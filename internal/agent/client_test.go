@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"nanoagent/internal/tools"
+	"bqagent/internal/tools"
 )
 
 func TestClientCreateChatCompletionUsesOpenAICompatibleRequest(t *testing.T) {

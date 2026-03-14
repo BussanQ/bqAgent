@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"nanoagent/internal/tools"
+	"bqagent/internal/tools"
 )
 
 type stubClient struct {

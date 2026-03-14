@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"nanoagent/internal/tools"
+	"bqagent/internal/tools"
 )
 
 const defaultBaseURL = "https://api.openai.com/v1"

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"nanoagent/internal/agent"
+	"bqagent/internal/agent"
 )
 
 func main() {

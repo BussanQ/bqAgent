@@ -1,4 +1,4 @@
-# nanoAgent
+# bqagent
 
 [中文](./README_CN.md) | English
 
@@ -8,14 +8,12 @@ The simplest way to build an agent that can interact with your system.
 
 A minimal AI agent written in Go using an OpenAI-compatible chat completions API. The agent can execute bash commands, read files, and write files.
 
-If you want to learn more (e.g. what MCP is, and how to fetch tools in a more modern way), see: https://github.com/sanbuphy/nanoMCP
-
 ## install
 
 Install Go 1.22+ and build the CLI:
 
 ```bash
-go build -o nanoagent ./cmd/agent
+go build -o bqagent ./cmd/agent
 ```
 
 Set your environment variables:
@@ -41,7 +39,7 @@ set OPENAI_BASE_URL=https://api.openai.com/v1
 set OPENAI_MODEL=gpt-4o-mini
 ```
 
-If `OPENAI_MODEL` is not set, nanoAgent defaults to `MiniMax-M2.5`.
+If `OPENAI_MODEL` is not set, bqagent defaults to `MiniMax-M2.5`.
 
 ## quick start
 

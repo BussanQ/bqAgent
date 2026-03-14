@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"nanoagent/internal/tools"
+	"bqagent/internal/tools"
 )
 
 const (

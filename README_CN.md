@@ -1,4 +1,4 @@
-# nanoAgent
+# bqagent
 
 [English](./README.md) | 中文
 
@@ -8,14 +8,12 @@
 
 这是一个使用 Go 编写、基于 OpenAI 兼容 chat completions 接口的最小化 AI 智能体实现。智能体可以执行 bash 命令、读取文件和写入文件。
 
-如果你想了解更多，比如学习什么是 MCP、如何更现代地获取工具，推荐看：https://github.com/sanbuphy/nanoMCP
-
 ## 安装
 
 安装 Go 1.22+，然后构建 CLI：
 
 ```bash
-go build -o nanoagent ./cmd/agent
+go build -o bqagent ./cmd/agent
 ```
 
 设置环境变量：
@@ -41,7 +39,7 @@ set OPENAI_BASE_URL=https://api.openai.com/v1
 set OPENAI_MODEL=gpt-4o-mini
 ```
 
-如果没有设置 `OPENAI_MODEL`，nanoAgent 默认使用 `MiniMax-M2.5`。
+如果没有设置 `OPENAI_MODEL`，bqagent 默认使用 `MiniMax-M2.5`。
 
 ## 快速开始
 
