@@ -25,6 +25,7 @@ type Meta struct {
 	Task          string    `json:"task,omitempty"`
 	Planned       bool      `json:"planned,omitempty"`
 	Background    bool      `json:"background,omitempty"`
+	Chat          bool      `json:"chat,omitempty"`
 	Status        Status    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
@@ -44,7 +45,14 @@ func NewStore(workspaceRoot string) *Store {
 	return &Store{workspaceRoot: workspaceRoot}
 }
 
-func (s *Store) Create(task string, planned, background bool) (*Session, error) {
+type CreateOptions struct {
+	Task       string
+	Planned    bool
+	Background bool
+	Chat       bool
+}
+
+func (s *Store) Create(options CreateOptions) (*Session, error) {
 	id, err := newSessionID()
 	if err != nil {
 		return nil, err
@@ -56,9 +64,10 @@ func (s *Store) Create(task string, planned, background bool) (*Session, error) 
 		meta: Meta{
 			ID:            id,
 			WorkspaceRoot: s.workspaceRoot,
-			Task:          task,
-			Planned:       planned,
-			Background:    background,
+			Task:          options.Task,
+			Planned:       options.Planned,
+			Background:    options.Background,
+			Chat:          options.Chat,
 			Status:        StatusCreated,
 			CreatedAt:     now,
 			UpdatedAt:     now,

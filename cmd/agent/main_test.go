@@ -35,7 +35,7 @@ func TestRunUsesDefaultHelloTask(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := run(context.Background(), &stdout, &stderr, nil, getenv)
+	code := run(context.Background(), nil, &stdout, &stderr, nil, getenv)
 	if code != 0 {
 		t.Fatalf("run returned code %d, want 0", code)
 	}
@@ -79,7 +79,7 @@ func TestRunJoinsArgumentsIntoSingleTask(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := run(context.Background(), &stdout, &stderr, []string{"read", "README.md"}, getenv)
+	code := run(context.Background(), nil, &stdout, &stderr, []string{"read", "README.md"}, getenv)
 	if code != 0 {
 		t.Fatalf("run returned code %d, want 0", code)
 	}
@@ -106,7 +106,7 @@ func TestRunWritesErrorsToStderr(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := run(context.Background(), &stdout, &stderr, []string{"hello"}, getenv)
+	code := run(context.Background(), nil, &stdout, &stderr, []string{"hello"}, getenv)
 	if code != 1 {
 		t.Fatalf("run returned code %d, want 1", code)
 	}

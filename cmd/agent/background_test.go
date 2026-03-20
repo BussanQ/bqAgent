@@ -20,7 +20,7 @@ func TestRunWithBackgroundCreatesSessionAndLaunchesChild(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runWithDeps(context.Background(), &stdout, &stderr, []string{"--background", "summarize", "README"}, func(string) string { return "" }, runDeps{
+	code := runWithDeps(context.Background(), nil, &stdout, &stderr, []string{"--background", "summarize", "README"}, func(string) string { return "" }, runDeps{
 		getwd:      func() (string, error) { return root, nil },
 		executable: func() (string, error) { return "bqagent-test", nil },
 		startBackground: func(executable string, args []string, dir, outputPath string) error {
@@ -73,7 +73,7 @@ func TestRunWithResumeRequiresTask(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runWithDeps(context.Background(), &stdout, &stderr, []string{"--resume", "demo"}, func(string) string { return "" }, runDeps{
+	code := runWithDeps(context.Background(), nil, &stdout, &stderr, []string{"--resume", "demo"}, func(string) string { return "" }, runDeps{
 		getwd:           func() (string, error) { return root, nil },
 		executable:      func() (string, error) { return "bqagent-test", nil },
 		startBackground: func(string, []string, string, string) error { return nil },

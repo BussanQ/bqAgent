@@ -23,6 +23,7 @@ The difference now is that the loop can be wrapped with extra capabilities inspi
 - compatibility with `workspace/memory/MEMORY.md` and `workspace/memory/YYYY-MM-DD.md`
 - continued support for `.agent/rules/*.md` and `.agent/skills/*/SKILL.md`
 - optional planning with `--plan`
+- interactive multi-turn conversation with `--chat`
 - persistent sessions with `--resume`
 - minimal background execution with `--background`
 
@@ -65,6 +66,12 @@ If `OPENAI_MODEL` is not set, bqagent defaults to `MiniMax-M2.5`.
 # default single-run task
 go run ./cmd/agent "list all Go files in this repo"
 
+# interactive multi-turn conversation
+go run ./cmd/agent --chat
+
+# start a chat with an initial task
+go run ./cmd/agent --chat "read README.md and summarize it"
+
 # plan first, then execute the steps
 go run ./cmd/agent --plan "inspect the current project structure and summarize it"
 
@@ -73,6 +80,9 @@ go run ./cmd/agent --background "read README.md and summarize it"
 
 # resume a previous session
 go run ./cmd/agent --resume <session-id> "continue from the previous result"
+
+# resume a previous session in chat mode
+go run ./cmd/agent --chat --resume <session-id>
 ```
 
 If you run `bqagent` without any arguments, it still defaults to `Hello`.
@@ -163,6 +173,8 @@ Behavior notes:
 
 ## Sessions and background mode
 
+`--chat` starts an interactive multi-turn conversation in the terminal. Type your messages one at a time; the agent keeps the full conversation context across turns. Type `/exit` or press Ctrl-D (EOF) to end the session. Chat sessions are automatically persisted under `.agent/sessions/`.
+
 `--background` starts a minimal background session by launching the same binary as a child process and writing output to:
 
 - `.agent/sessions/<session-id>/meta.json`
@@ -185,6 +197,9 @@ This is intentionally a small implementation:
 ```bash
 # Ask the agent to inspect the repo
 go run ./cmd/agent "what files are in this repository?"
+
+# Interactive conversation
+go run ./cmd/agent --chat
 
 # Use workspace rules and skills
 go run ./cmd/agent "follow the workspace rules and summarize the available skills"

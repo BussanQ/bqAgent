@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 type cliOptions struct {
 	plan       bool
 	background bool
+	chat       bool
 	resumeID   string
 	sessionID  string
 	sessionRun bool
@@ -30,18 +32,18 @@ type runDeps struct {
 }
 
 func main() {
-	os.Exit(run(context.Background(), os.Stdout, os.Stderr, os.Args[1:], os.Getenv))
+	os.Exit(run(context.Background(), os.Stdin, os.Stdout, os.Stderr, os.Args[1:], os.Getenv))
 }
 
-func run(ctx context.Context, stdout, stderr io.Writer, args []string, getenv func(string) string) int {
-	return runWithDeps(ctx, stdout, stderr, args, getenv, runDeps{
+func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args []string, getenv func(string) string) int {
+	return runWithDeps(ctx, stdin, stdout, stderr, args, getenv, runDeps{
 		getwd:           os.Getwd,
 		executable:      os.Executable,
 		startBackground: startBackgroundProcess,
 	})
 }
 
-func runWithDeps(ctx context.Context, stdout, stderr io.Writer, args []string, getenv func(string) string, deps runDeps) int {
+func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args []string, getenv func(string) string, deps runDeps) int {
 	options, taskArgs, err := parseCLI(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -67,12 +69,16 @@ func runWithDeps(ctx context.Context, stdout, stderr io.Writer, args []string, g
 	}
 
 	task := strings.Join(taskArgs, " ")
-	if strings.TrimSpace(task) == "" && !options.plan && !options.background && effectiveSessionID(options) == "" {
+	if strings.TrimSpace(task) == "" && !options.plan && !options.background && !options.chat && effectiveSessionID(options) == "" {
 		task = "Hello"
 	}
 
 	if options.background {
 		return runInBackground(stdout, stderr, deps, ws, options, taskArgs)
+	}
+
+	if options.chat {
+		return runChat(ctx, stdin, stdout, stderr, getenv, ws, systemPrompt, task, options)
 	}
 
 	return runForeground(ctx, stdout, stderr, getenv, ws, systemPrompt, task, options)
@@ -85,6 +91,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	var options cliOptions
 	fs.BoolVar(&options.plan, "plan", false, "break the task into steps before execution")
 	fs.BoolVar(&options.background, "background", false, "run the task in the background")
+	fs.BoolVar(&options.chat, "chat", false, "interactive multi-turn conversation mode")
 	fs.StringVar(&options.resumeID, "resume", "", "resume an existing session")
 	fs.StringVar(&options.sessionID, "session-id", "", "internal session identifier")
 	fs.BoolVar(&options.sessionRun, "session-run", false, "internal background session runner")
@@ -97,6 +104,9 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	}
 	if options.background && options.sessionRun {
 		return cliOptions{}, nil, fmt.Errorf("--background cannot be combined with --session-run")
+	}
+	if options.chat && options.background {
+		return cliOptions{}, nil, fmt.Errorf("--chat cannot be combined with --background")
 	}
 	return options, fs.Args(), nil
 }
@@ -115,7 +125,7 @@ func runInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace.Works
 		err          error
 	)
 	if sessionID == "" {
-		savedSession, err = store.Create(task, options.plan, true)
+		savedSession, err = store.Create(session.CreateOptions{Task: task, Planned: options.plan, Background: true})
 	} else {
 		savedSession, err = store.Open(sessionID)
 	}
@@ -264,6 +274,119 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	}
 
 	fmt.Fprintln(outputWriter, result)
+	return 0
+}
+
+func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt, initialTask string, options cliOptions) int {
+	store := session.NewStore(ws.Root)
+	var (
+		savedSession *session.Session
+		messages     []map[string]any
+		err          error
+	)
+
+	sessionID := effectiveSessionID(options)
+	if sessionID != "" {
+		savedSession, err = store.Open(sessionID)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		messages, err = savedSession.LoadMessages()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	} else {
+		savedSession, err = store.Create(session.CreateOptions{Task: initialTask, Planned: options.plan, Chat: true})
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+
+	if err := savedSession.MarkRunning(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	if len(messages) == 0 {
+		systemMessage := map[string]any{"role": "system", "content": systemPrompt}
+		messages = append(messages, systemMessage)
+		if err := savedSession.RecordMessage(systemMessage); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+
+	chatClient := agent.NewClient(getenv("OPENAI_API_KEY"), getenv("OPENAI_BASE_URL"), nil)
+	planner := agent.NewPlanner(chatClient, getenv("OPENAI_MODEL"))
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: ws.Root, IncludePlan: options.plan})
+	app := agent.NewWithOptions(chatClient, getenv("OPENAI_MODEL"), agent.Options{
+		SystemPrompt:    systemPrompt,
+		LogWriter:       stdout,
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       catalog.Registry(),
+		Planner:         planner,
+		Recorder:        savedSession,
+	})
+
+	executeTurn := func(input string) ([]map[string]any, error) {
+		userMessage := map[string]any{"role": "user", "content": input}
+		messages = append(messages, userMessage)
+		if err := savedSession.RecordMessage(userMessage); err != nil {
+			return messages, err
+		}
+
+		result, updatedMessages, err := app.RunConversationTurn(ctx, messages, agent.DefaultMaxIterations)
+		if err != nil {
+			return updatedMessages, err
+		}
+		messages = updatedMessages
+		fmt.Fprintln(stdout, result)
+		return messages, nil
+	}
+
+	if strings.TrimSpace(initialTask) != "" {
+		var err error
+		messages, err = executeTurn(initialTask)
+		if err != nil {
+			_ = savedSession.MarkFailed(err)
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+
+	scanner := bufio.NewScanner(stdin)
+	for {
+		fmt.Fprint(stdout, "> ")
+		if !scanner.Scan() {
+			break
+		}
+		line := scanner.Text()
+		if line == "/exit" {
+			break
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		var err error
+		messages, err = executeTurn(line)
+		if err != nil {
+			_ = savedSession.MarkFailed(err)
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+
+	if scanErr := scanner.Err(); scanErr != nil {
+		fmt.Fprintln(stderr, scanErr)
+		_ = savedSession.MarkFailed(scanErr)
+		return 1
+	}
+
+	_ = savedSession.MarkCompleted()
 	return 0
 }
 

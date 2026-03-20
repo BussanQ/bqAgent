@@ -23,6 +23,7 @@ bqagent 的核心仍然很简单：
 - 兼容 `workspace/memory/MEMORY.md` 和 `workspace/memory/YYYY-MM-DD.md`
 - 继续支持 `.agent/rules/*.md` 和 `.agent/skills/*/SKILL.md`
 - 使用 `--plan` 先拆步骤再执行
+- 使用 `--chat` 进行交互式多轮对话
 - 使用 `--resume` 恢复持久会话
 - 使用 `--background` 启动最小后台会话
 
@@ -65,6 +66,12 @@ set OPENAI_MODEL=gpt-4o-mini
 # 默认单次任务
 go run ./cmd/agent "列出当前仓库里的所有 Go 文件"
 
+# 交互式多轮对话
+go run ./cmd/agent --chat
+
+# 带初始任务的交互对话
+go run ./cmd/agent --chat "读取 README.md 并总结"
+
 # 先规划再执行
 go run ./cmd/agent --plan "梳理当前项目结构并总结"
 
@@ -73,6 +80,9 @@ go run ./cmd/agent --background "读取 README.md 并总结"
 
 # 恢复之前的会话
 go run ./cmd/agent --resume <session-id> "基于刚才的结果继续"
+
+# 以对话模式恢复之前的会话
+go run ./cmd/agent --chat --resume <session-id>
 ```
 
 如果不传任何参数，bqagent 仍然会默认使用 `Hello`。
@@ -163,7 +173,9 @@ project/
 
 ## 会话与后台模式
 
-`--background` 会启动一个“最小后台会话”：通过同一二进制拉起子进程，并把输出写入：
+`--chat` 启动交互式多轮对话模式。在终端中逐条输入消息，智能体会在整个会话过程中保持完整的对话上下文。输入 `/exit` 或按 Ctrl-D（EOF）结束会话。对话会自动持久化到 `.agent/sessions/` 目录下。
+
+`--background` 会启动一个”最小后台会话”：通过同一二进制拉起子进程，并把输出写入：
 
 - `.agent/sessions/<session-id>/meta.json`
 - `.agent/sessions/<session-id>/messages.jsonl`
@@ -185,6 +197,9 @@ project/
 ```bash
 # 让智能体检查仓库
 go run ./cmd/agent "当前仓库里有哪些文件？"
+
+# 交互式对话
+go run ./cmd/agent --chat
 
 # 使用 workspace 规则和技能
 go run ./cmd/agent "遵循当前 workspace 规则并总结可用技能"

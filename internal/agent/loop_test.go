@@ -161,3 +161,31 @@ func TestRunReturnsMaxIterationsReached(t *testing.T) {
 		t.Fatalf("Run returned %q, want %q", result, "Max iterations reached")
 	}
 }
+
+func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
+	app := New(client, "", &bytes.Buffer{})
+
+	messages := []map[string]any{
+		{"role": "system", "content": "sys"},
+		{"role": "user", "content": "hello"},
+	}
+
+	result, updated, err := app.RunConversationTurn(context.Background(), messages, 5)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if result != "reply" {
+		t.Fatalf("result = %q, want %q", result, "reply")
+	}
+	if len(updated) != 3 {
+		t.Fatalf("updated messages = %d, want 3 (system + user + assistant)", len(updated))
+	}
+	if updated[2]["role"] != "assistant" {
+		t.Fatalf("last message role = %q, want assistant", updated[2]["role"])
+	}
+	// Original messages should not be mutated
+	if len(messages) != 2 {
+		t.Fatalf("original messages mutated: len = %d, want 2", len(messages))
+	}
+}

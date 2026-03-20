@@ -96,6 +96,10 @@ func (a *Agent) RunConversation(ctx context.Context, messages []map[string]any, 
 	return result, err
 }
 
+func (a *Agent) RunConversationTurn(ctx context.Context, messages []map[string]any, maxIterations int) (string, []map[string]any, error) {
+	return a.runConversation(ctx, duplicateMessages(messages), maxIterations, a.planner != nil)
+}
+
 func (a *Agent) RunPlanned(ctx context.Context, task string, maxIterations int) (string, error) {
 	messages := []map[string]any{{"role": "system", "content": a.systemPrompt}}
 	if err := a.recordMessages(messages...); err != nil {

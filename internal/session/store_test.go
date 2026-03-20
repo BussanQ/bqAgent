@@ -7,7 +7,7 @@ import (
 
 func TestSessionStorePersistsMessagesAndStatus(t *testing.T) {
 	store := NewStore(t.TempDir())
-	savedSession, err := store.Create("inspect repo", true, true)
+	savedSession, err := store.Create(CreateOptions{Task: "inspect repo", Planned: true, Background: true})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
