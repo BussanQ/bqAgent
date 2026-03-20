@@ -26,7 +26,73 @@ type Definition struct {
 
 type Function func(args map[string]any) (string, error)
 
+type Options struct {
+	WorkspaceRoot string
+	IncludePlan   bool
+}
+
+type Catalog struct {
+	definitions []Definition
+	functions   map[string]Function
+}
+
 func Definitions() []Definition {
+	return cloneDefinitions(builtinDefinitions())
+}
+
+func Registry() map[string]Function {
+	return RegistryWithOptions(Options{})
+}
+
+func RegistryWithOptions(options Options) map[string]Function {
+	return map[string]Function{
+		"execute_bash": ExecuteBashInDir(options.WorkspaceRoot),
+		"read_file":    ReadFileFromRoot(options.WorkspaceRoot),
+		"write_file":   WriteFileToRoot(options.WorkspaceRoot),
+	}
+}
+
+func NewCatalog(options Options) Catalog {
+	definitions := Definitions()
+	if options.IncludePlan {
+		definitions = append(definitions, PlanDefinition())
+	}
+	return Catalog{
+		definitions: definitions,
+		functions:   RegistryWithOptions(options),
+	}
+}
+
+func (catalog Catalog) Definitions() []Definition {
+	return cloneDefinitions(catalog.definitions)
+}
+
+func (catalog Catalog) Registry() map[string]Function {
+	cloned := make(map[string]Function, len(catalog.functions))
+	for name, function := range catalog.functions {
+		cloned[name] = function
+	}
+	return cloned
+}
+
+func PlanDefinition() Definition {
+	return Definition{
+		Type: "function",
+		Function: FunctionDefinition{
+			Name:        "plan",
+			Description: "Break down complex task into steps and execute sequentially",
+			Parameters: JSONSchema{
+				Type: "object",
+				Properties: map[string]JSONSchemaProperty{
+					"task": {Type: "string"},
+				},
+				Required: []string{"task"},
+			},
+		},
+	}
+}
+
+func builtinDefinitions() []Definition {
 	return []Definition{
 		{
 			Type: "function",
@@ -74,12 +140,10 @@ func Definitions() []Definition {
 	}
 }
 
-func Registry() map[string]Function {
-	return map[string]Function{
-		"execute_bash": ExecuteBash,
-		"read_file":    ReadFile,
-		"write_file":   WriteFile,
-	}
+func cloneDefinitions(definitions []Definition) []Definition {
+	cloned := make([]Definition, len(definitions))
+	copy(cloned, definitions)
+	return cloned
 }
 
 func requireString(args map[string]any, key string) (string, error) {

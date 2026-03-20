@@ -19,6 +19,10 @@ type ChatCompletionClient interface {
 	CreateChatCompletion(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition) (AssistantMessage, error)
 }
 
+type ChatCompletionOptions struct {
+	ResponseFormat map[string]any
+}
+
 type Client struct {
 	httpClient *http.Client
 	apiKey     string
@@ -43,9 +47,10 @@ type FunctionCall struct {
 }
 
 type chatCompletionRequest struct {
-	Model    string             `json:"model"`
-	Messages []map[string]any   `json:"messages"`
-	Tools    []tools.Definition `json:"tools,omitempty"`
+	Model          string             `json:"model"`
+	Messages       []map[string]any   `json:"messages"`
+	Tools          []tools.Definition `json:"tools,omitempty"`
+	ResponseFormat map[string]any     `json:"response_format,omitempty"`
 }
 
 type chatCompletionResponse struct {
@@ -69,10 +74,15 @@ func NewClient(apiKey, baseURL string, httpClient *http.Client) *Client {
 }
 
 func (c *Client) CreateChatCompletion(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition) (AssistantMessage, error) {
+	return c.CreateChatCompletionWithOptions(ctx, model, messages, definitions, ChatCompletionOptions{})
+}
+
+func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
 	body, err := json.Marshal(chatCompletionRequest{
-		Model:    model,
-		Messages: messages,
-		Tools:    definitions,
+		Model:          model,
+		Messages:       messages,
+		Tools:          definitions,
+		ResponseFormat: options.ResponseFormat,
 	})
 	if err != nil {
 		return AssistantMessage{}, err

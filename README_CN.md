@@ -4,9 +4,27 @@
 
 > *"问题不在于你看到了什么，而在于你看见了什么。"* — 梭罗
 
-用最简单的方式构建一个能与系统交互的智能体。
+这是一个面向本地工作流的小型 Go 智能体。现在它在保留极简执行循环的同时，增加了工作区上下文、Markdown 技能定义、轻量记忆、规划、持久会话和最小后台模式。
 
-这是一个使用 Go 编写、基于 OpenAI 兼容 chat completions 接口的最小化 AI 智能体实现。智能体可以执行 bash 命令、读取文件和写入文件。
+## 它现在能做什么
+
+bqagent 的核心仍然很简单：
+
+1. 调用 OpenAI 兼容 chat completions 接口
+2. 让模型选择工具
+3. 在本地执行工具
+4. 把工具结果回传给模型
+5. 重复直到任务结束
+
+新增的能力主要来自对 `agent-claudecode.py` 和 OpenClaw 思路的吸收：
+
+- 基于 workspace 的 system prompt 装配
+- 兼容 `workspace/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md`
+- 兼容 `workspace/memory/MEMORY.md` 和 `workspace/memory/YYYY-MM-DD.md`
+- 继续支持 `.agent/rules/*.md` 和 `.agent/skills/*/SKILL.md`
+- 使用 `--plan` 先拆步骤再执行
+- 使用 `--resume` 恢复持久会话
+- 使用 `--background` 启动最小后台会话
 
 ## 安装
 
@@ -44,47 +62,138 @@ set OPENAI_MODEL=gpt-4o-mini
 ## 快速开始
 
 ```bash
-go run ./cmd/agent "列出当前目录下所有 python 文件"
-go run ./cmd/agent "创建一个名为 hello.txt 的文件，内容是 'Hello World'"
-go run ./cmd/agent "读取 README.md 的内容"
+# 默认单次任务
+go run ./cmd/agent "列出当前仓库里的所有 Go 文件"
+
+# 先规划再执行
+go run ./cmd/agent --plan "梳理当前项目结构并总结"
+
+# 启动后台会话
+go run ./cmd/agent --background "读取 README.md 并总结"
+
+# 恢复之前的会话
+go run ./cmd/agent --resume <session-id> "基于刚才的结果继续"
 ```
 
-## 工作原理
+如果不传任何参数，bqagent 仍然会默认使用 `Hello`。
 
-智能体使用 OpenAI 兼容的 tool calling 来：
-1. 接收用户任务
-2. 决定使用哪些工具（`execute_bash`、`read_file`、`write_file`）
-3. 在本地执行工具
-4. 将工具结果返回给模型
-5. 重复直到任务完成
+## 工作区布局
 
-就这样。几个很小的 Go 文件。
+bqagent 会从当前目录向上查找，直到命中以下任一标记为止：
 
-核心仍然只是一个循环：调用模型 → 执行工具 → 重复。
+- `.agent`
+- `.git`
+- `go.mod`
 
-当前行为刻意与字面版 `agent.py` 保持一致：
+找到后就把它当作 workspace root。相对路径工具和 shell 命令都会以这个目录为基准执行。
+
+可选的工作区文件布局现在支持两种：
+
+```text
+project/
+├─ workspace/
+│  ├─ AGENT.md
+│  ├─ SOUL.md
+│  ├─ TOOLS.md
+│  ├─ USER.md
+│  └─ memory/
+│     ├─ MEMORY.md
+│     └─ YYYY-MM-DD.md
+├─ agent_memory.md
+└─ .agent/
+   ├─ rules/
+   │  └─ *.md
+   ├─ skills/
+   │  └─ <skill>/
+   │     └─ SKILL.md
+   ├─ sessions/
+   │  └─ <session-id>/
+   │     ├─ meta.json
+   │     ├─ messages.jsonl
+   │     └─ output.log
+   └─ mcp.json
+```
+
+### 这些文件分别做什么
+
+- `workspace/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md`
+  - OpenClaw 风格的上下文文件
+  - 当前会默认加载进 system prompt
+- `workspace/memory/MEMORY.md`
+  - 长期记忆文件
+  - 启动时会加载进 prompt
+- `workspace/memory/YYYY-MM-DD.md`
+  - 日记型记忆文件
+  - 启动时会自动加载今天和昨天的文件
+  - 当 `workspace/` 存在时，新的任务结果会优先追加到今天的这个文件
+- `agent_memory.md`
+  - 兼容旧布局的轻量记忆文件
+  - 当 `workspace/memory/MEMORY.md` 不存在时仍会读取；若两者都存在，会一并注入 prompt
+- `.agent/rules/*.md`
+  - 规则全文注入 prompt
+- `.agent/skills/*/SKILL.md`
+  - Markdown 技能定义，当前会以摘要形式注入 prompt
+- `.agent/sessions/<session-id>/messages.jsonl`
+  - 可恢复会话的追加式 transcript
+- `.agent/sessions/<session-id>/output.log`
+  - 人类可读的执行日志
+- `.agent/mcp.json`
+  - 为后续 MCP 风格工具定义预留的路径
+  - 当前 **还没有** 实现 live MCP 传输层
+
+## 内建工具
+
+默认内建工具：
+
+- `execute_bash`
+- `read_file`
+- `write_file`
+
+启用 planner 后，模型还可以调用：
+
+- `plan`
+
+当前行为说明：
 
 - 未知工具会作为 `Error: Unknown tool '...'` 返回给模型
 - 非法 JSON 工具参数会直接让当前运行失败
 - 文件读写失败也会直接让当前运行失败
+- 相对路径的 `read_file` / `write_file` 会按 workspace root 解析
+- `execute_bash` 也会在 workspace root 下运行
 
-## 能力
+## 会话与后台模式
 
-- `execute_bash`: 运行 bash 命令
-- `read_file`: 读取文件内容
-- `write_file`: 写入内容到文件
+`--background` 会启动一个“最小后台会话”：通过同一二进制拉起子进程，并把输出写入：
+
+- `.agent/sessions/<session-id>/meta.json`
+- `.agent/sessions/<session-id>/messages.jsonl`
+- `.agent/sessions/<session-id>/output.log`
+
+命令会立即返回 session ID、session 目录和日志路径。
+
+`--resume <session-id> "..."` 会读取 `messages.jsonl`，追加新的 follow-up 任务，然后从该上下文继续执行。
+
+这里刻意保持简单：
+
+- 不做 daemon
+- 不做队列服务
+- 不做 live MCP runtime
+- 不做向量记忆
 
 ## 示例
 
 ```bash
-# 系统操作
-go run ./cmd/agent "当前目录是什么，里面有哪些文件？"
+# 让智能体检查仓库
+go run ./cmd/agent "当前仓库里有哪些文件？"
 
-# 文件操作
-go run ./cmd/agent "创建一个打印 hello world 的 python 脚本"
+# 使用 workspace 规则和技能
+go run ./cmd/agent "遵循当前 workspace 规则并总结可用技能"
 
-# 组合任务
-go run ./cmd/agent "找到所有 .py 文件并统计总代码行数"
+# 先规划再执行
+go run ./cmd/agent --plan "分析当前 Go 项目并说明主要包的职责"
+
+# 后台运行
+go run ./cmd/agent --background "扫描代码库并总结关键文件"
 ```
 
 ---
@@ -92,7 +201,3 @@ go run ./cmd/agent "找到所有 .py 文件并统计总代码行数"
 ## 许可证
 
 MIT
-
-────────────────────────────────────────
-
-⏺ *如同一粒种子长成森林，几个小小的 Go 文件也能化作无限可能。*

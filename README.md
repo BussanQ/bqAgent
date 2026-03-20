@@ -4,11 +4,29 @@
 
 > *"The question is not what you look at, but what you see."* — Henry David Thoreau
 
-The simplest way to build an agent that can interact with your system.
+A small Go agent for local work, now with workspace-aware context, Markdown skill definitions, lightweight memory, planning, persistent sessions, and a minimal background mode.
 
-A minimal AI agent written in Go using an OpenAI-compatible chat completions API. The agent can execute bash commands, read files, and write files.
+## What it can do
 
-## install
+bqagent still keeps the same core loop:
+
+1. send messages to an OpenAI-compatible chat completions API
+2. let the model choose tools
+3. run the tools locally
+4. return tool results to the model
+5. repeat until the task is done
+
+The difference now is that the loop can be wrapped with extra capabilities inspired by `agent-claudecode.py` and OpenClaw:
+
+- workspace-rooted system prompt assembly
+- compatibility with `workspace/AGENT.md`, `SOUL.md`, `TOOLS.md`, and `USER.md`
+- compatibility with `workspace/memory/MEMORY.md` and `workspace/memory/YYYY-MM-DD.md`
+- continued support for `.agent/rules/*.md` and `.agent/skills/*/SKILL.md`
+- optional planning with `--plan`
+- persistent sessions with `--resume`
+- minimal background execution with `--background`
+
+## Install
 
 Install Go 1.22+ and build the CLI:
 
@@ -41,58 +59,145 @@ set OPENAI_MODEL=gpt-4o-mini
 
 If `OPENAI_MODEL` is not set, bqagent defaults to `MiniMax-M2.5`.
 
-## quick start
+## Quick start
 
 ```bash
-go run ./cmd/agent "list all python files in current directory"
-go run ./cmd/agent "create a file called hello.txt with 'Hello World'"
-go run ./cmd/agent "read the contents of README.md"
+# default single-run task
+go run ./cmd/agent "list all Go files in this repo"
+
+# plan first, then execute the steps
+go run ./cmd/agent --plan "inspect the current project structure and summarize it"
+
+# start a background session
+go run ./cmd/agent --background "read README.md and summarize it"
+
+# resume a previous session
+go run ./cmd/agent --resume <session-id> "continue from the previous result"
 ```
 
-## how it works
+If you run `bqagent` without any arguments, it still defaults to `Hello`.
 
-The agent uses OpenAI-compatible tool calling to:
-1. Receive a task from the user
-2. Decide which tools to use (`execute_bash`, `read_file`, `write_file`)
-3. Execute the tools locally
-4. Return tool results to the model
-5. Repeat until the task is complete
+## Workspace layout
 
-That's it. A few small Go files.
+bqagent resolves a workspace root by walking upward from the current directory until it finds one of:
 
-The core is still just a loop: call model → execute tools → repeat.
+- `.agent`
+- `.git`
+- `go.mod`
 
-Current behavior intentionally matches the literal `agent.py` implementation:
+Relative tool paths and shell commands run from that resolved workspace root.
+
+Optional workspace files now support two layouts:
+
+```text
+project/
+├─ workspace/
+│  ├─ AGENT.md
+│  ├─ SOUL.md
+│  ├─ TOOLS.md
+│  ├─ USER.md
+│  └─ memory/
+│     ├─ MEMORY.md
+│     └─ YYYY-MM-DD.md
+├─ agent_memory.md
+└─ .agent/
+   ├─ rules/
+   │  └─ *.md
+   ├─ skills/
+   │  └─ <skill>/
+   │     └─ SKILL.md
+   ├─ sessions/
+   │  └─ <session-id>/
+   │     ├─ meta.json
+   │     ├─ messages.jsonl
+   │     └─ output.log
+   └─ mcp.json
+```
+
+### Files and directories
+
+- `workspace/AGENT.md`, `SOUL.md`, `TOOLS.md`, `USER.md`
+  - OpenClaw-style context files
+  - loaded into the system prompt by default when present
+- `workspace/memory/MEMORY.md`
+  - long-term memory file
+  - loaded into the prompt at startup
+- `workspace/memory/YYYY-MM-DD.md`
+  - diary-style memory files
+  - today's and yesterday's files are loaded automatically at startup
+  - when `workspace/` exists, new task results are appended to today's file first
+- `agent_memory.md`
+  - compatibility path for the older layout
+  - still loaded when present; if both memory files exist, both are included in the prompt
+- `.agent/rules/*.md`
+  - full rule documents injected into the prompt
+- `.agent/skills/*/SKILL.md`
+  - Markdown skill definitions summarized into the prompt
+- `.agent/sessions/<session-id>/messages.jsonl`
+  - append-only transcript for resumable conversations
+- `.agent/sessions/<session-id>/output.log`
+  - human-readable execution log
+- `.agent/mcp.json`
+  - reserved path for future MCP-style tool definitions
+  - live MCP transport is **not** implemented yet
+
+## Built-in tools
+
+Default built-in tools:
+
+- `execute_bash`
+- `read_file`
+- `write_file`
+
+When planner support is enabled, the agent can also use:
+
+- `plan`
+
+Behavior notes:
 
 - unknown tools are returned to the model as `Error: Unknown tool '...'`
 - malformed JSON tool arguments stop the current run with an error
 - file read/write failures also stop the current run with an error
+- relative `read_file` / `write_file` paths are resolved from the workspace root
+- `execute_bash` also runs from the workspace root
 
-## capabilities
+## Sessions and background mode
 
-- `execute_bash`: Run any bash command
-- `read_file`: Read file contents
-- `write_file`: Write content to files
+`--background` starts a minimal background session by launching the same binary as a child process and writing output to:
 
-## examples
+- `.agent/sessions/<session-id>/meta.json`
+- `.agent/sessions/<session-id>/messages.jsonl`
+- `.agent/sessions/<session-id>/output.log`
+
+The command immediately prints the session ID, session directory, and log path.
+
+`--resume <session-id> "..."` loads `messages.jsonl`, appends your follow-up task, and continues from there.
+
+This is intentionally a small implementation:
+
+- no daemon
+- no queue server
+- no live MCP runtime
+- no vector memory
+
+## Examples
 
 ```bash
-# System operations
-go run ./cmd/agent "what's my current directory and what files are in it?"
+# Ask the agent to inspect the repo
+go run ./cmd/agent "what files are in this repository?"
 
-# File operations
-go run ./cmd/agent "create a python script that prints hello world"
+# Use workspace rules and skills
+go run ./cmd/agent "follow the workspace rules and summarize the available skills"
 
-# Combined tasks
-go run ./cmd/agent "find all .py files and count total lines of code"
+# Run a planned task
+go run ./cmd/agent --plan "analyze the current Go project and explain the main packages"
+
+# Run in background
+go run ./cmd/agent --background "scan the codebase and summarize the key files"
 ```
 
 ---
 
-## license
+## License
 
 MIT
-
-────────────────────────────────────────
-
-⏺ *Like a single seed that grows into a forest, a few small Go files become infinite possibilities.*
