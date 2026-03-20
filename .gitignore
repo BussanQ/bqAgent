@@ -8,6 +8,6 @@ coverage.out
 .claude/
 .agent/sessions/
 # runtime memory
-memory/**
-!memory/
-!memory/MEMORY.md
+workspace/memory/**
+!workspace/memory/
+!workspace/memory/MEMORY.md
