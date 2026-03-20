@@ -13,7 +13,7 @@ import (
 const (
 	DefaultModel         = "MiniMax-M2.5"
 	DefaultSystemPrompt  = "You are a helpful assistant. Be concise."
-	DefaultMaxIterations = 5
+	DefaultMaxIterations = 20
 )
 
 type MessageRecorder interface {
