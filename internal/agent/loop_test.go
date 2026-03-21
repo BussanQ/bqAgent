@@ -25,6 +25,10 @@ func (s *stubClient) CreateChatCompletion(_ context.Context, _ string, messages 
 	return response, nil
 }
 
+func (s *stubClient) CreateChatCompletionStream(_ context.Context, _ string, messages []map[string]any, _ []tools.Definition, _ func(string)) (AssistantMessage, error) {
+	return s.CreateChatCompletion(context.Background(), "", messages, nil)
+}
+
 func cloneMessages(messages []map[string]any) []map[string]any {
 	cloned := make([]map[string]any, len(messages))
 	for index, message := range messages {

@@ -21,12 +21,13 @@ type MessageRecorder interface {
 }
 
 type Options struct {
-	SystemPrompt   string
-	LogWriter      io.Writer
+	SystemPrompt    string
+	LogWriter       io.Writer
 	ToolDefinitions []tools.Definition
-	Functions      map[string]tools.Function
-	Planner        *Planner
-	Recorder       MessageRecorder
+	Functions       map[string]tools.Function
+	Planner         *Planner
+	Recorder        MessageRecorder
+	Stream          bool
 }
 
 type Agent struct {
@@ -38,6 +39,7 @@ type Agent struct {
 	functions       map[string]tools.Function
 	planner         *Planner
 	recorder        MessageRecorder
+	stream          bool
 }
 
 func New(client ChatCompletionClient, model string, logWriter io.Writer) *Agent {
@@ -77,6 +79,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		functions:       functions,
 		planner:         options.Planner,
 		recorder:        options.Recorder,
+		stream:          options.Stream,
 	}
 }
 
@@ -155,7 +158,19 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 
 	definitions := a.toolDefinitionsForRun(allowPlan)
 	for iteration := 0; iteration < maxIterations; iteration++ {
-		message, err := a.client.CreateChatCompletion(ctx, a.model, messages, definitions)
+		var (
+			message AssistantMessage
+			err     error
+		)
+		if a.stream {
+			message, err = a.client.CreateChatCompletionStream(ctx, a.model, messages, definitions, func(chunk string) {
+				if a.logWriter != nil {
+					_, _ = io.WriteString(a.logWriter, chunk)
+				}
+			})
+		} else {
+			message, err = a.client.CreateChatCompletion(ctx, a.model, messages, definitions)
+		}
 		if err != nil {
 			return "", messages, err
 		}
@@ -166,7 +181,11 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			return "", messages, err
 		}
 
-		a.logf("[Agent] %s\n", message.DisplayContent())
+		if a.stream && len(message.ToolCalls) == 0 {
+			// content already streamed via onChunk; skip log line
+		} else {
+			a.logf("[Agent] %s\n", message.DisplayContent())
+		}
 		if len(message.ToolCalls) == 0 {
 			return message.FinalContent(), messages, nil
 		}

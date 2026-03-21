@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -17,6 +18,7 @@ const defaultBaseURL = "https://api.openai.com/v1"
 
 type ChatCompletionClient interface {
 	CreateChatCompletion(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition) (AssistantMessage, error)
+	CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error)
 }
 
 type ChatCompletionOptions struct {
@@ -53,10 +55,40 @@ type chatCompletionRequest struct {
 	ResponseFormat map[string]any     `json:"response_format,omitempty"`
 }
 
+type chatCompletionStreamRequest struct {
+	Model    string             `json:"model"`
+	Messages []map[string]any   `json:"messages"`
+	Tools    []tools.Definition `json:"tools,omitempty"`
+	Stream   bool               `json:"stream"`
+}
+
 type chatCompletionResponse struct {
 	Choices []struct {
 		Message AssistantMessage `json:"message"`
 	} `json:"choices"`
+}
+
+type streamDelta struct {
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	ToolCalls []struct {
+		Index    int    `json:"index"`
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Function struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"function"`
+	} `json:"tool_calls"`
+}
+
+type streamChoice struct {
+	Delta        streamDelta `json:"delta"`
+	FinishReason string      `json:"finish_reason"`
+}
+
+type streamChunk struct {
+	Choices []streamChoice `json:"choices"`
 }
 
 func NewClient(apiKey, baseURL string, httpClient *http.Client) *Client {
@@ -122,6 +154,124 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 	message := decoded.Choices[0].Message
 	if message.Role == "" {
 		message.Role = "assistant"
+	}
+	return message, nil
+}
+
+func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error) {
+	body, err := json.Marshal(chatCompletionStreamRequest{
+		Model:    model,
+		Messages: messages,
+		Tools:    definitions,
+		Stream:   true,
+	})
+	if err != nil {
+		return AssistantMessage{}, err
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return AssistantMessage{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "text/event-stream")
+	if c.apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return AssistantMessage{}, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		payload, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			return AssistantMessage{}, fmt.Errorf("chat completions stream request failed: %s", response.Status)
+		}
+		return AssistantMessage{}, fmt.Errorf("chat completions stream request failed: %s: %s", response.Status, strings.TrimSpace(string(payload)))
+	}
+
+	type partialToolCall struct {
+		id        string
+		callType  string
+		name      string
+		arguments strings.Builder
+	}
+
+	var (
+		contentBuilder strings.Builder
+		role           string
+		toolCallMap    = map[int]*partialToolCall{}
+	)
+
+	scanner := bufio.NewScanner(response.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		var chunk streamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil || len(chunk.Choices) == 0 {
+			continue
+		}
+		delta := chunk.Choices[0].Delta
+		if delta.Role != "" {
+			role = delta.Role
+		}
+		if delta.Content != "" {
+			contentBuilder.WriteString(delta.Content)
+			if onChunk != nil {
+				onChunk(delta.Content)
+			}
+		}
+		for _, tc := range delta.ToolCalls {
+			ptc, ok := toolCallMap[tc.Index]
+			if !ok {
+				ptc = &partialToolCall{}
+				toolCallMap[tc.Index] = ptc
+			}
+			if tc.ID != "" {
+				ptc.id = tc.ID
+			}
+			if tc.Type != "" {
+				ptc.callType = tc.Type
+			}
+			if tc.Function.Name != "" {
+				ptc.name = tc.Function.Name
+			}
+			if tc.Function.Arguments != "" {
+				ptc.arguments.WriteString(tc.Function.Arguments)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return AssistantMessage{}, fmt.Errorf("reading stream: %w", err)
+	}
+
+	if role == "" {
+		role = "assistant"
+	}
+
+	message := AssistantMessage{
+		Role:    role,
+		Content: contentBuilder.String(),
+	}
+	for i := 0; i < len(toolCallMap); i++ {
+		ptc := toolCallMap[i]
+		message.ToolCalls = append(message.ToolCalls, ToolCall{
+			ID:   ptc.id,
+			Type: ptc.callType,
+			Function: FunctionCall{
+				Name:      ptc.name,
+				Arguments: ptc.arguments.String(),
+			},
+		})
 	}
 	return message, nil
 }

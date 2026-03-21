@@ -20,6 +20,7 @@ type cliOptions struct {
 	plan       bool
 	background bool
 	chat       bool
+	stream     bool
 	resumeID   string
 	sessionID  string
 	sessionRun bool
@@ -97,6 +98,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.BoolVar(&options.plan, "plan", false, "break the task into steps before execution")
 	fs.BoolVar(&options.background, "background", false, "run the task in the background")
 	fs.BoolVar(&options.chat, "chat", false, "interactive multi-turn conversation mode")
+	fs.BoolVar(&options.stream, "stream", false, "stream responses token by token (requires --chat)")
 	fs.StringVar(&options.resumeID, "resume", "", "resume an existing session")
 	fs.StringVar(&options.sessionID, "session-id", "", "internal session identifier")
 	fs.BoolVar(&options.sessionRun, "session-run", false, "internal background session runner")
@@ -112,6 +114,9 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	}
 	if options.chat && options.background {
 		return cliOptions{}, nil, fmt.Errorf("--chat cannot be combined with --background")
+	}
+	if options.stream && !options.chat {
+		return cliOptions{}, nil, fmt.Errorf("--stream requires --chat")
 	}
 	return options, fs.Args(), nil
 }
@@ -344,8 +349,10 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 		Functions:       catalog.Registry(),
 		Planner:         planner,
 		Recorder:        savedSession,
+		Stream:          options.stream,
 	})
 
+	streamMode := options.stream
 	memoryEnabled := ws.MemoryEnabled()
 
 	executeTurn := func(input string) ([]map[string]any, error) {
@@ -360,7 +367,12 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 			return updatedMessages, runErr
 		}
 		messages = updatedMessages
-		fmt.Fprintln(outputWriter, result)
+		if streamMode {
+			// content already printed chunk by chunk; just add trailing newline
+			fmt.Fprint(outputWriter, "\n")
+		} else {
+			fmt.Fprintln(outputWriter, result)
+		}
 
 		if memoryEnabled && strings.TrimSpace(input) != "" {
 			if memErr := ws.AppendMemory(input, result); memErr != nil {
