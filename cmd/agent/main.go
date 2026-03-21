@@ -315,11 +315,21 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 		return 1
 	}
 
+	// Open output log file so chat sessions are persisted like foreground runs.
+	logFile, err := savedSession.OpenOutputFile()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	defer logFile.Close()
+	outputWriter := io.MultiWriter(stdout, logFile)
+	errorWriter := io.MultiWriter(stderr, logFile)
+
 	if len(messages) == 0 {
 		systemMessage := map[string]any{"role": "system", "content": systemPrompt}
 		messages = append(messages, systemMessage)
 		if err := savedSession.RecordMessage(systemMessage); err != nil {
-			fmt.Fprintln(stderr, err)
+			fmt.Fprintln(errorWriter, err)
 			return 1
 		}
 	}
@@ -329,12 +339,14 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: ws.Root, IncludePlan: options.plan, SearchAPIKey: getenv("SEARCH_API_KEY"), SearchBaseURL: getenv("SEARCH_BASE_URL"), MemoryDir: ws.WorkspaceMemoryDir()})
 	app := agent.NewWithOptions(chatClient, getenv("OPENAI_MODEL"), agent.Options{
 		SystemPrompt:    systemPrompt,
-		LogWriter:       stdout,
+		LogWriter:       outputWriter,
 		ToolDefinitions: catalog.Definitions(),
 		Functions:       catalog.Registry(),
 		Planner:         planner,
 		Recorder:        savedSession,
 	})
+
+	memoryEnabled := ws.MemoryEnabled()
 
 	executeTurn := func(input string) ([]map[string]any, error) {
 		userMessage := map[string]any{"role": "user", "content": input}
@@ -343,12 +355,19 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 			return messages, err
 		}
 
-		result, updatedMessages, err := app.RunConversationTurn(ctx, messages, agent.DefaultMaxIterations)
-		if err != nil {
-			return updatedMessages, err
+		result, updatedMessages, runErr := app.RunConversationTurn(ctx, messages, agent.DefaultMaxIterations)
+		if runErr != nil {
+			return updatedMessages, runErr
 		}
 		messages = updatedMessages
-		fmt.Fprintln(stdout, result)
+		fmt.Fprintln(outputWriter, result)
+
+		if memoryEnabled && strings.TrimSpace(input) != "" {
+			if memErr := ws.AppendMemory(input, result); memErr != nil {
+				fmt.Fprintln(errorWriter, memErr)
+			}
+		}
+
 		return messages, nil
 	}
 
@@ -357,7 +376,7 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 		messages, err = executeTurn(initialTask)
 		if err != nil {
 			_ = savedSession.MarkFailed(err)
-			fmt.Fprintln(stderr, err)
+			fmt.Fprintln(errorWriter, err)
 			return 1
 		}
 	}
@@ -380,13 +399,13 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 		messages, err = executeTurn(line)
 		if err != nil {
 			_ = savedSession.MarkFailed(err)
-			fmt.Fprintln(stderr, err)
+			fmt.Fprintln(errorWriter, err)
 			return 1
 		}
 	}
 
 	if scanErr := scanner.Err(); scanErr != nil {
-		fmt.Fprintln(stderr, scanErr)
+		fmt.Fprintln(errorWriter, scanErr)
 		_ = savedSession.MarkFailed(scanErr)
 		return 1
 	}
