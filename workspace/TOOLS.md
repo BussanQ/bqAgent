@@ -15,6 +15,9 @@ It is guidance only — it does not change what tools are available.
 ## Shell
 - **shell**: Run any shell command. Timeout: 60s. Use for builds, tests, installs.
 
+## Web Search
+- **web_search**: Search the web for up-to-date information. Requires `SEARCH_API_KEY` (Tavily). Optional `SEARCH_BASE_URL`.
+
 ## Memory
 - **mem_get**: Read a specific file from memory/ directory.
 - **mem_save**: Save to daily log (target="daily") or long-term (target="longterm").

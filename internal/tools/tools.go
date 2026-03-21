@@ -29,6 +29,8 @@ type Function func(args map[string]any) (string, error)
 type Options struct {
 	WorkspaceRoot string
 	IncludePlan   bool
+	SearchAPIKey  string
+	SearchBaseURL string
 }
 
 type Catalog struct {
@@ -49,6 +51,7 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"execute_bash": ExecuteBashInDir(options.WorkspaceRoot),
 		"read_file":    ReadFileFromRoot(options.WorkspaceRoot),
 		"write_file":   WriteFileToRoot(options.WorkspaceRoot),
+		"web_search":   WebSearchWithConfig(options.SearchAPIKey, options.SearchBaseURL),
 	}
 }
 
@@ -134,6 +137,20 @@ func builtinDefinitions() []Definition {
 						"content": {Type: "string"},
 					},
 					Required: []string{"path", "content"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "web_search",
+				Description: "Search the web for up-to-date information",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"query": {Type: "string", Description: "The search query"},
+					},
+					Required: []string{"query"},
 				},
 			},
 		},
