@@ -62,6 +62,11 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		return 1
 	}
 
+	if err := ws.EnsureDefaults(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
 	systemPrompt, err := ws.BuildSystemPrompt(agent.DefaultSystemPrompt)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -224,7 +229,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 
 	chatClient := agent.NewClient(getenv("OPENAI_API_KEY"), getenv("OPENAI_BASE_URL"), nil)
 	planner := agent.NewPlanner(chatClient, getenv("OPENAI_MODEL"))
-	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: ws.Root, IncludePlan: true, SearchAPIKey: getenv("SEARCH_API_KEY"), SearchBaseURL: getenv("SEARCH_BASE_URL")})
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: ws.Root, IncludePlan: true, SearchAPIKey: getenv("SEARCH_API_KEY"), SearchBaseURL: getenv("SEARCH_BASE_URL"), MemoryDir: ws.WorkspaceMemoryDir()})
 	var recorder agent.MessageRecorder
 	if savedSession != nil {
 		recorder = savedSession
@@ -321,7 +326,7 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 
 	chatClient := agent.NewClient(getenv("OPENAI_API_KEY"), getenv("OPENAI_BASE_URL"), nil)
 	planner := agent.NewPlanner(chatClient, getenv("OPENAI_MODEL"))
-	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: ws.Root, IncludePlan: options.plan, SearchAPIKey: getenv("SEARCH_API_KEY"), SearchBaseURL: getenv("SEARCH_BASE_URL")})
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: ws.Root, IncludePlan: options.plan, SearchAPIKey: getenv("SEARCH_API_KEY"), SearchBaseURL: getenv("SEARCH_BASE_URL"), MemoryDir: ws.WorkspaceMemoryDir()})
 	app := agent.NewWithOptions(chatClient, getenv("OPENAI_MODEL"), agent.Options{
 		SystemPrompt:    systemPrompt,
 		LogWriter:       stdout,

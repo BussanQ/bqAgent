@@ -13,7 +13,7 @@ const (
 	mcpConfigFileName    = "mcp.json"
 	sessionsDirName      = "sessions"
 
-	contextDirName      = "workspace"
+	contextDirName      = ".agent"
 	agentDocFileName    = "AGENT.md"
 	soulDocFileName     = "SOUL.md"
 	toolsDocFileName    = "TOOLS.md"

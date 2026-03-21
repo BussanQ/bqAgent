@@ -7,5 +7,3 @@
 <!-- - Experience level: Senior, intermediate, etc. -->
 <!-- - Preferred tools: VS Code, specific frameworks, etc. -->
 <!-- - Communication style: concise, detailed, etc. -->
-
-Preferred language: Chinese

@@ -8,8 +8,8 @@ import (
 
 func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 4 {
-		t.Fatalf("definitions length = %d, want 4", len(definitions))
+	if len(definitions) != 6 {
+		t.Fatalf("definitions length = %d, want 6", len(definitions))
 	}
 
 	tests := []struct {
@@ -22,6 +22,8 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		{index: 1, name: "read_file", description: "Read a file", required: []string{"path"}},
 		{index: 2, name: "write_file", description: "Write to a file", required: []string{"path", "content"}},
 		{index: 3, name: "web_search", description: "Search the web for up-to-date information", required: []string{"query"}},
+		{index: 4, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
+		{index: 5, name: "mem_get", description: "Read memory contents. Use to recall saved knowledge and context.", required: []string{"target"}},
 	}
 
 	for _, testCase := range tests {

@@ -54,8 +54,8 @@ func TestClientCreateChatCompletionUsesOpenAICompatibleRequest(t *testing.T) {
 	if len(seenRequest.Messages) != 1 {
 		t.Fatalf("messages length = %d, want 1", len(seenRequest.Messages))
 	}
-	if len(seenRequest.Tools) != 4 {
-		t.Fatalf("tools length = %d, want 4", len(seenRequest.Tools))
+	if len(seenRequest.Tools) != 6 {
+		t.Fatalf("tools length = %d, want 6", len(seenRequest.Tools))
 	}
 	if message.FinalContent() != "done" {
 		t.Fatalf("final content = %q, want %q", message.FinalContent(), "done")

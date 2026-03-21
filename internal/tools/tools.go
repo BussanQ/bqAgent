@@ -31,6 +31,7 @@ type Options struct {
 	IncludePlan   bool
 	SearchAPIKey  string
 	SearchBaseURL string
+	MemoryDir     string
 }
 
 type Catalog struct {
@@ -52,6 +53,8 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"read_file":    ReadFileFromRoot(options.WorkspaceRoot),
 		"write_file":   WriteFileToRoot(options.WorkspaceRoot),
 		"web_search":   WebSearchWithConfig(options.SearchAPIKey, options.SearchBaseURL),
+		"mem_save":     MemSaveInDir(options.MemoryDir),
+		"mem_get":      MemGetInDir(options.MemoryDir),
 	}
 }
 
@@ -151,6 +154,35 @@ func builtinDefinitions() []Definition {
 						"query": {Type: "string", Description: "The search query"},
 					},
 					Required: []string{"query"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "mem_save",
+				Description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"target":  {Type: "string", Description: "Where to save: \"daily\" or \"longterm\""},
+						"content": {Type: "string", Description: "The knowledge or note to save"},
+					},
+					Required: []string{"target", "content"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "mem_get",
+				Description: "Read memory contents. Use to recall saved knowledge and context.",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"target": {Type: "string", Description: "Which memory to read: \"daily\", \"longterm\", or \"yesterday\""},
+					},
+					Required: []string{"target"},
 				},
 			},
 		},

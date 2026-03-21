@@ -78,17 +78,17 @@ func TestBuildSystemPromptIncludesWorkspaceDirectoryDocuments(t *testing.T) {
 	nowFunc = func() time.Time { return time.Date(2026, 3, 21, 10, 0, 0, 0, time.Local) }
 	defer func() { nowFunc = originalNowFunc }()
 
-	if err := os.MkdirAll(filepath.Join(root, "workspace", "memory"), 0o755); err != nil {
-		t.Fatalf("failed to create workspace memory directory: %v", err)
+	if err := os.MkdirAll(filepath.Join(root, ".agent", "memory"), 0o755); err != nil {
+		t.Fatalf("failed to create .agent memory directory: %v", err)
 	}
 	files := map[string]string{
-		filepath.Join(root, "workspace", "AGENT.md"):               "# AGENT\n\nUse memory carefully.",
-		filepath.Join(root, "workspace", "SOUL.md"):                "# SOUL\n\nBe direct.",
-		filepath.Join(root, "workspace", "TOOLS.md"):               "# TOOLS\n\nPrefer read before edit.",
-		filepath.Join(root, "workspace", "USER.md"):                "Preferred language: Chinese",
-		filepath.Join(root, "workspace", "memory", "MEMORY.md"):   "User likes concise answers.",
-		filepath.Join(root, "workspace", "memory", "2026-03-20.md"): "Yesterday note.",
-		filepath.Join(root, "workspace", "memory", "2026-03-21.md"): "Today note.",
+		filepath.Join(root, ".agent", "AGENT.md"):               "# AGENT\n\nUse memory carefully.",
+		filepath.Join(root, ".agent", "SOUL.md"):                "# SOUL\n\nBe direct.",
+		filepath.Join(root, ".agent", "TOOLS.md"):               "# TOOLS\n\nPrefer read before edit.",
+		filepath.Join(root, ".agent", "USER.md"):                "Preferred language: Chinese",
+		filepath.Join(root, ".agent", "memory", "MEMORY.md"):   "User likes concise answers.",
+		filepath.Join(root, ".agent", "memory", "2026-03-20.md"): "Yesterday note.",
+		filepath.Join(root, ".agent", "memory", "2026-03-21.md"): "Today note.",
 	}
 	for path, content := range files {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -111,11 +111,11 @@ func TestBuildSystemPromptIncludesWorkspaceDirectoryDocuments(t *testing.T) {
 		"Prefer read before edit.",
 		"## USER.md",
 		"Preferred language: Chinese",
-		"## workspace/memory/MEMORY.md",
+		"## .agent/memory/MEMORY.md",
 		"User likes concise answers.",
-		"## workspace/memory/2026-03-20.md",
+		"## .agent/memory/2026-03-20.md",
 		"Yesterday note.",
-		"## workspace/memory/2026-03-21.md",
+		"## .agent/memory/2026-03-21.md",
 		"Today note.",
 	}
 	for _, check := range checks {
@@ -128,8 +128,8 @@ func TestBuildSystemPromptIncludesWorkspaceDirectoryDocuments(t *testing.T) {
 func TestAppendMemoryPrefersWorkspaceDailyMemoryFile(t *testing.T) {
 	root := t.TempDir()
 	ws := &Workspace{Root: root}
-	if err := os.MkdirAll(filepath.Join(root, "workspace"), 0o755); err != nil {
-		t.Fatalf("failed to create workspace directory: %v", err)
+	if err := os.MkdirAll(filepath.Join(root, ".agent"), 0o755); err != nil {
+		t.Fatalf("failed to create .agent directory: %v", err)
 	}
 
 	originalNowFunc := nowFunc
@@ -140,18 +140,18 @@ func TestAppendMemoryPrefersWorkspaceDailyMemoryFile(t *testing.T) {
 		t.Fatalf("AppendMemory returned error: %v", err)
 	}
 
-	content, err := os.ReadFile(filepath.Join(root, "workspace", "memory", "2026-03-21.md"))
+	content, err := os.ReadFile(filepath.Join(root, ".agent", "memory", "2026-03-21.md"))
 	if err != nil {
-		t.Fatalf("failed to read workspace daily memory file: %v", err)
+		t.Fatalf("failed to read .agent daily memory file: %v", err)
 	}
 	text := string(content)
 	if !strings.Contains(text, "**Task:** inspect repo") {
 		t.Fatalf("memory content = %q, want task entry", text)
 	}
-	if fileExists(filepath.Join(root, "workspace", "memory", "MEMORY.md")) {
+	if fileExists(filepath.Join(root, ".agent", "memory", "MEMORY.md")) {
 		t.Fatalf("long-term memory file should not receive automatic daily entries")
 	}
 	if fileExists(filepath.Join(root, "agent_memory.md")) {
-		t.Fatalf("legacy memory file should not be created when workspace/ exists")
+		t.Fatalf("legacy memory file should not be created when .agent/ exists")
 	}
 }

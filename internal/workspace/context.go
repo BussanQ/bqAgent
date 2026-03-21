@@ -82,9 +82,9 @@ func (w *Workspace) workspaceSection() string {
 	lines := []string{
 		"# Workspace",
 		"Root: " + w.Root,
-		"Context directory: workspace/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
-		"Workspace long-term memory: workspace/memory/MEMORY.md",
-		"Workspace daily memory: workspace/memory/YYYY-MM-DD.md (loads today and yesterday; new session notes append to today)",
+		"Context directory: .agent/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
+		"Workspace long-term memory: .agent/memory/MEMORY.md",
+		"Workspace daily memory: .agent/memory/YYYY-MM-DD.md (loads today and yesterday; new session notes append to today)",
 		"Legacy memory file: agent_memory.md",
 		"Rules directory: .agent/rules/*.md",
 		"Skills directory: .agent/skills/*/SKILL.md",
@@ -243,7 +243,7 @@ func (w *Workspace) loadMemoryContext(maxLines int) (string, error) {
 		return "", err
 	}
 	if workspaceMemory != "" {
-		blocks = append(blocks, "## workspace/memory/MEMORY.md\n"+workspaceMemory)
+		blocks = append(blocks, "## .agent/memory/MEMORY.md\n"+workspaceMemory)
 	}
 
 	now := nowFunc()
@@ -259,7 +259,7 @@ func (w *Workspace) loadMemoryContext(maxLines int) (string, error) {
 		if dailyMemory == "" {
 			continue
 		}
-		blocks = append(blocks, "## workspace/memory/"+day+".md\n"+dailyMemory)
+		blocks = append(blocks, "## .agent/memory/"+day+".md\n"+dailyMemory)
 	}
 
 	legacyMemory, err := readTail(w.LegacyMemoryPath(), maxLines)

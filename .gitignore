@@ -6,8 +6,4 @@ __pycache__/
 *.out
 coverage.out
 .claude/
-.agent/sessions/
-# runtime memory
-workspace/memory/**
-!workspace/memory/
-!workspace/memory/MEMORY.md
+.agent/

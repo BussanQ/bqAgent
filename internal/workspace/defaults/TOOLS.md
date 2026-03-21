@@ -18,10 +18,10 @@ It is guidance only — it does not change what tools are available.
 ## Web Search
 - **web_search**: Search the web for up-to-date information. Requires `SEARCH_API_KEY` (Tavily). Optional `SEARCH_BASE_URL`.
 
-## Memory
-- **mem_get**: Read a specific file from memory/ directory.
-- **mem_save**: Save to daily log (target="daily") or long-term (target="longterm").
-- **mem_search**: Keyword search across all memory files.
+## Memory (implemented)
+- **mem_save**: Save knowledge to memory. Parameters: `target` ("daily" or "longterm"), `content` (text to save). Daily saves go to `.agent/memory/YYYY-MM-DD.md`, longterm saves go to `.agent/memory/MEMORY.md`. Use longterm for durable facts, preferences, and patterns. Use daily for session notes.
+- **mem_get**: Read memory contents. Parameter: `target` ("daily", "longterm", or "yesterday"). Use to recall saved knowledge and context.
+- **mem_search**: Keyword search across all memory files. (not yet implemented)
 
 ## Best Practices
 - Read before editing — always understand current content first
