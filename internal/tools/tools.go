@@ -32,6 +32,7 @@ type Options struct {
 	SearchAPIKey  string
 	SearchBaseURL string
 	MemoryDir     string
+	ServerMode    bool
 }
 
 type Catalog struct {
@@ -48,6 +49,9 @@ func Registry() map[string]Function {
 }
 
 func RegistryWithOptions(options Options) map[string]Function {
+	if options.ServerMode {
+		return map[string]Function{}
+	}
 	return map[string]Function{
 		"execute_bash": ExecuteBashInDir(options.WorkspaceRoot),
 		"read_file":    ReadFileFromRoot(options.WorkspaceRoot),
@@ -60,6 +64,9 @@ func RegistryWithOptions(options Options) map[string]Function {
 
 func NewCatalog(options Options) Catalog {
 	definitions := Definitions()
+	if options.ServerMode {
+		definitions = []Definition{}
+	}
 	if options.IncludePlan {
 		definitions = append(definitions, PlanDefinition())
 	}

@@ -1,0 +1,449 @@
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"bqagent/internal/agent"
+	serverchanclient "bqagent/internal/serverchan"
+	"bqagent/internal/session"
+	"bqagent/internal/tools"
+)
+
+func TestChatEndpointCreatesAndResumesSession(t *testing.T) {
+	var requestCount int
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestCount++
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(fmt.Sprintf(`{"choices":[{"message":{"role":"assistant","content":"reply-%d"}}]}`, requestCount)))
+	}))
+	defer llmServer.Close()
+
+	root := t.TempDir()
+	handler := NewHandler(HandlerOptions{Service: newTestService(root, llmServer.URL), ServerChanClient: serverchanclient.NewClient(nil)})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	first := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"hello"}`)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first status = %d, want 200", first.StatusCode)
+	}
+	var firstResponse chatResponse
+	if err := json.NewDecoder(first.Body).Decode(&firstResponse); err != nil {
+		t.Fatalf("failed to decode first response: %v", err)
+	}
+	_ = first.Body.Close()
+	if firstResponse.SessionID == "" {
+		t.Fatal("first session_id was empty")
+	}
+	if firstResponse.Reply != "reply-1" {
+		t.Fatalf("first reply = %q, want %q", firstResponse.Reply, "reply-1")
+	}
+
+	second := postJSON(t, apiServer.URL+"/api/v1/chat", fmt.Sprintf(`{"session_id":%q,"message":"again"}`, firstResponse.SessionID))
+	if second.StatusCode != http.StatusOK {
+		t.Fatalf("second status = %d, want 200", second.StatusCode)
+	}
+	var secondResponse chatResponse
+	if err := json.NewDecoder(second.Body).Decode(&secondResponse); err != nil {
+		t.Fatalf("failed to decode second response: %v", err)
+	}
+	_ = second.Body.Close()
+	if secondResponse.SessionID != firstResponse.SessionID {
+		t.Fatalf("second session_id = %q, want %q", secondResponse.SessionID, firstResponse.SessionID)
+	}
+	if secondResponse.Reply != "reply-2" {
+		t.Fatalf("second reply = %q, want %q", secondResponse.Reply, "reply-2")
+	}
+	if requestCount != 2 {
+		t.Fatalf("LLM request count = %d, want 2", requestCount)
+	}
+
+	store := session.NewStore(root)
+	savedSession, err := store.Open(firstResponse.SessionID)
+	if err != nil {
+		t.Fatalf("failed to open saved session: %v", err)
+	}
+	messages, err := savedSession.LoadMessages()
+	if err != nil {
+		t.Fatalf("failed to load messages: %v", err)
+	}
+	if len(messages) != 5 {
+		t.Fatalf("messages length = %d, want 5", len(messages))
+	}
+}
+
+func TestServerChanChatEndpointSendsReply(t *testing.T) {
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"assistant reply"}}]}`))
+	}))
+	defer llmServer.Close()
+
+	var delivered struct {
+		text string
+		desp string
+	}
+	deliveryServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := request.ParseForm(); err != nil {
+			t.Fatalf("failed to parse delivery form: %v", err)
+		}
+		delivered.text = request.Form.Get("text")
+		delivered.desp = request.Form.Get("desp")
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"code":0}`))
+	}))
+	defer deliveryServer.Close()
+
+	targetURL, err := url.Parse(deliveryServer.URL)
+	if err != nil {
+		t.Fatalf("failed to parse delivery server URL: %v", err)
+	}
+	serverChanHTTPClient := &http.Client{Transport: rewriteTransport{target: targetURL, base: http.DefaultTransport}}
+
+	root := t.TempDir()
+	handler := NewHandler(HandlerOptions{
+		Service:          newTestService(root, llmServer.URL),
+		ServerChanClient: serverchanclient.NewClient(serverChanHTTPClient),
+	})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	form := url.Values{}
+	form.Set("key", "sendkey-demo")
+	form.Set("text", "hello title")
+	form.Set("desp", "hello body")
+	response, err := http.Post(apiServer.URL+"/api/v1/serverchan/chat", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("failed to post serverchan chat request: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.StatusCode)
+	}
+
+	var payload chatResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.SessionID == "" {
+		t.Fatal("session_id was empty")
+	}
+	if payload.Reply != "assistant reply" {
+		t.Fatalf("reply = %q, want %q", payload.Reply, "assistant reply")
+	}
+	if payload.ServerChanResponse != `{"code":0}` {
+		t.Fatalf("serverchan response = %q, want %q", payload.ServerChanResponse, `{"code":0}`)
+	}
+	if delivered.text != "Re: hello title" {
+		t.Fatalf("delivered text = %q, want %q", delivered.text, "Re: hello title")
+	}
+	if delivered.desp != "assistant reply" {
+		t.Fatalf("delivered desp = %q, want %q", delivered.desp, "assistant reply")
+	}
+}
+
+func TestServerChanBotWebhookProcessesConversation(t *testing.T) {
+	var llmCount atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		count := llmCount.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(fmt.Sprintf(`{"choices":[{"message":{"role":"assistant","content":"reply-%d"}}]}`, count)))
+	}))
+	defer llmServer.Close()
+
+	var botCount atomic.Int32
+	sentMessages := make(chan serverchanclient.BotSendMessageRequest, 4)
+	botServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		botCount.Add(1)
+		var payload serverchanclient.BotSendMessageRequest
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode bot payload: %v", err)
+		}
+		sentMessages <- payload
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"result":{"message_id":1,"chat_id":42,"text":"ok"}}`))
+	}))
+	defer botServer.Close()
+
+	root := t.TempDir()
+	handler := newTestHandlerWithBot(root, llmServer.URL, botServer.URL, "bot-token", "secret")
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	status, body := postBotWebhook(t, apiServer.URL+"/api/v1/serverchan/bot/webhook", "secret", `{"ok":true,"update_id":1,"message":{"message_id":11,"text":"hello","chat_id":42}}`)
+	if status != http.StatusOK {
+		t.Fatalf("first status = %d, want 200", status)
+	}
+	if body != "ok" {
+		t.Fatalf("first body = %q, want %q", body, "ok")
+	}
+	firstSend := waitForBotSend(t, sentMessages)
+	if firstSend.ChatID != 42 {
+		t.Fatalf("first send chat_id = %d, want 42", firstSend.ChatID)
+	}
+	if firstSend.Text != "reply-1" {
+		t.Fatalf("first send text = %q, want %q", firstSend.Text, "reply-1")
+	}
+
+	status, body = postBotWebhook(t, apiServer.URL+"/api/v1/serverchan/bot/webhook", "secret", `{"ok":true,"update_id":2,"message":{"message_id":12,"text":"again","chat":{"id":42}}}`)
+	if status != http.StatusOK {
+		t.Fatalf("second status = %d, want 200", status)
+	}
+	if body != "ok" {
+		t.Fatalf("second body = %q, want %q", body, "ok")
+	}
+	secondSend := waitForBotSend(t, sentMessages)
+	if secondSend.Text != "reply-2" {
+		t.Fatalf("second send text = %q, want %q", secondSend.Text, "reply-2")
+	}
+
+	waitForCondition(t, 2*time.Second, func() bool { return llmCount.Load() == 2 && botCount.Load() == 2 }, "webhook processing to complete")
+
+	stateStore := serverchanclient.NewBotStateStore(root)
+	waitForCondition(t, 2*time.Second, func() bool {
+		state, err := stateStore.Load(42)
+		return err == nil && state.SessionID != "" && state.LastCompletedUpdateID == 2 && state.PendingReply == ""
+	}, "bot state to persist completed update")
+	state, err := stateStore.Load(42)
+	if err != nil {
+		t.Fatalf("failed to load bot state: %v", err)
+	}
+	store := session.NewStore(root)
+	savedSession, err := store.Open(state.SessionID)
+	if err != nil {
+		t.Fatalf("failed to open saved session: %v", err)
+	}
+	messages, err := savedSession.LoadMessages()
+	if err != nil {
+		t.Fatalf("failed to load messages: %v", err)
+	}
+	if len(messages) != 5 {
+		t.Fatalf("messages length = %d, want 5", len(messages))
+	}
+}
+
+func TestServerChanBotWebhookDedupesUpdateID(t *testing.T) {
+	var llmCount atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		count := llmCount.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(fmt.Sprintf(`{"choices":[{"message":{"role":"assistant","content":"reply-%d"}}]}`, count)))
+	}))
+	defer llmServer.Close()
+
+	var botCount atomic.Int32
+	sentMessages := make(chan serverchanclient.BotSendMessageRequest, 2)
+	botServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		botCount.Add(1)
+		var payload serverchanclient.BotSendMessageRequest
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode bot payload: %v", err)
+		}
+		sentMessages <- payload
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"result":{"message_id":1,"chat_id":42,"text":"ok"}}`))
+	}))
+	defer botServer.Close()
+
+	root := t.TempDir()
+	handler := newTestHandlerWithBot(root, llmServer.URL, botServer.URL, "bot-token", "secret")
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	status, body := postBotWebhook(t, apiServer.URL+"/api/v1/serverchan/bot/webhook", "secret", `{"ok":true,"update_id":1,"message":{"message_id":11,"text":"hello","chat_id":42}}`)
+	if status != http.StatusOK || body != "ok" {
+		t.Fatalf("first webhook = (%d, %q), want (200, ok)", status, body)
+	}
+	_ = waitForBotSend(t, sentMessages)
+
+	status, body = postBotWebhook(t, apiServer.URL+"/api/v1/serverchan/bot/webhook", "secret", `{"ok":true,"update_id":1,"message":{"message_id":11,"text":"hello","chat_id":42}}`)
+	if status != http.StatusOK || body != "ok" {
+		t.Fatalf("duplicate webhook = (%d, %q), want (200, ok)", status, body)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if llmCount.Load() != 1 {
+		t.Fatalf("LLM request count = %d, want 1", llmCount.Load())
+	}
+	if botCount.Load() != 1 {
+		t.Fatalf("bot send count = %d, want 1", botCount.Load())
+	}
+}
+
+func TestServerChanBotWebhookRetriesPendingReplyWithoutRerunningModel(t *testing.T) {
+	var llmCount atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		llmCount.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"assistant reply"}}]}`))
+	}))
+	defer llmServer.Close()
+
+	var botCount atomic.Int32
+	botServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		count := botCount.Add(1)
+		if count == 1 {
+			writer.WriteHeader(http.StatusBadGateway)
+			_, _ = writer.Write([]byte(`temporary failure`))
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"result":{"message_id":1,"chat_id":42,"text":"ok"}}`))
+	}))
+	defer botServer.Close()
+
+	root := t.TempDir()
+	handler := newTestHandlerWithBot(root, llmServer.URL, botServer.URL, "bot-token", "secret")
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	status, body := postBotWebhook(t, apiServer.URL+"/api/v1/serverchan/bot/webhook", "secret", `{"ok":true,"update_id":1,"message":{"message_id":11,"text":"hello","chat_id":42}}`)
+	if status != http.StatusOK || body != "ok" {
+		t.Fatalf("first webhook = (%d, %q), want (200, ok)", status, body)
+	}
+	waitForCondition(t, 2*time.Second, func() bool { return botCount.Load() == 1 }, "first bot send attempt")
+
+	stateStore := serverchanclient.NewBotStateStore(root)
+	waitForCondition(t, 2*time.Second, func() bool {
+		state, err := stateStore.Load(42)
+		return err == nil && state.PendingUpdateID == 1 && state.PendingReply == "assistant reply"
+	}, "pending reply to be saved")
+
+	status, body = postBotWebhook(t, apiServer.URL+"/api/v1/serverchan/bot/webhook", "secret", `{"ok":true,"update_id":1,"message":{"message_id":11,"text":"hello","chat_id":42}}`)
+	if status != http.StatusOK || body != "ok" {
+		t.Fatalf("retry webhook = (%d, %q), want (200, ok)", status, body)
+	}
+	waitForCondition(t, 2*time.Second, func() bool {
+		state, err := stateStore.Load(42)
+		return err == nil && state.LastCompletedUpdateID == 1 && state.PendingReply == "" && botCount.Load() == 2
+	}, "retry send to complete")
+
+	if llmCount.Load() != 1 {
+		t.Fatalf("LLM request count = %d, want 1", llmCount.Load())
+	}
+}
+
+func TestServerChanBotWebhookRequiresConfiguredToken(t *testing.T) {
+	root := t.TempDir()
+	service := newTestService(root, "http://example.invalid")
+	handler := NewHandler(HandlerOptions{
+		Service: service,
+		BotWebhookProcessor: NewBotWebhookProcessor(
+			service,
+			serverchanclient.NewBotClient("", nil),
+			serverchanclient.NewBotStateStore(root),
+			"secret",
+		),
+	})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	status, body := postBotWebhook(t, apiServer.URL+"/api/v1/serverchan/bot/webhook", "secret", `{"ok":true,"update_id":1,"message":{"message_id":11,"text":"hello","chat_id":42}}`)
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", status)
+	}
+	if body != "serverchan bot is not configured" {
+		t.Fatalf("body = %q, want %q", body, "serverchan bot is not configured")
+	}
+}
+
+func newTestService(root, baseURL string) *Service {
+	chatClient := agent.NewClient("", baseURL, nil)
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root, ServerMode: true})
+	return NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          chatClient,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       catalog.Registry(),
+	})
+}
+
+func newTestHandlerWithBot(root, llmBaseURL, botBaseURL, token, secret string) http.Handler {
+	service := newTestService(root, llmBaseURL)
+	return NewHandler(HandlerOptions{
+		Service:          service,
+		ServerChanClient: serverchanclient.NewClient(nil),
+		BotWebhookProcessor: NewBotWebhookProcessor(
+			service,
+			serverchanclient.NewBotClientWithBaseURL(token, botBaseURL, nil),
+			serverchanclient.NewBotStateStore(root),
+			secret,
+		),
+	})
+}
+
+func postJSON(t *testing.T, url string, body string) *http.Response {
+	t.Helper()
+	response, err := http.Post(url, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("failed to post JSON request: %v", err)
+	}
+	return response
+}
+
+func postBotWebhook(t *testing.T, url string, secret string, body string) (int, string) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("failed to create webhook request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if secret != "" {
+		request.Header.Set("X-Sc3Bot-Webhook-Secret", secret)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("failed to post bot webhook request: %v", err)
+	}
+	defer response.Body.Close()
+	payload, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("failed to read webhook response: %v", err)
+	}
+	return response.StatusCode, strings.TrimSpace(string(payload))
+}
+
+func waitForBotSend(t *testing.T, requests <-chan serverchanclient.BotSendMessageRequest) serverchanclient.BotSendMessageRequest {
+	t.Helper()
+	select {
+	case request := <-requests:
+		return request
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for bot send")
+		return serverchanclient.BotSendMessageRequest{}
+	}
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, check func() bool, description string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if check() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", description)
+}
+
+type rewriteTransport struct {
+	target *url.URL
+	base   http.RoundTripper
+}
+
+func (transport rewriteTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	cloned := request.Clone(request.Context())
+	cloned.URL.Scheme = transport.target.Scheme
+	cloned.URL.Host = transport.target.Host
+	cloned.Host = transport.target.Host
+	return transport.base.RoundTrip(cloned)
+}

@@ -26,6 +26,7 @@ The difference now is that the loop can be wrapped with extra capabilities inspi
 - interactive multi-turn conversation with `--chat`
 - persistent sessions with `--resume`
 - minimal background execution with `--background`
+- a long-lived HTTP server with `--server`, including optional ServerChan reply delivery
 
 ## Install
 
@@ -60,6 +61,13 @@ set OPENAI_MODEL=gpt-4o-mini
 
 If `OPENAI_MODEL` is not set, bqagent defaults to `MiniMax-M2.5`.
 
+For ServerChan Bot webhook conversations, the server mode also supports:
+
+```bash
+export SERVERCHAN_BOT_TOKEN='your-bot-token'
+export SERVERCHAN_BOT_WEBHOOK_SECRET='your-webhook-secret'  # optional but recommended
+```
+
 ## Quick start
 
 ```bash
@@ -77,6 +85,12 @@ go run ./cmd/agent --plan "inspect the current project structure and summarize i
 
 # start a background session
 go run ./cmd/agent --background "read README.md and summarize it"
+
+# start the long-lived HTTP server
+go run ./cmd/agent --server
+
+# start the HTTP server in background
+go run ./cmd/agent --server --background
 
 # resume a previous session
 go run ./cmd/agent --resume <session-id> "continue from the previous result"
@@ -170,6 +184,7 @@ Behavior notes:
 - file read/write failures also stop the current run with an error
 - relative `read_file` / `write_file` paths are resolved from the workspace root
 - `execute_bash` also runs from the workspace root
+- `--server` intentionally disables local shell / file / memory tools by default so the HTTP surface stays conversation-only (plus optional `plan`)
 
 ## Sessions and background mode
 
@@ -185,9 +200,24 @@ The command immediately prints the session ID, session directory, and log path.
 
 `--resume <session-id> "..."` loads `messages.jsonl`, appends your follow-up task, and continues from there.
 
-This is intentionally a small implementation:
+`--server` starts a long-lived HTTP service on `127.0.0.1:8080` by default and exposes:
 
-- no daemon
+- `GET /healthz`
+- `POST /api/v1/chat`
+- `POST /api/v1/serverchan/chat`
+- `POST /api/v1/serverchan/bot/webhook`
+
+`/api/v1/chat` continues conversations by `session_id`.
+
+`/api/v1/serverchan/chat` is the existing sendkey-based push adapter: it generates a reply and forwards it through ServerChan using the `text` / `desp` / `sendkey` shape from the Go demo.
+
+`/api/v1/serverchan/bot/webhook` is the conversational webhook endpoint for ServerChan Bot / WeChat replies. It accepts the Bot webhook JSON update format, maps each inbound `chat_id` onto a persisted bqagent session, and sends the assistant reply back through the Bot `sendMessage` API using `SERVERCHAN_BOT_TOKEN`. If `SERVERCHAN_BOT_WEBHOOK_SECRET` is set, requests must include `X-Sc3Bot-Webhook-Secret`.
+
+`--server --background` runs this server in the background and writes service logs to `.agent/server/server.log`. For real webhook use, expose `/api/v1/serverchan/bot/webhook` through a public HTTPS endpoint or reverse proxy.
+
+This is still intentionally a small implementation:
+
+- the one-shot background task path is not a daemon
 - no queue server
 - no live MCP runtime
 - no vector memory

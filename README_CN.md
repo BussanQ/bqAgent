@@ -26,6 +26,7 @@ bqagent 的核心仍然很简单：
 - 使用 `--chat` 进行交互式多轮对话
 - 使用 `--resume` 恢复持久会话
 - 使用 `--background` 启动最小后台会话
+- 使用 `--server` 启动常驻 HTTP 对话服务，并可选通过 ServerChan 推送回复
 
 ## 安装
 
@@ -60,6 +61,13 @@ set OPENAI_MODEL=gpt-4o-mini
 
 如果没有设置 `OPENAI_MODEL`，bqagent 默认使用 `MiniMax-M2.5`。
 
+如果要启用 ServerChan Bot webhook 对话，还需要设置：
+
+```bash
+export SERVERCHAN_BOT_TOKEN='your-bot-token'
+export SERVERCHAN_BOT_WEBHOOK_SECRET='your-webhook-secret'  # 可选但推荐
+```
+
 ## 快速开始
 
 ```bash
@@ -77,6 +85,12 @@ go run ./cmd/agent --plan "梳理当前项目结构并总结"
 
 # 启动后台会话
 go run ./cmd/agent --background "读取 README.md 并总结"
+
+# 启动常驻 HTTP 服务
+go run ./cmd/agent --server
+
+# 后台启动 HTTP 服务
+go run ./cmd/agent --server --background
 
 # 恢复之前的会话
 go run ./cmd/agent --resume <session-id> "基于刚才的结果继续"
@@ -170,6 +184,7 @@ project/
 - 文件读写失败也会直接让当前运行失败
 - 相对路径的 `read_file` / `write_file` 会按 workspace root 解析
 - `execute_bash` 也会在 workspace root 下运行
+- `--server` 模式默认不暴露本地 shell / 文件 / memory 工具，只保留纯对话能力（以及可选的 `plan`）
 
 ## 会话与后台模式
 
@@ -185,9 +200,24 @@ project/
 
 `--resume <session-id> "..."` 会读取 `messages.jsonl`，追加新的 follow-up 任务，然后从该上下文继续执行。
 
-这里刻意保持简单：
+`--server` 会启动一个常驻 HTTP 服务，默认监听 `127.0.0.1:8080`，提供：
 
-- 不做 daemon
+- `GET /healthz`
+- `POST /api/v1/chat`
+- `POST /api/v1/serverchan/chat`
+- `POST /api/v1/serverchan/bot/webhook`
+
+其中 `/api/v1/chat` 用于基于 `session_id` 的接口对话。
+
+`/api/v1/serverchan/chat` 保留为现有的 sendkey 推送型接口：它会生成回复，然后按 demo 中的 `text` / `desp` / `sendkey` 语义把结果推送出去。
+
+`/api/v1/serverchan/bot/webhook` 则用于 ServerChan Bot / 微信回复回流：它接收 Bot webhook 的 JSON update，用入站 `chat_id` 绑定到持久化的 bqagent session，并通过 `SERVERCHAN_BOT_TOKEN` 调用 Bot `sendMessage` API 把回复发回去。如果设置了 `SERVERCHAN_BOT_WEBHOOK_SECRET`，请求还必须带上 `X-Sc3Bot-Webhook-Secret`。
+
+`--server --background` 会把该服务放到后台运行，并把服务日志写入 `.agent/server/server.log`。如果要真正接 webhook，需要把 `/api/v1/serverchan/bot/webhook` 通过公网 HTTPS 地址或反向代理暴露出去。
+
+这里仍然刻意保持简单：
+
+- 最小后台任务模式本身仍然不是 daemon
 - 不做队列服务
 - 不做 live MCP runtime
 - 不做向量记忆

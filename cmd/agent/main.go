@@ -20,10 +20,13 @@ type cliOptions struct {
 	plan       bool
 	background bool
 	chat       bool
+	server     bool
 	stream     bool
+	listen     string
 	resumeID   string
 	sessionID  string
 	sessionRun bool
+	serverRun  bool
 }
 
 type runDeps struct {
@@ -75,12 +78,19 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 	}
 
 	task := strings.Join(taskArgs, " ")
-	if strings.TrimSpace(task) == "" && !options.plan && !options.background && !options.chat && effectiveSessionID(options) == "" {
+	if strings.TrimSpace(task) == "" && !options.plan && !options.background && !options.chat && !options.server && !options.serverRun && effectiveSessionID(options) == "" {
 		task = "Hello"
 	}
 
 	if options.background {
+		if options.server {
+			return runServerInBackground(stdout, stderr, deps, ws, options)
+		}
 		return runInBackground(stdout, stderr, deps, ws, options, taskArgs)
+	}
+
+	if options.server || options.serverRun {
+		return runServer(ctx, stdout, stderr, getenv, ws, systemPrompt, options)
 	}
 
 	if options.chat {
@@ -98,10 +108,13 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.BoolVar(&options.plan, "plan", false, "break the task into steps before execution")
 	fs.BoolVar(&options.background, "background", false, "run the task in the background")
 	fs.BoolVar(&options.chat, "chat", false, "interactive multi-turn conversation mode")
+	fs.BoolVar(&options.server, "server", false, "run a long-lived HTTP server")
 	fs.BoolVar(&options.stream, "stream", false, "stream responses token by token (requires --chat)")
+	fs.StringVar(&options.listen, "listen", "127.0.0.1:8080", "HTTP listen address for server mode")
 	fs.StringVar(&options.resumeID, "resume", "", "resume an existing session")
 	fs.StringVar(&options.sessionID, "session-id", "", "internal session identifier")
 	fs.BoolVar(&options.sessionRun, "session-run", false, "internal background session runner")
+	fs.BoolVar(&options.serverRun, "server-run", false, "internal background server runner")
 
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, nil, err
@@ -112,11 +125,26 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if options.background && options.sessionRun {
 		return cliOptions{}, nil, fmt.Errorf("--background cannot be combined with --session-run")
 	}
+	if options.background && options.serverRun {
+		return cliOptions{}, nil, fmt.Errorf("--background cannot be combined with --server-run")
+	}
 	if options.chat && options.background {
 		return cliOptions{}, nil, fmt.Errorf("--chat cannot be combined with --background")
 	}
+	if options.server && options.chat {
+		return cliOptions{}, nil, fmt.Errorf("--server cannot be combined with --chat")
+	}
+	if options.server && effectiveSessionID(options) != "" {
+		return cliOptions{}, nil, fmt.Errorf("--server cannot be combined with --resume or --session-id")
+	}
+	if options.server && options.stream {
+		return cliOptions{}, nil, fmt.Errorf("--server cannot be combined with --stream")
+	}
 	if options.stream && !options.chat {
 		return cliOptions{}, nil, fmt.Errorf("--stream requires --chat")
+	}
+	if (options.server || options.serverRun) && len(fs.Args()) > 0 {
+		return cliOptions{}, nil, fmt.Errorf("server mode does not accept a task")
 	}
 	return options, fs.Args(), nil
 }

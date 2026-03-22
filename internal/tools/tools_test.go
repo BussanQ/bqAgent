@@ -68,3 +68,18 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 		t.Fatalf("file content = %q, want %q", string(content), "Hello World")
 	}
 }
+
+func TestNewCatalogServerModeDisablesLocalTools(t *testing.T) {
+	catalog := NewCatalog(Options{ServerMode: true, IncludePlan: true})
+	definitions := catalog.Definitions()
+	if len(definitions) != 1 {
+		t.Fatalf("definitions length = %d, want 1", len(definitions))
+	}
+	if definitions[0].Function.Name != "plan" {
+		t.Fatalf("definition name = %q, want %q", definitions[0].Function.Name, "plan")
+	}
+	registry := catalog.Registry()
+	if len(registry) != 0 {
+		t.Fatalf("registry length = %d, want 0", len(registry))
+	}
+}
