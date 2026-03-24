@@ -6,19 +6,20 @@ import (
 	"strings"
 
 	"bqagent/internal/agent"
+	appruntime "bqagent/internal/runtime"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
 )
 
 type ServiceOptions struct {
-	WorkspaceRoot    string
-	Client           agent.ChatCompletionClient
-	Model            string
-	SystemPrompt     string
-	Planner          *agent.Planner
-	ToolDefinitions  []tools.Definition
-	Functions        map[string]tools.Function
-	DefaultMaxTurns  int
+	WorkspaceRoot   string
+	Client          agent.ChatCompletionClient
+	Model           string
+	SystemPrompt    string
+	Planner         *agent.Planner
+	ToolDefinitions []tools.Definition
+	Functions       map[string]tools.Function
+	DefaultMaxTurns int
 }
 
 type Service struct {
@@ -68,52 +69,25 @@ func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (Tu
 	}
 
 	sessionID := strings.TrimSpace(request.SessionID)
-	var (
-		savedSession *session.Session
-		err          error
-	)
+	createOptions := &session.CreateOptions{Task: message, Planned: service.planner != nil, Chat: true}
 	if sessionID != "" {
 		unlock := service.locker.Lock(sessionID)
 		defer unlock()
-
-		savedSession, err = service.store.Open(sessionID)
-	} else {
-		savedSession, err = service.store.Create(session.CreateOptions{Task: message, Planned: service.planner != nil, Chat: true})
 	}
+	conversation, err := appruntime.PrepareConversation(service.store, sessionID, createOptions, service.systemPrompt)
 	if err != nil {
 		return TurnResponse{}, err
 	}
 
-	if err := savedSession.MarkRunning(); err != nil {
-		return TurnResponse{}, err
-	}
-
-	messages, err := savedSession.LoadMessages()
+	logFile, err := conversation.Session.OpenOutputFile()
 	if err != nil {
-		_ = savedSession.MarkFailed(err)
-		return TurnResponse{}, err
-	}
-
-	logFile, err := savedSession.OpenOutputFile()
-	if err != nil {
-		_ = savedSession.MarkFailed(err)
+		_ = conversation.MarkFailed(err)
 		return TurnResponse{}, err
 	}
 	defer logFile.Close()
 
-	if len(messages) == 0 {
-		systemMessage := map[string]any{"role": "system", "content": service.systemPrompt}
-		messages = append(messages, systemMessage)
-		if err := savedSession.RecordMessage(systemMessage); err != nil {
-			_ = savedSession.MarkFailed(err)
-			return TurnResponse{}, err
-		}
-	}
-
-	userMessage := map[string]any{"role": "user", "content": message}
-	messages = append(messages, userMessage)
-	if err := savedSession.RecordMessage(userMessage); err != nil {
-		_ = savedSession.MarkFailed(err)
+	if err := conversation.AddUserMessage(message); err != nil {
+		_ = conversation.MarkFailed(err)
 		return TurnResponse{}, err
 	}
 
@@ -123,19 +97,19 @@ func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (Tu
 		ToolDefinitions: service.toolDefinitions,
 		Functions:       service.functions,
 		Planner:         service.planner,
-		Recorder:        savedSession,
+		Recorder:        conversation.Recorder(),
 	})
 
-	result, _, err := app.RunConversationTurn(ctx, messages, service.maxTurns)
+	result, _, err := app.RunConversationTurn(ctx, conversation.Messages, service.maxTurns)
 	if err != nil {
-		_ = savedSession.MarkFailed(err)
+		_ = conversation.MarkFailed(err)
 		return TurnResponse{}, err
 	}
-	if err := savedSession.MarkCompleted(); err != nil {
+	if err := conversation.MarkCompleted(); err != nil {
 		return TurnResponse{}, err
 	}
 
-	return TurnResponse{SessionID: savedSession.ID(), Reply: result}, nil
+	return TurnResponse{SessionID: conversation.Session.ID(), Reply: result}, nil
 }
 
 func cloneFunctions(functions map[string]tools.Function) map[string]tools.Function {

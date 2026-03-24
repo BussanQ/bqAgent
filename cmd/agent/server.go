@@ -8,10 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"bqagent/internal/agent"
+	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
 	serverchanclient "bqagent/internal/serverchan"
-	"bqagent/internal/tools"
 	"bqagent/internal/workspace"
 )
 
@@ -42,27 +41,19 @@ func runServerInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace
 }
 
 func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, options cliOptions) int {
-	chatClient := agent.NewClient(getenv("OPENAI_API_KEY"), getenv("OPENAI_BASE_URL"), nil)
-	var planner *agent.Planner
-	if options.plan {
-		planner = agent.NewPlanner(chatClient, getenv("OPENAI_MODEL"))
-	}
-	catalog := tools.NewCatalog(tools.Options{
+	runtime := appruntime.Factory{
+		Config:        appruntime.ConfigFromEnv(getenv),
 		WorkspaceRoot: ws.Root,
-		IncludePlan:   options.plan,
-		SearchAPIKey:  getenv("SEARCH_API_KEY"),
-		SearchBaseURL: getenv("SEARCH_BASE_URL"),
 		MemoryDir:     ws.WorkspaceMemoryDir(),
-		ServerMode:    true,
-	})
+	}.Build(options.plan, true)
 	service := appserver.NewService(appserver.ServiceOptions{
 		WorkspaceRoot:   ws.Root,
-		Client:          chatClient,
-		Model:           getenv("OPENAI_MODEL"),
+		Client:          runtime.Client,
+		Model:           runtime.Model,
 		SystemPrompt:    systemPrompt,
-		Planner:         planner,
-		ToolDefinitions: catalog.Definitions(),
-		Functions:       catalog.Registry(),
+		Planner:         runtime.Planner,
+		ToolDefinitions: runtime.Catalog.Definitions(),
+		Functions:       runtime.Catalog.Registry(),
 	})
 	botProcessor := appserver.NewBotWebhookProcessor(
 		service,

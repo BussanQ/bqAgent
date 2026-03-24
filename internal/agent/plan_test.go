@@ -88,3 +88,41 @@ func TestRunConversationHandlesPlanTool(t *testing.T) {
 		t.Fatalf("tool message content = %#v, want plan execution note", toolMessages[0]["content"])
 	}
 }
+
+func TestRunPlannedConversationPlannerFailure(t *testing.T) {
+	// Planner Generate gets invalid JSON → returns parse error
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{Content: "not valid json at all"},
+		},
+	}
+
+	app := NewWithOptions(client, "", Options{
+		Planner: NewPlanner(client, ""),
+	})
+
+	_, err := app.RunPlannedConversation(context.Background(), []map[string]any{{"role": "system", "content": "sys"}}, "do task", 5)
+	if err == nil {
+		t.Fatal("RunPlannedConversation returned nil error, want planner parse error")
+	}
+}
+
+func TestRunPlannedConversationNoSteps(t *testing.T) {
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{Content: `{"steps":[]}`},
+		},
+	}
+
+	app := NewWithOptions(client, "", Options{
+		Planner: NewPlanner(client, ""),
+	})
+
+	_, err := app.RunPlannedConversation(context.Background(), []map[string]any{{"role": "system", "content": "sys"}}, "do task", 5)
+	if err == nil {
+		t.Fatal("RunPlannedConversation returned nil error, want no steps error")
+	}
+	if !strings.Contains(err.Error(), "no steps") {
+		t.Fatalf("error = %q, want 'no steps' message", err.Error())
+	}
+}

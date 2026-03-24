@@ -8,18 +8,19 @@ import (
 const (
 	legacyMemoryFileName = "agent_memory.md"
 	agentDirName         = ".agent"
+	legacyContextDirName = "workspace"
 	rulesDirName         = "rules"
 	skillsDirName        = "skills"
 	mcpConfigFileName    = "mcp.json"
 	sessionsDirName      = "sessions"
 
-	contextDirName      = ".agent"
-	agentDocFileName    = "AGENT.md"
-	soulDocFileName     = "SOUL.md"
-	toolsDocFileName    = "TOOLS.md"
-	userDocFileName     = "USER.md"
-	memoryDirName       = "memory"
-	memoryDocFileName   = "MEMORY.md"
+	contextDirName    = ".agent"
+	agentDocFileName  = "AGENT.md"
+	soulDocFileName   = "SOUL.md"
+	toolsDocFileName  = "TOOLS.md"
+	userDocFileName   = "USER.md"
+	memoryDirName     = "memory"
+	memoryDocFileName = "MEMORY.md"
 )
 
 type Workspace struct {
@@ -57,6 +58,10 @@ func (w *Workspace) AgentDir() string {
 	return filepath.Join(w.Root, agentDirName)
 }
 
+func (w *Workspace) LegacyContextDir() string {
+	return filepath.Join(w.Root, legacyContextDirName)
+}
+
 func (w *Workspace) ContextDir() string {
 	return filepath.Join(w.Root, contextDirName)
 }
@@ -81,12 +86,24 @@ func (w *Workspace) WorkspaceMemoryDir() string {
 	return filepath.Join(w.ContextDir(), memoryDirName)
 }
 
+func (w *Workspace) LegacyWorkspaceMemoryDir() string {
+	return filepath.Join(w.LegacyContextDir(), memoryDirName)
+}
+
 func (w *Workspace) WorkspaceMemoryPath() string {
 	return filepath.Join(w.WorkspaceMemoryDir(), memoryDocFileName)
 }
 
+func (w *Workspace) LegacyWorkspaceMemoryPath() string {
+	return filepath.Join(w.LegacyWorkspaceMemoryDir(), memoryDocFileName)
+}
+
 func (w *Workspace) DailyMemoryPath(day string) string {
 	return filepath.Join(w.WorkspaceMemoryDir(), day+".md")
+}
+
+func (w *Workspace) LegacyDailyMemoryPath(day string) string {
+	return filepath.Join(w.LegacyWorkspaceMemoryDir(), day+".md")
 }
 
 func (w *Workspace) LegacyMemoryPath() string {
@@ -124,14 +141,26 @@ func (w *Workspace) ResolvePath(path string) string {
 }
 
 func (w *Workspace) UsesWorkspaceContext() bool {
-	return fileExists(w.ContextDir())
+	return w.hasPrimaryContext() || w.hasLegacyContext()
 }
 
 func (w *Workspace) MemoryEnabled() bool {
-	return fileExists(w.LegacyMemoryPath()) || fileExists(w.AgentDir()) || fileExists(w.ContextDir())
+	return fileExists(w.LegacyMemoryPath()) ||
+		fileExists(w.WorkspaceMemoryPath()) ||
+		fileExists(w.LegacyWorkspaceMemoryPath()) ||
+		fileExists(w.WorkspaceMemoryDir()) ||
+		fileExists(w.LegacyWorkspaceMemoryDir())
 }
 
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func (w *Workspace) hasPrimaryContext() bool {
+	return fileExists(w.ContextDir())
+}
+
+func (w *Workspace) hasLegacyContext() bool {
+	return fileExists(w.LegacyContextDir())
 }

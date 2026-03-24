@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os/exec"
 	"runtime"
 )
@@ -32,7 +33,7 @@ func ExecuteBashInDir(root string) Function {
 		if err != nil {
 			var exitErr *exec.ExitError
 			if !errors.As(err, &exitErr) {
-				return "", err
+				return "", fmt.Errorf("command execution failed: %w", err)
 			}
 		}
 

@@ -82,11 +82,11 @@ func TestBuildSystemPromptIncludesWorkspaceDirectoryDocuments(t *testing.T) {
 		t.Fatalf("failed to create .agent memory directory: %v", err)
 	}
 	files := map[string]string{
-		filepath.Join(root, ".agent", "AGENT.md"):               "# AGENT\n\nUse memory carefully.",
-		filepath.Join(root, ".agent", "SOUL.md"):                "# SOUL\n\nBe direct.",
-		filepath.Join(root, ".agent", "TOOLS.md"):               "# TOOLS\n\nPrefer read before edit.",
-		filepath.Join(root, ".agent", "USER.md"):                "Preferred language: Chinese",
-		filepath.Join(root, ".agent", "memory", "MEMORY.md"):   "User likes concise answers.",
+		filepath.Join(root, ".agent", "AGENT.md"):                "# AGENT\n\nUse memory carefully.",
+		filepath.Join(root, ".agent", "SOUL.md"):                 "# SOUL\n\nBe direct.",
+		filepath.Join(root, ".agent", "TOOLS.md"):                "# TOOLS\n\nPrefer read before edit.",
+		filepath.Join(root, ".agent", "USER.md"):                 "Preferred language: Chinese",
+		filepath.Join(root, ".agent", "memory", "MEMORY.md"):     "User likes concise answers.",
 		filepath.Join(root, ".agent", "memory", "2026-03-20.md"): "Yesterday note.",
 		filepath.Join(root, ".agent", "memory", "2026-03-21.md"): "Today note.",
 	}
@@ -125,6 +125,86 @@ func TestBuildSystemPromptIncludesWorkspaceDirectoryDocuments(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptFallsBackToLegacyWorkspaceLayout(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root}
+
+	originalNowFunc := nowFunc
+	nowFunc = func() time.Time { return time.Date(2026, 3, 21, 10, 0, 0, 0, time.Local) }
+	defer func() { nowFunc = originalNowFunc }()
+
+	if err := os.MkdirAll(filepath.Join(root, "workspace", "memory"), 0o755); err != nil {
+		t.Fatalf("failed to create legacy workspace memory directory: %v", err)
+	}
+	files := map[string]string{
+		filepath.Join(root, "workspace", "AGENT.md"):                "# AGENT\n\nLegacy agent instructions.",
+		filepath.Join(root, "workspace", "SOUL.md"):                 "# SOUL\n\nLegacy soul.",
+		filepath.Join(root, "workspace", "TOOLS.md"):                "# TOOLS\n\nLegacy tool guidance.",
+		filepath.Join(root, "workspace", "USER.md"):                 "Legacy preferred language: Chinese",
+		filepath.Join(root, "workspace", "memory", "MEMORY.md"):     "Legacy long-term memory.",
+		filepath.Join(root, "workspace", "memory", "2026-03-20.md"): "Legacy yesterday note.",
+		filepath.Join(root, "workspace", "memory", "2026-03-21.md"): "Legacy today note.",
+	}
+	for path, content := range files {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("failed to write %s: %v", path, err)
+		}
+	}
+
+	prompt, err := ws.BuildSystemPrompt("Base prompt")
+	if err != nil {
+		t.Fatalf("BuildSystemPrompt returned error: %v", err)
+	}
+
+	checks := []string{
+		"Legacy agent instructions.",
+		"Legacy soul.",
+		"Legacy tool guidance.",
+		"Legacy preferred language: Chinese",
+		"## workspace/memory/MEMORY.md",
+		"Legacy long-term memory.",
+		"## workspace/memory/2026-03-20.md",
+		"Legacy yesterday note.",
+		"## workspace/memory/2026-03-21.md",
+		"Legacy today note.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Fatalf("prompt = %q, want substring %q", prompt, check)
+		}
+	}
+}
+
+func TestBuildSystemPromptPrefersDotAgentOverLegacyWorkspace(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root}
+
+	if err := os.MkdirAll(filepath.Join(root, ".agent"), 0o755); err != nil {
+		t.Fatalf("failed to create .agent directory: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "workspace"), 0o755); err != nil {
+		t.Fatalf("failed to create workspace directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".agent", "AGENT.md"), []byte("Primary instructions."), 0o644); err != nil {
+		t.Fatalf("failed to write .agent AGENT.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "workspace", "AGENT.md"), []byte("Legacy instructions."), 0o644); err != nil {
+		t.Fatalf("failed to write workspace AGENT.md: %v", err)
+	}
+
+	prompt, err := ws.BuildSystemPrompt("Base prompt")
+	if err != nil {
+		t.Fatalf("BuildSystemPrompt returned error: %v", err)
+	}
+
+	if !strings.Contains(prompt, "Primary instructions.") {
+		t.Fatalf("prompt = %q, want primary .agent instructions", prompt)
+	}
+	if strings.Contains(prompt, "Legacy instructions.") {
+		t.Fatalf("prompt = %q, should prefer .agent over legacy workspace", prompt)
+	}
+}
+
 func TestAppendMemoryPrefersWorkspaceDailyMemoryFile(t *testing.T) {
 	root := t.TempDir()
 	ws := &Workspace{Root: root}
@@ -153,5 +233,22 @@ func TestAppendMemoryPrefersWorkspaceDailyMemoryFile(t *testing.T) {
 	}
 	if fileExists(filepath.Join(root, "agent_memory.md")) {
 		t.Fatalf("legacy memory file should not be created when .agent/ exists")
+	}
+}
+
+func TestMemoryEnabledSupportsLegacyWorkspaceMemory(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root}
+
+	if ws.MemoryEnabled() {
+		t.Fatalf("MemoryEnabled should be false when no memory files exist")
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, "workspace", "memory"), 0o755); err != nil {
+		t.Fatalf("failed to create legacy workspace memory directory: %v", err)
+	}
+
+	if !ws.MemoryEnabled() {
+		t.Fatalf("MemoryEnabled should be true when legacy workspace memory directory exists")
 	}
 }

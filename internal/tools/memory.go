@@ -34,18 +34,18 @@ func MemSaveInDir(memDir string) Function {
 		}
 
 		if err := os.MkdirAll(filepath.Dir(memPath), 0o755); err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to create memory directory: %w", err)
 		}
 
 		file, err := os.OpenFile(memPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to open memory file: %w", err)
 		}
 		defer file.Close()
 
 		entry := fmt.Sprintf("\n## %s\n%s\n", now.Format("2006-01-02 15:04:05"), content)
 		if _, err := file.WriteString(entry); err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to write to memory file: %w", err)
 		}
 
 		return fmt.Sprintf("Saved to %s memory.", target), nil

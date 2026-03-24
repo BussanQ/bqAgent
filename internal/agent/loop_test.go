@@ -97,7 +97,7 @@ func TestRunReturnsUnknownToolErrorToLoop(t *testing.T) {
 	}
 }
 
-func TestRunReturnsErrorForMalformedArguments(t *testing.T) {
+func TestRunReturnsMalformedArgumentsAsToolError(t *testing.T) {
 	client := &stubClient{
 		responses: []AssistantMessage{
 			{
@@ -112,20 +112,29 @@ func TestRunReturnsErrorForMalformedArguments(t *testing.T) {
 					},
 				},
 			},
+			{Content: "recovered"},
 		},
 	}
 
 	app := New(client, "", &bytes.Buffer{})
 
-	_, err := app.Run(context.Background(), "test invalid args", 2)
-	if err == nil {
-		t.Fatal("Run returned nil error, want malformed JSON error")
+	result, err := app.Run(context.Background(), "test invalid args", 2)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unexpected end of JSON input") {
-		t.Fatalf("Run error = %q, want malformed JSON detail", err.Error())
+	if result != "recovered" {
+		t.Fatalf("Run returned %q, want %q", result, "recovered")
 	}
-	if len(client.messages) != 1 {
-		t.Fatalf("client saw %d requests, want 1", len(client.messages))
+	if len(client.messages) != 2 {
+		t.Fatalf("client saw %d requests, want 2", len(client.messages))
+	}
+	toolMessages := extractToolMessages(client.messages[1])
+	if len(toolMessages) != 1 {
+		t.Fatalf("saw %d tool messages, want 1", len(toolMessages))
+	}
+	content, _ := toolMessages[0]["content"].(string)
+	if !strings.Contains(content, `Error: Invalid JSON arguments for tool "read_file"`) {
+		t.Fatalf("tool content = %q, want malformed JSON tool error", content)
 	}
 }
 
@@ -161,8 +170,8 @@ func TestRunReturnsMaxIterationsReached(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	if result != "Max iterations reached" {
-		t.Fatalf("Run returned %q, want %q", result, "Max iterations reached")
+	if !strings.Contains(result, "Agent stopped") || !strings.Contains(result, "1 iterations") {
+		t.Fatalf("Run returned %q, want max iterations message with count", result)
 	}
 }
 
@@ -191,5 +200,247 @@ func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
 	// Original messages should not be mutated
 	if len(messages) != 2 {
 		t.Fatalf("original messages mutated: len = %d, want 2", len(messages))
+	}
+}
+
+func TestRunReturnsToolExecutionErrorToLoop(t *testing.T) {
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{
+				Content: "",
+				ToolCalls: []ToolCall{
+					{
+						ID: "tc-1",
+						Function: FunctionCall{
+							Name:      "read_file",
+							Arguments: `{"path":"missing.txt"}`,
+						},
+					},
+				},
+			},
+			{Content: "done"},
+		},
+	}
+
+	app := New(client, "", &bytes.Buffer{})
+
+	result, err := app.Run(context.Background(), "test tool error", 2)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("Run returned %q, want %q", result, "done")
+	}
+	if len(client.messages) != 2 {
+		t.Fatalf("client saw %d requests, want 2", len(client.messages))
+	}
+
+	toolMessages := extractToolMessages(client.messages[1])
+	if len(toolMessages) != 1 {
+		t.Fatalf("saw %d tool messages, want 1", len(toolMessages))
+	}
+	content, _ := toolMessages[0]["content"].(string)
+	if !strings.Contains(content, "Error:") {
+		t.Fatalf("tool content = %q, want error prefix", content)
+	}
+	if !strings.Contains(content, "missing.txt") {
+		t.Fatalf("tool content = %q, want missing path detail", content)
+	}
+}
+
+type failingRecorder struct {
+	callCount int
+	failAfter int
+}
+
+func (r *failingRecorder) RecordMessage(_ map[string]any) error {
+	r.callCount++
+	if r.callCount > r.failAfter {
+		return errors.New("disk write failed")
+	}
+	return nil
+}
+
+func TestPlanToolMissingTaskReturnsToolMessage(t *testing.T) {
+	// Response 1: model calls plan tool with empty args (no "task" key)
+	// Response 2: model recovers after seeing the tool error
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{
+				ToolCalls: []ToolCall{{
+					ID:       "plan-1",
+					Function: FunctionCall{Name: "plan", Arguments: `{}`},
+				}},
+			},
+			{Content: "recovered"},
+		},
+	}
+
+	catalog := tools.NewCatalog(tools.Options{IncludePlan: true})
+	app := NewWithOptions(client, "", Options{
+		Planner:         NewPlanner(client, ""),
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       catalog.Registry(),
+	})
+
+	result, err := app.RunConversation(context.Background(), []map[string]any{
+		{"role": "system", "content": "sys"},
+		{"role": "user", "content": "do something"},
+	}, 5)
+	if err != nil {
+		t.Fatalf("RunConversation returned error: %v", err)
+	}
+	if result != "recovered" {
+		t.Fatalf("result = %q, want %q", result, "recovered")
+	}
+	// Client should see 2 requests: initial + retry after tool error
+	if len(client.messages) != 2 {
+		t.Fatalf("client saw %d requests, want 2", len(client.messages))
+	}
+	toolMessages := extractToolMessages(client.messages[1])
+	if len(toolMessages) != 1 {
+		t.Fatalf("tool messages = %d, want 1", len(toolMessages))
+	}
+	content, _ := toolMessages[0]["content"].(string)
+	if !strings.Contains(content, "Error:") || !strings.Contains(content, "task") {
+		t.Fatalf("tool content = %q, want error about missing task", content)
+	}
+}
+
+func TestPlanToolPlannerFailureReturnsToolMessage(t *testing.T) {
+	// Response 1: model calls plan tool
+	// Response 2: planner.Generate call returns invalid JSON → parse error
+	// Response 3: model recovers
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{
+				ToolCalls: []ToolCall{{
+					ID:       "plan-1",
+					Function: FunctionCall{Name: "plan", Arguments: `{"task":"do stuff"}`},
+				}},
+			},
+			{Content: "not valid json"},
+			{Content: "recovered"},
+		},
+	}
+
+	catalog := tools.NewCatalog(tools.Options{IncludePlan: true})
+	app := NewWithOptions(client, "", Options{
+		Planner:         NewPlanner(client, ""),
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       catalog.Registry(),
+	})
+
+	result, err := app.RunConversation(context.Background(), []map[string]any{
+		{"role": "system", "content": "sys"},
+		{"role": "user", "content": "start"},
+	}, 5)
+	if err != nil {
+		t.Fatalf("RunConversation returned error: %v", err)
+	}
+	if result != "recovered" {
+		t.Fatalf("result = %q, want %q", result, "recovered")
+	}
+	// Request 1: initial, Request 2: planner Generate, Request 3: retry after error
+	if len(client.messages) != 3 {
+		t.Fatalf("client saw %d requests, want 3", len(client.messages))
+	}
+	toolMessages := extractToolMessages(client.messages[2])
+	if len(toolMessages) != 1 {
+		t.Fatalf("tool messages = %d, want 1", len(toolMessages))
+	}
+	content, _ := toolMessages[0]["content"].(string)
+	if !strings.Contains(content, "Error:") || !strings.Contains(content, "plan generation failed") {
+		t.Fatalf("tool content = %q, want plan generation error", content)
+	}
+}
+
+func TestPlanToolNoStepsReturnsToolMessage(t *testing.T) {
+	// Response 1: model calls plan tool
+	// Response 2: planner returns empty steps
+	// Response 3: model recovers
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{
+				ToolCalls: []ToolCall{{
+					ID:       "plan-1",
+					Function: FunctionCall{Name: "plan", Arguments: `{"task":"do stuff"}`},
+				}},
+			},
+			{Content: `{"steps":[]}`},
+			{Content: "recovered"},
+		},
+	}
+
+	catalog := tools.NewCatalog(tools.Options{IncludePlan: true})
+	app := NewWithOptions(client, "", Options{
+		Planner:         NewPlanner(client, ""),
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       catalog.Registry(),
+	})
+
+	result, err := app.RunConversation(context.Background(), []map[string]any{
+		{"role": "system", "content": "sys"},
+		{"role": "user", "content": "start"},
+	}, 5)
+	if err != nil {
+		t.Fatalf("RunConversation returned error: %v", err)
+	}
+	if result != "recovered" {
+		t.Fatalf("result = %q, want %q", result, "recovered")
+	}
+	if len(client.messages) != 3 {
+		t.Fatalf("client saw %d requests, want 3", len(client.messages))
+	}
+	toolMessages := extractToolMessages(client.messages[2])
+	if len(toolMessages) != 1 {
+		t.Fatalf("tool messages = %d, want 1", len(toolMessages))
+	}
+	content, _ := toolMessages[0]["content"].(string)
+	if !strings.Contains(content, "Error:") || !strings.Contains(content, "no steps") {
+		t.Fatalf("tool content = %q, want no steps error", content)
+	}
+}
+
+func TestMaxIterationsMessageIncludesCount(t *testing.T) {
+	toolCallResponse := AssistantMessage{
+		ToolCalls: []ToolCall{
+			{
+				ID:       "tc-1",
+				Function: FunctionCall{Name: "missing_tool", Arguments: "{}"},
+			},
+		},
+	}
+	client := &stubClient{
+		responses: []AssistantMessage{toolCallResponse, toolCallResponse, toolCallResponse},
+	}
+	app := New(client, "", &bytes.Buffer{})
+
+	result, err := app.Run(context.Background(), "hello", 3)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !strings.Contains(result, "3 iterations") {
+		t.Fatalf("result = %q, want message containing iteration count", result)
+	}
+}
+
+func TestRecorderFailureIsFatal(t *testing.T) {
+	client := &stubClient{
+		responses: []AssistantMessage{{Content: "done"}},
+	}
+
+	recorder := &failingRecorder{failAfter: 0}
+	app := NewWithOptions(client, "", Options{
+		LogWriter: &bytes.Buffer{},
+		Recorder:  recorder,
+	})
+
+	_, err := app.Run(context.Background(), "hello", 5)
+	if err == nil {
+		t.Fatal("Run returned nil error, want recorder failure")
+	}
+	if !strings.Contains(err.Error(), "disk write failed") {
+		t.Fatalf("error = %q, want disk write failed", err.Error())
 	}
 }

@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"bqagent/internal/agent"
+	appruntime "bqagent/internal/runtime"
 	"bqagent/internal/session"
-	"bqagent/internal/tools"
 	"bqagent/internal/workspace"
 )
 
@@ -206,8 +206,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	}
 
 	var (
-		savedSession *session.Session
-		messages     []map[string]any
+		conversation *appruntime.Conversation
 		outputWriter io.Writer = stdout
 		errorWriter  io.Writer = stderr
 		logFile      *os.File
@@ -216,13 +215,8 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 
 	sessionID := effectiveSessionID(options)
 	if sessionID != "" {
-		store := session.NewStore(ws.Root)
-		savedSession, err = store.Open(sessionID)
+		conversation, err = appruntime.PrepareConversation(session.NewStore(ws.Root), sessionID, nil, systemPrompt)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		if err := savedSession.MarkRunning(); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -233,7 +227,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		}()
 
 		if !options.sessionRun {
-			logFile, err = savedSession.OpenOutputFile()
+			logFile, err = conversation.Session.OpenOutputFile()
 			if err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
@@ -241,69 +235,41 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 			outputWriter = io.MultiWriter(stdout, logFile)
 			errorWriter = io.MultiWriter(stderr, logFile)
 		}
-
-		messages, err = savedSession.LoadMessages()
+	} else {
+		conversation, err = appruntime.PrepareConversation(nil, "", nil, systemPrompt)
 		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+
+	runtime := appruntime.Factory{
+		Config:        appruntime.ConfigFromEnv(getenv),
+		WorkspaceRoot: ws.Root,
+		MemoryDir:     ws.WorkspaceMemoryDir(),
+	}.Build(true, false)
+	app := runtime.NewAgent(outputWriter, systemPrompt, conversation.Recorder(), false)
+
+	if strings.TrimSpace(task) != "" && !options.plan {
+		if err := conversation.AddUserMessage(task); err != nil {
 			fmt.Fprintln(errorWriter, err)
 			return 1
 		}
 	}
 
-	if len(messages) == 0 {
-		systemMessage := map[string]any{"role": "system", "content": systemPrompt}
-		messages = append(messages, systemMessage)
-		if savedSession != nil {
-			if err := savedSession.RecordMessage(systemMessage); err != nil {
-				fmt.Fprintln(errorWriter, err)
-				return 1
-			}
-		}
-	}
-
-	chatClient := agent.NewClient(getenv("OPENAI_API_KEY"), getenv("OPENAI_BASE_URL"), nil)
-	planner := agent.NewPlanner(chatClient, getenv("OPENAI_MODEL"))
-	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: ws.Root, IncludePlan: true, SearchAPIKey: getenv("SEARCH_API_KEY"), SearchBaseURL: getenv("SEARCH_BASE_URL"), MemoryDir: ws.WorkspaceMemoryDir()})
-	var recorder agent.MessageRecorder
-	if savedSession != nil {
-		recorder = savedSession
-	}
-	app := agent.NewWithOptions(chatClient, getenv("OPENAI_MODEL"), agent.Options{
-		SystemPrompt:    systemPrompt,
-		LogWriter:       outputWriter,
-		ToolDefinitions: catalog.Definitions(),
-		Functions:       catalog.Registry(),
-		Planner:         planner,
-		Recorder:        recorder,
-	})
-
-	if strings.TrimSpace(task) != "" && !options.plan {
-		userMessage := map[string]any{"role": "user", "content": task}
-		messages = append(messages, userMessage)
-		if savedSession != nil {
-			if err := savedSession.RecordMessage(userMessage); err != nil {
-				fmt.Fprintln(errorWriter, err)
-				return 1
-			}
-		}
-	}
-
 	var result string
 	if options.plan {
-		result, err = app.RunPlannedConversation(ctx, messages, task, agent.DefaultMaxIterations)
+		result, err = app.RunPlannedConversation(ctx, conversation.Messages, task, agent.DefaultMaxIterations)
 	} else {
-		result, err = app.RunConversation(ctx, messages, agent.DefaultMaxIterations)
+		result, err = app.RunConversation(ctx, conversation.Messages, agent.DefaultMaxIterations)
 	}
 	if err != nil {
-		if savedSession != nil {
-			_ = savedSession.MarkFailed(err)
-		}
+		_ = conversation.MarkFailed(err)
 		fmt.Fprintln(errorWriter, err)
 		return 1
 	}
 
-	if savedSession != nil {
-		_ = savedSession.MarkCompleted()
-	}
+	_ = conversation.MarkCompleted()
 	if ws.MemoryEnabled() && strings.TrimSpace(task) != "" {
 		if memoryErr := ws.AppendMemory(task, result); memoryErr != nil {
 			fmt.Fprintln(errorWriter, memoryErr)
@@ -317,39 +283,18 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 
 func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt, initialTask string, options cliOptions) int {
 	store := session.NewStore(ws.Root)
-	var (
-		savedSession *session.Session
-		messages     []map[string]any
-		err          error
-	)
+	var err error
 
 	sessionID := effectiveSessionID(options)
-	if sessionID != "" {
-		savedSession, err = store.Open(sessionID)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		messages, err = savedSession.LoadMessages()
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-	} else {
-		savedSession, err = store.Create(session.CreateOptions{Task: initialTask, Planned: options.plan, Chat: true})
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-	}
-
-	if err := savedSession.MarkRunning(); err != nil {
+	createOptions := &session.CreateOptions{Task: initialTask, Planned: options.plan, Chat: true}
+	conversation, err := appruntime.PrepareConversation(store, sessionID, createOptions, systemPrompt)
+	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 
 	// Open output log file so chat sessions are persisted like foreground runs.
-	logFile, err := savedSession.OpenOutputFile()
+	logFile, err := conversation.Session.OpenOutputFile()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -358,43 +303,26 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 	outputWriter := io.MultiWriter(stdout, logFile)
 	errorWriter := io.MultiWriter(stderr, logFile)
 
-	if len(messages) == 0 {
-		systemMessage := map[string]any{"role": "system", "content": systemPrompt}
-		messages = append(messages, systemMessage)
-		if err := savedSession.RecordMessage(systemMessage); err != nil {
-			fmt.Fprintln(errorWriter, err)
-			return 1
-		}
-	}
-
-	chatClient := agent.NewClient(getenv("OPENAI_API_KEY"), getenv("OPENAI_BASE_URL"), nil)
-	planner := agent.NewPlanner(chatClient, getenv("OPENAI_MODEL"))
-	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: ws.Root, IncludePlan: options.plan, SearchAPIKey: getenv("SEARCH_API_KEY"), SearchBaseURL: getenv("SEARCH_BASE_URL"), MemoryDir: ws.WorkspaceMemoryDir()})
-	app := agent.NewWithOptions(chatClient, getenv("OPENAI_MODEL"), agent.Options{
-		SystemPrompt:    systemPrompt,
-		LogWriter:       outputWriter,
-		ToolDefinitions: catalog.Definitions(),
-		Functions:       catalog.Registry(),
-		Planner:         planner,
-		Recorder:        savedSession,
-		Stream:          options.stream,
-	})
+	runtime := appruntime.Factory{
+		Config:        appruntime.ConfigFromEnv(getenv),
+		WorkspaceRoot: ws.Root,
+		MemoryDir:     ws.WorkspaceMemoryDir(),
+	}.Build(options.plan, false)
+	app := runtime.NewAgent(outputWriter, systemPrompt, conversation.Recorder(), options.stream)
 
 	streamMode := options.stream
 	memoryEnabled := ws.MemoryEnabled()
 
 	executeTurn := func(input string) ([]map[string]any, error) {
-		userMessage := map[string]any{"role": "user", "content": input}
-		messages = append(messages, userMessage)
-		if err := savedSession.RecordMessage(userMessage); err != nil {
-			return messages, err
+		if err := conversation.AddUserMessage(input); err != nil {
+			return conversation.Messages, err
 		}
 
-		result, updatedMessages, runErr := app.RunConversationTurn(ctx, messages, agent.DefaultMaxIterations)
+		result, updatedMessages, runErr := app.RunConversationTurn(ctx, conversation.Messages, agent.DefaultMaxIterations)
 		if runErr != nil {
 			return updatedMessages, runErr
 		}
-		messages = updatedMessages
+		conversation.Messages = updatedMessages
 		if streamMode {
 			// content already printed chunk by chunk; just add trailing newline
 			fmt.Fprint(outputWriter, "\n")
@@ -408,14 +336,13 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 			}
 		}
 
-		return messages, nil
+		return conversation.Messages, nil
 	}
 
 	if strings.TrimSpace(initialTask) != "" {
-		var err error
-		messages, err = executeTurn(initialTask)
+		_, err = executeTurn(initialTask)
 		if err != nil {
-			_ = savedSession.MarkFailed(err)
+			_ = conversation.MarkFailed(err)
 			fmt.Fprintln(errorWriter, err)
 			return 1
 		}
@@ -435,10 +362,9 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 			continue
 		}
 
-		var err error
-		messages, err = executeTurn(line)
+		_, err = executeTurn(line)
 		if err != nil {
-			_ = savedSession.MarkFailed(err)
+			_ = conversation.MarkFailed(err)
 			fmt.Fprintln(errorWriter, err)
 			return 1
 		}
@@ -446,11 +372,11 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 
 	if scanErr := scanner.Err(); scanErr != nil {
 		fmt.Fprintln(errorWriter, scanErr)
-		_ = savedSession.MarkFailed(scanErr)
+		_ = conversation.MarkFailed(scanErr)
 		return 1
 	}
 
-	_ = savedSession.MarkCompleted()
+	_ = conversation.MarkCompleted()
 	return 0
 }
 

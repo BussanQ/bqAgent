@@ -82,9 +82,11 @@ func (w *Workspace) workspaceSection() string {
 	lines := []string{
 		"# Workspace",
 		"Root: " + w.Root,
-		"Context directory: .agent/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
+		"Primary context directory: .agent/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
+		"Legacy compatible context directory: workspace/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
 		"Workspace long-term memory: .agent/memory/MEMORY.md",
 		"Workspace daily memory: .agent/memory/YYYY-MM-DD.md (loads today and yesterday; new session notes append to today)",
+		"Legacy compatible memory directory: workspace/memory/{MEMORY.md, YYYY-MM-DD.md}",
 		"Legacy memory file: agent_memory.md",
 		"Rules directory: .agent/rules/*.md",
 		"Skills directory: .agent/skills/*/SKILL.md",
@@ -97,22 +99,22 @@ func (w *Workspace) workspaceSection() string {
 func (w *Workspace) loadWorkspaceDocuments() (string, error) {
 	documents := []struct {
 		label string
-		path  string
+		paths []string
 	}{
-		{label: "AGENT.md", path: w.WorkspaceAgentPath()},
-		{label: "SOUL.md", path: w.WorkspaceSoulPath()},
-		{label: "TOOLS.md", path: w.WorkspaceToolsPath()},
-		{label: "USER.md", path: w.WorkspaceUserPath()},
+		{label: "AGENT.md", paths: []string{w.WorkspaceAgentPath(), filepath.Join(w.LegacyContextDir(), agentDocFileName)}},
+		{label: "SOUL.md", paths: []string{w.WorkspaceSoulPath(), filepath.Join(w.LegacyContextDir(), soulDocFileName)}},
+		{label: "TOOLS.md", paths: []string{w.WorkspaceToolsPath(), filepath.Join(w.LegacyContextDir(), toolsDocFileName)}},
+		{label: "USER.md", paths: []string{w.WorkspaceUserPath(), filepath.Join(w.LegacyContextDir(), userDocFileName)}},
 	}
 
 	blocks := make([]string, 0, len(documents))
 	for _, document := range documents {
-		content, err := os.ReadFile(document.path)
-		if os.IsNotExist(err) {
-			continue
-		}
+		content, err := readFirstAvailable(document.paths...)
 		if err != nil {
 			return "", err
+		}
+		if len(content) == 0 {
+			continue
 		}
 		text := strings.TrimSpace(string(content))
 		if text == "" {
@@ -238,12 +240,12 @@ func summarizeSkill(fallbackName, content string) (string, string) {
 func (w *Workspace) loadMemoryContext(maxLines int) (string, error) {
 	blocks := make([]string, 0, 4)
 
-	workspaceMemory, err := readTail(w.WorkspaceMemoryPath(), maxLines)
+	workspaceMemory, workspaceMemoryPath, err := readPreferredTail(maxLines, w.WorkspaceMemoryPath(), w.LegacyWorkspaceMemoryPath())
 	if err != nil {
 		return "", err
 	}
 	if workspaceMemory != "" {
-		blocks = append(blocks, "## .agent/memory/MEMORY.md\n"+workspaceMemory)
+		blocks = append(blocks, "## "+w.displayPath(workspaceMemoryPath)+"\n"+workspaceMemory)
 	}
 
 	now := nowFunc()
@@ -252,14 +254,14 @@ func (w *Workspace) loadMemoryContext(maxLines int) (string, error) {
 		now.Format("2006-01-02"),
 	}
 	for _, day := range dailyFiles {
-		dailyMemory, err := readTail(w.DailyMemoryPath(day), maxLines)
+		dailyMemory, dailyMemoryPath, err := readPreferredTail(maxLines, w.DailyMemoryPath(day), w.LegacyDailyMemoryPath(day))
 		if err != nil {
 			return "", err
 		}
 		if dailyMemory == "" {
 			continue
 		}
-		blocks = append(blocks, "## .agent/memory/"+day+".md\n"+dailyMemory)
+		blocks = append(blocks, "## "+w.displayPath(dailyMemoryPath)+"\n"+dailyMemory)
 	}
 
 	legacyMemory, err := readTail(w.LegacyMemoryPath(), maxLines)
@@ -290,6 +292,42 @@ func readTail(path string, maxLines int) (string, error) {
 		lines = lines[len(lines)-maxLines:]
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n")), nil
+}
+
+func readFirstAvailable(paths ...string) ([]byte, error) {
+	for _, path := range paths {
+		content, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return content, nil
+	}
+	return nil, nil
+}
+
+func readPreferredTail(maxLines int, paths ...string) (string, string, error) {
+	for _, path := range paths {
+		content, err := readTail(path, maxLines)
+		if err != nil {
+			return "", "", err
+		}
+		if content == "" {
+			continue
+		}
+		return content, path, nil
+	}
+	return "", "", nil
+}
+
+func (w *Workspace) displayPath(path string) string {
+	relative, err := filepath.Rel(w.Root, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(relative)
 }
 
 func nonEmpty(values []string) []string {

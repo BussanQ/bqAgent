@@ -19,8 +19,9 @@ bqagent 的核心仍然很简单：
 新增的能力主要来自对 `agent-claudecode.py` 和 OpenClaw 思路的吸收：
 
 - 基于 workspace 的 system prompt 装配
-- 兼容 `workspace/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md`
-- 兼容 `workspace/memory/MEMORY.md` 和 `workspace/memory/YYYY-MM-DD.md`
+- 以 `.agent/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md` 作为主布局
+- 兼容旧版 `workspace/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md`
+- 兼容旧版 `workspace/memory/MEMORY.md` 和 `workspace/memory/YYYY-MM-DD.md`
 - 继续支持 `.agent/rules/*.md` 和 `.agent/skills/*/SKILL.md`
 - 使用 `--plan` 先拆步骤再执行
 - 使用 `--chat` 进行交互式多轮对话
@@ -111,11 +112,30 @@ bqagent 会从当前目录向上查找，直到命中以下任一标记为止：
 
 找到后就把它当作 workspace root。相对路径工具和 shell 命令都会以这个目录为基准执行。
 
-可选的工作区文件布局现在支持两种：
+工作区主布局现在使用 `.agent/`。如果对应的 `.agent/` 文件不存在，仍会兼容读取旧版 `workspace/` 布局。
 
 ```text
 project/
-├─ workspace/
+├─ .agent/
+│  ├─ AGENT.md
+│  ├─ SOUL.md
+│  ├─ TOOLS.md
+│  ├─ USER.md
+│  ├─ memory/
+│  │  ├─ MEMORY.md
+│  │  └─ YYYY-MM-DD.md
+│  ├─ rules/
+│  │  └─ *.md
+│  ├─ skills/
+│  │  └─ <skill>/
+│  │     └─ SKILL.md
+│  ├─ sessions/
+│  │  └─ <session-id>/
+│  │     ├─ meta.json
+│  │     ├─ messages.jsonl
+│  │     └─ output.log
+│  └─ mcp.json
+├─ workspace/  # 兼容旧布局
 │  ├─ AGENT.md
 │  ├─ SOUL.md
 │  ├─ TOOLS.md
@@ -123,33 +143,25 @@ project/
 │  └─ memory/
 │     ├─ MEMORY.md
 │     └─ YYYY-MM-DD.md
-├─ agent_memory.md
-└─ .agent/
-   ├─ rules/
-   │  └─ *.md
-   ├─ skills/
-   │  └─ <skill>/
-   │     └─ SKILL.md
-   ├─ sessions/
-   │  └─ <session-id>/
-   │     ├─ meta.json
-   │     ├─ messages.jsonl
-   │     └─ output.log
-   └─ mcp.json
+└─ agent_memory.md
 ```
 
 ### 这些文件分别做什么
 
-- `workspace/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md`
+- `.agent/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md`
   - OpenClaw 风格的上下文文件
   - 当前会默认加载进 system prompt
-- `workspace/memory/MEMORY.md`
+  - 若 `.agent/` 与 `workspace/` 同时存在，优先使用 `.agent/`
+- `.agent/memory/MEMORY.md`
   - 长期记忆文件
   - 启动时会加载进 prompt
-- `workspace/memory/YYYY-MM-DD.md`
+- `.agent/memory/YYYY-MM-DD.md`
   - 日记型记忆文件
   - 启动时会自动加载今天和昨天的文件
-  - 当 `workspace/` 存在时，新的任务结果会优先追加到今天的这个文件
+  - 新的任务结果会优先追加到今天的 `.agent/memory/YYYY-MM-DD.md`
+- `workspace/AGENT.md`、`workspace/memory/*`
+  - 旧布局兼容路径
+  - 仅当对应的 `.agent/` 文件不存在时才会读取
 - `agent_memory.md`
   - 兼容旧布局的轻量记忆文件
   - 当 `workspace/memory/MEMORY.md` 不存在时仍会读取；若两者都存在，会一并注入 prompt

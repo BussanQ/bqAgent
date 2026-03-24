@@ -19,8 +19,9 @@ bqagent still keeps the same core loop:
 The difference now is that the loop can be wrapped with extra capabilities inspired by `agent-claudecode.py` and OpenClaw:
 
 - workspace-rooted system prompt assembly
-- compatibility with `workspace/AGENT.md`, `SOUL.md`, `TOOLS.md`, and `USER.md`
-- compatibility with `workspace/memory/MEMORY.md` and `workspace/memory/YYYY-MM-DD.md`
+- primary `.agent/` workspace layout with `AGENT.md`, `SOUL.md`, `TOOLS.md`, and `USER.md`
+- compatibility with legacy `workspace/AGENT.md`, `SOUL.md`, `TOOLS.md`, and `USER.md`
+- compatibility with legacy `workspace/memory/MEMORY.md` and `workspace/memory/YYYY-MM-DD.md`
 - continued support for `.agent/rules/*.md` and `.agent/skills/*/SKILL.md`
 - optional planning with `--plan`
 - interactive multi-turn conversation with `--chat`
@@ -111,20 +112,18 @@ bqagent resolves a workspace root by walking upward from the current directory u
 
 Relative tool paths and shell commands run from that resolved workspace root.
 
-Optional workspace files now support two layouts:
+The primary workspace layout is `.agent/`. Legacy `workspace/` files are still read as a compatibility fallback when the corresponding `.agent/` files are absent.
 
 ```text
 project/
-├─ workspace/
-│  ├─ AGENT.md
-│  ├─ SOUL.md
-│  ├─ TOOLS.md
-│  ├─ USER.md
-│  └─ memory/
-│     ├─ MEMORY.md
-│     └─ YYYY-MM-DD.md
-├─ agent_memory.md
 └─ .agent/
+   ├─ AGENT.md
+   ├─ SOUL.md
+   ├─ TOOLS.md
+   ├─ USER.md
+   ├─ memory/
+   │  ├─ MEMORY.md
+   │  └─ YYYY-MM-DD.md
    ├─ rules/
    │  └─ *.md
    ├─ skills/
@@ -136,20 +135,33 @@ project/
    │     ├─ messages.jsonl
    │     └─ output.log
    └─ mcp.json
+├─ workspace/  # legacy compatible layout
+│  ├─ AGENT.md
+│  ├─ SOUL.md
+│  ├─ TOOLS.md
+│  ├─ USER.md
+│  └─ memory/
+│     ├─ MEMORY.md
+│     └─ YYYY-MM-DD.md
+└─ agent_memory.md
 ```
 
 ### Files and directories
 
-- `workspace/AGENT.md`, `SOUL.md`, `TOOLS.md`, `USER.md`
+- `.agent/AGENT.md`, `SOUL.md`, `TOOLS.md`, `USER.md`
   - OpenClaw-style context files
   - loaded into the system prompt by default when present
-- `workspace/memory/MEMORY.md`
+  - when both `.agent/` and `workspace/` exist, `.agent/` takes precedence
+- `.agent/memory/MEMORY.md`
   - long-term memory file
   - loaded into the prompt at startup
-- `workspace/memory/YYYY-MM-DD.md`
+- `.agent/memory/YYYY-MM-DD.md`
   - diary-style memory files
   - today's and yesterday's files are loaded automatically at startup
-  - when `workspace/` exists, new task results are appended to today's file first
+  - new task results are appended to today's `.agent/memory/YYYY-MM-DD.md`
+- `workspace/AGENT.md`, `workspace/memory/*`
+  - legacy compatibility layout
+  - read only when the corresponding `.agent/` file is absent
 - `agent_memory.md`
   - compatibility path for the older layout
   - still loaded when present; if both memory files exist, both are included in the prompt

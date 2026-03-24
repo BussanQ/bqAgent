@@ -193,18 +193,35 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		for _, toolCall := range message.ToolCalls {
 			parsedArguments, err := parseArguments(toolCall.Function.Arguments)
 			if err != nil {
-				return "", messages, err
+				toolMessage, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err))
+				messages = toolMessage
+				if recordErr != nil {
+					return "", messages, recordErr
+				}
+				continue
 			}
 			a.logf("[Tool] %s(%v)\n", toolCall.Function.Name, parsedArguments)
 
 			arguments, ok := parsedArguments.(map[string]any)
 			if !ok {
-				return "", messages, fmt.Errorf("tool arguments for %s must decode to a JSON object", toolCall.Function.Name)
+				toolMessage, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name))
+				messages = toolMessage
+				if recordErr != nil {
+					return "", messages, recordErr
+				}
+				continue
 			}
 
 			if toolCall.Function.Name == "plan" && allowPlan && a.planner != nil {
-				result, updatedMessages, err := a.executePlanTool(ctx, messages, toolCall, arguments, maxIterations)
-				return result, updatedMessages, err
+				result, updatedMessages, planErr := a.executePlanTool(ctx, messages, toolCall, arguments, maxIterations)
+				messages = updatedMessages
+				if planErr != nil {
+					return "", messages, planErr
+				}
+				if result != "" {
+					return result, messages, nil
+				}
+				continue
 			}
 
 			result := ""
@@ -214,38 +231,46 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			} else {
 				result, err = function(arguments)
 				if err != nil {
-					return "", messages, err
+					result = fmt.Sprintf("Error: %v", err)
 				}
 			}
 
-			toolMessage := map[string]any{
-				"role":         "tool",
-				"tool_call_id": toolCall.ID,
-				"content":      result,
-			}
-			messages = append(messages, toolMessage)
-			if err := a.recordMessages(toolMessage); err != nil {
-				return "", messages, err
+			updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, result)
+			messages = updatedMessages
+			if recordErr != nil {
+				return "", messages, recordErr
 			}
 		}
 	}
 
-	return "Max iterations reached", messages, nil
+	return fmt.Sprintf("Agent stopped: reached maximum of %d iterations without completing.", maxIterations), messages, nil
 }
 
 func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) (string, []map[string]any, error) {
 	task, err := requireStringArgument(arguments, "task")
 	if err != nil {
-		return "", messages, err
+		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: %v", err))
+		if recordErr != nil {
+			return "", updatedMessages, recordErr
+		}
+		return "", updatedMessages, nil
 	}
 
 	a.logf("[Plan] Breaking down: %s\n", task)
 	steps, err := a.planner.Generate(ctx, task)
 	if err != nil {
-		return "", messages, err
+		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: plan generation failed: %v", err))
+		if recordErr != nil {
+			return "", updatedMessages, recordErr
+		}
+		return "", updatedMessages, nil
 	}
 	if len(steps) == 0 {
-		return "", messages, fmt.Errorf("planner returned no steps")
+		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, "Error: planner returned no steps for this task")
+		if recordErr != nil {
+			return "", updatedMessages, recordErr
+		}
+		return "", updatedMessages, nil
 	}
 
 	a.logf("[Plan] Created %d steps\n", len(steps))
@@ -362,4 +387,17 @@ func (a *Agent) logf(format string, arguments ...any) {
 		return
 	}
 	fmt.Fprintf(a.logWriter, format, arguments...)
+}
+
+func (a *Agent) appendToolMessage(messages []map[string]any, toolCallID, content string) ([]map[string]any, error) {
+	toolMessage := map[string]any{
+		"role":         "tool",
+		"tool_call_id": toolCallID,
+		"content":      content,
+	}
+	messages = append(messages, toolMessage)
+	if err := a.recordMessages(toolMessage); err != nil {
+		return messages, err
+	}
+	return messages, nil
 }
