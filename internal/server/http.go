@@ -4,12 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
-
-	serverchanclient "bqagent/internal/serverchan"
 )
 
 const (
@@ -18,15 +15,12 @@ const (
 )
 
 type HandlerOptions struct {
-	Service             *Service
-	ServerChanClient    *serverchanclient.Client
-	BotWebhookProcessor *BotWebhookProcessor
+	Service  *Service
+	Channels []Channel
 }
 
 type handler struct {
-	service             *Service
-	serverChanClient    *serverchanclient.Client
-	botWebhookProcessor *BotWebhookProcessor
+	service *Service
 }
 
 type chatResponse struct {
@@ -37,20 +31,16 @@ type chatResponse struct {
 }
 
 func NewHandler(options HandlerOptions) http.Handler {
-	serverChanClient := options.ServerChanClient
-	if serverChanClient == nil {
-		serverChanClient = serverchanclient.NewClient(nil)
-	}
-	handler := &handler{
-		service:             options.Service,
-		serverChanClient:    serverChanClient,
-		botWebhookProcessor: options.BotWebhookProcessor,
-	}
+	handler := &handler{service: options.Service}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handler.handleHealth)
 	mux.HandleFunc("/api/v1/chat", handler.handleChat)
-	mux.HandleFunc("/api/v1/serverchan/chat", handler.handleServerChanChat)
-	mux.HandleFunc("/api/v1/serverchan/bot/webhook", handler.handleServerChanBotWebhook)
+	for _, channel := range options.Channels {
+		if channel == nil || !channel.Enabled() {
+			continue
+		}
+		channel.RegisterRoutes(mux)
+	}
 	return mux
 }
 
@@ -88,81 +78,6 @@ func (handler *handler) handleChat(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, Reply: response.Reply})
-}
-
-func (handler *handler) handleServerChanChat(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodPost {
-		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
-		return
-	}
-
-	values, err := readValues(writer, request)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
-		return
-	}
-	serverChanRequest, err := serverchanclient.ParseChatRequest(values)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(request.Context(), requestTimeout)
-	defer cancel()
-
-	response, err := handler.service.HandleTurn(ctx, TurnRequest{SessionID: serverChanRequest.SessionID, Message: serverChanRequest.Message})
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
-		return
-	}
-
-	title, desp := serverchanclient.BuildReply(serverChanRequest.Title, response.Reply)
-	delivery, err := handler.serverChanClient.Send(ctx, serverChanRequest.SendKey, title, desp)
-	if err != nil {
-		writeError(writer, http.StatusBadGateway, chatResponse{SessionID: response.SessionID, Reply: response.Reply, Error: err.Error()})
-		return
-	}
-
-	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, Reply: response.Reply, ServerChanResponse: delivery})
-}
-
-func (handler *handler) handleServerChanBotWebhook(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodPost {
-		writePlainText(writer, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if handler.botWebhookProcessor == nil || !handler.botWebhookProcessor.Configured() {
-		writePlainText(writer, http.StatusServiceUnavailable, "serverchan bot is not configured")
-		return
-	}
-	if !handler.botWebhookProcessor.VerifySecret(request.Header) {
-		writePlainText(writer, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	if !strings.Contains(strings.ToLower(request.Header.Get("Content-Type")), "application/json") {
-		writePlainText(writer, http.StatusBadRequest, "invalid payload")
-		return
-	}
-
-	request.Body = http.MaxBytesReader(writer, request.Body, maxRequestBodySize)
-	update, err := serverchanclient.ParseBotWebhookPayload(request.Body)
-	if err != nil {
-		if err == serverchanclient.ErrIgnoreBotUpdate {
-			writePlainText(writer, http.StatusOK, "ok")
-			return
-		}
-		writePlainText(writer, http.StatusBadRequest, "invalid payload")
-		return
-	}
-
-	writePlainText(writer, http.StatusOK, "ok")
-	go func(update serverchanclient.BotUpdate) {
-		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-		defer cancel()
-		if err := handler.botWebhookProcessor.ProcessUpdate(ctx, update); err != nil {
-			log.Printf("serverchan bot webhook processing failed: %v", err)
-		}
-	}(update)
 }
 
 func parseTurnRequest(values map[string]string) (TurnRequest, error) {

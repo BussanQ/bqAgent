@@ -14,7 +14,7 @@ type BotWebhookProcessor struct {
 	client  *serverchanclient.BotClient
 	states  *serverchanclient.BotStateStore
 	secret  string
-	locker  *KeyedLocker
+	runner  *ChannelTurnRunner
 }
 
 func NewBotWebhookProcessor(service *Service, client *serverchanclient.BotClient, states *serverchanclient.BotStateStore, secret string) *BotWebhookProcessor {
@@ -23,7 +23,7 @@ func NewBotWebhookProcessor(service *Service, client *serverchanclient.BotClient
 		client:  client,
 		states:  states,
 		secret:  secret,
-		locker:  NewKeyedLocker(),
+		runner:  NewChannelTurnRunner(service),
 	}
 }
 
@@ -42,56 +42,58 @@ func (processor *BotWebhookProcessor) ProcessUpdate(ctx context.Context, update 
 	if !processor.Configured() {
 		return fmt.Errorf("serverchan bot is not configured")
 	}
-	unlock := processor.locker.Lock(strconv.FormatInt(update.ChatID, 10))
-	defer unlock()
 
-	state, err := processor.states.Load(update.ChatID)
-	if err != nil {
-		return err
-	}
-	if update.UpdateID <= state.LastCompletedUpdateID {
-		return nil
-	}
-	if state.PendingUpdateID == update.UpdateID && state.PendingReply != "" {
-		if _, err := processor.client.SendMessage(ctx, update.ChatID, state.PendingReply); err != nil {
-			state.LastError = err.Error()
-			_ = processor.states.Save(state)
+	_, err := processor.runner.Process(ctx, ChannelTurnOptions{
+		PeerKey:   strconv.FormatInt(update.ChatID, 10),
+		DedupeKey: strconv.FormatInt(update.UpdateID, 10),
+		Message:   update.Text,
+		LoadState: func() (ChannelConversationState, error) {
+			state, err := processor.states.Load(update.ChatID)
+			if err != nil {
+				return ChannelConversationState{}, err
+			}
+			return ChannelConversationState{
+				SessionID:        state.SessionID,
+				LastCompletedKey: formatInt64Key(state.LastCompletedUpdateID),
+				PendingKey:       formatInt64Key(state.PendingUpdateID),
+				PendingReply:     state.PendingReply,
+				LastError:        state.LastError,
+			}, nil
+		},
+		SaveState: func(next ChannelConversationState) error {
+			state, err := processor.states.Load(update.ChatID)
+			if err != nil {
+				return err
+			}
+			state.SessionID = next.SessionID
+			state.LastCompletedUpdateID = parseInt64Key(next.LastCompletedKey)
+			state.PendingUpdateID = parseInt64Key(next.PendingKey)
+			state.PendingReply = next.PendingReply
+			state.LastError = next.LastError
+			return processor.states.Save(state)
+		},
+		SendReply: func(ctx context.Context, reply string) error {
+			_, err := processor.client.SendMessage(ctx, update.ChatID, reply)
 			return err
-		}
-		state.LastCompletedUpdateID = update.UpdateID
-		state.PendingUpdateID = 0
-		state.PendingReply = ""
-		state.LastError = ""
-		return processor.states.Save(state)
-	}
+		},
+	})
+	return err
+}
 
-	response, err := processor.service.HandleTurn(ctx, TurnRequest{SessionID: state.SessionID, Message: update.Text})
+func formatInt64Key(value int64) string {
+	if value <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(value, 10)
+}
+
+func parseInt64Key(value string) int64 {
+	if value == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		state.LastError = err.Error()
-		if response.SessionID != "" {
-			state.SessionID = response.SessionID
-		}
-		_ = processor.states.Save(state)
-		return err
+		return 0
 	}
-
-	state.SessionID = response.SessionID
-	state.PendingUpdateID = update.UpdateID
-	state.PendingReply = response.Reply
-	state.LastError = ""
-	if err := processor.states.Save(state); err != nil {
-		return err
-	}
-
-	if _, err := processor.client.SendMessage(ctx, update.ChatID, response.Reply); err != nil {
-		state.LastError = err.Error()
-		_ = processor.states.Save(state)
-		return err
-	}
-
-	state.LastCompletedUpdateID = update.UpdateID
-	state.PendingUpdateID = 0
-	state.PendingReply = ""
-	state.LastError = ""
-	return processor.states.Save(state)
+	return parsed
 }

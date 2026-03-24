@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
 	serverchanclient "bqagent/internal/serverchan"
+	"bqagent/internal/weixin"
 	"bqagent/internal/workspace"
 )
 
@@ -55,18 +57,37 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 		ToolDefinitions: runtime.Catalog.Definitions(),
 		Functions:       runtime.Catalog.Registry(),
 	})
+
 	botProcessor := appserver.NewBotWebhookProcessor(
 		service,
 		serverchanclient.NewBotClient(getenv("SERVERCHAN_BOT_TOKEN"), nil),
 		serverchanclient.NewBotStateStore(ws.Root),
 		getenv("SERVERCHAN_BOT_WEBHOOK_SECRET"),
 	)
+	channels := []appserver.Channel{
+		appserver.NewServerChanChannel(service, serverchanclient.NewClient(nil), botProcessor),
+	}
+	if envEnabled(getenv("WEIXIN_ILINK_ENABLED")) {
+		channels = append(channels, appserver.NewIlinkChannel(
+			service,
+			weixin.NewClientWithBaseURL(getenv("WEIXIN_ILINK_BASE_URL"), getenv("WEIXIN_ILINK_CHANNEL_VERSION"), nil),
+			weixin.NewTokenStore(ws.Root),
+			weixin.NewPollerStateStore(ws.Root),
+			weixin.NewChatStateStore(ws.Root),
+		))
+	}
+	for _, channel := range channels {
+		if channel == nil || !channel.Enabled() {
+			continue
+		}
+		channel.Start(ctx)
+	}
+
 	server := &http.Server{
 		Addr: options.listen,
 		Handler: appserver.NewHandler(appserver.HandlerOptions{
-			Service:             service,
-			ServerChanClient:    serverchanclient.NewClient(nil),
-			BotWebhookProcessor: botProcessor,
+			Service:  service,
+			Channels: channels,
 		}),
 	}
 
@@ -84,4 +105,13 @@ func serverOutputPath(ws *workspace.Workspace) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "server.log"), nil
+}
+
+func envEnabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

@@ -17,16 +17,19 @@ import (
 )
 
 type cliOptions struct {
-	plan       bool
-	background bool
-	chat       bool
-	server     bool
-	stream     bool
-	listen     string
-	resumeID   string
-	sessionID  string
-	sessionRun bool
-	serverRun  bool
+	plan        bool
+	background  bool
+	chat        bool
+	server      bool
+	stream      bool
+	ilinkLogin  bool
+	ilinkStatus bool
+	listen      string
+	serverURL   string
+	resumeID    string
+	sessionID   string
+	sessionRun  bool
+	serverRun   bool
 }
 
 type runDeps struct {
@@ -52,6 +55,13 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+
+	if options.ilinkLogin {
+		return runIlinkLogin(ctx, stdout, stderr, options)
+	}
+	if options.ilinkStatus {
+		return runIlinkStatus(ctx, stdout, stderr, options)
 	}
 
 	cwd, err := deps.getwd()
@@ -110,7 +120,10 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.BoolVar(&options.chat, "chat", false, "interactive multi-turn conversation mode")
 	fs.BoolVar(&options.server, "server", false, "run a long-lived HTTP server")
 	fs.BoolVar(&options.stream, "stream", false, "stream responses token by token (requires --chat)")
+	fs.BoolVar(&options.ilinkLogin, "ilink-login", false, "trigger the running server's iLink login flow")
+	fs.BoolVar(&options.ilinkStatus, "ilink-status", false, "fetch the running server's iLink login status")
 	fs.StringVar(&options.listen, "listen", "127.0.0.1:8080", "HTTP listen address for server mode")
+	fs.StringVar(&options.serverURL, "server-url", "http://127.0.0.1:8080", "base URL of a running server for client-style commands")
 	fs.StringVar(&options.resumeID, "resume", "", "resume an existing session")
 	fs.StringVar(&options.sessionID, "session-id", "", "internal session identifier")
 	fs.BoolVar(&options.sessionRun, "session-run", false, "internal background session runner")
@@ -142,6 +155,18 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	}
 	if options.stream && !options.chat {
 		return cliOptions{}, nil, fmt.Errorf("--stream requires --chat")
+	}
+	if options.ilinkLogin && options.ilinkStatus {
+		return cliOptions{}, nil, fmt.Errorf("--ilink-login cannot be combined with --ilink-status")
+	}
+	if (options.ilinkLogin || options.ilinkStatus) && (options.plan || options.background || options.chat || options.server || options.stream || options.sessionRun || options.serverRun || effectiveSessionID(options) != "") {
+		return cliOptions{}, nil, fmt.Errorf("--ilink-login and --ilink-status cannot be combined with execution or server flags")
+	}
+	if options.ilinkLogin && len(fs.Args()) > 0 {
+		return cliOptions{}, nil, fmt.Errorf("--ilink-login does not accept a task")
+	}
+	if options.ilinkStatus && len(fs.Args()) > 0 {
+		return cliOptions{}, nil, fmt.Errorf("--ilink-status does not accept a task")
 	}
 	if (options.server || options.serverRun) && len(fs.Args()) > 0 {
 		return cliOptions{}, nil, fmt.Errorf("server mode does not accept a task")

@@ -28,7 +28,7 @@ func TestChatEndpointCreatesAndResumesSession(t *testing.T) {
 	defer llmServer.Close()
 
 	root := t.TempDir()
-	handler := NewHandler(HandlerOptions{Service: newTestService(root, llmServer.URL), ServerChanClient: serverchanclient.NewClient(nil)})
+	handler := NewHandler(HandlerOptions{Service: newTestService(root, llmServer.URL)})
 	apiServer := httptest.NewServer(handler)
 	defer apiServer.Close()
 
@@ -110,9 +110,12 @@ func TestServerChanChatEndpointSendsReply(t *testing.T) {
 	serverChanHTTPClient := &http.Client{Transport: rewriteTransport{target: targetURL, base: http.DefaultTransport}}
 
 	root := t.TempDir()
+	service := newTestService(root, llmServer.URL)
 	handler := NewHandler(HandlerOptions{
-		Service:          newTestService(root, llmServer.URL),
-		ServerChanClient: serverchanclient.NewClient(serverChanHTTPClient),
+		Service: service,
+		Channels: []Channel{
+			NewServerChanChannel(service, serverchanclient.NewClient(serverChanHTTPClient), nil),
+		},
 	})
 	apiServer := httptest.NewServer(handler)
 	defer apiServer.Close()
@@ -336,12 +339,18 @@ func TestServerChanBotWebhookRequiresConfiguredToken(t *testing.T) {
 	service := newTestService(root, "http://example.invalid")
 	handler := NewHandler(HandlerOptions{
 		Service: service,
-		BotWebhookProcessor: NewBotWebhookProcessor(
-			service,
-			serverchanclient.NewBotClient("", nil),
-			serverchanclient.NewBotStateStore(root),
-			"secret",
-		),
+		Channels: []Channel{
+			NewServerChanChannel(
+				service,
+				nil,
+				NewBotWebhookProcessor(
+					service,
+					serverchanclient.NewBotClient("", nil),
+					serverchanclient.NewBotStateStore(root),
+					"secret",
+				),
+			),
+		},
 	})
 	apiServer := httptest.NewServer(handler)
 	defer apiServer.Close()
@@ -370,14 +379,19 @@ func newTestService(root, baseURL string) *Service {
 func newTestHandlerWithBot(root, llmBaseURL, botBaseURL, token, secret string) http.Handler {
 	service := newTestService(root, llmBaseURL)
 	return NewHandler(HandlerOptions{
-		Service:          service,
-		ServerChanClient: serverchanclient.NewClient(nil),
-		BotWebhookProcessor: NewBotWebhookProcessor(
-			service,
-			serverchanclient.NewBotClientWithBaseURL(token, botBaseURL, nil),
-			serverchanclient.NewBotStateStore(root),
-			secret,
-		),
+		Service: service,
+		Channels: []Channel{
+			NewServerChanChannel(
+				service,
+				serverchanclient.NewClient(nil),
+				NewBotWebhookProcessor(
+					service,
+					serverchanclient.NewBotClientWithBaseURL(token, botBaseURL, nil),
+					serverchanclient.NewBotStateStore(root),
+					secret,
+				),
+			),
+		},
 	})
 }
 
