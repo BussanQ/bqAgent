@@ -43,6 +43,11 @@ func runServerInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace
 }
 
 func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, options cliOptions) int {
+	if strings.TrimSpace(getenv("OPENAI_API_KEY")) == "" {
+		fmt.Fprintln(stderr, "OPENAI_API_KEY is required for server mode")
+		return 1
+	}
+
 	runtime := appruntime.Factory{
 		Config:        appruntime.ConfigFromEnv(getenv),
 		WorkspaceRoot: ws.Root,

@@ -84,7 +84,7 @@ func TestChatEndpointCreatesAndResumesSession(t *testing.T) {
 func TestServerChanChatEndpointSendsReply(t *testing.T) {
 	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"assistant reply"}}]}`))
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"<think>hidden</think>\nassistant reply"}}]}`))
 	}))
 	defer llmServer.Close()
 

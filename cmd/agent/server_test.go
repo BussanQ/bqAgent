@@ -70,3 +70,24 @@ func TestServerCannotCombineWithChat(t *testing.T) {
 		t.Fatalf("error = %q, want server/chat validation", err.Error())
 	}
 }
+
+func TestRunServerRequiresAPIKey(t *testing.T) {
+	root := t.TempDir()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runWithDeps(context.Background(), nil, &stdout, &stderr, []string{"--server-run"}, func(string) string { return "" }, runDeps{
+		getwd:           func() (string, error) { return root, nil },
+		executable:      func() (string, error) { return "bqagent-test", nil },
+		startBackground: func(string, []string, string, string) error { return nil },
+	})
+	if code != 1 {
+		t.Fatalf("runWithDeps returned code %d, want 1", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "OPENAI_API_KEY is required for server mode") {
+		t.Fatalf("stderr = %q, want missing api key error", stderr.String())
+	}
+}

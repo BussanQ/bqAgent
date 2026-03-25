@@ -58,6 +58,7 @@ func (runner *ChannelTurnRunner) Process(ctx context.Context, options ChannelTur
 		return state, nil
 	}
 	if dedupeKey != "" && dedupeKey == state.PendingKey && state.PendingReply != "" {
+		state.PendingReply = sanitizeChannelReply(state.PendingReply)
 		if err := options.SendReply(ctx, state.PendingReply); err != nil {
 			state.LastError = err.Error()
 			_ = options.SaveState(state)
@@ -82,12 +83,12 @@ func (runner *ChannelTurnRunner) Process(ctx context.Context, options ChannelTur
 
 	state.SessionID = response.SessionID
 	state.PendingKey = dedupeKey
-	state.PendingReply = response.Reply
+	state.PendingReply = sanitizeChannelReply(response.Reply)
 	state.LastError = ""
 	if err := options.SaveState(state); err != nil {
 		return state, err
 	}
-	if err := options.SendReply(ctx, response.Reply); err != nil {
+	if err := options.SendReply(ctx, state.PendingReply); err != nil {
 		state.LastError = err.Error()
 		_ = options.SaveState(state)
 		return state, err

@@ -69,6 +69,7 @@ func (channel *ServerChanChannel) handleChat(writer http.ResponseWriter, request
 		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
 		return
 	}
+	response.Reply = sanitizeChannelReply(response.Reply)
 
 	title, desp := serverchanclient.BuildReply(serverChanRequest.Title, response.Reply)
 	delivery, err := channel.serverChanClient.Send(ctx, serverChanRequest.SendKey, title, desp)
