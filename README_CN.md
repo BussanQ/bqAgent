@@ -60,6 +60,16 @@ set OPENAI_BASE_URL=https://api.openai.com/v1
 set OPENAI_MODEL=gpt-4o-mini
 ```
 
+也可以把同样的变量写在工作区根目录下的 `.env` 文件中，bqagent 会在启动时自动加载。
+
+```dotenv
+OPENAI_API_KEY=your-key-here
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+```
+
+如果 shell 里已经设置了同名环境变量，则以 shell 中的值为准，不会被 `.env` 覆盖。
+
 如果没有设置 `OPENAI_MODEL`，bqagent 默认使用 `MiniMax-M2.5`。
 
 如果要启用 ServerChan Bot webhook 对话，还需要设置：

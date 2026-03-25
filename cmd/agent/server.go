@@ -114,6 +114,8 @@ func serverOutputPath(ws *workspace.Workspace) (string, error) {
 
 func envEnabled(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return true
 	case "1", "true", "yes", "on":
 		return true
 	default:

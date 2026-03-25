@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"bqagent/internal/tools"
 )
@@ -51,6 +52,8 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		model = DefaultModel
 	}
 
+	client = instrumentChatCompletionClient(client, options.LogWriter)
+
 	systemPrompt := strings.TrimSpace(options.SystemPrompt)
 	if systemPrompt == "" {
 		systemPrompt = DefaultSystemPrompt
@@ -77,7 +80,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		systemPrompt:    systemPrompt,
 		toolDefinitions: definitions,
 		functions:       functions,
-		planner:         options.Planner,
+		planner:         clonePlannerWithClient(options.Planner, client),
 		recorder:        options.Recorder,
 		stream:          options.Stream,
 	}
@@ -151,35 +154,46 @@ func (a *Agent) runPlannedConversation(ctx context.Context, messages []map[strin
 	return strings.Join(results, "\n"), messages, nil
 }
 
-func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, maxIterations int, allowPlan bool) (string, []map[string]any, error) {
+func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, maxIterations int, allowPlan bool) (result string, updatedMessages []map[string]any, err error) {
+	startedAt := time.Now()
+	updatedMessages = messages
 	if maxIterations <= 0 {
 		maxIterations = DefaultMaxIterations
 	}
 
 	definitions := a.toolDefinitionsForRun(allowPlan)
+	actualIterations := 0
+	defer func() {
+		logTurnTiming(a.logWriter, actualIterations, allowPlan, time.Since(startedAt), err)
+	}()
+
 	for iteration := 0; iteration < maxIterations; iteration++ {
+		actualIterations = iteration + 1
 		var (
-			message AssistantMessage
-			err     error
+			message    AssistantMessage
+			requestErr error
 		)
 		if a.stream {
-			message, err = a.client.CreateChatCompletionStream(ctx, a.model, messages, definitions, func(chunk string) {
+			message, requestErr = a.client.CreateChatCompletionStream(ctx, a.model, messages, definitions, func(chunk string) {
 				if a.logWriter != nil {
 					_, _ = io.WriteString(a.logWriter, chunk)
 				}
 			})
 		} else {
-			message, err = a.client.CreateChatCompletion(ctx, a.model, messages, definitions)
+			message, requestErr = a.client.CreateChatCompletion(ctx, a.model, messages, definitions)
 		}
-		if err != nil {
-			return "", messages, err
+		if requestErr != nil {
+			err = requestErr
+			return "", updatedMessages, err
 		}
+		message.normalizeInlineToolCalls()
 
 		requestMessage := message.RequestMessage()
-		messages = append(messages, requestMessage)
+		updatedMessages = append(updatedMessages, requestMessage)
 		if err := a.recordMessages(requestMessage); err != nil {
-			return "", messages, err
+			return "", updatedMessages, err
 		}
+		messages = updatedMessages
 
 		if a.stream && len(message.ToolCalls) == 0 {
 			// content already streamed via onChunk; skip log line
@@ -187,63 +201,69 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			a.logf("[Agent] %s\n", message.DisplayContent())
 		}
 		if len(message.ToolCalls) == 0 {
-			return message.FinalContent(), messages, nil
+			return message.FinalContent(), updatedMessages, nil
 		}
 
 		for _, toolCall := range message.ToolCalls {
 			parsedArguments, err := parseArguments(toolCall.Function.Arguments)
 			if err != nil {
-				toolMessage, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err))
-				messages = toolMessage
+				toolMessage, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, fmt.Sprintf("Error: Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err))
+				updatedMessages = toolMessage
 				if recordErr != nil {
-					return "", messages, recordErr
+					return "", updatedMessages, recordErr
 				}
+				messages = updatedMessages
 				continue
 			}
 			a.logf("[Tool] %s(%v)\n", toolCall.Function.Name, parsedArguments)
 
 			arguments, ok := parsedArguments.(map[string]any)
 			if !ok {
-				toolMessage, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name))
-				messages = toolMessage
+				toolMessage, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name))
+				updatedMessages = toolMessage
 				if recordErr != nil {
-					return "", messages, recordErr
+					return "", updatedMessages, recordErr
 				}
+				messages = updatedMessages
 				continue
 			}
 
 			if toolCall.Function.Name == "plan" && allowPlan && a.planner != nil {
-				result, updatedMessages, planErr := a.executePlanTool(ctx, messages, toolCall, arguments, maxIterations)
+				result, updatedMessages, planErr := a.executePlanTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
 				messages = updatedMessages
 				if planErr != nil {
-					return "", messages, planErr
+					return "", updatedMessages, planErr
 				}
 				if result != "" {
-					return result, messages, nil
+					return result, updatedMessages, nil
 				}
 				continue
 			}
 
-			result := ""
+			toolStartedAt := time.Now()
+			toolResult := ""
+			var toolErr error
 			function, ok := a.functions[toolCall.Function.Name]
 			if !ok {
-				result = fmt.Sprintf("Error: Unknown tool '%s'", toolCall.Function.Name)
+				toolErr = fmt.Errorf("unknown tool '%s'", toolCall.Function.Name)
+				toolResult = fmt.Sprintf("Error: Unknown tool '%s'", toolCall.Function.Name)
 			} else {
-				result, err = function(arguments)
-				if err != nil {
-					result = fmt.Sprintf("Error: %v", err)
+				toolResult, toolErr = function(arguments)
+				if toolErr != nil {
+					toolResult = fmt.Sprintf("Error: %v", toolErr)
 				}
 			}
+			logToolTiming(a.logWriter, toolCall.Function.Name, time.Since(toolStartedAt), toolErr)
 
-			updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, result)
+			updatedMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, toolResult)
 			messages = updatedMessages
 			if recordErr != nil {
-				return "", messages, recordErr
+				return "", updatedMessages, recordErr
 			}
 		}
 	}
 
-	return fmt.Sprintf("Agent stopped: reached maximum of %d iterations without completing.", maxIterations), messages, nil
+	return fmt.Sprintf("Agent stopped: reached maximum of %d iterations without completing.", maxIterations), updatedMessages, nil
 }
 
 func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) (string, []map[string]any, error) {
@@ -368,6 +388,16 @@ func cloneFunctionMap(functions map[string]tools.Function) map[string]tools.Func
 		cloned[name] = function
 	}
 	return cloned
+}
+
+func clonePlannerWithClient(planner *Planner, client ChatCompletionClient) *Planner {
+	if planner == nil {
+		return nil
+	}
+	return &Planner{
+		client: client,
+		model:  planner.model,
+	}
 }
 
 func duplicateMessages(messages []map[string]any) []map[string]any {

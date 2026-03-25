@@ -47,6 +47,12 @@ func TestRunPlannedConversationExecutesPlannerSteps(t *testing.T) {
 	if !strings.Contains(logs.String(), "[Plan] Created 2 steps") {
 		t.Fatalf("logs = %q, want plan creation log", logs.String())
 	}
+	if !strings.Contains(logs.String(), "[Model] request=chat") {
+		t.Fatalf("logs = %q, want model timing log", logs.String())
+	}
+	if !strings.Contains(logs.String(), "[Turn] iterations=1 allow_plan=false") {
+		t.Fatalf("logs = %q, want step turn timing", logs.String())
+	}
 }
 
 func TestRunConversationHandlesPlanTool(t *testing.T) {
@@ -54,7 +60,7 @@ func TestRunConversationHandlesPlanTool(t *testing.T) {
 		responses: []AssistantMessage{
 			{
 				ToolCalls: []ToolCall{{
-					ID: "plan-1",
+					ID:       "plan-1",
 					Function: FunctionCall{Name: "plan", Arguments: `{"task":"inspect repo"}`},
 				}},
 			},
@@ -64,7 +70,9 @@ func TestRunConversationHandlesPlanTool(t *testing.T) {
 	}
 
 	catalog := tools.NewCatalog(tools.Options{IncludePlan: true})
+	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
+		LogWriter:       &logs,
 		Planner:         NewPlanner(client, ""),
 		ToolDefinitions: catalog.Definitions(),
 		Functions:       catalog.Registry(),
@@ -86,6 +94,12 @@ func TestRunConversationHandlesPlanTool(t *testing.T) {
 	}
 	if toolMessages[0]["content"] != "Plan created with 1 steps. Executing now..." {
 		t.Fatalf("tool message content = %#v, want plan execution note", toolMessages[0]["content"])
+	}
+	if !strings.Contains(logs.String(), "[Model] request=chat") {
+		t.Fatalf("logs = %q, want model timing log", logs.String())
+	}
+	if !strings.Contains(logs.String(), "[Turn] iterations=1 allow_plan=false") {
+		t.Fatalf("logs = %q, want child turn timing", logs.String())
 	}
 }
 

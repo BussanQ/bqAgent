@@ -95,6 +95,12 @@ func TestRunReturnsUnknownToolErrorToLoop(t *testing.T) {
 	if !strings.Contains(logs.String(), "[Tool] missing_tool(map[])") {
 		t.Fatalf("logs did not include tool call: %q", logs.String())
 	}
+	if !strings.Contains(logs.String(), "[Tool] name=missing_tool") || !strings.Contains(logs.String(), "status=error") {
+		t.Fatalf("logs did not include tool timing: %q", logs.String())
+	}
+	if !strings.Contains(logs.String(), "[Turn] iterations=2 allow_plan=false") {
+		t.Fatalf("logs did not include turn timing: %q", logs.String())
+	}
 }
 
 func TestRunReturnsMalformedArgumentsAsToolError(t *testing.T) {
@@ -116,7 +122,8 @@ func TestRunReturnsMalformedArgumentsAsToolError(t *testing.T) {
 		},
 	}
 
-	app := New(client, "", &bytes.Buffer{})
+	var logs bytes.Buffer
+	app := New(client, "", &logs)
 
 	result, err := app.Run(context.Background(), "test invalid args", 2)
 	if err != nil {
@@ -136,11 +143,18 @@ func TestRunReturnsMalformedArgumentsAsToolError(t *testing.T) {
 	if !strings.Contains(content, `Error: Invalid JSON arguments for tool "read_file"`) {
 		t.Fatalf("tool content = %q, want malformed JSON tool error", content)
 	}
+	if strings.Contains(logs.String(), "[Tool] name=read_file") {
+		t.Fatalf("logs = %q, did not want tool timing for invalid JSON", logs.String())
+	}
+	if !strings.Contains(logs.String(), "[Turn] iterations=2 allow_plan=false") {
+		t.Fatalf("logs did not include turn timing: %q", logs.String())
+	}
 }
 
 func TestRunReturnsAssistantContentWithoutToolCalls(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Content: "done"}}}
-	app := New(client, "", &bytes.Buffer{})
+	var logs bytes.Buffer
+	app := New(client, "", &logs)
 
 	result, err := app.Run(context.Background(), "hello", 5)
 	if err != nil {
@@ -148,6 +162,44 @@ func TestRunReturnsAssistantContentWithoutToolCalls(t *testing.T) {
 	}
 	if result != "done" {
 		t.Fatalf("Run returned %q, want %q", result, "done")
+	}
+	if !strings.Contains(logs.String(), "[Turn] iterations=1 allow_plan=false") {
+		t.Fatalf("logs did not include turn timing: %q", logs.String())
+	}
+}
+
+func TestRunExecutesInlineToolCallContent(t *testing.T) {
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{
+				Content: "<think>用户让我用 web_search 搜索天气。我来调用这个工具。</think>\n\n<tool_call>\n{\"name\":\"read_file\",\"parameters\":{\"path\":\"README.md\"}}\n</tool_call>",
+			},
+			{Content: "done"},
+		},
+	}
+	var logs bytes.Buffer
+	app := New(client, "", &logs)
+
+	result, err := app.Run(context.Background(), "search", 3)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("Run returned %q, want %q", result, "done")
+	}
+	if len(client.messages) != 2 {
+		t.Fatalf("client saw %d requests, want 2", len(client.messages))
+	}
+	toolMessages := extractToolMessages(client.messages[1])
+	if len(toolMessages) != 1 {
+		t.Fatalf("saw %d tool messages, want 1", len(toolMessages))
+	}
+	content, _ := toolMessages[0]["content"].(string)
+	if !strings.Contains(content, "Error:") || !strings.Contains(content, "README.md") {
+		t.Fatalf("tool content = %q, want executed inline tool result", content)
+	}
+	if !strings.Contains(logs.String(), "[Tool] read_file(map[path:README.md])") {
+		t.Fatalf("logs did not include inline tool call: %q", logs.String())
 	}
 }
 
@@ -164,7 +216,8 @@ func TestRunReturnsMaxIterationsReached(t *testing.T) {
 			},
 		},
 	}
-	app := New(client, "", &bytes.Buffer{})
+	var logs bytes.Buffer
+	app := New(client, "", &logs)
 
 	result, err := app.Run(context.Background(), "hello", 1)
 	if err != nil {
@@ -173,11 +226,15 @@ func TestRunReturnsMaxIterationsReached(t *testing.T) {
 	if !strings.Contains(result, "Agent stopped") || !strings.Contains(result, "1 iterations") {
 		t.Fatalf("Run returned %q, want max iterations message with count", result)
 	}
+	if !strings.Contains(logs.String(), "[Turn] iterations=1 allow_plan=false") {
+		t.Fatalf("logs did not include turn timing: %q", logs.String())
+	}
 }
 
 func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
-	app := New(client, "", &bytes.Buffer{})
+	var logs bytes.Buffer
+	app := New(client, "", &logs)
 
 	messages := []map[string]any{
 		{"role": "system", "content": "sys"},
@@ -201,6 +258,9 @@ func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
 	if len(messages) != 2 {
 		t.Fatalf("original messages mutated: len = %d, want 2", len(messages))
 	}
+	if !strings.Contains(logs.String(), "[Turn] iterations=1 allow_plan=false") {
+		t.Fatalf("logs did not include turn timing: %q", logs.String())
+	}
 }
 
 func TestRunReturnsToolExecutionErrorToLoop(t *testing.T) {
@@ -222,7 +282,8 @@ func TestRunReturnsToolExecutionErrorToLoop(t *testing.T) {
 		},
 	}
 
-	app := New(client, "", &bytes.Buffer{})
+	var logs bytes.Buffer
+	app := New(client, "", &logs)
 
 	result, err := app.Run(context.Background(), "test tool error", 2)
 	if err != nil {
@@ -245,6 +306,12 @@ func TestRunReturnsToolExecutionErrorToLoop(t *testing.T) {
 	}
 	if !strings.Contains(content, "missing.txt") {
 		t.Fatalf("tool content = %q, want missing path detail", content)
+	}
+	if !strings.Contains(logs.String(), "[Tool] name=read_file") || !strings.Contains(logs.String(), "status=error") {
+		t.Fatalf("logs did not include tool timing: %q", logs.String())
+	}
+	if !strings.Contains(logs.String(), "[Turn] iterations=2 allow_plan=false") {
+		t.Fatalf("logs did not include turn timing: %q", logs.String())
 	}
 }
 

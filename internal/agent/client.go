@@ -68,6 +68,11 @@ type chatCompletionResponse struct {
 	} `json:"choices"`
 }
 
+type inlineToolCallPayload struct {
+	Name       string         `json:"name"`
+	Parameters map[string]any `json:"parameters"`
+}
+
 type streamDelta struct {
 	Role      string `json:"role"`
 	Content   string `json:"content"`
@@ -155,6 +160,7 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 	if message.Role == "" {
 		message.Role = "assistant"
 	}
+	message.normalizeInlineToolCalls()
 	return message, nil
 }
 
@@ -273,7 +279,63 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 			},
 		})
 	}
+	message.normalizeInlineToolCalls()
 	return message, nil
+}
+
+func (m *AssistantMessage) normalizeInlineToolCalls() {
+	if m == nil || len(m.ToolCalls) > 0 {
+		return
+	}
+	text, ok := m.Content.(string)
+	if !ok {
+		return
+	}
+	m.ToolCalls = extractInlineToolCalls(text)
+}
+
+func extractInlineToolCalls(content string) []ToolCall {
+	toolCalls := make([]ToolCall, 0)
+	remaining := content
+	for index := 0; ; index++ {
+		start := strings.Index(remaining, "<tool_call>")
+		if start < 0 {
+			break
+		}
+		afterStart := remaining[start+len("<tool_call>"):]
+		end := strings.Index(afterStart, "</tool_call>")
+		if end < 0 {
+			break
+		}
+
+		payloadText := strings.TrimSpace(afterStart[:end])
+		remaining = afterStart[end+len("</tool_call>"):]
+		if payloadText == "" {
+			continue
+		}
+
+		var payload inlineToolCallPayload
+		if err := json.Unmarshal([]byte(payloadText), &payload); err != nil {
+			continue
+		}
+		if strings.TrimSpace(payload.Name) == "" {
+			continue
+		}
+
+		arguments, err := json.Marshal(payload.Parameters)
+		if err != nil {
+			continue
+		}
+		toolCalls = append(toolCalls, ToolCall{
+			ID:   fmt.Sprintf("inline-tool-%d", index+1),
+			Type: "function",
+			Function: FunctionCall{
+				Name:      payload.Name,
+				Arguments: string(arguments),
+			},
+		})
+	}
+	return toolCalls
 }
 
 func (m AssistantMessage) RequestMessage() map[string]any {

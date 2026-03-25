@@ -91,3 +91,25 @@ func TestRunServerRequiresAPIKey(t *testing.T) {
 		t.Fatalf("stderr = %q, want missing api key error", stderr.String())
 	}
 }
+
+func TestEnvEnabledDefaultsToTrue(t *testing.T) {
+	if !envEnabled("") {
+		t.Fatal("envEnabled(\"\") = false, want true")
+	}
+}
+
+func TestEnvEnabledSupportsExplicitDisable(t *testing.T) {
+	for _, value := range []string{"0", "false", "off", "no"} {
+		if envEnabled(value) {
+			t.Fatalf("envEnabled(%q) = true, want false", value)
+		}
+	}
+}
+
+func TestEnvEnabledSupportsExplicitEnable(t *testing.T) {
+	for _, value := range []string{"1", "true", "on", "yes"} {
+		if !envEnabled(value) {
+			t.Fatalf("envEnabled(%q) = false, want true", value)
+		}
+	}
+}

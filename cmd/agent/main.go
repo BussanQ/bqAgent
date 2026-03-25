@@ -75,6 +75,7 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	getenv = appruntime.MergeEnv(getenv, appruntime.LoadDotEnv(ws.Root))
 
 	if err := ws.EnsureDefaults(); err != nil {
 		fmt.Fprintln(stderr, err)
