@@ -190,6 +190,13 @@ func TestRunExecutesInlineToolCallContent(t *testing.T) {
 	if len(client.messages) != 2 {
 		t.Fatalf("client saw %d requests, want 2", len(client.messages))
 	}
+	assistantMessage := client.messages[1][2]
+	if content := assistantMessage["content"]; content != nil {
+		t.Fatalf("assistant content = %#v, want nil for tool call follow-up", content)
+	}
+	if _, ok := assistantMessage["tool_calls"]; !ok {
+		t.Fatal("assistant message missing tool_calls in follow-up request")
+	}
 	toolMessages := extractToolMessages(client.messages[1])
 	if len(toolMessages) != 1 {
 		t.Fatalf("saw %d tool messages, want 1", len(toolMessages))
@@ -260,6 +267,116 @@ func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "[Turn] iterations=1 allow_plan=false") {
 		t.Fatalf("logs did not include turn timing: %q", logs.String())
+	}
+}
+
+func TestRunConversationTurnSanitizesCompletedToolHistory(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "next reply"}}}
+	var logs bytes.Buffer
+	app := New(client, "", &logs)
+
+	messages := []map[string]any{
+		{"role": "system", "content": "sys"},
+		{"role": "user", "content": "search news"},
+		{"role": "assistant", "content": nil, "tool_calls": []ToolCall{{ID: "tc-1", Type: "function", Function: FunctionCall{Name: "web_search", Arguments: `{"query":"today news"}`}}}},
+		{"role": "tool", "tool_call_id": "tc-1", "content": "search results"},
+		{"role": "assistant", "content": "today's headlines"},
+		{"role": "user", "content": "continue"},
+	}
+
+	result, updated, err := app.RunConversationTurn(context.Background(), messages, 5)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if result != "next reply" {
+		t.Fatalf("result = %q, want %q", result, "next reply")
+	}
+	if len(client.messages) != 1 {
+		t.Fatalf("client saw %d requests, want 1", len(client.messages))
+	}
+	request := client.messages[0]
+	if len(request) != 4 {
+		t.Fatalf("request messages = %d, want 4 after sanitizing tool history", len(request))
+	}
+	for _, message := range request {
+		role, _ := message["role"].(string)
+		if role == "tool" {
+			t.Fatalf("request still contains tool message: %#v", message)
+		}
+		if role == "assistant" {
+			if _, ok := message["tool_calls"]; ok {
+				t.Fatalf("request still contains assistant tool call scaffolding: %#v", message)
+			}
+		}
+	}
+	if len(updated) != 5 {
+		t.Fatalf("updated messages = %d, want 5 after appending final assistant reply to sanitized history", len(updated))
+	}
+}
+
+func TestRunSanitizesEarlierCompletedToolHistoryBetweenIterations(t *testing.T) {
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{
+				Content: "",
+				ToolCalls: []ToolCall{
+					{ID: "tc-1", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"missing-1.txt"}`}},
+				},
+			},
+			{
+				Content: "",
+				ToolCalls: []ToolCall{
+					{ID: "tc-2", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"missing-2.txt"}`}},
+				},
+			},
+			{Content: "done"},
+		},
+	}
+	var logs bytes.Buffer
+	app := New(client, "", &logs)
+
+	result, err := app.Run(context.Background(), "search", 5)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("Run returned %q, want %q", result, "done")
+	}
+	if len(client.messages) != 3 {
+		t.Fatalf("client saw %d requests, want 3", len(client.messages))
+	}
+	secondRequest := client.messages[1]
+	assistantToolCalls := 0
+	for _, message := range secondRequest {
+		role, _ := message["role"].(string)
+		if role == "assistant" {
+			if _, ok := message["tool_calls"]; ok {
+				assistantToolCalls++
+			}
+		}
+	}
+	if assistantToolCalls != 1 {
+		t.Fatalf("second request assistant tool call count = %d, want 1 pending call", assistantToolCalls)
+	}
+	thirdRequest := client.messages[2]
+	assistantToolCalls = 0
+	toolMessages := 0
+	for _, message := range thirdRequest {
+		role, _ := message["role"].(string)
+		if role == "tool" {
+			toolMessages++
+		}
+		if role == "assistant" {
+			if _, ok := message["tool_calls"]; ok {
+				assistantToolCalls++
+			}
+		}
+	}
+	if assistantToolCalls != 1 {
+		t.Fatalf("third request assistant tool call count = %d, want 1 latest call", assistantToolCalls)
+	}
+	if toolMessages != 1 {
+		t.Fatalf("third request tool message count = %d, want 1 latest tool result", toolMessages)
 	}
 }
 

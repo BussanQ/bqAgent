@@ -294,6 +294,32 @@ func (m *AssistantMessage) normalizeInlineToolCalls() {
 	m.ToolCalls = extractInlineToolCalls(text)
 }
 
+func stripInlineToolCallMarkup(content string) string {
+	if !strings.Contains(content, "<tool_call>") {
+		return content
+	}
+
+	var cleaned strings.Builder
+	remaining := content
+	for {
+		start := strings.Index(remaining, "<tool_call>")
+		if start < 0 {
+			cleaned.WriteString(remaining)
+			break
+		}
+
+		cleaned.WriteString(remaining[:start])
+		afterStart := remaining[start+len("<tool_call>"):]
+		end := strings.Index(afterStart, "</tool_call>")
+		if end < 0 {
+			break
+		}
+		remaining = afterStart[end+len("</tool_call>"):]
+	}
+
+	return strings.TrimSpace(cleaned.String())
+}
+
 func extractInlineToolCalls(content string) []ToolCall {
 	toolCalls := make([]ToolCall, 0)
 	remaining := content
@@ -339,9 +365,28 @@ func extractInlineToolCalls(content string) []ToolCall {
 }
 
 func (m AssistantMessage) RequestMessage() map[string]any {
+	role := m.Role
+	if strings.TrimSpace(role) == "" {
+		role = "assistant"
+	}
+
+	content := m.Content
+	if len(m.ToolCalls) > 0 {
+		if text, ok := content.(string); ok {
+			cleaned := stripInlineToolCallMarkup(text)
+			if strings.TrimSpace(cleaned) == "" {
+				content = nil
+			} else {
+				// Providers that support tool calls often expect assistant tool-call
+				// messages to carry structured calls only, not extra reasoning text.
+				content = nil
+			}
+		}
+	}
+
 	message := map[string]any{
-		"role":    m.Role,
-		"content": m.Content,
+		"role":    role,
+		"content": content,
 	}
 	if len(m.ToolCalls) > 0 {
 		message["tool_calls"] = m.ToolCalls

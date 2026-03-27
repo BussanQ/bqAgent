@@ -98,12 +98,12 @@ func (a *Agent) Run(ctx context.Context, userMessage string, maxIterations int) 
 }
 
 func (a *Agent) RunConversation(ctx context.Context, messages []map[string]any, maxIterations int) (string, error) {
-	result, _, err := a.runConversation(ctx, duplicateMessages(messages), maxIterations, a.planner != nil)
+	result, _, err := a.runConversation(ctx, sanitizeCompletedToolHistory(duplicateMessages(messages)), maxIterations, a.planner != nil)
 	return result, err
 }
 
 func (a *Agent) RunConversationTurn(ctx context.Context, messages []map[string]any, maxIterations int) (string, []map[string]any, error) {
-	return a.runConversation(ctx, duplicateMessages(messages), maxIterations, a.planner != nil)
+	return a.runConversation(ctx, sanitizeCompletedToolHistory(duplicateMessages(messages)), maxIterations, a.planner != nil)
 }
 
 func (a *Agent) RunPlanned(ctx context.Context, task string, maxIterations int) (string, error) {
@@ -169,18 +169,19 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		actualIterations = iteration + 1
+		requestMessages := sanitizeCompletedToolHistory(duplicateMessages(messages))
 		var (
 			message    AssistantMessage
 			requestErr error
 		)
 		if a.stream {
-			message, requestErr = a.client.CreateChatCompletionStream(ctx, a.model, messages, definitions, func(chunk string) {
+			message, requestErr = a.client.CreateChatCompletionStream(ctx, a.model, requestMessages, definitions, func(chunk string) {
 				if a.logWriter != nil {
 					_, _ = io.WriteString(a.logWriter, chunk)
 				}
 			})
 		} else {
-			message, requestErr = a.client.CreateChatCompletion(ctx, a.model, messages, definitions)
+			message, requestErr = a.client.CreateChatCompletion(ctx, a.model, requestMessages, definitions)
 		}
 		if requestErr != nil {
 			err = requestErr
@@ -410,6 +411,65 @@ func duplicateMessages(messages []map[string]any) []map[string]any {
 		cloned[index] = copyMessage
 	}
 	return cloned
+}
+
+func sanitizeCompletedToolHistory(messages []map[string]any) []map[string]any {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	pendingAssistantIndex := -1
+	pendingToolStart := len(messages)
+	for i := len(messages) - 1; i >= 0; i-- {
+		role, _ := messages[i]["role"].(string)
+		if role == "tool" {
+			pendingToolStart = i
+			continue
+		}
+		if role == "assistant" && len(extractToolCallsFromMessageMap(messages[i])) > 0 && pendingToolStart == i+1 {
+			pendingAssistantIndex = i
+		}
+		break
+	}
+
+	sanitized := make([]map[string]any, 0, len(messages))
+	for i := 0; i < len(messages); i++ {
+		message := messages[i]
+		role, _ := message["role"].(string)
+		if role == "tool" {
+			if pendingAssistantIndex >= 0 && i >= pendingToolStart {
+				sanitized = append(sanitized, message)
+			}
+			continue
+		}
+		if role == "assistant" && len(extractToolCallsFromMessageMap(message)) > 0 {
+			if i == pendingAssistantIndex {
+				sanitized = append(sanitized, message)
+			}
+			continue
+		}
+		sanitized = append(sanitized, message)
+	}
+	return sanitized
+}
+
+func extractToolCallsFromMessageMap(message map[string]any) []any {
+	raw, ok := message["tool_calls"]
+	if !ok || raw == nil {
+		return nil
+	}
+	calls, ok := raw.([]any)
+	if ok {
+		return calls
+	}
+	if typed, ok := raw.([]ToolCall); ok && len(typed) > 0 {
+		calls := make([]any, len(typed))
+		for i, call := range typed {
+			calls[i] = call
+		}
+		return calls
+	}
+	return nil
 }
 
 func (a *Agent) logf(format string, arguments ...any) {

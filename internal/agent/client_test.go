@@ -93,6 +93,31 @@ func TestClientCreateChatCompletionParsesInlineToolCallContent(t *testing.T) {
 	}
 }
 
+func TestAssistantMessageRequestMessageStripsInlineToolCallMarkup(t *testing.T) {
+	message := AssistantMessage{
+		Role:    "assistant",
+		Content: "<think>search</think>\n<tool_call>\n{\"name\":\"web_search\",\"parameters\":{\"query\":\"today\"}}\n</tool_call>",
+		ToolCalls: []ToolCall{
+			{
+				ID:   "inline-tool-1",
+				Type: "function",
+				Function: FunctionCall{
+					Name:      "web_search",
+					Arguments: `{"query":"today"}`,
+				},
+			},
+		},
+	}
+
+	request := message.RequestMessage()
+	if content := request["content"]; content != nil {
+		t.Fatalf("content = %#v, want nil for assistant tool call message", content)
+	}
+	if _, ok := request["tool_calls"]; !ok {
+		t.Fatal("request missing tool_calls")
+	}
+}
+
 type failingStreamClient struct{}
 
 func (f *failingStreamClient) CreateChatCompletion(_ context.Context, _ string, _ []map[string]any, _ []tools.Definition) (AssistantMessage, error) {
