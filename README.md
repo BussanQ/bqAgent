@@ -222,7 +222,7 @@ The command immediately prints the session ID, session directory, and log path.
 
 `--resume <session-id> "..."` loads `messages.jsonl`, appends your follow-up task, and continues from there.
 
-`--server` starts a long-lived HTTP service on `127.0.0.1:8080` by default and exposes:
+`--server` starts a long-lived HTTP service on `0.0.0.0:8080` by default and exposes:
 
 - `GET /healthz`
 - `POST /api/v1/chat`

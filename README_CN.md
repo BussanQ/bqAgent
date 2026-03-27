@@ -222,7 +222,7 @@ project/
 
 `--resume <session-id> "..."` 会读取 `messages.jsonl`，追加新的 follow-up 任务，然后从该上下文继续执行。
 
-`--server` 会启动一个常驻 HTTP 服务，默认监听 `127.0.0.1:8080`，提供：
+`--server` 会启动一个常驻 HTTP 服务，默认监听 `0.0.0.0:8080`，提供：
 
 - `GET /healthz`
 - `POST /api/v1/chat`

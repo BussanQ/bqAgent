@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -41,7 +42,32 @@ func NewHandler(options HandlerOptions) http.Handler {
 		}
 		channel.RegisterRoutes(mux)
 	}
-	return mux
+	return withRequestLogging(mux)
+}
+
+type responseRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (recorder *responseRecorder) WriteHeader(statusCode int) {
+	recorder.statusCode = statusCode
+	recorder.ResponseWriter.WriteHeader(statusCode)
+}
+
+func withRequestLogging(next http.Handler) http.Handler {
+	if next == nil {
+		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			http.NotFound(writer, request)
+		})
+	}
+
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		startedAt := time.Now()
+		recorder := &responseRecorder{ResponseWriter: writer, statusCode: http.StatusOK}
+		next.ServeHTTP(recorder, request)
+		log.Printf("%s %s %d %s remote=%s", request.Method, request.URL.Path, recorder.statusCode, time.Since(startedAt).Round(time.Millisecond), request.RemoteAddr)
+	})
 }
 
 func (handler *handler) handleHealth(writer http.ResponseWriter, request *http.Request) {

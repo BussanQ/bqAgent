@@ -123,7 +123,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.BoolVar(&options.stream, "stream", false, "stream responses token by token (requires --chat)")
 	fs.BoolVar(&options.ilinkLogin, "ilink-login", false, "trigger the running server's iLink login flow")
 	fs.BoolVar(&options.ilinkStatus, "ilink-status", false, "fetch the running server's iLink login status")
-	fs.StringVar(&options.listen, "listen", "127.0.0.1:8080", "HTTP listen address for server mode")
+	fs.StringVar(&options.listen, "listen", "0.0.0.0:8080", "HTTP listen address for server mode")
 	fs.StringVar(&options.serverURL, "server-url", "http://127.0.0.1:8080", "base URL of a running server for client-style commands")
 	fs.StringVar(&options.resumeID, "resume", "", "resume an existing session")
 	fs.StringVar(&options.sessionID, "session-id", "", "internal session identifier")
