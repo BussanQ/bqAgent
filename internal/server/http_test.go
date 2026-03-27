@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/extagent"
 	serverchanclient "bqagent/internal/serverchan"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
@@ -364,6 +366,50 @@ func TestServerChanBotWebhookRequiresConfiguredToken(t *testing.T) {
 	}
 }
 
+func TestChatEndpointRoutesSlashPrefixedMessageToExternalAgent(t *testing.T) {
+	root := t.TempDir()
+	service := newTestServiceWithExternal(root)
+	handler := NewHandler(HandlerOptions{Service: service})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	response := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"/codex hello external"}`)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.StatusCode)
+	}
+	defer response.Body.Close()
+
+	var payload chatResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Reply != "codex reply" {
+		t.Fatalf("reply = %q, want %q", payload.Reply, "codex reply")
+	}
+}
+
+func TestChatEndpointRejectsEmptySlashPrefixedMessage(t *testing.T) {
+	root := t.TempDir()
+	service := newTestServiceWithExternal(root)
+	handler := NewHandler(HandlerOptions{Service: service})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	response := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"/claude"}`)
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", response.StatusCode)
+	}
+	defer response.Body.Close()
+
+	var payload chatResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !strings.Contains(payload.Error, "message is required after /claude") {
+		t.Fatalf("error = %q, want validation message", payload.Error)
+	}
+}
+
 func newTestService(root, baseURL string) *Service {
 	chatClient := agent.NewClient("", baseURL, nil)
 	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root, ServerMode: true})
@@ -374,6 +420,47 @@ func newTestService(root, baseURL string) *Service {
 		ToolDefinitions: catalog.Definitions(),
 		Functions:       catalog.Registry(),
 	})
+}
+
+func newTestServiceWithExternal(root string) *Service {
+	service := newTestService(root, "http://example.invalid")
+	service.externalBroker = extagent.NewBroker(
+		extagent.NewStateStore(root),
+		map[extagent.AgentName]extagent.DetectionResult{
+			extagent.AgentCodex: {
+				Agent:     extagent.AgentCodex,
+				Preferred: &extagent.AgentTransport{Agent: extagent.AgentCodex, Kind: extagent.TransportCLI, Command: extagent.CommandSpec{Command: os.Args[0], Args: []string{"-test.run=TestServerExternalHelperProcess", "--", "cli-codex"}}},
+			},
+			extagent.AgentClaude: {
+				Agent:     extagent.AgentClaude,
+				Preferred: &extagent.AgentTransport{Agent: extagent.AgentClaude, Kind: extagent.TransportCLI, Command: extagent.CommandSpec{Command: os.Args[0], Args: []string{"-test.run=TestServerExternalHelperProcess", "--", "cli-claude"}}},
+			},
+		},
+		nil,
+	)
+	return service
+}
+
+func TestServerExternalHelperProcess(t *testing.T) {
+	if len(os.Args) < 4 || os.Args[2] != "--" {
+		return
+	}
+	switch os.Args[3] {
+	case "cli-codex":
+		outputPath := ""
+		for i := 4; i < len(os.Args)-1; i++ {
+			if os.Args[i] == "--output-last-message" {
+				outputPath = os.Args[i+1]
+			}
+		}
+		if outputPath != "" {
+			_ = os.WriteFile(outputPath, []byte("codex reply"), 0o644)
+		}
+		_, _ = os.Stdout.WriteString("{\"event\":\"session\",\"session_id\":\"codex-session-1\"}\n")
+	case "cli-claude":
+		_, _ = os.Stdout.WriteString(`{"result":"claude reply","session_id":"claude-session-1"}`)
+	}
+	os.Exit(0)
 }
 
 func newTestHandlerWithBot(root, llmBaseURL, botBaseURL, token, secret string) http.Handler {
