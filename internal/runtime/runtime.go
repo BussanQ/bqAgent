@@ -22,10 +22,11 @@ type Factory struct {
 }
 
 type Runtime struct {
-	Client  agent.ChatCompletionClient
-	Planner *agent.Planner
-	Catalog tools.Catalog
-	Model   string
+	Client        agent.ChatCompletionClient
+	Planner       *agent.Planner
+	Catalog       tools.Catalog
+	Model         string
+	WorkspaceRoot string
 }
 
 func ConfigFromEnv(getenv func(string) string) Config {
@@ -55,10 +56,11 @@ func (factory Factory) Build(includePlan bool) Runtime {
 	})
 
 	return Runtime{
-		Client:  client,
-		Planner: planner,
-		Catalog: catalog,
-		Model:   factory.Config.Model,
+		Client:        client,
+		Planner:       planner,
+		Catalog:       catalog,
+		Model:         factory.Config.Model,
+		WorkspaceRoot: factory.WorkspaceRoot,
 	}
 }
 
@@ -71,5 +73,6 @@ func (runtime Runtime) NewAgent(logWriter io.Writer, systemPrompt string, record
 		Planner:         runtime.Planner,
 		Recorder:        recorder,
 		Stream:          stream,
+		WorkspaceRoot:   runtime.WorkspaceRoot,
 	})
 }

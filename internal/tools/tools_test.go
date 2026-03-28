@@ -8,8 +8,8 @@ import (
 
 func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 6 {
-		t.Fatalf("definitions length = %d, want 6", len(definitions))
+	if len(definitions) != 7 {
+		t.Fatalf("definitions length = %d, want 7", len(definitions))
 	}
 
 	tests := []struct {
@@ -24,6 +24,7 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		{index: 3, name: "web_search", description: "Search the web for up-to-date information", required: []string{"query"}},
 		{index: 4, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
 		{index: 5, name: "mem_get", description: "Read memory contents. Use to recall saved knowledge and context.", required: []string{"target"}},
+		{index: 6, name: "run_skill", description: "Execute a workspace skill when one of the loaded skills is relevant to the task.", required: []string{"skill"}},
 	}
 
 	for _, testCase := range tests {
@@ -72,11 +73,21 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 	catalog := NewCatalog(Options{IncludePlan: true})
 	definitions := catalog.Definitions()
-	if len(definitions) != 7 {
-		t.Fatalf("definitions length = %d, want 7", len(definitions))
+	if len(definitions) != 8 {
+		t.Fatalf("definitions length = %d, want 8", len(definitions))
 	}
 	if definitions[len(definitions)-1].Function.Name != "plan" {
 		t.Fatalf("last definition name = %q, want %q", definitions[len(definitions)-1].Function.Name, "plan")
+	}
+	foundRunSkill := false
+	for _, definition := range definitions {
+		if definition.Function.Name == "run_skill" {
+			foundRunSkill = true
+			break
+		}
+	}
+	if !foundRunSkill {
+		t.Fatal("definitions missing run_skill")
 	}
 	registry := catalog.Registry()
 	if len(registry) != 6 {

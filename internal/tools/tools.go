@@ -186,6 +186,21 @@ func builtinDefinitions() []Definition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "run_skill",
+				Description: "Execute a workspace skill when one of the loaded skills is relevant to the task.",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"skill": {Type: "string", Description: "Workspace skill id from the loaded skills list"},
+						"args":  {Type: "string", Description: "Optional raw arguments or task details passed to the skill"},
+					},
+					Required: []string{"skill"},
+				},
+			},
+		},
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"bqagent/internal/tools"
+	"bqagent/internal/workspace"
 )
 
 const (
@@ -29,6 +30,7 @@ type Options struct {
 	Planner         *Planner
 	Recorder        MessageRecorder
 	Stream          bool
+	WorkspaceRoot   string
 }
 
 type Agent struct {
@@ -41,6 +43,7 @@ type Agent struct {
 	planner         *Planner
 	recorder        MessageRecorder
 	stream          bool
+	workspaceRoot   string
 }
 
 func New(client ChatCompletionClient, model string, logWriter io.Writer) *Agent {
@@ -83,6 +86,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		planner:         clonePlannerWithClient(options.Planner, client),
 		recorder:        options.Recorder,
 		stream:          options.Stream,
+		workspaceRoot:   options.WorkspaceRoot,
 	}
 }
 
@@ -104,6 +108,18 @@ func (a *Agent) RunConversation(ctx context.Context, messages []map[string]any, 
 
 func (a *Agent) RunConversationTurn(ctx context.Context, messages []map[string]any, maxIterations int) (string, []map[string]any, error) {
 	return a.runConversation(ctx, sanitizeCompletedToolHistory(duplicateMessages(messages)), maxIterations, a.planner != nil)
+}
+
+func (a *Agent) RunSkill(ctx context.Context, skillID, args string, maxIterations int) (string, error) {
+	messages, err := a.executeSkillTool(ctx, nil, ToolCall{ID: "skill-direct-1", Function: FunctionCall{Name: "run_skill"}}, map[string]any{"skill": skillID, "args": args}, maxIterations)
+	if err != nil {
+		return "", err
+	}
+	if len(messages) == 0 {
+		return "", nil
+	}
+	content, _ := messages[len(messages)-1]["content"].(string)
+	return content, nil
 }
 
 func (a *Agent) RunPlanned(ctx context.Context, task string, maxIterations int) (string, error) {
@@ -241,7 +257,16 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				continue
 			}
 
-			toolStartedAt := time.Now()
+			if toolCall.Function.Name == "run_skill" {
+					updatedMessages, skillErr := a.executeSkillTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
+					messages = updatedMessages
+					if skillErr != nil {
+						return "", updatedMessages, skillErr
+					}
+					continue
+				}
+
+				toolStartedAt := time.Now()
 			toolResult := ""
 			var toolErr error
 			function, ok := a.functions[toolCall.Function.Name]
@@ -325,6 +350,92 @@ func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, 
 	return strings.Join(results, "\n"), messages, nil
 }
 
+func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) ([]map[string]any, error) {
+	skillID, err := requireStringArgument(arguments, "skill")
+	if err != nil {
+		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: %v", err))
+		if recordErr != nil {
+			return updatedMessages, recordErr
+		}
+		return updatedMessages, nil
+	}
+	if strings.TrimSpace(a.workspaceRoot) == "" {
+		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, "Error: workspace root is not configured for run_skill")
+		if recordErr != nil {
+			return updatedMessages, recordErr
+		}
+		return updatedMessages, nil
+	}
+
+	ws := &workspace.Workspace{Root: a.workspaceRoot}
+	skill, err := ws.LoadSkill(skillID)
+	if err != nil {
+		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: %v", err))
+		if recordErr != nil {
+			return updatedMessages, recordErr
+		}
+		return updatedMessages, nil
+	}
+
+	argsText := ""
+	if rawArgs, ok := arguments["args"]; ok {
+		text, ok := rawArgs.(string)
+		if !ok {
+			updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, "Error: argument \"args\" must be a string")
+			if recordErr != nil {
+				return updatedMessages, recordErr
+			}
+			return updatedMessages, nil
+		}
+		argsText = strings.TrimSpace(text)
+	}
+
+	toolMessage := map[string]any{
+		"role":         "tool",
+		"tool_call_id": toolCall.ID,
+		"content":      fmt.Sprintf("Running skill %q...", skill.ID),
+	}
+	messages = append(messages, toolMessage)
+	if err := a.recordMessages(toolMessage); err != nil {
+		return messages, err
+	}
+
+	skillTask := buildSkillTask(skill, argsText)
+	child := &Agent{
+		client:          a.client,
+		model:           a.model,
+		logWriter:       a.logWriter,
+		systemPrompt:    a.systemPrompt,
+		toolDefinitions: a.toolDefinitionsForSkillRun(),
+		functions:       cloneFunctionMap(a.functions),
+		planner:         nil,
+		recorder:        a.recorder,
+		stream:          false,
+		workspaceRoot:   a.workspaceRoot,
+	}
+	result, _, err := child.runConversation(ctx, []map[string]any{{"role": "system", "content": a.systemPrompt}, {"role": "user", "content": skillTask}}, maxIterations, false)
+	if err != nil {
+		return messages, err
+	}
+
+	messages[len(messages)-1]["content"] = result
+	return messages, nil
+}
+
+func buildSkillTask(skill workspace.Skill, args string) string {
+	parts := []string{
+		fmt.Sprintf("Execute workspace skill %q.", skill.ID),
+		fmt.Sprintf("Skill title: %s", skill.Title),
+		"Follow the skill instructions below and complete the requested task using the available tools.",
+		"Skill definition:",
+		skill.Body,
+	}
+	if strings.TrimSpace(args) != "" {
+		parts = append(parts, "Skill arguments:", args)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 func parseArguments(raw string) (any, error) {
 	if strings.TrimSpace(raw) == "" {
 		return map[string]any{}, nil
@@ -351,13 +462,20 @@ func requireStringArgument(args map[string]any, key string) (string, error) {
 }
 
 func (a *Agent) toolDefinitionsForRun(allowPlan bool) []tools.Definition {
-	if allowPlan || a.planner == nil {
-		return cloneDefinitions(a.toolDefinitions)
-	}
-
 	filtered := make([]tools.Definition, 0, len(a.toolDefinitions))
 	for _, definition := range a.toolDefinitions {
-		if definition.Function.Name == "plan" {
+		if definition.Function.Name == "plan" && (!allowPlan || a.planner == nil) {
+			continue
+		}
+		filtered = append(filtered, definition)
+	}
+	return filtered
+}
+
+func (a *Agent) toolDefinitionsForSkillRun() []tools.Definition {
+	filtered := make([]tools.Definition, 0, len(a.toolDefinitions))
+	for _, definition := range a.toolDefinitions {
+		if definition.Function.Name == "plan" || definition.Function.Name == "run_skill" {
 			continue
 		}
 		filtered = append(filtered, definition)

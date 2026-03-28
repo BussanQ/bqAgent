@@ -9,6 +9,17 @@ import (
 	"time"
 )
 
+const defaultSkillSummary = "Markdown skill definition available."
+
+// Skill describes a workspace skill loaded from .agent/skills/*/SKILL.md.
+type Skill struct {
+	ID      string
+	Title   string
+	Summary string
+	Body    string
+	Path    string
+}
+
 const memoryTailLines = 50
 
 var nowFunc = time.Now
@@ -32,7 +43,7 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 		parts = append(parts, rules)
 	}
 
-	skills, err := w.loadSkillsSummary()
+	skills, err := w.loadSkillsSection()
 	if err != nil {
 		return "", err
 	}
@@ -161,20 +172,20 @@ func (w *Workspace) loadRules() (string, error) {
 	return "# Rules\n\n" + strings.Join(blocks, "\n\n"), nil
 }
 
-func (w *Workspace) loadSkillsSummary() (string, error) {
+func (w *Workspace) LoadSkills() ([]Skill, error) {
 	entries, err := os.ReadDir(w.SkillsDir())
 	if os.IsNotExist(err) {
-		return "", nil
+		return nil, nil
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Name() < entries[j].Name()
 	})
 
-	lines := []string{"# Skills"}
+	skills := make([]Skill, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -186,17 +197,59 @@ func (w *Workspace) loadSkillsSummary() (string, error) {
 			continue
 		}
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 
 		title, summary := summarizeSkill(entry.Name(), string(content))
-		lines = append(lines, fmt.Sprintf("- %s: %s", title, summary))
+		skills = append(skills, Skill{
+			ID:      entry.Name(),
+			Title:   title,
+			Summary: summary,
+			Body:    strings.TrimSpace(string(content)),
+			Path:    skillPath,
+		})
 	}
+	return skills, nil
+}
 
-	if len(lines) == 1 {
+func (w *Workspace) LoadSkill(id string) (Skill, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Skill{}, fmt.Errorf("skill id is required")
+	}
+	skills, err := w.LoadSkills()
+	if err != nil {
+		return Skill{}, err
+	}
+	for _, skill := range skills {
+		if skill.ID == id {
+			return skill, nil
+		}
+	}
+	return Skill{}, fmt.Errorf("skill %q not found", id)
+}
+
+func (w *Workspace) loadSkillsSection() (string, error) {
+	skills, err := w.LoadSkills()
+	if err != nil {
+		return "", err
+	}
+	if len(skills) == 0 {
 		return "", nil
 	}
+
+	lines := []string{
+		"# Skills",
+		"Available executable skills can be run with the run_skill tool when one is clearly relevant.",
+	}
+	for _, skill := range skills {
+		lines = append(lines, fmt.Sprintf("- %s (%s): %s", skill.ID, skill.Title, skill.Summary))
+	}
 	return strings.Join(lines, "\n"), nil
+}
+
+func loadSkillsSummary(w *Workspace) (string, error) {
+	return w.loadSkillsSection()
 }
 
 func summarizeSkill(fallbackName, content string) (string, string) {
@@ -230,7 +283,7 @@ func summarizeSkill(fallbackName, content string) (string, string) {
 		paragraph = append(paragraph, line)
 	}
 
-	summary := "Markdown skill definition available."
+	summary := defaultSkillSummary
 	if len(paragraph) > 0 {
 		summary = strings.Join(paragraph, " ")
 	}

@@ -117,6 +117,28 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{}, err
 	}
 
+	if reply, handled, skillErr := service.handleSkillSlash(ctx, conversation.Messages, message, conversation.Recorder(), logWriter); handled {
+		if skillErr != nil {
+			writeTurnError(logFile, skillErr)
+			_ = conversation.MarkFailed(skillErr)
+			return TurnResponse{}, skillErr
+		}
+		assistantMessage := map[string]any{"role": "assistant", "content": reply}
+		if err := conversation.Session.RecordMessage(assistantMessage); err != nil {
+			writeTurnError(logFile, err)
+			_ = conversation.MarkFailed(err)
+			return TurnResponse{}, err
+		}
+		conversation.Messages = append(conversation.Messages, assistantMessage)
+		if err := conversation.MarkCompleted(); err != nil {
+			writeTurnError(logFile, err)
+			return TurnResponse{}, err
+		}
+		service.appendMemory(message, reply)
+		writeTurnReply(logWriter, reply, false)
+		return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply}, nil
+	}
+
 	if service.externalBroker != nil {
 		routedAgent, routedPrompt, _, routeErr := service.externalBroker.Resolve(message, conversation.Session.ID())
 		if routeErr != nil {
@@ -182,6 +204,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		Planner:         service.planner,
 		Recorder:        conversation.Recorder(),
 		Stream:          options.Stream,
+		WorkspaceRoot:   service.workspaceRoot,
 	})
 
 	result, _, err := app.RunConversationTurn(ctx, conversation.Messages, service.maxTurns)
@@ -198,6 +221,34 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	writeTurnReply(logWriter, result, options.Stream)
 
 	return TurnResponse{SessionID: conversation.Session.ID(), Reply: result, Streamed: options.Stream}, nil
+}
+
+func (service *Service) handleSkillSlash(ctx context.Context, _ []map[string]any, message string, recorder agent.MessageRecorder, logWriter io.Writer) (string, bool, error) {
+	message = strings.TrimSpace(message)
+	if !strings.HasPrefix(message, "/skill") {
+		return "", false, nil
+	}
+	fields := strings.Fields(message)
+	if len(fields) < 2 {
+		return "", true, fmt.Errorf("skill name is required after /skill")
+	}
+	skillID := strings.TrimSpace(fields[1])
+	args := ""
+	if len(fields) > 2 {
+		args = strings.TrimSpace(strings.Join(fields[2:], " "))
+	}
+
+	app := agent.NewWithOptions(service.client, service.model, agent.Options{
+		SystemPrompt:    service.systemPrompt,
+		LogWriter:       logWriter,
+		ToolDefinitions: service.toolDefinitions,
+		Functions:       service.functions,
+		Planner:         service.planner,
+		Recorder:        recorder,
+		WorkspaceRoot:   service.workspaceRoot,
+	})
+	result, err := app.RunSkill(ctx, skillID, args, service.maxTurns)
+	return result, true, err
 }
 
 func cloneFunctions(functions map[string]tools.Function) map[string]tools.Function {

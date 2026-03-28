@@ -58,7 +58,8 @@ func TestBuildSystemPromptIncludesRulesSkillsAndMemory(t *testing.T) {
 		"# Rules",
 		"Always be careful.",
 		"# Skills",
-		"Demo Skill: Helps summarize repository changes.",
+		"Available executable skills can be run with the run_skill tool when one is clearly relevant.",
+		"demo (Demo Skill): Helps summarize repository changes.",
 		"# Memory",
 		"## agent_memory.md",
 		"recent memory",
@@ -67,6 +68,31 @@ func TestBuildSystemPromptIncludesRulesSkillsAndMemory(t *testing.T) {
 		if !strings.Contains(prompt, check) {
 			t.Fatalf("prompt = %q, want substring %q", prompt, check)
 		}
+	}
+}
+
+func TestLoadSkillReturnsStructuredSkill(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("failed to create skills directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nHelps summarize repository changes."), 0o644); err != nil {
+		t.Fatalf("failed to write skill file: %v", err)
+	}
+
+	skill, err := ws.LoadSkill("demo")
+	if err != nil {
+		t.Fatalf("LoadSkill returned error: %v", err)
+	}
+	if skill.ID != "demo" {
+		t.Fatalf("skill.ID = %q, want %q", skill.ID, "demo")
+	}
+	if skill.Title != "Demo Skill" {
+		t.Fatalf("skill.Title = %q, want %q", skill.Title, "Demo Skill")
+	}
+	if skill.Summary != "Helps summarize repository changes." {
+		t.Fatalf("skill.Summary = %q, want summary", skill.Summary)
 	}
 }
 

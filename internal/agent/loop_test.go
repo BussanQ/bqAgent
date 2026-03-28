@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -409,6 +411,56 @@ func TestRunSanitizesEarlierCompletedToolHistoryBetweenIterations(t *testing.T) 
 	}
 	if toolMessages != 1 {
 		t.Fatalf("third request tool message count = %d, want 1 latest tool result", toolMessages)
+	}
+}
+
+func TestRunSkillToolExecutesWorkspaceSkill(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("failed to create skill directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nRead README.md and summarize it."), 0o644); err != nil {
+		t.Fatalf("failed to write skill file: %v", err)
+	}
+
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{ToolCalls: []ToolCall{{ID: "skill-1", Function: FunctionCall{Name: "run_skill", Arguments: `{"skill":"demo","args":"focus on setup"}`}}}},
+			{Content: "skill result"},
+			{Content: "final answer"},
+		},
+	}
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
+	app := NewWithOptions(client, "", Options{
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       catalog.Registry(),
+		WorkspaceRoot:   root,
+	})
+
+	result, err := app.RunConversation(context.Background(), []map[string]any{{"role": "system", "content": "sys"}, {"role": "user", "content": "help me with demo skill"}}, 5)
+	if err != nil {
+		t.Fatalf("RunConversation returned error: %v", err)
+	}
+	if result != "final answer" {
+		t.Fatalf("result = %q, want %q", result, "final answer")
+	}
+	if len(client.messages) != 3 {
+		t.Fatalf("client saw %d requests, want 3", len(client.messages))
+	}
+	toolMessages := extractToolMessages(client.messages[2])
+	if len(toolMessages) != 1 {
+		t.Fatalf("tool messages = %d, want 1", len(toolMessages))
+	}
+	if content, _ := toolMessages[0]["content"].(string); content != "skill result" {
+		t.Fatalf("tool content = %q, want %q", content, "skill result")
+	}
+	childRequest := client.messages[1]
+	if len(childRequest) < 2 {
+		t.Fatalf("child request messages = %d, want at least 2", len(childRequest))
+	}
+	childUser, _ := childRequest[1]["content"].(string)
+	if !strings.Contains(childUser, "Read README.md and summarize it.") || !strings.Contains(childUser, "focus on setup") {
+		t.Fatalf("child skill prompt = %q, want skill body and args", childUser)
 	}
 }
 
