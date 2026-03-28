@@ -21,6 +21,7 @@ import (
 	serverchanclient "bqagent/internal/serverchan"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
+	"bqagent/internal/workspace"
 )
 
 func TestChatEndpointCreatesAndResumesSession(t *testing.T) {
@@ -568,6 +569,61 @@ func TestChatEndpointRejectsEmptySlashPrefixedMessage(t *testing.T) {
 	}
 	if !strings.Contains(payload.Error, "message is required after /claude") {
 		t.Fatalf("error = %q, want validation message", payload.Error)
+	}
+}
+
+func TestServiceHandleTurnHotReloadsSkillSectionForExistingSession(t *testing.T) {
+	root := t.TempDir()
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
+	var requestBodies []string
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		requestBodies = append(requestBodies, string(body))
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"memory reply"}}]}`))
+	}))
+	defer llmServer.Close()
+
+	service := NewService(ServiceOptions{
+		WorkspaceRoot: root,
+		Client:        agent.NewClient("", llmServer.URL, nil),
+		SystemPrompt:  "You are a helpful assistant. Be concise.",
+		SystemPromptBuilder: func() (string, error) {
+			return (&workspace.Workspace{Root: root}).BuildSystemPrompt(agent.DefaultSystemPrompt)
+		},
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       catalog.Registry(),
+	})
+
+	first, err := service.HandleTurn(context.Background(), TurnRequest{Message: "hello"})
+	if err != nil {
+		t.Fatalf("first HandleTurn returned error: %v", err)
+	}
+	if len(requestBodies) != 1 {
+		t.Fatalf("request body count = %d, want 1", len(requestBodies))
+	}
+	if strings.Contains(requestBodies[0], "# Skills") {
+		t.Fatalf("first request body unexpectedly contained skills section: %s", requestBodies[0])
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("failed to create skill directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nHelps with demo tasks."), 0o644); err != nil {
+		t.Fatalf("failed to write skill file: %v", err)
+	}
+
+	_, err = service.HandleTurn(context.Background(), TurnRequest{SessionID: first.SessionID, Message: "hello again"})
+	if err != nil {
+		t.Fatalf("second HandleTurn returned error: %v", err)
+	}
+	if len(requestBodies) != 2 {
+		t.Fatalf("request body count = %d, want 2", len(requestBodies))
+	}
+	if !strings.Contains(requestBodies[1], "# Skills") || !strings.Contains(requestBodies[1], "demo (Demo Skill): Helps with demo tasks.") {
+		t.Fatalf("second request body = %s, want refreshed skills section", requestBodies[1])
 	}
 }
 

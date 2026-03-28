@@ -26,6 +26,22 @@ func appendJSONL(path string, entries ...any) error {
 	return nil
 }
 
+func writeMessagesJSONL(path string, entries []map[string]any) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	for _, entry := range entries {
+		if err := encoder.Encode(entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func readMessagesJSONL(path string) ([]map[string]any, error) {
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {

@@ -15,31 +15,33 @@ import (
 )
 
 type ServiceOptions struct {
-	WorkspaceRoot   string
-	Client          agent.ChatCompletionClient
-	Model           string
-	SystemPrompt    string
-	Planner         *agent.Planner
-	ToolDefinitions []tools.Definition
-	Functions       map[string]tools.Function
-	DefaultMaxTurns int
-	ExternalBroker  *extagent.Broker
-	MemoryAppend    func(task, result string) error
+	WorkspaceRoot       string
+	Client              agent.ChatCompletionClient
+	Model               string
+	SystemPrompt        string
+	SystemPromptBuilder func() (string, error)
+	Planner             *agent.Planner
+	ToolDefinitions     []tools.Definition
+	Functions           map[string]tools.Function
+	DefaultMaxTurns     int
+	ExternalBroker      *extagent.Broker
+	MemoryAppend        func(task, result string) error
 }
 
 type Service struct {
-	store           *session.Store
-	workspaceRoot   string
-	client          agent.ChatCompletionClient
-	model           string
-	systemPrompt    string
-	planner         *agent.Planner
-	toolDefinitions []tools.Definition
-	functions       map[string]tools.Function
-	maxTurns        int
-	locker          *KeyedLocker
-	externalBroker  *extagent.Broker
-	memoryAppend    func(task, result string) error
+	store               *session.Store
+	workspaceRoot       string
+	client              agent.ChatCompletionClient
+	model               string
+	systemPrompt        string
+	systemPromptBuilder func() (string, error)
+	planner             *agent.Planner
+	toolDefinitions     []tools.Definition
+	functions           map[string]tools.Function
+	maxTurns            int
+	locker              *KeyedLocker
+	externalBroker      *extagent.Broker
+	memoryAppend        func(task, result string) error
 }
 
 type TurnRequest struct {
@@ -64,18 +66,19 @@ func NewService(options ServiceOptions) *Service {
 		maxTurns = agent.DefaultMaxIterations
 	}
 	return &Service{
-		store:           session.NewStore(options.WorkspaceRoot),
-		workspaceRoot:   options.WorkspaceRoot,
-		client:          options.Client,
-		model:           options.Model,
-		systemPrompt:    options.SystemPrompt,
-		planner:         options.Planner,
-		toolDefinitions: append([]tools.Definition{}, options.ToolDefinitions...),
-		functions:       cloneFunctions(options.Functions),
-		maxTurns:        maxTurns,
-		locker:          NewKeyedLocker(),
-		externalBroker:  options.ExternalBroker,
-		memoryAppend:    options.MemoryAppend,
+		store:               session.NewStore(options.WorkspaceRoot),
+		workspaceRoot:       options.WorkspaceRoot,
+		client:              options.Client,
+		model:               options.Model,
+		systemPrompt:        options.SystemPrompt,
+		systemPromptBuilder: options.SystemPromptBuilder,
+		planner:             options.Planner,
+		toolDefinitions:     append([]tools.Definition{}, options.ToolDefinitions...),
+		functions:           cloneFunctions(options.Functions),
+		maxTurns:            maxTurns,
+		locker:              NewKeyedLocker(),
+		externalBroker:      options.ExternalBroker,
+		memoryAppend:        options.MemoryAppend,
 	}
 }
 
@@ -95,7 +98,11 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		unlock := service.locker.Lock(sessionID)
 		defer unlock()
 	}
-	conversation, err := appruntime.PrepareConversation(service.store, sessionID, createOptions, service.systemPrompt)
+	systemPrompt, err := service.currentSystemPrompt()
+	if err != nil {
+		return TurnResponse{}, err
+	}
+	conversation, err := appruntime.PrepareConversation(service.store, sessionID, createOptions, systemPrompt)
 	if err != nil {
 		return TurnResponse{}, err
 	}
@@ -117,7 +124,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{}, err
 	}
 
-	if reply, handled, skillErr := service.handleSkillSlash(ctx, conversation.Messages, message, conversation.Recorder(), logWriter); handled {
+	if reply, handled, skillErr := service.handleSkillSlash(ctx, conversation.Messages, message, conversation.Recorder(), logWriter, systemPrompt); handled {
 		if skillErr != nil {
 			writeTurnError(logFile, skillErr)
 			_ = conversation.MarkFailed(skillErr)
@@ -197,7 +204,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 
 	app := agent.NewWithOptions(service.client, service.model, agent.Options{
-		SystemPrompt:    service.systemPrompt,
+		SystemPrompt:    systemPrompt,
 		LogWriter:       logWriter,
 		ToolDefinitions: service.toolDefinitions,
 		Functions:       service.functions,
@@ -223,7 +230,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	return TurnResponse{SessionID: conversation.Session.ID(), Reply: result, Streamed: options.Stream}, nil
 }
 
-func (service *Service) handleSkillSlash(ctx context.Context, _ []map[string]any, message string, recorder agent.MessageRecorder, logWriter io.Writer) (string, bool, error) {
+func (service *Service) handleSkillSlash(ctx context.Context, _ []map[string]any, message string, recorder agent.MessageRecorder, logWriter io.Writer, systemPrompt string) (string, bool, error) {
 	message = strings.TrimSpace(message)
 	if !strings.HasPrefix(message, "/skill") {
 		return "", false, nil
@@ -239,7 +246,7 @@ func (service *Service) handleSkillSlash(ctx context.Context, _ []map[string]any
 	}
 
 	app := agent.NewWithOptions(service.client, service.model, agent.Options{
-		SystemPrompt:    service.systemPrompt,
+		SystemPrompt:    systemPrompt,
 		LogWriter:       logWriter,
 		ToolDefinitions: service.toolDefinitions,
 		Functions:       service.functions,
@@ -249,6 +256,20 @@ func (service *Service) handleSkillSlash(ctx context.Context, _ []map[string]any
 	})
 	result, err := app.RunSkill(ctx, skillID, args, service.maxTurns)
 	return result, true, err
+}
+
+func (service *Service) currentSystemPrompt() (string, error) {
+	if service == nil {
+		return "", nil
+	}
+	if service.systemPromptBuilder == nil {
+		return service.systemPrompt, nil
+	}
+	prompt, err := service.systemPromptBuilder()
+	if err != nil {
+		return "", err
+	}
+	return prompt, nil
 }
 
 func cloneFunctions(functions map[string]tools.Function) map[string]tools.Function {

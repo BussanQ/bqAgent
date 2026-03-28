@@ -139,6 +139,13 @@ func (session *Session) RecordMessages(messages ...map[string]any) error {
 	return appendJSONL(session.MessagesPath(), entries...)
 }
 
+func (session *Session) RewriteMessages(messages []map[string]any) error {
+	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
+		return err
+	}
+	return writeMessagesJSONL(session.MessagesPath(), messages)
+}
+
 func (session *Session) OpenOutputFile() (*os.File, error) {
 	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
 		return nil, err

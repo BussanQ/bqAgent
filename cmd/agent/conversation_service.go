@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
 	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
@@ -33,10 +34,13 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	}
 
 	service := appserver.NewService(appserver.ServiceOptions{
-		WorkspaceRoot:   ws.Root,
-		Client:          runtime.Client,
-		Model:           runtime.Model,
-		SystemPrompt:    systemPrompt,
+		WorkspaceRoot: ws.Root,
+		Client:        runtime.Client,
+		Model:         runtime.Model,
+		SystemPrompt:  systemPrompt,
+		SystemPromptBuilder: func() (string, error) {
+			return ws.BuildSystemPrompt(agent.DefaultSystemPrompt)
+		},
 		Planner:         runtime.Planner,
 		ToolDefinitions: runtime.Catalog.Definitions(),
 		Functions:       runtime.Catalog.Registry(),

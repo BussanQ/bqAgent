@@ -55,14 +55,27 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 }
 
 func (conversation *Conversation) EnsureSystemMessage(systemPrompt string) error {
-	if len(conversation.Messages) > 0 {
+	systemMessage := map[string]any{"role": "system", "content": systemPrompt}
+	if len(conversation.Messages) == 0 {
+		conversation.Messages = append(conversation.Messages, systemMessage)
+		if conversation.Session != nil {
+			return conversation.Session.RecordMessage(systemMessage)
+		}
 		return nil
 	}
 
-	systemMessage := map[string]any{"role": "system", "content": systemPrompt}
-	conversation.Messages = append(conversation.Messages, systemMessage)
+	role, _ := conversation.Messages[0]["role"].(string)
+	content, _ := conversation.Messages[0]["content"].(string)
+	if role == "system" {
+		if content == systemPrompt {
+			return nil
+		}
+		conversation.Messages[0] = systemMessage
+	} else {
+		conversation.Messages = append([]map[string]any{systemMessage}, conversation.Messages...)
+	}
 	if conversation.Session != nil {
-		return conversation.Session.RecordMessage(systemMessage)
+		return conversation.Session.RewriteMessages(conversation.Messages)
 	}
 	return nil
 }
