@@ -69,17 +69,17 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 	}
 }
 
-func TestNewCatalogServerModeDisablesLocalTools(t *testing.T) {
-	catalog := NewCatalog(Options{ServerMode: true, IncludePlan: true})
+func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
+	catalog := NewCatalog(Options{IncludePlan: true})
 	definitions := catalog.Definitions()
-	if len(definitions) != 1 {
-		t.Fatalf("definitions length = %d, want 1", len(definitions))
+	if len(definitions) != 7 {
+		t.Fatalf("definitions length = %d, want 7", len(definitions))
 	}
-	if definitions[0].Function.Name != "plan" {
-		t.Fatalf("definition name = %q, want %q", definitions[0].Function.Name, "plan")
+	if definitions[len(definitions)-1].Function.Name != "plan" {
+		t.Fatalf("last definition name = %q, want %q", definitions[len(definitions)-1].Function.Name, "plan")
 	}
 	registry := catalog.Registry()
-	if len(registry) != 0 {
-		t.Fatalf("registry length = %d, want 0", len(registry))
+	if len(registry) != 6 {
+		t.Fatalf("registry length = %d, want 6", len(registry))
 	}
 }

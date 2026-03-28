@@ -32,7 +32,6 @@ type Options struct {
 	SearchAPIKey  string
 	SearchBaseURL string
 	MemoryDir     string
-	ServerMode    bool
 }
 
 type Catalog struct {
@@ -49,9 +48,6 @@ func Registry() map[string]Function {
 }
 
 func RegistryWithOptions(options Options) map[string]Function {
-	if options.ServerMode {
-		return map[string]Function{}
-	}
 	return map[string]Function{
 		"execute_bash": ExecuteBashInDir(options.WorkspaceRoot),
 		"read_file":    ReadFileFromRoot(options.WorkspaceRoot),
@@ -64,9 +60,6 @@ func RegistryWithOptions(options Options) map[string]Function {
 
 func NewCatalog(options Options) Catalog {
 	definitions := Definitions()
-	if options.ServerMode {
-		definitions = []Definition{}
-	}
 	if options.IncludePlan {
 		definitions = append(definitions, PlanDefinition())
 	}
@@ -213,4 +206,25 @@ func requireString(args map[string]any, key string) (string, error) {
 		return "", fmt.Errorf("argument %q must be a string", key)
 	}
 	return text, nil
+}
+
+func requireStringAlias(args map[string]any, keys ...string) (string, error) {
+	for _, key := range keys {
+		value, ok := args[key]
+		if !ok {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			return "", fmt.Errorf("argument %q must be a string", key)
+		}
+		return text, nil
+	}
+	if len(keys) == 0 {
+		return "", fmt.Errorf("missing required string argument")
+	}
+	if len(keys) == 1 {
+		return "", fmt.Errorf("missing required argument %q", keys[0])
+	}
+	return "", fmt.Errorf("missing required argument %q (or %q)", keys[0], keys[1])
 }

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
 	serverchanclient "bqagent/internal/serverchan"
 	"bqagent/internal/weixin"
@@ -48,20 +47,8 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 		return 1
 	}
 
-	runtime := appruntime.Factory{
-		Config:        appruntime.ConfigFromEnv(getenv),
-		WorkspaceRoot: ws.Root,
-		MemoryDir:     ws.WorkspaceMemoryDir(),
-	}.Build(options.plan, true)
-	service := appserver.NewService(appserver.ServiceOptions{
-		WorkspaceRoot:   ws.Root,
-		Client:          runtime.Client,
-		Model:           runtime.Model,
-		SystemPrompt:    systemPrompt,
-		Planner:         runtime.Planner,
-		ToolDefinitions: runtime.Catalog.Definitions(),
-		Functions:       runtime.Catalog.Registry(),
-	})
+	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, stdout)
+	defer externalBroker.Close()
 
 	botProcessor := appserver.NewBotWebhookProcessor(
 		service,

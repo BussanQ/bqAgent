@@ -38,7 +38,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 	}
 }
 
-func (factory Factory) Build(includePlan bool, serverMode bool) Runtime {
+func (factory Factory) Build(includePlan bool) Runtime {
 	client := agent.NewClient(factory.Config.APIKey, factory.Config.BaseURL, nil)
 
 	var planner *agent.Planner
@@ -52,7 +52,6 @@ func (factory Factory) Build(includePlan bool, serverMode bool) Runtime {
 		SearchAPIKey:  factory.Config.SearchAPIKey,
 		SearchBaseURL: factory.Config.SearchBaseURL,
 		MemoryDir:     factory.MemoryDir,
-		ServerMode:    serverMode,
 	})
 
 	return Runtime{

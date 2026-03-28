@@ -71,6 +71,16 @@ func TestServerCannotCombineWithChat(t *testing.T) {
 	}
 }
 
+func TestServerListenDefaultsToLoopback(t *testing.T) {
+	options, _, err := parseCLI([]string{"--server"})
+	if err != nil {
+		t.Fatalf("parseCLI returned error: %v", err)
+	}
+	if options.listen != "127.0.0.1:8080" {
+		t.Fatalf("options.listen = %q, want %q", options.listen, "127.0.0.1:8080")
+	}
+}
+
 func TestRunServerRequiresAPIKey(t *testing.T) {
 	root := t.TempDir()
 

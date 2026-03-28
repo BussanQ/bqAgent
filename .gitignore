@@ -9,3 +9,5 @@ coverage.out
 .agent/
 .cache/
 .env
+*.log
+agent.exe~

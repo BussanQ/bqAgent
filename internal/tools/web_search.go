@@ -39,7 +39,7 @@ func WebSearchWithConfig(apiKey, baseURL string) Function {
 	baseURL = strings.TrimRight(baseURL, "/")
 
 	return func(args map[string]any) (string, error) {
-		query, err := requireString(args, "query")
+		query, err := requireStringAlias(args, "query", "search")
 		if err != nil {
 			return "", err
 		}

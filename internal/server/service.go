@@ -3,9 +3,12 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"strings"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/extagent"
 	appruntime "bqagent/internal/runtime"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
@@ -20,10 +23,13 @@ type ServiceOptions struct {
 	ToolDefinitions []tools.Definition
 	Functions       map[string]tools.Function
 	DefaultMaxTurns int
+	ExternalBroker  *extagent.Broker
+	MemoryAppend    func(task, result string) error
 }
 
 type Service struct {
 	store           *session.Store
+	workspaceRoot   string
 	client          agent.ChatCompletionClient
 	model           string
 	systemPrompt    string
@@ -32,6 +38,8 @@ type Service struct {
 	functions       map[string]tools.Function
 	maxTurns        int
 	locker          *KeyedLocker
+	externalBroker  *extagent.Broker
+	memoryAppend    func(task, result string) error
 }
 
 type TurnRequest struct {
@@ -42,6 +50,12 @@ type TurnRequest struct {
 type TurnResponse struct {
 	SessionID string `json:"session_id"`
 	Reply     string `json:"reply"`
+	Streamed  bool   `json:"-"`
+}
+
+type TurnOptions struct {
+	OutputWriter io.Writer
+	Stream       bool
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -51,6 +65,7 @@ func NewService(options ServiceOptions) *Service {
 	}
 	return &Service{
 		store:           session.NewStore(options.WorkspaceRoot),
+		workspaceRoot:   options.WorkspaceRoot,
 		client:          options.Client,
 		model:           options.Model,
 		systemPrompt:    options.SystemPrompt,
@@ -59,10 +74,16 @@ func NewService(options ServiceOptions) *Service {
 		functions:       cloneFunctions(options.Functions),
 		maxTurns:        maxTurns,
 		locker:          NewKeyedLocker(),
+		externalBroker:  options.ExternalBroker,
+		memoryAppend:    options.MemoryAppend,
 	}
 }
 
 func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (TurnResponse, error) {
+	return service.HandleTurnWithOptions(ctx, request, TurnOptions{})
+}
+
+func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnRequest, options TurnOptions) (TurnResponse, error) {
 	message := strings.TrimSpace(request.Message)
 	if message == "" {
 		return TurnResponse{}, fmt.Errorf("message is required")
@@ -85,31 +106,98 @@ func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (Tu
 		return TurnResponse{}, err
 	}
 	defer logFile.Close()
+	logWriter := io.Writer(logFile)
+	if options.OutputWriter != nil {
+		logWriter = io.MultiWriter(options.OutputWriter, logFile)
+	}
 
 	if err := conversation.AddUserMessage(message); err != nil {
+		writeTurnError(logFile, err)
 		_ = conversation.MarkFailed(err)
 		return TurnResponse{}, err
+	}
+
+	if service.externalBroker != nil {
+		routedAgent, routedPrompt, _, routeErr := service.externalBroker.Resolve(message, conversation.Session.ID())
+		if routeErr != nil {
+			writeTurnError(logFile, routeErr)
+			_ = conversation.MarkFailed(routeErr)
+			return TurnResponse{}, routeErr
+		}
+		if routedAgent == extagent.AgentDefault {
+			if err := service.externalBroker.Clear(conversation.Session.ID()); err != nil {
+				writeTurnError(logFile, err)
+				_ = conversation.MarkFailed(err)
+				return TurnResponse{}, err
+			}
+			reply := "switched to default model"
+			assistantMessage := map[string]any{"role": "assistant", "content": reply}
+			if err := conversation.Session.RecordMessage(assistantMessage); err != nil {
+				writeTurnError(logFile, err)
+				_ = conversation.MarkFailed(err)
+				return TurnResponse{}, err
+			}
+			conversation.Messages = append(conversation.Messages, assistantMessage)
+			if err := conversation.MarkCompleted(); err != nil {
+				writeTurnError(logFile, err)
+				return TurnResponse{}, err
+			}
+			writeTurnReply(logWriter, reply, false)
+			return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply}, nil
+		}
+		if routedAgent != "" {
+			result, err := service.externalBroker.SendTurn(ctx, extagent.TurnRequest{
+				BQSessionID: conversation.Session.ID(),
+				Agent:       routedAgent,
+				Prompt:      routedPrompt,
+				CWD:         service.workspaceRoot,
+			})
+			if err != nil {
+				writeTurnError(logFile, err)
+				_ = conversation.MarkFailed(err)
+				return TurnResponse{}, err
+			}
+			assistantMessage := map[string]any{"role": "assistant", "content": result.Reply}
+			if err := conversation.Session.RecordMessage(assistantMessage); err != nil {
+				writeTurnError(logFile, err)
+				_ = conversation.MarkFailed(err)
+				return TurnResponse{}, err
+			}
+			conversation.Messages = append(conversation.Messages, assistantMessage)
+			if err := conversation.MarkCompleted(); err != nil {
+				writeTurnError(logFile, err)
+				return TurnResponse{}, err
+			}
+			service.appendMemory(message, result.Reply)
+			writeTurnReply(logWriter, result.Reply, false)
+			return TurnResponse{SessionID: conversation.Session.ID(), Reply: result.Reply}, nil
+		}
 	}
 
 	app := agent.NewWithOptions(service.client, service.model, agent.Options{
 		SystemPrompt:    service.systemPrompt,
-		LogWriter:       logFile,
+		LogWriter:       logWriter,
 		ToolDefinitions: service.toolDefinitions,
 		Functions:       service.functions,
 		Planner:         service.planner,
 		Recorder:        conversation.Recorder(),
+		Stream:          options.Stream,
 	})
 
 	result, _, err := app.RunConversationTurn(ctx, conversation.Messages, service.maxTurns)
 	if err != nil {
+		writeTurnError(logFile, err)
 		_ = conversation.MarkFailed(err)
 		return TurnResponse{}, err
 	}
 	if err := conversation.MarkCompleted(); err != nil {
+		writeTurnError(logFile, err)
 		return TurnResponse{}, err
 	}
+	service.appendMemory(message, result)
+	writeTurnReply(logWriter, result, options.Stream)
 
-	return TurnResponse{SessionID: conversation.Session.ID(), Reply: result}, nil
+	return TurnResponse{SessionID: conversation.Session.ID(), Reply: result, Streamed: options.Stream}, nil
 }
 
 func cloneFunctions(functions map[string]tools.Function) map[string]tools.Function {
@@ -118,4 +206,31 @@ func cloneFunctions(functions map[string]tools.Function) map[string]tools.Functi
 		cloned[name] = function
 	}
 	return cloned
+}
+
+func (service *Service) appendMemory(task, result string) {
+	if service == nil || service.memoryAppend == nil {
+		return
+	}
+	if err := service.memoryAppend(task, result); err != nil {
+		log.Printf("memory append failed: %v", err)
+	}
+}
+
+func writeTurnReply(writer io.Writer, reply string, streamed bool) {
+	if writer == nil {
+		return
+	}
+	if streamed {
+		_, _ = io.WriteString(writer, "\n")
+		return
+	}
+	_, _ = fmt.Fprintln(writer, reply)
+}
+
+func writeTurnError(writer io.Writer, err error) {
+	if writer == nil || err == nil {
+		return
+	}
+	_, _ = fmt.Fprintln(writer, err)
 }
