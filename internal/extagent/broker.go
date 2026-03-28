@@ -54,6 +54,25 @@ func (broker *Broker) Resolve(message, sessionID string) (AgentName, string, boo
 	return state.Agent, strings.TrimSpace(message), false, nil
 }
 
+func (broker *Broker) Clear(sessionID string) error {
+	if broker == nil || broker.store == nil {
+		return nil
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("session_id is required")
+	}
+
+	broker.mu.Lock()
+	if client := broker.acpClients[sessionID]; client != nil {
+		_ = client.Close()
+		delete(broker.acpClients, sessionID)
+	}
+	broker.mu.Unlock()
+
+	return broker.store.Clear(sessionID)
+}
+
 func (broker *Broker) SendTurn(ctx context.Context, request TurnRequest) (TurnResponse, error) {
 	if broker == nil || broker.store == nil {
 		return TurnResponse{}, fmt.Errorf("external agent broker is not configured")

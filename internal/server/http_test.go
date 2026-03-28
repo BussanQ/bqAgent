@@ -1,13 +1,15 @@
 package server
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -388,6 +390,124 @@ func TestChatEndpointRoutesSlashPrefixedMessageToExternalAgent(t *testing.T) {
 	}
 }
 
+func TestChatEndpointContinuesExternalAgentSessionWithoutSlashPrefix(t *testing.T) {
+	root := t.TempDir()
+	service := newTestServiceWithPersistentExternal(root)
+	defer func() {
+		if service.externalBroker != nil {
+			_ = service.externalBroker.Close()
+		}
+	}()
+	handler := NewHandler(HandlerOptions{Service: service})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	first := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"/claude hello external"}`)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first status = %d, want 200", first.StatusCode)
+	}
+	var firstPayload chatResponse
+	if err := json.NewDecoder(first.Body).Decode(&firstPayload); err != nil {
+		t.Fatalf("failed to decode first response: %v", err)
+	}
+	_ = first.Body.Close()
+	if firstPayload.SessionID == "" {
+		t.Fatal("first session_id was empty")
+	}
+
+	second := postJSON(t, apiServer.URL+"/api/v1/chat", fmt.Sprintf(`{"session_id":%q,"message":"follow up"}`, firstPayload.SessionID))
+	if second.StatusCode != http.StatusOK {
+		t.Fatalf("second status = %d, want 200", second.StatusCode)
+	}
+	defer second.Body.Close()
+
+	var secondPayload chatResponse
+	if err := json.NewDecoder(second.Body).Decode(&secondPayload); err != nil {
+		t.Fatalf("failed to decode second response: %v", err)
+	}
+	if secondPayload.SessionID != firstPayload.SessionID {
+		t.Fatalf("second session_id = %q, want %q", secondPayload.SessionID, firstPayload.SessionID)
+	}
+	if secondPayload.Reply != "reply:follow up" {
+		t.Fatalf("second reply = %q, want %q", secondPayload.Reply, "reply:follow up")
+	}
+
+	state, err := extagent.NewStateStore(root).Load(firstPayload.SessionID)
+	if err != nil {
+		t.Fatalf("failed to load external agent state: %v", err)
+	}
+	if state.Agent != extagent.AgentClaude {
+		t.Fatalf("agent = %q, want %q", state.Agent, extagent.AgentClaude)
+	}
+	if state.ExternalSessionID != "acp-session-1" {
+		t.Fatalf("external session id = %q, want %q", state.ExternalSessionID, "acp-session-1")
+	}
+}
+
+func TestChatEndpointCanSwitchBackToDefaultModel(t *testing.T) {
+	var requestCount int
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestCount++
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"default reply"}}]}`))
+	}))
+	defer llmServer.Close()
+
+	root := t.TempDir()
+	service := newTestServiceWithExternal(root)
+	service.client = agent.NewClient("", llmServer.URL, nil)
+	handler := NewHandler(HandlerOptions{Service: service})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	first := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"/claude hello external"}`)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first status = %d, want 200", first.StatusCode)
+	}
+	var firstPayload chatResponse
+	if err := json.NewDecoder(first.Body).Decode(&firstPayload); err != nil {
+		t.Fatalf("failed to decode first response: %v", err)
+	}
+	_ = first.Body.Close()
+
+	reset := postJSON(t, apiServer.URL+"/api/v1/chat", fmt.Sprintf(`{"session_id":%q,"message":"/default"}`, firstPayload.SessionID))
+	if reset.StatusCode != http.StatusOK {
+		t.Fatalf("reset status = %d, want 200", reset.StatusCode)
+	}
+	var resetPayload chatResponse
+	if err := json.NewDecoder(reset.Body).Decode(&resetPayload); err != nil {
+		t.Fatalf("failed to decode reset response: %v", err)
+	}
+	_ = reset.Body.Close()
+	if resetPayload.Reply != "switched to default model" {
+		t.Fatalf("reset reply = %q, want %q", resetPayload.Reply, "switched to default model")
+	}
+
+	second := postJSON(t, apiServer.URL+"/api/v1/chat", fmt.Sprintf(`{"session_id":%q,"message":"hello model"}`, firstPayload.SessionID))
+	if second.StatusCode != http.StatusOK {
+		t.Fatalf("second status = %d, want 200", second.StatusCode)
+	}
+	defer second.Body.Close()
+	var secondPayload chatResponse
+	if err := json.NewDecoder(second.Body).Decode(&secondPayload); err != nil {
+		t.Fatalf("failed to decode second response: %v", err)
+	}
+	if secondPayload.Reply != "default reply" {
+		t.Fatalf("second reply = %q, want %q", secondPayload.Reply, "default reply")
+	}
+	if requestCount != 1 {
+		t.Fatalf("LLM request count = %d, want 1 after /default", requestCount)
+	}
+
+	state, err := extagent.NewStateStore(root).Load(firstPayload.SessionID)
+	if err != nil {
+		t.Fatalf("failed to load external agent state: %v", err)
+	}
+	if state.Agent != "" {
+		t.Fatalf("agent = %q, want empty after /default", state.Agent)
+	}
+}
+
 func TestChatEndpointRejectsEmptySlashPrefixedMessage(t *testing.T) {
 	root := t.TempDir()
 	service := newTestServiceWithExternal(root)
@@ -410,9 +530,49 @@ func TestChatEndpointRejectsEmptySlashPrefixedMessage(t *testing.T) {
 	}
 }
 
+func TestServiceHandleTurnAppendsMemory(t *testing.T) {
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"memory reply"}}]}`))
+	}))
+	defer llmServer.Close()
+
+	root := t.TempDir()
+	var (
+		task   string
+		result string
+	)
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          agent.NewClient("", llmServer.URL, nil),
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: tools.NewCatalog(tools.Options{WorkspaceRoot: root}).Definitions(),
+		Functions:       tools.NewCatalog(tools.Options{WorkspaceRoot: root}).Registry(),
+		MemoryAppend: func(savedTask, savedResult string) error {
+			task = savedTask
+			result = savedResult
+			return nil
+		},
+	})
+
+	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "remember this"})
+	if err != nil {
+		t.Fatalf("HandleTurn returned error: %v", err)
+	}
+	if response.Reply != "memory reply" {
+		t.Fatalf("reply = %q, want %q", response.Reply, "memory reply")
+	}
+	if task != "remember this" {
+		t.Fatalf("memory task = %q, want %q", task, "remember this")
+	}
+	if result != "memory reply" {
+		t.Fatalf("memory result = %q, want %q", result, "memory reply")
+	}
+}
+
 func newTestService(root, baseURL string) *Service {
 	chatClient := agent.NewClient("", baseURL, nil)
-	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root, ServerMode: true})
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
 	return NewService(ServiceOptions{
 		WorkspaceRoot:   root,
 		Client:          chatClient,
@@ -441,6 +601,25 @@ func newTestServiceWithExternal(root string) *Service {
 	return service
 }
 
+func newTestServiceWithPersistentExternal(root string) *Service {
+	service := newTestService(root, "http://example.invalid")
+	service.externalBroker = extagent.NewBroker(
+		extagent.NewStateStore(root),
+		map[extagent.AgentName]extagent.DetectionResult{
+			extagent.AgentClaude: {
+				Agent: extagent.AgentClaude,
+				Preferred: &extagent.AgentTransport{
+					Agent:   extagent.AgentClaude,
+					Kind:    extagent.TransportACP,
+					Command: extagent.CommandSpec{Command: os.Args[0], Args: []string{"-test.run=TestServerExternalHelperProcess", "--", "acp-claude"}},
+				},
+			},
+		},
+		extagent.NewACPClient,
+	)
+	return service
+}
+
 func TestServerExternalHelperProcess(t *testing.T) {
 	if len(os.Args) < 4 || os.Args[2] != "--" {
 		return
@@ -459,8 +638,61 @@ func TestServerExternalHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.WriteString("{\"event\":\"session\",\"session_id\":\"codex-session-1\"}\n")
 	case "cli-claude":
 		_, _ = os.Stdout.WriteString(`{"result":"claude reply","session_id":"claude-session-1"}`)
+	case "acp-claude":
+		runServerACPHelper()
 	}
 	os.Exit(0)
+}
+
+func runServerACPHelper() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var request map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+			continue
+		}
+		id, _ := request["id"].(float64)
+		method, _ := request["method"].(string)
+		switch method {
+		case "initialize":
+			writeServerACPEnvelope(map[string]any{
+				"id": int64(id),
+				"result": map[string]any{
+					"agentCapabilities": map[string]any{"loadSession": true},
+				},
+			})
+		case "session/new":
+			writeServerACPEnvelope(map[string]any{"id": int64(id), "result": map[string]any{"sessionId": "acp-session-1"}})
+		case "session/load":
+			writeServerACPEnvelope(map[string]any{"id": int64(id), "result": map[string]any{"sessionId": "acp-session-1"}})
+		case "session/prompt":
+			params, _ := request["params"].(map[string]any)
+			sessionID, _ := params["sessionId"].(string)
+			prompt := ""
+			if prompts, ok := params["prompt"].([]any); ok && len(prompts) > 0 {
+				if first, ok := prompts[0].(map[string]any); ok {
+					prompt, _ = first["text"].(string)
+				}
+			}
+			writeServerACPEnvelope(map[string]any{
+				"method": "session/update",
+				"params": map[string]any{
+					"sessionId": sessionID,
+					"update": map[string]any{
+						"sessionUpdate": "agent_message_chunk",
+						"content":       map[string]any{"text": "reply:" + prompt},
+					},
+				},
+			})
+			writeServerACPEnvelope(map[string]any{"id": int64(id), "result": map[string]any{"stopReason": "end_turn"}})
+		}
+	}
+}
+
+func writeServerACPEnvelope(payload map[string]any) {
+	data, _ := json.Marshal(payload)
+	_, _ = os.Stdout.Write(append(data, '\n'))
+	time.Sleep(5 * time.Millisecond)
 }
 
 func newTestHandlerWithBot(root, llmBaseURL, botBaseURL, token, secret string) http.Handler {

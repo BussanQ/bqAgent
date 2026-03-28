@@ -210,6 +210,38 @@ func TestRunExecutesInlineToolCallContent(t *testing.T) {
 	}
 }
 
+func TestRunExecutesShorthandInlineToolCallContent(t *testing.T) {
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{
+				Content: `<tool_call>read_file path="README.md"</tool_call>`,
+			},
+			{Content: "done"},
+		},
+	}
+	var logs bytes.Buffer
+	app := New(client, "", &logs)
+
+	result, err := app.Run(context.Background(), "search", 3)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("Run returned %q, want %q", result, "done")
+	}
+	if len(client.messages) != 2 {
+		t.Fatalf("client saw %d requests, want 2", len(client.messages))
+	}
+	toolMessages := extractToolMessages(client.messages[1])
+	if len(toolMessages) != 1 {
+		t.Fatalf("saw %d tool messages, want 1", len(toolMessages))
+	}
+	content, _ := toolMessages[0]["content"].(string)
+	if !strings.Contains(content, "README.md") {
+		t.Fatalf("tool content = %q, want executed shorthand inline tool result", content)
+	}
+}
+
 func TestRunReturnsMaxIterationsReached(t *testing.T) {
 	client := &stubClient{
 		responses: []AssistantMessage{

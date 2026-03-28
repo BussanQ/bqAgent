@@ -206,7 +206,7 @@ project/
 - 文件读写失败也会直接让当前运行失败
 - 相对路径的 `read_file` / `write_file` 会按 workspace root 解析
 - `execute_bash` 也会在 workspace root 下运行
-- `--server` 模式默认不暴露本地 shell / 文件 / memory 工具，只保留纯对话能力（以及可选的 `plan`）
+- `--server` 和 `--chat` 现在共用同一套内置本地工具，包括 shell、文件、网页搜索和 memory 工具
 
 ## 会话与后台模式
 
@@ -222,7 +222,7 @@ project/
 
 `--resume <session-id> "..."` 会读取 `messages.jsonl`，追加新的 follow-up 任务，然后从该上下文继续执行。
 
-`--server` 会启动一个常驻 HTTP 服务，默认监听 `0.0.0.0:8080`，提供：
+`--server` 会启动一个常驻 HTTP 服务，默认监听 `127.0.0.1:8080`，提供：
 
 - `GET /healthz`
 - `POST /api/v1/chat`

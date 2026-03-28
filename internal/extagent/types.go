@@ -9,6 +9,7 @@ const (
 	AgentCodex    AgentName = "codex"
 	AgentCursor   AgentName = "cursor"
 	AgentOpenCode AgentName = "opencode"
+	AgentDefault  AgentName = "default"
 )
 
 type TransportKind string

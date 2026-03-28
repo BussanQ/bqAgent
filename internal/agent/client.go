@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -72,6 +73,8 @@ type inlineToolCallPayload struct {
 	Name       string         `json:"name"`
 	Parameters map[string]any `json:"parameters"`
 }
+
+var inlineToolArgumentPattern = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*"([^"]*)"`)
 
 type streamDelta struct {
 	Role      string `json:"role"`
@@ -340,8 +343,8 @@ func extractInlineToolCalls(content string) []ToolCall {
 			continue
 		}
 
-		var payload inlineToolCallPayload
-		if err := json.Unmarshal([]byte(payloadText), &payload); err != nil {
+		payload, ok := parseInlineToolCallPayload(payloadText)
+		if !ok {
 			continue
 		}
 		if strings.TrimSpace(payload.Name) == "" {
@@ -362,6 +365,34 @@ func extractInlineToolCalls(content string) []ToolCall {
 		})
 	}
 	return toolCalls
+}
+
+func parseInlineToolCallPayload(payloadText string) (inlineToolCallPayload, bool) {
+	var payload inlineToolCallPayload
+	if err := json.Unmarshal([]byte(payloadText), &payload); err == nil {
+		if payload.Parameters == nil {
+			payload.Parameters = map[string]any{}
+		}
+		return payload, strings.TrimSpace(payload.Name) != ""
+	}
+
+	fields := strings.Fields(payloadText)
+	if len(fields) == 0 {
+		return inlineToolCallPayload{}, false
+	}
+
+	payload.Name = strings.TrimSpace(fields[0])
+	payload.Parameters = map[string]any{}
+	for _, match := range inlineToolArgumentPattern.FindAllStringSubmatch(payloadText, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		payload.Parameters[match[1]] = match[2]
+	}
+	if strings.TrimSpace(payload.Name) == "" {
+		return inlineToolCallPayload{}, false
+	}
+	return payload, true
 }
 
 func (m AssistantMessage) RequestMessage() map[string]any {

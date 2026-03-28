@@ -206,7 +206,7 @@ Behavior notes:
 - file read/write failures also stop the current run with an error
 - relative `read_file` / `write_file` paths are resolved from the workspace root
 - `execute_bash` also runs from the workspace root
-- `--server` intentionally disables local shell / file / memory tools by default so the HTTP surface stays conversation-only (plus optional `plan`)
+- `--server` and `--chat` now share the same built-in local tool set, including shell, file, web search, and memory tools
 
 ## Sessions and background mode
 
@@ -222,7 +222,7 @@ The command immediately prints the session ID, session directory, and log path.
 
 `--resume <session-id> "..."` loads `messages.jsonl`, appends your follow-up task, and continues from there.
 
-`--server` starts a long-lived HTTP service on `0.0.0.0:8080` by default and exposes:
+`--server` starts a long-lived HTTP service on `127.0.0.1:8080` by default and exposes:
 
 - `GET /healthz`
 - `POST /api/v1/chat`

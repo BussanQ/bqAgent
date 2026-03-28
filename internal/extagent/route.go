@@ -23,6 +23,11 @@ func ParseRoute(message string) (agent AgentName, prompt string, explicit bool, 
 		agent = AgentCursor
 	case string(AgentOpenCode):
 		agent = AgentOpenCode
+	case string(AgentDefault):
+		if len(fields) > 1 {
+			return "", "", true, fmt.Errorf("/%s does not accept a message", AgentDefault)
+		}
+		return AgentDefault, "", true, nil
 	default:
 		return "", message, false, nil
 	}

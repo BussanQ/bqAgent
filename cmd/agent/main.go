@@ -12,6 +12,7 @@ import (
 
 	"bqagent/internal/agent"
 	appruntime "bqagent/internal/runtime"
+	appserver "bqagent/internal/server"
 	"bqagent/internal/session"
 	"bqagent/internal/workspace"
 )
@@ -123,7 +124,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.BoolVar(&options.stream, "stream", false, "stream responses token by token (requires --chat)")
 	fs.BoolVar(&options.ilinkLogin, "ilink-login", false, "trigger the running server's iLink login flow")
 	fs.BoolVar(&options.ilinkStatus, "ilink-status", false, "fetch the running server's iLink login status")
-	fs.StringVar(&options.listen, "listen", "0.0.0.0:8080", "HTTP listen address for server mode")
+	fs.StringVar(&options.listen, "listen", "127.0.0.1:8080", "HTTP listen address for server mode")
 	fs.StringVar(&options.serverURL, "server-url", "http://127.0.0.1:8080", "base URL of a running server for client-style commands")
 	fs.StringVar(&options.resumeID, "resume", "", "resume an existing session")
 	fs.StringVar(&options.sessionID, "session-id", "", "internal session identifier")
@@ -273,7 +274,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		Config:        appruntime.ConfigFromEnv(getenv),
 		WorkspaceRoot: ws.Root,
 		MemoryDir:     ws.WorkspaceMemoryDir(),
-	}.Build(true, false)
+	}.Build(true)
 	app := runtime.NewAgent(outputWriter, systemPrompt, conversation.Recorder(), false)
 
 	if strings.TrimSpace(task) != "" && !options.plan {
@@ -308,68 +309,28 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 }
 
 func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt, initialTask string, options cliOptions) int {
-	store := session.NewStore(ws.Root)
-	var err error
-
 	sessionID := effectiveSessionID(options)
-	createOptions := &session.CreateOptions{Task: initialTask, Planned: options.plan, Chat: true}
-	conversation, err := appruntime.PrepareConversation(store, sessionID, createOptions, systemPrompt)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
+	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, nil)
+	defer externalBroker.Close()
 
-	// Open output log file so chat sessions are persisted like foreground runs.
-	logFile, err := conversation.Session.OpenOutputFile()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	defer logFile.Close()
-	outputWriter := io.MultiWriter(stdout, logFile)
-	errorWriter := io.MultiWriter(stderr, logFile)
-
-	runtime := appruntime.Factory{
-		Config:        appruntime.ConfigFromEnv(getenv),
-		WorkspaceRoot: ws.Root,
-		MemoryDir:     ws.WorkspaceMemoryDir(),
-	}.Build(options.plan, false)
-	app := runtime.NewAgent(outputWriter, systemPrompt, conversation.Recorder(), options.stream)
-
-	streamMode := options.stream
-	memoryEnabled := ws.MemoryEnabled()
-
-	executeTurn := func(input string) ([]map[string]any, error) {
-		if err := conversation.AddUserMessage(input); err != nil {
-			return conversation.Messages, err
+	executeTurn := func(input string) error {
+		response, err := service.HandleTurnWithOptions(ctx, appserver.TurnRequest{
+			SessionID: sessionID,
+			Message:   input,
+		}, appserver.TurnOptions{
+			OutputWriter: stdout,
+			Stream:       options.stream,
+		})
+		if err != nil {
+			return err
 		}
-
-		result, updatedMessages, runErr := app.RunConversationTurn(ctx, conversation.Messages, agent.DefaultMaxIterations)
-		if runErr != nil {
-			return updatedMessages, runErr
-		}
-		conversation.Messages = updatedMessages
-		if streamMode {
-			// content already printed chunk by chunk; just add trailing newline
-			fmt.Fprint(outputWriter, "\n")
-		} else {
-			fmt.Fprintln(outputWriter, result)
-		}
-
-		if memoryEnabled && strings.TrimSpace(input) != "" {
-			if memErr := ws.AppendMemory(input, result); memErr != nil {
-				fmt.Fprintln(errorWriter, memErr)
-			}
-		}
-
-		return conversation.Messages, nil
+		sessionID = response.SessionID
+		return nil
 	}
 
 	if strings.TrimSpace(initialTask) != "" {
-		_, err = executeTurn(initialTask)
-		if err != nil {
-			_ = conversation.MarkFailed(err)
-			fmt.Fprintln(errorWriter, err)
+		if err := executeTurn(initialTask); err != nil {
+			fmt.Fprintln(stderr, err)
 			return 1
 		}
 	}
@@ -388,21 +349,16 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 			continue
 		}
 
-		_, err = executeTurn(line)
-		if err != nil {
-			_ = conversation.MarkFailed(err)
-			fmt.Fprintln(errorWriter, err)
+		if err := executeTurn(line); err != nil {
+			fmt.Fprintln(stderr, err)
 			return 1
 		}
 	}
 
 	if scanErr := scanner.Err(); scanErr != nil {
-		fmt.Fprintln(errorWriter, scanErr)
-		_ = conversation.MarkFailed(scanErr)
+		fmt.Fprintln(stderr, scanErr)
 		return 1
 	}
-
-	_ = conversation.MarkCompleted()
 	return 0
 }
 

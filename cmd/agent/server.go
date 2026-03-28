@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bqagent/internal/extagent"
-	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
 	serverchanclient "bqagent/internal/serverchan"
 	"bqagent/internal/weixin"
@@ -49,27 +47,8 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 		return 1
 	}
 
-	runtime := appruntime.Factory{
-		Config:        appruntime.ConfigFromEnv(getenv),
-		WorkspaceRoot: ws.Root,
-		MemoryDir:     ws.WorkspaceMemoryDir(),
-	}.Build(options.plan, true)
-	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
-	detections := extagent.Detect(ctx, externalConfig, nil)
-	for _, status := range extagent.FormatStatuses(detections) {
-		fmt.Fprintf(stdout, "external-agent %s\n", status)
-	}
-	externalBroker := extagent.NewBroker(extagent.NewStateStore(ws.Root), detections, nil)
-	service := appserver.NewService(appserver.ServiceOptions{
-		WorkspaceRoot:   ws.Root,
-		Client:          runtime.Client,
-		Model:           runtime.Model,
-		SystemPrompt:    systemPrompt,
-		Planner:         runtime.Planner,
-		ToolDefinitions: runtime.Catalog.Definitions(),
-		Functions:       runtime.Catalog.Registry(),
-		ExternalBroker:  externalBroker,
-	})
+	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, stdout)
+	defer externalBroker.Close()
 
 	botProcessor := appserver.NewBotWebhookProcessor(
 		service,

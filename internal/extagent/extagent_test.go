@@ -168,6 +168,26 @@ func TestParseRoute(t *testing.T) {
 	}
 }
 
+func TestParseRouteSupportsDefaultReset(t *testing.T) {
+	agent, prompt, explicit, err := ParseRoute("/default")
+	if err != nil {
+		t.Fatalf("ParseRoute returned error: %v", err)
+	}
+	if !explicit || agent != AgentDefault || prompt != "" {
+		t.Fatalf("route = (%v, %q, %v), want (default, \"\", true)", agent, prompt, explicit)
+	}
+}
+
+func TestParseRouteRejectsDefaultWithMessage(t *testing.T) {
+	_, _, explicit, err := ParseRoute("/default hello")
+	if !explicit {
+		t.Fatal("want explicit route")
+	}
+	if err == nil {
+		t.Fatal("ParseRoute returned nil error, want validation failure")
+	}
+}
+
 func TestParseRouteRejectsEmptyAgentMessage(t *testing.T) {
 	_, _, explicit, err := ParseRoute("/codex")
 	if !explicit {
@@ -175,6 +195,31 @@ func TestParseRouteRejectsEmptyAgentMessage(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("ParseRoute returned nil error, want validation failure")
+	}
+}
+
+func TestBrokerClearRemovesSessionBinding(t *testing.T) {
+	root := t.TempDir()
+	store := NewStateStore(root)
+	if err := store.Save(SessionState{
+		BQSessionID:       "session-1",
+		Agent:             AgentClaude,
+		ExternalSessionID: "claude-session-1",
+	}); err != nil {
+		t.Fatalf("Save returned error: %v", err)
+	}
+	broker := NewBroker(store, nil, nil)
+
+	if err := broker.Clear("session-1"); err != nil {
+		t.Fatalf("Clear returned error: %v", err)
+	}
+
+	agent, prompt, explicit, err := broker.Resolve("hello", "session-1")
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if explicit || agent != "" || prompt != "hello" {
+		t.Fatalf("resolve = (%q, %q, %v), want (\"\", \"hello\", false)", agent, prompt, explicit)
 	}
 }
 

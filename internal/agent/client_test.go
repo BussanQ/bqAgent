@@ -118,6 +118,34 @@ func TestAssistantMessageRequestMessageStripsInlineToolCallMarkup(t *testing.T) 
 	}
 }
 
+func TestClientCreateChatCompletionParsesShorthandInlineToolCallContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"<tool_call>web_search search=\"IT科技新闻 今日 最新\"</tool_call>"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-key", server.URL, server.Client())
+	message, err := client.CreateChatCompletion(
+		context.Background(),
+		DefaultModel,
+		[]map[string]any{{"role": "user", "content": "hello"}},
+		tools.Definitions(),
+	)
+	if err != nil {
+		t.Fatalf("CreateChatCompletion returned error: %v", err)
+	}
+	if len(message.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %d, want 1", len(message.ToolCalls))
+	}
+	if message.ToolCalls[0].Function.Name != "web_search" {
+		t.Fatalf("tool name = %q, want %q", message.ToolCalls[0].Function.Name, "web_search")
+	}
+	if message.ToolCalls[0].Function.Arguments != `{"search":"IT科技新闻 今日 最新"}` {
+		t.Fatalf("tool arguments = %q, want shorthand args json", message.ToolCalls[0].Function.Arguments)
+	}
+}
+
 type failingStreamClient struct{}
 
 func (f *failingStreamClient) CreateChatCompletion(_ context.Context, _ string, _ []map[string]any, _ []tools.Definition) (AssistantMessage, error) {
