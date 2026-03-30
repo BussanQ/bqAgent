@@ -53,6 +53,7 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"read_file":    ReadFileFromRoot(options.WorkspaceRoot),
 		"write_file":   WriteFileToRoot(options.WorkspaceRoot),
 		"web_search":   WebSearchWithConfig(options.SearchAPIKey, options.SearchBaseURL),
+		"web_fetch":    WebFetch,
 		"mem_save":     MemSaveInDir(options.MemoryDir),
 		"mem_get":      MemGetInDir(options.MemoryDir),
 	}
@@ -154,6 +155,22 @@ func builtinDefinitions() []Definition {
 						"query": {Type: "string", Description: "The search query"},
 					},
 					Required: []string{"query"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "web_fetch",
+				Description: "Fetch content from a web URL",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"url":          {Type: "string", Description: "The URL to fetch"},
+						"extract_mode": {Type: "string", Description: "Optional extraction mode: markdown (default) or text"},
+						"max_chars":    {Type: "string", Description: "Optional positive integer limit for extracted content length"},
+					},
+					Required: []string{"url"},
 				},
 			},
 		},

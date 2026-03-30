@@ -8,8 +8,8 @@ import (
 
 func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 7 {
-		t.Fatalf("definitions length = %d, want 7", len(definitions))
+	if len(definitions) != 8 {
+		t.Fatalf("definitions length = %d, want 8", len(definitions))
 	}
 
 	tests := []struct {
@@ -22,9 +22,10 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		{index: 1, name: "read_file", description: "Read a file", required: []string{"path"}},
 		{index: 2, name: "write_file", description: "Write to a file", required: []string{"path", "content"}},
 		{index: 3, name: "web_search", description: "Search the web for up-to-date information", required: []string{"query"}},
-		{index: 4, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
-		{index: 5, name: "mem_get", description: "Read memory contents. Use to recall saved knowledge and context.", required: []string{"target"}},
-		{index: 6, name: "run_skill", description: "Execute a workspace skill when one of the loaded skills is relevant to the task.", required: []string{"skill"}},
+		{index: 4, name: "web_fetch", description: "Fetch content from a web URL", required: []string{"url"}},
+		{index: 5, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
+		{index: 6, name: "mem_get", description: "Read memory contents. Use to recall saved knowledge and context.", required: []string{"target"}},
+		{index: 7, name: "run_skill", description: "Execute a workspace skill when one of the loaded skills is relevant to the task.", required: []string{"skill"}},
 	}
 
 	for _, testCase := range tests {
@@ -44,6 +45,14 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		for requiredIndex, required := range testCase.required {
 			if definition.Function.Parameters.Required[requiredIndex] != required {
 				t.Fatalf("definition[%d].required[%d] = %q, want %q", testCase.index, requiredIndex, definition.Function.Parameters.Required[requiredIndex], required)
+			}
+		}
+		if definition.Function.Name == "web_fetch" {
+			if _, ok := definition.Function.Parameters.Properties["extract_mode"]; !ok {
+				t.Fatal("web_fetch definition missing extract_mode property")
+			}
+			if _, ok := definition.Function.Parameters.Properties["max_chars"]; !ok {
+				t.Fatal("web_fetch definition missing max_chars property")
 			}
 		}
 	}
@@ -73,8 +82,8 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 	catalog := NewCatalog(Options{IncludePlan: true})
 	definitions := catalog.Definitions()
-	if len(definitions) != 8 {
-		t.Fatalf("definitions length = %d, want 8", len(definitions))
+	if len(definitions) != 9 {
+		t.Fatalf("definitions length = %d, want 9", len(definitions))
 	}
 	if definitions[len(definitions)-1].Function.Name != "plan" {
 		t.Fatalf("last definition name = %q, want %q", definitions[len(definitions)-1].Function.Name, "plan")
@@ -90,7 +99,7 @@ func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 		t.Fatal("definitions missing run_skill")
 	}
 	registry := catalog.Registry()
-	if len(registry) != 6 {
-		t.Fatalf("registry length = %d, want 6", len(registry))
+	if len(registry) != 7 {
+		t.Fatalf("registry length = %d, want 7", len(registry))
 	}
 }
