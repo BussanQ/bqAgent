@@ -13,8 +13,11 @@ import (
 )
 
 type stubClient struct {
-	messages  [][]map[string]any
-	responses []AssistantMessage
+	messages        [][]map[string]any
+	responses       []AssistantMessage
+	optionMessages  [][]map[string]any
+	optionResponses []AssistantMessage
+	optionErrors    []error
 }
 
 func (s *stubClient) CreateChatCompletion(_ context.Context, _ string, messages []map[string]any, _ []tools.Definition) (AssistantMessage, error) {
@@ -29,6 +32,23 @@ func (s *stubClient) CreateChatCompletion(_ context.Context, _ string, messages 
 
 func (s *stubClient) CreateChatCompletionStream(_ context.Context, _ string, messages []map[string]any, _ []tools.Definition, _ func(string)) (AssistantMessage, error) {
 	return s.CreateChatCompletion(context.Background(), "", messages, nil)
+}
+
+func (s *stubClient) CreateChatCompletionWithOptions(ctx context.Context, _ string, messages []map[string]any, _ []tools.Definition, _ ChatCompletionOptions) (AssistantMessage, error) {
+	s.optionMessages = append(s.optionMessages, cloneMessages(messages))
+	if len(s.optionErrors) > 0 {
+		err := s.optionErrors[0]
+		s.optionErrors = s.optionErrors[1:]
+		if err != nil {
+			return AssistantMessage{}, err
+		}
+	}
+	if len(s.optionResponses) > 0 {
+		response := s.optionResponses[0]
+		s.optionResponses = s.optionResponses[1:]
+		return response, nil
+	}
+	return s.CreateChatCompletion(ctx, "", messages, nil)
 }
 
 func cloneMessages(messages []map[string]any) []map[string]any {
@@ -156,7 +176,7 @@ func TestRunReturnsMalformedArgumentsAsToolError(t *testing.T) {
 func TestRunReturnsAssistantContentWithoutToolCalls(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Content: "done"}}}
 	var logs bytes.Buffer
-	app := New(client, "", &logs)
+	app := NewWithOptions(client, "", Options{LogWriter: &logs, Context: ContextConfig{Enabled: false}})
 
 	result, err := app.Run(context.Background(), "hello", 5)
 	if err != nil {
@@ -258,7 +278,7 @@ func TestRunReturnsMaxIterationsReached(t *testing.T) {
 		},
 	}
 	var logs bytes.Buffer
-	app := New(client, "", &logs)
+	app := NewWithOptions(client, "", Options{LogWriter: &logs, Context: ContextConfig{Enabled: false}})
 
 	result, err := app.Run(context.Background(), "hello", 1)
 	if err != nil {
@@ -275,7 +295,7 @@ func TestRunReturnsMaxIterationsReached(t *testing.T) {
 func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
 	var logs bytes.Buffer
-	app := New(client, "", &logs)
+	app := NewWithOptions(client, "", Options{LogWriter: &logs, Context: ContextConfig{Enabled: false}})
 
 	messages := []map[string]any{
 		{"role": "system", "content": "sys"},
@@ -307,7 +327,7 @@ func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
 func TestRunConversationTurnSanitizesCompletedToolHistory(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "next reply"}}}
 	var logs bytes.Buffer
-	app := New(client, "", &logs)
+	app := NewWithOptions(client, "", Options{LogWriter: &logs, Context: ContextConfig{Enabled: false}})
 
 	messages := []map[string]any{
 		{"role": "system", "content": "sys"},
@@ -343,8 +363,8 @@ func TestRunConversationTurnSanitizesCompletedToolHistory(t *testing.T) {
 			}
 		}
 	}
-	if len(updated) != 5 {
-		t.Fatalf("updated messages = %d, want 5 after appending final assistant reply to sanitized history", len(updated))
+	if len(updated) != 7 {
+		t.Fatalf("updated messages = %d, want 7 after appending final assistant reply to full conversation history", len(updated))
 	}
 }
 
@@ -367,7 +387,7 @@ func TestRunSanitizesEarlierCompletedToolHistoryBetweenIterations(t *testing.T) 
 		},
 	}
 	var logs bytes.Buffer
-	app := New(client, "", &logs)
+	app := NewWithOptions(client, "", Options{LogWriter: &logs, Context: ContextConfig{Enabled: false}})
 
 	result, err := app.Run(context.Background(), "search", 5)
 	if err != nil {
@@ -411,6 +431,149 @@ func TestRunSanitizesEarlierCompletedToolHistoryBetweenIterations(t *testing.T) 
 	}
 	if toolMessages != 1 {
 		t.Fatalf("third request tool message count = %d, want 1 latest tool result", toolMessages)
+	}
+}
+
+func TestRunContextPrunesOldMessages(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
+	var logs bytes.Buffer
+	app := NewWithOptions(client, "", Options{
+		LogWriter: &logs,
+		Context: ContextConfig{
+			Enabled:               true,
+			MaxInputTokens:        60,
+			TargetInputTokens:     20,
+			ResponseReserveTokens: 10,
+			KeepLastTurns:         1,
+		},
+	})
+
+	messages := []map[string]any{
+		{"role": "system", "content": "system prompt"},
+		{"role": "user", "content": strings.Repeat("older-user-", 8)},
+		{"role": "assistant", "content": strings.Repeat("older-assistant-", 8)},
+		{"role": "user", "content": strings.Repeat("recent-user-", 8)},
+	}
+
+	_, _, err := app.RunConversationTurn(context.Background(), messages, 2)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if len(client.messages) != 1 {
+		t.Fatalf("client saw %d requests, want 1", len(client.messages))
+	}
+	request := client.messages[0]
+	if len(request) != 2 {
+		t.Fatalf("request messages = %d, want 2 after pruning", len(request))
+	}
+	if request[0]["role"] != "system" {
+		t.Fatalf("first message role = %#v, want system", request[0]["role"])
+	}
+	if request[1]["content"] != strings.Repeat("recent-user-", 8) {
+		t.Fatalf("last kept content = %#v, want most recent user turn", request[1]["content"])
+	}
+	if !strings.Contains(logs.String(), "[Context]") || !strings.Contains(logs.String(), "pruned=true") {
+		t.Fatalf("logs did not include context budget line: %q", logs.String())
+	}
+}
+
+func TestRunContextSummarizesOldMessages(t *testing.T) {
+	client := &stubClient{
+		responses:       []AssistantMessage{{Role: "assistant", Content: "reply"}},
+		optionResponses: []AssistantMessage{{Role: "assistant", Content: "carry forward the prior intent and constraints"}},
+	}
+	var logs bytes.Buffer
+	app := NewWithOptions(client, "", Options{
+		LogWriter: &logs,
+		Context: ContextConfig{
+			Enabled:               true,
+			MaxInputTokens:        60,
+			TargetInputTokens:     10,
+			ResponseReserveTokens: 10,
+			KeepLastTurns:         1,
+			SummarizationEnabled:  true,
+			SummaryTriggerTokens:  18,
+		},
+	})
+
+	messages := []map[string]any{
+		{"role": "system", "content": "system prompt"},
+		{"role": "user", "content": strings.Repeat("older-user-", 10)},
+		{"role": "assistant", "content": strings.Repeat("older-assistant-", 10)},
+		{"role": "user", "content": strings.Repeat("recent-user-", 8)},
+	}
+
+	_, _, err := app.RunConversationTurn(context.Background(), messages, 2)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if len(client.optionMessages) != 1 {
+		t.Fatalf("summary call count = %d, want 1", len(client.optionMessages))
+	}
+	if len(client.messages) != 1 {
+		t.Fatalf("client saw %d requests, want 1", len(client.messages))
+	}
+	request := client.messages[0]
+	if len(request) != 3 {
+		t.Fatalf("request messages = %d, want 3 after summarization", len(request))
+	}
+	if request[0]["role"] != "system" {
+		t.Fatalf("first message role = %#v, want system", request[0]["role"])
+	}
+	summary, _ := request[1]["content"].(string)
+	if !strings.Contains(summary, "Summary of earlier conversation:") {
+		t.Fatalf("summary message = %q, want summary prefix", summary)
+	}
+	if request[2]["content"] != strings.Repeat("recent-user-", 8) {
+		t.Fatalf("last kept content = %#v, want recent tail", request[2]["content"])
+	}
+	if !strings.Contains(logs.String(), "summarized=true") {
+		t.Fatalf("logs did not include summarized context line: %q", logs.String())
+	}
+}
+
+func TestRunContextFallsBackWhenSummarizationFails(t *testing.T) {
+	client := &stubClient{
+		responses:    []AssistantMessage{{Role: "assistant", Content: "reply"}},
+		optionErrors: []error{errors.New("summary failed")},
+	}
+	var logs bytes.Buffer
+	app := NewWithOptions(client, "", Options{
+		LogWriter: &logs,
+		Context: ContextConfig{
+			Enabled:               true,
+			MaxInputTokens:        60,
+			TargetInputTokens:     10,
+			ResponseReserveTokens: 10,
+			KeepLastTurns:         1,
+			SummarizationEnabled:  true,
+			SummaryTriggerTokens:  18,
+		},
+	})
+
+	messages := []map[string]any{
+		{"role": "system", "content": "system prompt"},
+		{"role": "user", "content": strings.Repeat("older-user-", 10)},
+		{"role": "assistant", "content": strings.Repeat("older-assistant-", 10)},
+		{"role": "user", "content": strings.Repeat("recent-user-", 8)},
+	}
+
+	_, _, err := app.RunConversationTurn(context.Background(), messages, 2)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if len(client.messages) != 1 {
+		t.Fatalf("client saw %d requests, want 1", len(client.messages))
+	}
+	request := client.messages[0]
+	if len(request) != 2 {
+		t.Fatalf("request messages = %d, want 2 after fallback pruning", len(request))
+	}
+	if request[1]["content"] != strings.Repeat("recent-user-", 8) {
+		t.Fatalf("fallback kept content = %#v, want recent tail", request[1]["content"])
+	}
+	if strings.Contains(logs.String(), "summarized=true") {
+		t.Fatalf("logs unexpectedly reported summarization success: %q", logs.String())
 	}
 }
 

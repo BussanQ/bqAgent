@@ -13,13 +13,32 @@ import (
 )
 
 const (
-	DefaultModel         = "MiniMax-M2.5"
-	DefaultSystemPrompt  = "You are a helpful assistant. Be concise."
-	DefaultMaxIterations = 20
+	DefaultModel                        = "MiniMax-M2.5"
+	DefaultSystemPrompt                 = "You are a helpful assistant. Be concise."
+	DefaultMaxIterations                = 20
+	DefaultContextMaxInputTokens        = 24000
+	DefaultContextResponseReserveTokens = 4000
+	DefaultContextKeepLastTurns         = 6
+	EarlierConversationSummaryPrefix    = "Summary of earlier conversation:\n"
 )
 
 type MessageRecorder interface {
 	RecordMessage(message map[string]any) error
+}
+
+type ContextCheckpointRecorder interface {
+	SaveCheckpointSummary(summary string, tailMessages []map[string]any, systemPrompt string) error
+}
+
+type ContextConfig struct {
+	Enabled               bool
+	MaxInputTokens        int
+	TargetInputTokens     int
+	ResponseReserveTokens int
+	KeepLastTurns         int
+	SummarizationEnabled  bool
+	SummaryTriggerTokens  int
+	SummaryModel          string
 }
 
 type Options struct {
@@ -31,6 +50,7 @@ type Options struct {
 	Recorder        MessageRecorder
 	Stream          bool
 	WorkspaceRoot   string
+	Context         ContextConfig
 }
 
 type Agent struct {
@@ -42,8 +62,10 @@ type Agent struct {
 	functions       map[string]tools.Function
 	planner         *Planner
 	recorder        MessageRecorder
+	checkpointSaver ContextCheckpointRecorder
 	stream          bool
 	workspaceRoot   string
+	contextConfig   ContextConfig
 }
 
 func New(client ChatCompletionClient, model string, logWriter io.Writer) *Agent {
@@ -76,6 +98,14 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		functions = cloneFunctionMap(functions)
 	}
 
+	contextConfig := options.Context
+	contextConfig = normalizeContextConfig(contextConfig)
+
+	var checkpointSaver ContextCheckpointRecorder
+	if saver, ok := options.Recorder.(ContextCheckpointRecorder); ok {
+		checkpointSaver = saver
+	}
+
 	return &Agent{
 		client:          client,
 		model:           model,
@@ -85,8 +115,10 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		functions:       functions,
 		planner:         clonePlannerWithClient(options.Planner, client),
 		recorder:        options.Recorder,
+		checkpointSaver: checkpointSaver,
 		stream:          options.Stream,
 		workspaceRoot:   options.WorkspaceRoot,
+		contextConfig:   contextConfig,
 	}
 }
 
@@ -102,12 +134,49 @@ func (a *Agent) Run(ctx context.Context, userMessage string, maxIterations int) 
 }
 
 func (a *Agent) RunConversation(ctx context.Context, messages []map[string]any, maxIterations int) (string, error) {
-	result, _, err := a.runConversation(ctx, sanitizeCompletedToolHistory(duplicateMessages(messages)), maxIterations, a.planner != nil)
+	result, _, err := a.runConversation(ctx, duplicateMessages(messages), maxIterations, a.planner != nil)
 	return result, err
 }
 
 func (a *Agent) RunConversationTurn(ctx context.Context, messages []map[string]any, maxIterations int) (string, []map[string]any, error) {
-	return a.runConversation(ctx, sanitizeCompletedToolHistory(duplicateMessages(messages)), maxIterations, a.planner != nil)
+	return a.runConversation(ctx, duplicateMessages(messages), maxIterations, a.planner != nil)
+}
+
+func DefaultContextConfig() ContextConfig {
+	return ContextConfig{
+		Enabled:               true,
+		MaxInputTokens:        DefaultContextMaxInputTokens,
+		ResponseReserveTokens: DefaultContextResponseReserveTokens,
+		TargetInputTokens:     DefaultContextMaxInputTokens - DefaultContextResponseReserveTokens,
+		KeepLastTurns:         DefaultContextKeepLastTurns,
+		SummarizationEnabled:  false,
+		SummaryTriggerTokens:  DefaultContextMaxInputTokens - DefaultContextResponseReserveTokens,
+	}
+}
+
+func normalizeContextConfig(config ContextConfig) ContextConfig {
+	if config.MaxInputTokens <= 0 {
+		config.MaxInputTokens = DefaultContextMaxInputTokens
+	}
+	if config.ResponseReserveTokens < 0 {
+		config.ResponseReserveTokens = 0
+	}
+	if config.ResponseReserveTokens >= config.MaxInputTokens {
+		config.ResponseReserveTokens = config.MaxInputTokens / 4
+	}
+	if config.TargetInputTokens <= 0 || config.TargetInputTokens >= config.MaxInputTokens {
+		config.TargetInputTokens = config.MaxInputTokens - config.ResponseReserveTokens
+	}
+	if config.TargetInputTokens <= 0 {
+		config.TargetInputTokens = config.MaxInputTokens
+	}
+	if config.KeepLastTurns < 0 {
+		config.KeepLastTurns = DefaultContextKeepLastTurns
+	}
+	if config.SummaryTriggerTokens <= 0 {
+		config.SummaryTriggerTokens = config.TargetInputTokens
+	}
+	return config
 }
 
 func (a *Agent) RunSkill(ctx context.Context, skillID, args string, maxIterations int) (string, error) {
@@ -185,7 +254,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		actualIterations = iteration + 1
-		requestMessages := sanitizeCompletedToolHistory(duplicateMessages(messages))
+		requestMessages := a.buildRequestMessages(ctx, messages)
 		var (
 			message    AssistantMessage
 			requestErr error
@@ -258,15 +327,15 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 
 			if toolCall.Function.Name == "run_skill" {
-					updatedMessages, skillErr := a.executeSkillTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
-					messages = updatedMessages
-					if skillErr != nil {
-						return "", updatedMessages, skillErr
-					}
-					continue
+				updatedMessages, skillErr := a.executeSkillTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
+				messages = updatedMessages
+				if skillErr != nil {
+					return "", updatedMessages, skillErr
 				}
+				continue
+			}
 
-				toolStartedAt := time.Now()
+			toolStartedAt := time.Now()
 			toolResult := ""
 			var toolErr error
 			function, ok := a.functions[toolCall.Function.Name]
@@ -412,6 +481,7 @@ func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any,
 		recorder:        a.recorder,
 		stream:          false,
 		workspaceRoot:   a.workspaceRoot,
+		contextConfig:   a.contextConfig,
 	}
 	result, _, err := child.runConversation(ctx, []map[string]any{{"role": "system", "content": a.systemPrompt}, {"role": "user", "content": skillTask}}, maxIterations, false)
 	if err != nil {
@@ -420,6 +490,181 @@ func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any,
 
 	messages[len(messages)-1]["content"] = result
 	return messages, nil
+}
+
+func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]any) []map[string]any {
+	sanitized := sanitizeCompletedToolHistory(duplicateMessages(messages))
+	if !a.contextConfig.Enabled {
+		return sanitized
+	}
+
+	estimatedTokens := estimateMessagesTokens(sanitized)
+	if estimatedTokens <= a.contextConfig.TargetInputTokens {
+		a.logContextBudget(len(messages), len(sanitized), len(sanitized), estimatedTokens, false, false)
+		return sanitized
+	}
+
+	pruned := pruneMessagesToBudget(sanitized, a.contextConfig)
+	prunedTokens := estimateMessagesTokens(pruned)
+	if !a.contextConfig.SummarizationEnabled || !shouldSummarize(estimatedTokens, a.contextConfig) {
+		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedTokens, true, false)
+		return pruned
+	}
+
+	summarized, ok := a.summarizeMessages(ctx, sanitized)
+	if !ok {
+		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedTokens, true, false)
+		return pruned
+	}
+	summaryTokens := estimateMessagesTokens(summarized)
+	a.logContextBudget(len(messages), len(sanitized), len(summarized), summaryTokens, true, true)
+	return summarized
+}
+
+func pruneMessagesToBudget(messages []map[string]any, config ContextConfig) []map[string]any {
+	if len(messages) <= 1 {
+		return messages
+	}
+
+	systemEnd := 0
+	if role, _ := messages[0]["role"].(string); role == "system" {
+		systemEnd = 1
+	}
+	if systemEnd >= len(messages) {
+		return messages
+	}
+
+	start := safeTailStart(messages, config.KeepLastTurns)
+	if start < systemEnd {
+		start = systemEnd
+	}
+
+	pruned := append([]map[string]any{}, messages[:systemEnd]...)
+	pruned = append(pruned, messages[start:]...)
+	return pruned
+}
+
+func shouldSummarize(estimatedTokens int, config ContextConfig) bool {
+	return config.SummarizationEnabled && estimatedTokens > config.SummaryTriggerTokens
+}
+
+func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any) ([]map[string]any, bool) {
+	prefix, tail, ok := splitMessagesForSummary(messages, a.contextConfig.KeepLastTurns)
+	if !ok {
+		return nil, false
+	}
+	summary, err := a.generateSummary(ctx, prefix)
+	if err != nil || strings.TrimSpace(summary) == "" {
+		return nil, false
+	}
+	if a.checkpointSaver != nil {
+		_ = a.checkpointSaver.SaveCheckpointSummary(summary, tail, a.systemPrompt)
+	}
+
+	summarized := make([]map[string]any, 0, len(tail)+2)
+	if len(prefix) > 0 {
+		if role, _ := prefix[0]["role"].(string); role == "system" {
+			summarized = append(summarized, prefix[0])
+		}
+	}
+	summarized = append(summarized, map[string]any{
+		"role":    "assistant",
+		"content": EarlierConversationSummaryPrefix + summary,
+	})
+	summarized = append(summarized, tail...)
+	return summarized, true
+}
+
+func splitMessagesForSummary(messages []map[string]any, keepLastTurns int) ([]map[string]any, []map[string]any, bool) {
+	if len(messages) <= 2 {
+		return nil, nil, false
+	}
+	start := safeTailStart(messages, keepLastTurns)
+	systemEnd := 0
+	if role, _ := messages[0]["role"].(string); role == "system" {
+		systemEnd = 1
+	}
+	if start <= systemEnd || start >= len(messages) {
+		return nil, nil, false
+	}
+	return messages[:start], messages[start:], true
+}
+
+func (a *Agent) generateSummary(ctx context.Context, messages []map[string]any) (string, error) {
+	client, ok := a.client.(chatCompletionOptionsClient)
+	if !ok {
+		return "", fmt.Errorf("chat completion options are not supported")
+	}
+
+	model := strings.TrimSpace(a.contextConfig.SummaryModel)
+	if model == "" {
+		model = a.model
+	}
+	promptMessages := []map[string]any{
+		{"role": "system", "content": "Summarize the earlier conversation for future continuation. Preserve goals, constraints, decisions, unresolved questions, and important factual context. Be concise."},
+		{"role": "user", "content": buildSummaryInput(messages)},
+	}
+	response, err := client.CreateChatCompletionWithOptions(ctx, model, promptMessages, nil, ChatCompletionOptions{})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(response.FinalContent()), nil
+}
+
+func buildSummaryInput(messages []map[string]any) string {
+	parts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		role, _ := message["role"].(string)
+		content, _ := message["content"].(string)
+		content = strings.TrimSpace(content)
+		if role == "" || content == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s: %s", role, content))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func safeTailStart(messages []map[string]any, keepLastTurns int) int {
+	turns := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		role, _ := messages[i]["role"].(string)
+		if role == "user" {
+			turns++
+			if turns >= keepLastTurns {
+				return i
+			}
+		}
+	}
+	return 0
+}
+
+func estimateMessagesTokens(messages []map[string]any) int {
+	totalChars := 0
+	for _, message := range messages {
+		for _, key := range []string{"role", "content", "tool_call_id"} {
+			if text, ok := message[key].(string); ok {
+				totalChars += len(text)
+			}
+		}
+		if toolCalls, ok := message["tool_calls"]; ok && toolCalls != nil {
+			encoded, err := json.Marshal(toolCalls)
+			if err == nil {
+				totalChars += len(encoded)
+			}
+		}
+	}
+	if totalChars == 0 {
+		return 0
+	}
+	return (totalChars + 3) / 4
+}
+
+func (a *Agent) logContextBudget(rawCount, sanitizedCount, requestCount, estimatedTokens int, pruned bool, summarized bool) {
+	if a.logWriter == nil {
+		return
+	}
+	fmt.Fprintf(a.logWriter, "[Context] raw_messages=%d sanitized_messages=%d request_messages=%d estimated_tokens=%d pruned=%t summarized=%t target_tokens=%d\n", rawCount, sanitizedCount, requestCount, estimatedTokens, pruned, summarized, a.contextConfig.TargetInputTokens)
 }
 
 func buildSkillTask(skill workspace.Skill, args string) string {

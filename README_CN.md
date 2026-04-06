@@ -4,7 +4,7 @@
 
 > *"问题不在于你看到了什么，而在于你看见了什么。"* — 梭罗
 
-这是一个面向本地工作流的小型 Go 智能体。现在它在保留极简执行循环的同时，增加了工作区上下文、Markdown 技能定义、轻量记忆、规划、持久会话和最小后台模式。
+这是一个面向本地工作流的小型 Go 智能体。现在它在保留极简执行循环的同时，增加了工作区上下文、Markdown 技能定义、轻量记忆、规划、持久会话、请求级上下文管理、基于 checkpoint 的压缩恢复，以及最小后台模式。
 
 ## 它现在能做什么
 
@@ -26,6 +26,9 @@ bqagent 的核心仍然很简单：
 - 使用 `--plan` 先拆步骤再执行
 - 使用 `--chat` 进行交互式多轮对话
 - 使用 `--resume` 恢复持久会话
+- 对长对话做请求时上下文裁剪
+- 可选地对旧对话做请求时摘要压缩
+- 通过 checkpoint 进行紧凑恢复，同时保留原始会话历史
 - 使用 `--background` 启动最小后台会话
 - 使用 `--server` 启动常驻 HTTP 对话服务，并可选通过 ServerChan 推送回复
 
@@ -143,6 +146,7 @@ project/
 │  │  └─ <session-id>/
 │  │     ├─ meta.json
 │  │     ├─ messages.jsonl
+│  │     ├─ context_checkpoint.json
 │  │     └─ output.log
 │  └─ mcp.json
 ├─ workspace/  # 兼容旧布局
@@ -180,7 +184,10 @@ project/
 - `.agent/skills/*/SKILL.md`
   - Markdown 技能定义，当前会以摘要形式注入 prompt
 - `.agent/sessions/<session-id>/messages.jsonl`
-  - 可恢复会话的追加式 transcript
+  - 可恢复会话的追加式原始 transcript
+- `.agent/sessions/<session-id>/context_checkpoint.json`
+  - 保存“摘要 + 最近 tail”的紧凑 checkpoint，用于恢复时重建工作上下文
+  - 不会替换或重写原始 `messages.jsonl`
 - `.agent/sessions/<session-id>/output.log`
   - 人类可读的执行日志
 - `.agent/mcp.json`
@@ -210,17 +217,25 @@ project/
 
 ## 会话与后台模式
 
-`--chat` 启动交互式多轮对话模式。在终端中逐条输入消息，智能体会在整个会话过程中保持完整的对话上下文。输入 `/exit` 或按 Ctrl-D（EOF）结束会话。对话会自动持久化到 `.agent/sessions/` 目录下。
+`--chat` 启动交互式多轮对话模式。在终端中逐条输入消息，智能体会在整个会话过程中持续接续上下文。输入 `/exit` 或按 Ctrl-D（EOF）结束会话。对话会自动持久化到 `.agent/sessions/` 目录下。
+
+长对话现在会在每次请求模型前做上下文管理：
+
+- 已完成的历史 tool call 脚手架不会继续带入请求 payload
+- 旧对话会按目标输入预算裁剪
+- 可选地把更早的普通对话压缩成一条 synthetic summary message
+- 即使请求 payload 被缩短，磁盘上的原始会话历史仍然保留
 
 `--background` 会启动一个”最小后台会话”：通过同一二进制拉起子进程，并把输出写入：
 
 - `.agent/sessions/<session-id>/meta.json`
 - `.agent/sessions/<session-id>/messages.jsonl`
+- `.agent/sessions/<session-id>/context_checkpoint.json`（当已生成摘要 checkpoint 时）
 - `.agent/sessions/<session-id>/output.log`
 
 命令会立即返回 session ID、session 目录和日志路径。
 
-`--resume <session-id> "..."` 会读取 `messages.jsonl`，追加新的 follow-up 任务，然后从该上下文继续执行。
+`--resume <session-id> "..."` 会恢复已有会话、刷新当前 system prompt、在兼容时复用 `context_checkpoint.json`，再追加新的 follow-up 任务并继续执行。
 
 `--server` 会启动一个常驻 HTTP 服务，默认监听 `127.0.0.1:8080`，提供：
 
@@ -236,6 +251,17 @@ project/
 `/api/v1/serverchan/bot/webhook` 则用于 ServerChan Bot / 微信回复回流：它接收 Bot webhook 的 JSON update，用入站 `chat_id` 绑定到持久化的 bqagent session，并通过 `SERVERCHAN_BOT_TOKEN` 调用 Bot `sendMessage` API 把回复发回去。如果设置了 `SERVERCHAN_BOT_WEBHOOK_SECRET`，请求还必须带上 `X-Sc3Bot-Webhook-Secret`。
 
 `--server --background` 会把该服务放到后台运行，并把服务日志写入 `.agent/server/server.log`。如果要真正接 webhook，需要把 `/api/v1/serverchan/bot/webhook` 通过公网 HTTPS 地址或反向代理暴露出去。
+
+上下文管理可通过环境变量配置：
+
+- `CONTEXT_MANAGEMENT_ENABLED`
+- `CONTEXT_MAX_INPUT_TOKENS`
+- `CONTEXT_TARGET_INPUT_TOKENS`
+- `CONTEXT_RESPONSE_RESERVE_TOKENS`
+- `CONTEXT_KEEP_LAST_TURNS`
+- `CONTEXT_SUMMARIZATION_ENABLED`
+- `CONTEXT_SUMMARY_TRIGGER_TOKENS`
+- `CONTEXT_SUMMARY_MODEL`
 
 这里仍然刻意保持简单：
 

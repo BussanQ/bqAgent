@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"bqagent/internal/session"
@@ -99,6 +100,70 @@ func TestPrepareConversationRefreshesExistingSystemMessage(t *testing.T) {
 	}
 	if messages[0]["content"] != "new prompt" {
 		t.Fatalf("persisted first message content = %#v, want new prompt", messages[0]["content"])
+	}
+}
+
+func TestPrepareConversationRestoresCheckpointSummaryAndTail(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	createOptions := &session.CreateOptions{Task: "hello", Chat: true}
+
+	conversation, err := PrepareConversation(store, "", createOptions, "system prompt")
+	if err != nil {
+		t.Fatalf("PrepareConversation returned error: %v", err)
+	}
+	if err := conversation.AddUserMessage("old detail"); err != nil {
+		t.Fatalf("AddUserMessage returned error: %v", err)
+	}
+	if err := conversation.Session.SaveCheckpointSummary("checkpoint summary", []map[string]any{{"role": "user", "content": "recent tail"}}, "system prompt"); err != nil {
+		t.Fatalf("SaveCheckpointSummary returned error: %v", err)
+	}
+
+	restored, err := PrepareConversation(store, conversation.Session.ID(), nil, "system prompt")
+	if err != nil {
+		t.Fatalf("PrepareConversation restore returned error: %v", err)
+	}
+	if len(restored.Messages) != 3 {
+		t.Fatalf("restored messages = %d, want 3", len(restored.Messages))
+	}
+	if restored.Messages[0]["role"] != "system" {
+		t.Fatalf("first restored role = %#v, want system", restored.Messages[0]["role"])
+	}
+	summary, _ := restored.Messages[1]["content"].(string)
+	if !strings.Contains(summary, "Summary of earlier conversation:\ncheckpoint summary") {
+		t.Fatalf("restored summary = %q, want checkpoint summary message", summary)
+	}
+	if restored.Messages[2]["content"] != "recent tail" {
+		t.Fatalf("restored tail content = %#v, want %q", restored.Messages[2]["content"], "recent tail")
+	}
+}
+
+func TestPrepareConversationIgnoresCheckpointWhenSystemPromptChanges(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	createOptions := &session.CreateOptions{Task: "hello", Chat: true}
+
+	conversation, err := PrepareConversation(store, "", createOptions, "old system prompt")
+	if err != nil {
+		t.Fatalf("PrepareConversation returned error: %v", err)
+	}
+	if err := conversation.AddUserMessage("old detail"); err != nil {
+		t.Fatalf("AddUserMessage returned error: %v", err)
+	}
+	if err := conversation.Session.SaveCheckpointSummary("checkpoint summary", []map[string]any{{"role": "user", "content": "recent tail"}}, "old system prompt"); err != nil {
+		t.Fatalf("SaveCheckpointSummary returned error: %v", err)
+	}
+
+	restored, err := PrepareConversation(store, conversation.Session.ID(), nil, "new system prompt")
+	if err != nil {
+		t.Fatalf("PrepareConversation restore returned error: %v", err)
+	}
+	if len(restored.Messages) != 2 {
+		t.Fatalf("restored messages = %d, want 2 when checkpoint is ignored", len(restored.Messages))
+	}
+	if restored.Messages[0]["content"] != "new system prompt" {
+		t.Fatalf("first restored content = %#v, want new system prompt", restored.Messages[0]["content"])
+	}
+	if restored.Messages[1]["content"] != "old detail" {
+		t.Fatalf("second restored content = %#v, want original stored message", restored.Messages[1]["content"])
 	}
 }
 

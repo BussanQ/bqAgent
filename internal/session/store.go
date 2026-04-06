@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -34,6 +35,13 @@ type Meta struct {
 
 type Store struct {
 	workspaceRoot string
+}
+
+type ContextCheckpoint struct {
+	Summary      string           `json:"summary"`
+	TailMessages []map[string]any `json:"tail_messages"`
+	SystemPrompt string           `json:"system_prompt,omitempty"`
+	UpdatedAt    time.Time        `json:"updated_at"`
 }
 
 type Session struct {
@@ -119,6 +127,10 @@ func (session *Session) OutputPath() string {
 	return filepath.Join(session.Dir(), "output.log")
 }
 
+func (session *Session) CheckpointPath() string {
+	return filepath.Join(session.Dir(), "context_checkpoint.json")
+}
+
 func (session *Session) LoadMessages() ([]map[string]any, error) {
 	return readMessagesJSONL(session.MessagesPath())
 }
@@ -144,6 +156,48 @@ func (session *Session) RewriteMessages(messages []map[string]any) error {
 		return err
 	}
 	return writeMessagesJSONL(session.MessagesPath(), messages)
+}
+
+func (session *Session) SaveCheckpoint(checkpoint ContextCheckpoint) error {
+	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
+		return err
+	}
+	content, err := json.MarshalIndent(checkpoint, "", "  ")
+	if err != nil {
+		return err
+	}
+	content = append(content, '\n')
+	return os.WriteFile(session.CheckpointPath(), content, 0o644)
+}
+
+func (session *Session) LoadCheckpoint() (ContextCheckpoint, error) {
+	content, err := os.ReadFile(session.CheckpointPath())
+	if err != nil {
+		return ContextCheckpoint{}, err
+	}
+	var checkpoint ContextCheckpoint
+	if err := json.Unmarshal(content, &checkpoint); err != nil {
+		return ContextCheckpoint{}, err
+	}
+	return checkpoint, nil
+}
+
+func (session *Session) SaveCheckpointSummary(summary string, tailMessages []map[string]any, systemPrompt string) error {
+	clonedTail := make([]map[string]any, len(tailMessages))
+	for i, message := range tailMessages {
+		copyMessage := make(map[string]any, len(message))
+		for key, value := range message {
+			copyMessage[key] = value
+		}
+		clonedTail[i] = copyMessage
+	}
+	checkpoint := ContextCheckpoint{
+		Summary:      strings.TrimSpace(summary),
+		TailMessages: clonedTail,
+		SystemPrompt: systemPrompt,
+		UpdatedAt:    time.Now().UTC(),
+	}
+	return session.SaveCheckpoint(checkpoint)
 }
 
 func (session *Session) OpenOutputFile() (*os.File, error) {

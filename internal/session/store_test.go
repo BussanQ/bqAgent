@@ -47,3 +47,33 @@ func TestSessionStorePersistsMessagesAndStatus(t *testing.T) {
 		t.Fatalf("last error = %q, want %q", reopened.Meta().LastError, "boom")
 	}
 }
+
+func TestSessionStorePersistsCheckpoint(t *testing.T) {
+	store := NewStore(t.TempDir())
+	savedSession, err := store.Create(CreateOptions{Task: "inspect repo", Chat: true})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	tail := []map[string]any{{"role": "user", "content": "continue here"}}
+	if err := savedSession.SaveCheckpointSummary("important summary", tail, "system prompt"); err != nil {
+		t.Fatalf("SaveCheckpointSummary returned error: %v", err)
+	}
+
+	checkpoint, err := savedSession.LoadCheckpoint()
+	if err != nil {
+		t.Fatalf("LoadCheckpoint returned error: %v", err)
+	}
+	if checkpoint.Summary != "important summary" {
+		t.Fatalf("checkpoint summary = %q, want %q", checkpoint.Summary, "important summary")
+	}
+	if checkpoint.SystemPrompt != "system prompt" {
+		t.Fatalf("checkpoint system prompt = %q, want %q", checkpoint.SystemPrompt, "system prompt")
+	}
+	if len(checkpoint.TailMessages) != 1 {
+		t.Fatalf("checkpoint tail messages = %d, want 1", len(checkpoint.TailMessages))
+	}
+	if checkpoint.TailMessages[0]["content"] != "continue here" {
+		t.Fatalf("checkpoint tail content = %#v, want %q", checkpoint.TailMessages[0]["content"], "continue here")
+	}
+}

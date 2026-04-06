@@ -4,7 +4,7 @@
 
 > *"The question is not what you look at, but what you see."* — Henry David Thoreau
 
-A small Go agent for local work, now with workspace-aware context, Markdown skill definitions, lightweight memory, planning, persistent sessions, and a minimal background mode.
+A small Go agent for local work, now with workspace-aware context, Markdown skill definitions, lightweight memory, planning, persistent sessions, request-time context management, checkpoint-based resume compaction, and a minimal background mode.
 
 ## What it can do
 
@@ -26,6 +26,9 @@ The difference now is that the loop can be wrapped with extra capabilities inspi
 - optional planning with `--plan`
 - interactive multi-turn conversation with `--chat`
 - persistent sessions with `--resume`
+- request-time context pruning for long conversations
+- optional request-time summary compaction for older turns
+- checkpoint-based compact resume while keeping raw session history intact
 - minimal background execution with `--background`
 - a long-lived HTTP server with `--server`, including optional ServerChan reply delivery
 
@@ -143,6 +146,7 @@ project/
    │  └─ <session-id>/
    │     ├─ meta.json
    │     ├─ messages.jsonl
+   │     ├─ context_checkpoint.json
    │     └─ output.log
    └─ mcp.json
 ├─ workspace/  # legacy compatible layout
@@ -180,7 +184,10 @@ project/
 - `.agent/skills/*/SKILL.md`
   - Markdown skill definitions summarized into the prompt
 - `.agent/sessions/<session-id>/messages.jsonl`
-  - append-only transcript for resumable conversations
+  - append-only raw transcript for resumable conversations
+- `.agent/sessions/<session-id>/context_checkpoint.json`
+  - compact checkpoint with summary plus recent tail for faster resume context reconstruction
+  - does not replace or rewrite the raw `messages.jsonl` history
 - `.agent/sessions/<session-id>/output.log`
   - human-readable execution log
 - `.agent/mcp.json`
@@ -210,17 +217,25 @@ Behavior notes:
 
 ## Sessions and background mode
 
-`--chat` starts an interactive multi-turn conversation in the terminal. Type your messages one at a time; the agent keeps the full conversation context across turns. Type `/exit` or press Ctrl-D (EOF) to end the session. Chat sessions are automatically persisted under `.agent/sessions/`.
+`--chat` starts an interactive multi-turn conversation in the terminal. Type your messages one at a time; the agent keeps the conversation going across turns. Type `/exit` or press Ctrl-D (EOF) to end the session. Chat sessions are automatically persisted under `.agent/sessions/`.
+
+Long conversations now use request-time context management before each model call:
+
+- completed historical tool-call scaffolding is stripped from the request payload
+- older turns can be pruned to stay within a target input budget
+- optional summarization can replace older dialogue with a synthetic summary message
+- the raw on-disk transcript remains intact even when the request payload is shortened
 
 `--background` starts a minimal background session by launching the same binary as a child process and writing output to:
 
 - `.agent/sessions/<session-id>/meta.json`
 - `.agent/sessions/<session-id>/messages.jsonl`
+- `.agent/sessions/<session-id>/context_checkpoint.json` (when a summary checkpoint has been created)
 - `.agent/sessions/<session-id>/output.log`
 
 The command immediately prints the session ID, session directory, and log path.
 
-`--resume <session-id> "..."` loads `messages.jsonl`, appends your follow-up task, and continues from there.
+`--resume <session-id> "..."` restores the session, refreshes the current system prompt, reuses `context_checkpoint.json` when compatible, appends your follow-up task, and continues from there.
 
 `--server` starts a long-lived HTTP service on `127.0.0.1:8080` by default and exposes:
 
@@ -236,6 +251,17 @@ The command immediately prints the session ID, session directory, and log path.
 `/api/v1/serverchan/bot/webhook` is the conversational webhook endpoint for ServerChan Bot / WeChat replies. It accepts the Bot webhook JSON update format, maps each inbound `chat_id` onto a persisted bqagent session, and sends the assistant reply back through the Bot `sendMessage` API using `SERVERCHAN_BOT_TOKEN`. If `SERVERCHAN_BOT_WEBHOOK_SECRET` is set, requests must include `X-Sc3Bot-Webhook-Secret`.
 
 `--server --background` runs this server in the background and writes service logs to `.agent/server/server.log`. For real webhook use, expose `/api/v1/serverchan/bot/webhook` through a public HTTPS endpoint or reverse proxy.
+
+Context behavior is configurable through environment variables:
+
+- `CONTEXT_MANAGEMENT_ENABLED`
+- `CONTEXT_MAX_INPUT_TOKENS`
+- `CONTEXT_TARGET_INPUT_TOKENS`
+- `CONTEXT_RESPONSE_RESERVE_TOKENS`
+- `CONTEXT_KEEP_LAST_TURNS`
+- `CONTEXT_SUMMARIZATION_ENABLED`
+- `CONTEXT_SUMMARY_TRIGGER_TOKENS`
+- `CONTEXT_SUMMARY_MODEL`
 
 This is still intentionally a small implementation:
 

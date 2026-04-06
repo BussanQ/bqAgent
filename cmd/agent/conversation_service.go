@@ -46,6 +46,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		Functions:       runtime.Catalog.Registry(),
 		ExternalBroker:  externalBroker,
 		MemoryAppend:    memoryAppend,
+		Context:         runtime.Context,
 	})
 	return service, externalBroker
 }

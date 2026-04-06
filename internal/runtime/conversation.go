@@ -39,6 +39,9 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 			_ = savedSession.MarkFailed(err)
 			return nil, err
 		}
+		if checkpoint, checkpointErr := savedSession.LoadCheckpoint(); checkpointErr == nil {
+			messages = restoreCheckpointMessages(messages, checkpoint, systemPrompt)
+		}
 	}
 
 	conversation := &Conversation{
@@ -78,6 +81,34 @@ func (conversation *Conversation) EnsureSystemMessage(systemPrompt string) error
 		return conversation.Session.RewriteMessages(conversation.Messages)
 	}
 	return nil
+}
+
+func restoreCheckpointMessages(messages []map[string]any, checkpoint session.ContextCheckpoint, systemPrompt string) []map[string]any {
+	if strings.TrimSpace(checkpoint.Summary) == "" || len(checkpoint.TailMessages) == 0 {
+		return messages
+	}
+	if strings.TrimSpace(checkpoint.SystemPrompt) != "" && checkpoint.SystemPrompt != systemPrompt {
+		return messages
+	}
+
+	restored := make([]map[string]any, 0, len(checkpoint.TailMessages)+2)
+	if len(messages) > 0 {
+		if role, _ := messages[0]["role"].(string); role == "system" {
+			restored = append(restored, messages[0])
+		}
+	}
+	restored = append(restored, map[string]any{
+		"role":    "assistant",
+		"content": agent.EarlierConversationSummaryPrefix + checkpoint.Summary,
+	})
+	for _, message := range checkpoint.TailMessages {
+		copyMessage := make(map[string]any, len(message))
+		for key, value := range message {
+			copyMessage[key] = value
+		}
+		restored = append(restored, copyMessage)
+	}
+	return restored
 }
 
 func (conversation *Conversation) AddUserMessage(content string) error {

@@ -26,6 +26,7 @@ type ServiceOptions struct {
 	DefaultMaxTurns     int
 	ExternalBroker      *extagent.Broker
 	MemoryAppend        func(task, result string) error
+	Context             agent.ContextConfig
 }
 
 type Service struct {
@@ -42,6 +43,7 @@ type Service struct {
 	locker              *KeyedLocker
 	externalBroker      *extagent.Broker
 	memoryAppend        func(task, result string) error
+	context             agent.ContextConfig
 }
 
 type TurnRequest struct {
@@ -79,6 +81,7 @@ func NewService(options ServiceOptions) *Service {
 		locker:              NewKeyedLocker(),
 		externalBroker:      options.ExternalBroker,
 		memoryAppend:        options.MemoryAppend,
+		context:             options.Context,
 	}
 }
 
@@ -212,6 +215,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		Recorder:        conversation.Recorder(),
 		Stream:          options.Stream,
 		WorkspaceRoot:   service.workspaceRoot,
+		Context:         service.context,
 	})
 
 	result, _, err := app.RunConversationTurn(ctx, conversation.Messages, service.maxTurns)
@@ -253,6 +257,7 @@ func (service *Service) handleSkillSlash(ctx context.Context, _ []map[string]any
 		Planner:         service.planner,
 		Recorder:        recorder,
 		WorkspaceRoot:   service.workspaceRoot,
+		Context:         service.context,
 	})
 	result, err := app.RunSkill(ctx, skillID, args, service.maxTurns)
 	return result, true, err
