@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ func TestMemSaveDailyAppendsToTodayFile(t *testing.T) {
 	defer func() { memoryNow = time.Now }()
 
 	fn := MemSaveInDir(memDir)
-	result, err := fn(map[string]any{"target": "daily", "content": "user prefers dark mode"})
+	result, err := fn(context.Background(), map[string]any{"target": "daily", "content": "user prefers dark mode"})
 	if err != nil {
 		t.Fatalf("mem_save daily returned error: %v", err)
 	}
@@ -40,7 +41,7 @@ func TestMemSaveLongtermAppendsToMemoryFile(t *testing.T) {
 	defer func() { memoryNow = time.Now }()
 
 	fn := MemSaveInDir(memDir)
-	result, err := fn(map[string]any{"target": "longterm", "content": "project uses Go 1.22"})
+	result, err := fn(context.Background(), map[string]any{"target": "longterm", "content": "project uses Go 1.22"})
 	if err != nil {
 		t.Fatalf("mem_save longterm returned error: %v", err)
 	}
@@ -65,8 +66,8 @@ func TestMemSaveAppendsMultipleEntries(t *testing.T) {
 	defer func() { memoryNow = time.Now }()
 
 	fn := MemSaveInDir(memDir)
-	_, _ = fn(map[string]any{"target": "daily", "content": "first entry"})
-	_, _ = fn(map[string]any{"target": "daily", "content": "second entry"})
+	_, _ = fn(context.Background(), map[string]any{"target": "daily", "content": "first entry"})
+	_, _ = fn(context.Background(), map[string]any{"target": "daily", "content": "second entry"})
 
 	path := filepath.Join(memDir, "2026-03-21.md")
 	data, err := os.ReadFile(path)
@@ -80,7 +81,7 @@ func TestMemSaveAppendsMultipleEntries(t *testing.T) {
 
 func TestMemSaveRejectsInvalidTarget(t *testing.T) {
 	fn := MemSaveInDir(t.TempDir())
-	_, err := fn(map[string]any{"target": "invalid", "content": "test"})
+	_, err := fn(context.Background(), map[string]any{"target": "invalid", "content": "test"})
 	if err == nil {
 		t.Fatal("expected error for invalid target")
 	}
@@ -93,7 +94,7 @@ func TestMemGetReadsLongtermMemory(t *testing.T) {
 	}
 
 	fn := MemGetInDir(memDir)
-	result, err := fn(map[string]any{"target": "longterm"})
+	result, err := fn(context.Background(), map[string]any{"target": "longterm"})
 	if err != nil {
 		t.Fatalf("mem_get longterm returned error: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestMemGetReadsDailyMemory(t *testing.T) {
 	}
 
 	fn := MemGetInDir(memDir)
-	result, err := fn(map[string]any{"target": "daily"})
+	result, err := fn(context.Background(), map[string]any{"target": "daily"})
 	if err != nil {
 		t.Fatalf("mem_get daily returned error: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestMemGetReadsYesterdayMemory(t *testing.T) {
 	}
 
 	fn := MemGetInDir(memDir)
-	result, err := fn(map[string]any{"target": "yesterday"})
+	result, err := fn(context.Background(), map[string]any{"target": "yesterday"})
 	if err != nil {
 		t.Fatalf("mem_get yesterday returned error: %v", err)
 	}
@@ -144,7 +145,7 @@ func TestMemGetReadsYesterdayMemory(t *testing.T) {
 
 func TestMemGetReturnsFriendlyMessageWhenFileNotFound(t *testing.T) {
 	fn := MemGetInDir(t.TempDir())
-	result, err := fn(map[string]any{"target": "longterm"})
+	result, err := fn(context.Background(), map[string]any{"target": "longterm"})
 	if err != nil {
 		t.Fatalf("mem_get returned error: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestMemGetReturnsFriendlyMessageWhenFileNotFound(t *testing.T) {
 
 func TestMemGetRejectsInvalidTarget(t *testing.T) {
 	fn := MemGetInDir(t.TempDir())
-	_, err := fn(map[string]any{"target": "invalid"})
+	_, err := fn(context.Background(), map[string]any{"target": "invalid"})
 	if err == nil {
 		t.Fatal("expected error for invalid target")
 	}

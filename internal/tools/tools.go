@@ -1,6 +1,9 @@
 package tools
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 type JSONSchemaProperty struct {
 	Type        string `json:"type"`
@@ -24,7 +27,7 @@ type Definition struct {
 	Function FunctionDefinition `json:"function"`
 }
 
-type Function func(args map[string]any) (string, error)
+type Function func(ctx context.Context, args map[string]any) (string, error)
 
 type Options struct {
 	WorkspaceRoot string

@@ -343,7 +343,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				toolErr = fmt.Errorf("unknown tool '%s'", toolCall.Function.Name)
 				toolResult = fmt.Sprintf("Error: Unknown tool '%s'", toolCall.Function.Name)
 			} else {
-				toolResult, toolErr = function(arguments)
+				toolResult, toolErr = function(ctx, arguments)
 				if toolErr != nil {
 					toolResult = fmt.Sprintf("Error: %v", toolErr)
 				}

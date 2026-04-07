@@ -2,24 +2,25 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
 )
 
-func ExecuteBash(args map[string]any) (string, error) {
-	return ExecuteBashInDir("")(args)
+func ExecuteBash(ctx context.Context, args map[string]any) (string, error) {
+	return ExecuteBashInDir("")(ctx, args)
 }
 
 func ExecuteBashInDir(root string) Function {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		command, err := requireString(args, "command")
 		if err != nil {
 			return "", err
 		}
 
-		cmd := shellCommand(command)
+		cmd := shellCommand(ctx, command)
 		if root != "" {
 			cmd.Dir = root
 		}
@@ -41,9 +42,9 @@ func ExecuteBashInDir(root string) Function {
 	}
 }
 
-func shellCommand(command string) *exec.Cmd {
+func shellCommand(ctx context.Context, command string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
-		return exec.Command("cmd", "/C", command)
+		return exec.CommandContext(ctx, "cmd", "/C", command)
 	}
-	return exec.Command("sh", "-c", command)
+	return exec.CommandContext(ctx, "sh", "-c", command)
 }

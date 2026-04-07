@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +13,7 @@ const memoryLongtermFile = "MEMORY.md"
 var memoryNow = time.Now
 
 func MemSaveInDir(memDir string) Function {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		target, err := requireString(args, "target")
 		if err != nil {
 			return "", err
@@ -53,7 +54,7 @@ func MemSaveInDir(memDir string) Function {
 }
 
 func MemGetInDir(memDir string) Function {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		target, err := requireString(args, "target")
 		if err != nil {
 			return "", err

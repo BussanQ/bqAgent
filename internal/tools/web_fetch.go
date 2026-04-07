@@ -49,8 +49,8 @@ type fetchResult struct {
 	Truncated   bool
 }
 
-func WebFetch(args map[string]any) (string, error) {
-	return WebFetchWithClient(nil, false)(args)
+func WebFetch(ctx context.Context, args map[string]any) (string, error) {
+	return WebFetchWithClient(nil, false)(ctx, args)
 }
 
 func WebFetchWithClient(client *http.Client, allowPrivateHosts bool) Function {
@@ -91,7 +91,7 @@ func WebFetchWithClient(client *http.Client, allowPrivateHosts bool) Function {
 		return validateRequestURL(req.URL, allowPrivateHosts)
 	}
 
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		rawURL, err := requireString(args, "url")
 		if err != nil {
 			return "", err

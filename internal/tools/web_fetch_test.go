@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,7 @@ func TestWebFetchReturnsMarkdownByDefault(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := WebFetchWithClient(server.Client(), true)(map[string]any{"url": server.URL})
+	result, err := WebFetchWithClient(server.Client(), true)(context.Background(), map[string]any{"url": server.URL})
 	if err != nil {
 		t.Fatalf("WebFetch returned error: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestWebFetchReturnsTextWhenRequested(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := WebFetchWithClient(server.Client(), true)(map[string]any{"url": server.URL, "extract_mode": "text"})
+	result, err := WebFetchWithClient(server.Client(), true)(context.Background(), map[string]any{"url": server.URL, "extract_mode": "text"})
 	if err != nil {
 		t.Fatalf("WebFetch returned error: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestWebFetchReturnsPlainText(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := WebFetchWithClient(server.Client(), true)(map[string]any{"url": server.URL})
+	result, err := WebFetchWithClient(server.Client(), true)(context.Background(), map[string]any{"url": server.URL})
 	if err != nil {
 		t.Fatalf("WebFetch returned error: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestWebFetchReturnsRedirectFinalURL(t *testing.T) {
 	}))
 	defer redirect.Close()
 
-	result, err := WebFetchWithClient(redirect.Client(), true)(map[string]any{"url": redirect.URL})
+	result, err := WebFetchWithClient(redirect.Client(), true)(context.Background(), map[string]any{"url": redirect.URL})
 	if err != nil {
 		t.Fatalf("WebFetch returned error: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestWebFetchTruncatesContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := WebFetchWithClient(server.Client(), true)(map[string]any{"url": server.URL, "max_chars": 10})
+	result, err := WebFetchWithClient(server.Client(), true)(context.Background(), map[string]any{"url": server.URL, "max_chars": 10})
 	if err != nil {
 		t.Fatalf("WebFetch returned error: %v", err)
 	}
@@ -115,28 +116,28 @@ func TestWebFetchTruncatesContent(t *testing.T) {
 }
 
 func TestWebFetchRejectsInvalidExtractMode(t *testing.T) {
-	_, err := WebFetch(map[string]any{"url": "https://example.com", "extract_mode": "html"})
+	_, err := WebFetch(context.Background(), map[string]any{"url": "https://example.com", "extract_mode": "html"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported extract_mode") {
 		t.Fatalf("WebFetch error = %v, want unsupported extract_mode", err)
 	}
 }
 
 func TestWebFetchRejectsInvalidURL(t *testing.T) {
-	_, err := WebFetch(map[string]any{"url": "://bad"})
+	_, err := WebFetch(context.Background(), map[string]any{"url": "://bad"})
 	if err == nil || !strings.Contains(err.Error(), "invalid url") {
 		t.Fatalf("WebFetch error = %v, want invalid url", err)
 	}
 }
 
 func TestWebFetchRejectsUnsupportedScheme(t *testing.T) {
-	_, err := WebFetch(map[string]any{"url": "file:///tmp/test.txt"})
+	_, err := WebFetch(context.Background(), map[string]any{"url": "file:///tmp/test.txt"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported url scheme") {
 		t.Fatalf("WebFetch error = %v, want unsupported scheme", err)
 	}
 }
 
 func TestWebFetchRejectsLocalhost(t *testing.T) {
-	_, err := WebFetch(map[string]any{"url": "http://127.0.0.1/test"})
+	_, err := WebFetch(context.Background(), map[string]any{"url": "http://127.0.0.1/test"})
 	if err == nil || !strings.Contains(err.Error(), "refusing to fetch private or local address") {
 		t.Fatalf("WebFetch error = %v, want private address rejection", err)
 	}
@@ -149,7 +150,7 @@ func TestWebFetchRejectsNonSuccessStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := WebFetchWithClient(server.Client(), true)(map[string]any{"url": server.URL})
+	_, err := WebFetchWithClient(server.Client(), true)(context.Background(), map[string]any{"url": server.URL})
 	if err == nil || !strings.Contains(err.Error(), "502 Bad Gateway") || !strings.Contains(err.Error(), "nope") {
 		t.Fatalf("WebFetch error = %v, want status failure details", err)
 	}
@@ -162,7 +163,7 @@ func TestWebFetchRejectsUnsupportedContentType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := WebFetchWithClient(server.Client(), true)(map[string]any{"url": server.URL})
+	_, err := WebFetchWithClient(server.Client(), true)(context.Background(), map[string]any{"url": server.URL})
 	if err == nil || !strings.Contains(err.Error(), "unsupported content type") {
 		t.Fatalf("WebFetch error = %v, want unsupported content type", err)
 	}
@@ -175,7 +176,7 @@ func TestWebFetchRejectsOversizedBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := WebFetchWithClient(server.Client(), true)(map[string]any{"url": server.URL})
+	_, err := WebFetchWithClient(server.Client(), true)(context.Background(), map[string]any{"url": server.URL})
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("exceeded %d bytes", maxFetchBodyBytes)) {
 		t.Fatalf("WebFetch error = %v, want oversized body rejection", err)
 	}

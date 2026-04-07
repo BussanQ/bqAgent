@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,7 +63,7 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 	tempDir := t.TempDir()
 	path := filepath.Join(tempDir, "hello.txt")
 
-	result, err := WriteFile(map[string]any{"path": path, "content": "Hello World"})
+	result, err := WriteFile(context.Background(), map[string]any{"path": path, "content": "Hello World"})
 	if err != nil {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
@@ -101,5 +102,15 @@ func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 	registry := catalog.Registry()
 	if len(registry) != 7 {
 		t.Fatalf("registry length = %d, want 7", len(registry))
+	}
+}
+
+func TestExecuteBashHonorsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := ExecuteBash(ctx, map[string]any{"command": "ping 127.0.0.1"})
+	if err == nil {
+		t.Fatal("expected cancellation error")
 	}
 }

@@ -907,6 +907,99 @@ func waitForBotSend(t *testing.T, requests <-chan serverchanclient.BotSendMessag
 	}
 }
 
+type sequenceChatClient struct {
+	responses []agent.AssistantMessage
+}
+
+func (client *sequenceChatClient) CreateChatCompletion(ctx context.Context, _ string, _ []map[string]any, _ []tools.Definition) (agent.AssistantMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return agent.AssistantMessage{}, err
+	}
+	if len(client.responses) == 0 {
+		return agent.AssistantMessage{}, errors.New("no response configured")
+	}
+	response := client.responses[0]
+	client.responses = client.responses[1:]
+	return response, nil
+}
+
+func (client *sequenceChatClient) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, _ func(string)) (agent.AssistantMessage, error) {
+	return client.CreateChatCompletion(ctx, model, messages, definitions)
+}
+
+func TestChannelTurnRunnerReleasesPeerLockAfterToolTimeout(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"ignored"}`}}}},
+		{Content: "second reply"},
+	}}
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
+	functions := catalog.Registry()
+	functions["execute_bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       functions,
+	})
+	runner := NewChannelTurnRunner(service)
+
+	var state ChannelConversationState
+	loadState := func() (ChannelConversationState, error) { return state, nil }
+	saveState := func(next ChannelConversationState) error {
+		state = next
+		return nil
+	}
+
+	firstCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, firstErr := runner.Process(firstCtx, ChannelTurnOptions{
+		PeerKey:   "peer-1",
+		DedupeKey: "ctx-1",
+		Message:   "first",
+		LoadState: loadState,
+		SaveState: saveState,
+		SendReply: func(context.Context, string) error { return nil },
+	})
+	if firstErr == nil {
+		t.Fatal("first Process returned nil error, want timeout")
+	}
+	if !errors.Is(firstErr, context.DeadlineExceeded) {
+		t.Fatalf("first error = %v, want context deadline exceeded", firstErr)
+	}
+
+	secondCtx, secondCancel := context.WithTimeout(context.Background(), time.Second)
+	defer secondCancel()
+	var replies []string
+	secondState, secondErr := runner.Process(secondCtx, ChannelTurnOptions{
+		PeerKey:   "peer-1",
+		DedupeKey: "ctx-2",
+		Message:   "second",
+		LoadState: loadState,
+		SaveState: saveState,
+		SendReply: func(_ context.Context, reply string) error {
+			replies = append(replies, reply)
+			return nil
+		},
+	})
+	if secondErr != nil {
+		t.Fatalf("second Process returned error: %v", secondErr)
+	}
+	if len(replies) != 1 || replies[0] != "second reply" {
+		t.Fatalf("replies = %#v, want second reply", replies)
+	}
+	if secondState.LastCompletedKey != "ctx-2" {
+		t.Fatalf("LastCompletedKey = %q, want %q", secondState.LastCompletedKey, "ctx-2")
+	}
+	if secondState.PendingReply != "" {
+		t.Fatalf("PendingReply = %q, want empty", secondState.PendingReply)
+	}
+}
+
 func waitForCondition(t *testing.T, timeout time.Duration, check func() bool, description string) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
