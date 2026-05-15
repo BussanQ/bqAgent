@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,6 +23,7 @@ import (
 	serverchanclient "bqagent/internal/serverchan"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
+	"bqagent/internal/workspace"
 )
 
 func TestChatEndpointCreatesAndResumesSession(t *testing.T) {
@@ -368,6 +372,46 @@ func TestServerChanBotWebhookRequiresConfiguredToken(t *testing.T) {
 	}
 }
 
+func TestChatEndpointRoutesSkillSlashToRunSkill(t *testing.T) {
+	var requestCount atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestCount.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"demo skill result"}}]}`))
+	}))
+	defer llmServer.Close()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("failed to create skill directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nReply with the prepared demo result."), 0o644); err != nil {
+		t.Fatalf("failed to write skill file: %v", err)
+	}
+
+	service := newTestService(root, llmServer.URL)
+	handler := NewHandler(HandlerOptions{Service: service})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	response := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"/skill demo concise"}`)
+	defer response.Body.Close()
+
+	var payload chatResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200, error=%q", response.StatusCode, payload.Error)
+	}
+	if payload.Reply != "demo skill result" {
+		t.Fatalf("reply = %q, want %q", payload.Reply, "demo skill result")
+	}
+	if requestCount.Load() != 1 {
+		t.Fatalf("LLM request count = %d, want 1", requestCount.Load())
+	}
+}
+
 func TestChatEndpointRoutesSlashPrefixedMessageToExternalAgent(t *testing.T) {
 	root := t.TempDir()
 	service := newTestServiceWithExternal(root)
@@ -530,6 +574,61 @@ func TestChatEndpointRejectsEmptySlashPrefixedMessage(t *testing.T) {
 	}
 }
 
+func TestServiceHandleTurnHotReloadsSkillSectionForExistingSession(t *testing.T) {
+	root := t.TempDir()
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
+	var requestBodies []string
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		requestBodies = append(requestBodies, string(body))
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"memory reply"}}]}`))
+	}))
+	defer llmServer.Close()
+
+	service := NewService(ServiceOptions{
+		WorkspaceRoot: root,
+		Client:        agent.NewClient("", llmServer.URL, nil),
+		SystemPrompt:  "You are a helpful assistant. Be concise.",
+		SystemPromptBuilder: func() (string, error) {
+			return (&workspace.Workspace{Root: root}).BuildSystemPrompt(agent.DefaultSystemPrompt)
+		},
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       catalog.Registry(),
+	})
+
+	first, err := service.HandleTurn(context.Background(), TurnRequest{Message: "hello"})
+	if err != nil {
+		t.Fatalf("first HandleTurn returned error: %v", err)
+	}
+	if len(requestBodies) != 1 {
+		t.Fatalf("request body count = %d, want 1", len(requestBodies))
+	}
+	if strings.Contains(requestBodies[0], "# Skills") {
+		t.Fatalf("first request body unexpectedly contained skills section: %s", requestBodies[0])
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("failed to create skill directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nHelps with demo tasks."), 0o644); err != nil {
+		t.Fatalf("failed to write skill file: %v", err)
+	}
+
+	_, err = service.HandleTurn(context.Background(), TurnRequest{SessionID: first.SessionID, Message: "hello again"})
+	if err != nil {
+		t.Fatalf("second HandleTurn returned error: %v", err)
+	}
+	if len(requestBodies) != 2 {
+		t.Fatalf("request body count = %d, want 2", len(requestBodies))
+	}
+	if !strings.Contains(requestBodies[1], "# Skills") || !strings.Contains(requestBodies[1], "demo (Demo Skill): Helps with demo tasks.") {
+		t.Fatalf("second request body = %s, want refreshed skills section", requestBodies[1])
+	}
+}
+
 func TestServiceHandleTurnAppendsMemory(t *testing.T) {
 	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -567,6 +666,58 @@ func TestServiceHandleTurnAppendsMemory(t *testing.T) {
 	}
 	if result != "memory reply" {
 		t.Fatalf("memory result = %q, want %q", result, "memory reply")
+	}
+}
+
+type failingChatClient struct{}
+
+func (failingChatClient) CreateChatCompletion(context.Context, string, []map[string]any, []tools.Definition) (agent.AssistantMessage, error) {
+	return agent.AssistantMessage{}, errors.New("upstream unavailable")
+}
+
+func (failingChatClient) CreateChatCompletionStream(context.Context, string, []map[string]any, []tools.Definition, func(string)) (agent.AssistantMessage, error) {
+	return agent.AssistantMessage{}, errors.New("upstream unavailable")
+}
+
+func TestServiceHandleTurnWritesServerLogWithSessionIDAndTimestamp(t *testing.T) {
+	root := t.TempDir()
+	var serverLog strings.Builder
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          failingChatClient{},
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: tools.NewCatalog(tools.Options{WorkspaceRoot: root}).Definitions(),
+		Functions:       tools.NewCatalog(tools.Options{WorkspaceRoot: root}).Registry(),
+		ServerLogWriter: &serverLog,
+	})
+
+	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "hello"})
+	if err == nil {
+		t.Fatal("HandleTurn returned nil error, want upstream unavailable")
+	}
+	if !strings.Contains(err.Error(), "upstream unavailable") {
+		t.Fatalf("error = %q, want upstream unavailable", err.Error())
+	}
+	if response.SessionID != "" {
+		t.Fatalf("session id = %q, want empty on failure response", response.SessionID)
+	}
+
+	logs := serverLog.String()
+	if !strings.Contains(logs, "[session:") {
+		t.Fatalf("server log = %q, want session prefix", logs)
+	}
+	if !strings.Contains(logs, "[Model]") || !strings.Contains(logs, "status=error") {
+		t.Fatalf("server log = %q, want model error log", logs)
+	}
+	if !strings.Contains(logs, "upstream unavailable") {
+		t.Fatalf("server log = %q, want upstream error text", logs)
+	}
+	matched, matchErr := regexp.MatchString(`\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[^\]]+\] \[session:[^\]]+\]`, logs)
+	if matchErr != nil {
+		t.Fatalf("failed to match log prefix: %v", matchErr)
+	}
+	if !matched {
+		t.Fatalf("server log = %q, want timestamp and session prefix", logs)
 	}
 }
 
@@ -753,6 +904,99 @@ func waitForBotSend(t *testing.T, requests <-chan serverchanclient.BotSendMessag
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for bot send")
 		return serverchanclient.BotSendMessageRequest{}
+	}
+}
+
+type sequenceChatClient struct {
+	responses []agent.AssistantMessage
+}
+
+func (client *sequenceChatClient) CreateChatCompletion(ctx context.Context, _ string, _ []map[string]any, _ []tools.Definition) (agent.AssistantMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return agent.AssistantMessage{}, err
+	}
+	if len(client.responses) == 0 {
+		return agent.AssistantMessage{}, errors.New("no response configured")
+	}
+	response := client.responses[0]
+	client.responses = client.responses[1:]
+	return response, nil
+}
+
+func (client *sequenceChatClient) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, _ func(string)) (agent.AssistantMessage, error) {
+	return client.CreateChatCompletion(ctx, model, messages, definitions)
+}
+
+func TestChannelTurnRunnerReleasesPeerLockAfterToolTimeout(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"ignored"}`}}}},
+		{Content: "second reply"},
+	}}
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
+	functions := catalog.Registry()
+	functions["execute_bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       functions,
+	})
+	runner := NewChannelTurnRunner(service)
+
+	var state ChannelConversationState
+	loadState := func() (ChannelConversationState, error) { return state, nil }
+	saveState := func(next ChannelConversationState) error {
+		state = next
+		return nil
+	}
+
+	firstCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, firstErr := runner.Process(firstCtx, ChannelTurnOptions{
+		PeerKey:   "peer-1",
+		DedupeKey: "ctx-1",
+		Message:   "first",
+		LoadState: loadState,
+		SaveState: saveState,
+		SendReply: func(context.Context, string) error { return nil },
+	})
+	if firstErr == nil {
+		t.Fatal("first Process returned nil error, want timeout")
+	}
+	if !errors.Is(firstErr, context.DeadlineExceeded) {
+		t.Fatalf("first error = %v, want context deadline exceeded", firstErr)
+	}
+
+	secondCtx, secondCancel := context.WithTimeout(context.Background(), time.Second)
+	defer secondCancel()
+	var replies []string
+	secondState, secondErr := runner.Process(secondCtx, ChannelTurnOptions{
+		PeerKey:   "peer-1",
+		DedupeKey: "ctx-2",
+		Message:   "second",
+		LoadState: loadState,
+		SaveState: saveState,
+		SendReply: func(_ context.Context, reply string) error {
+			replies = append(replies, reply)
+			return nil
+		},
+	})
+	if secondErr != nil {
+		t.Fatalf("second Process returned error: %v", secondErr)
+	}
+	if len(replies) != 1 || replies[0] != "second reply" {
+		t.Fatalf("replies = %#v, want second reply", replies)
+	}
+	if secondState.LastCompletedKey != "ctx-2" {
+		t.Fatalf("LastCompletedKey = %q, want %q", secondState.LastCompletedKey, "ctx-2")
+	}
+	if secondState.PendingReply != "" {
+		t.Fatalf("PendingReply = %q, want empty", secondState.PendingReply)
 	}
 }
 

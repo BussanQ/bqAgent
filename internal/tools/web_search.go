@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,8 +29,8 @@ type searchResponse struct {
 	Results []searchResult `json:"results"`
 }
 
-func WebSearch(args map[string]any) (string, error) {
-	return WebSearchWithConfig("", "")(args)
+func WebSearch(ctx context.Context, args map[string]any) (string, error) {
+	return WebSearchWithConfig("", "")(ctx, args)
 }
 
 func WebSearchWithConfig(apiKey, baseURL string) Function {
@@ -38,7 +39,7 @@ func WebSearchWithConfig(apiKey, baseURL string) Function {
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		query, err := requireStringAlias(args, "query", "search")
 		if err != nil {
 			return "", err

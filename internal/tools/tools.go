@@ -1,6 +1,9 @@
 package tools
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 type JSONSchemaProperty struct {
 	Type        string `json:"type"`
@@ -24,7 +27,7 @@ type Definition struct {
 	Function FunctionDefinition `json:"function"`
 }
 
-type Function func(args map[string]any) (string, error)
+type Function func(ctx context.Context, args map[string]any) (string, error)
 
 type Options struct {
 	WorkspaceRoot string
@@ -53,6 +56,7 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"read_file":    ReadFileFromRoot(options.WorkspaceRoot),
 		"write_file":   WriteFileToRoot(options.WorkspaceRoot),
 		"web_search":   WebSearchWithConfig(options.SearchAPIKey, options.SearchBaseURL),
+		"web_fetch":    WebFetch,
 		"mem_save":     MemSaveInDir(options.MemoryDir),
 		"mem_get":      MemGetInDir(options.MemoryDir),
 	}
@@ -160,6 +164,22 @@ func builtinDefinitions() []Definition {
 		{
 			Type: "function",
 			Function: FunctionDefinition{
+				Name:        "web_fetch",
+				Description: "Fetch content from a web URL",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"url":          {Type: "string", Description: "The URL to fetch"},
+						"extract_mode": {Type: "string", Description: "Optional extraction mode: markdown (default) or text"},
+						"max_chars":    {Type: "string", Description: "Optional positive integer limit for extracted content length"},
+					},
+					Required: []string{"url"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
 				Name:        "mem_save",
 				Description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.",
 				Parameters: JSONSchema{
@@ -183,6 +203,21 @@ func builtinDefinitions() []Definition {
 						"target": {Type: "string", Description: "Which memory to read: \"daily\", \"longterm\", or \"yesterday\""},
 					},
 					Required: []string{"target"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "run_skill",
+				Description: "Execute a workspace skill when one of the loaded skills is relevant to the task.",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"skill": {Type: "string", Description: "Workspace skill id from the loaded skills list"},
+						"args":  {Type: "string", Description: "Optional raw arguments or task details passed to the skill"},
+					},
+					Required: []string{"skill"},
 				},
 			},
 		},

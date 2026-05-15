@@ -11,3 +11,6 @@ coverage.out
 .env
 *.log
 agent.exe~
+.idea
+bqagent-linux*
+bqagent

@@ -1,17 +1,18 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 )
 
-func ReadFile(args map[string]any) (string, error) {
-	return ReadFileFromRoot("")(args)
+func ReadFile(ctx context.Context, args map[string]any) (string, error) {
+	return ReadFileFromRoot("")(ctx, args)
 }
 
 func ReadFileFromRoot(root string) Function {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, err := requireString(args, "path")
 		if err != nil {
 			return "", err
@@ -25,12 +26,12 @@ func ReadFileFromRoot(root string) Function {
 	}
 }
 
-func WriteFile(args map[string]any) (string, error) {
-	return WriteFileToRoot("")(args)
+func WriteFile(ctx context.Context, args map[string]any) (string, error) {
+	return WriteFileToRoot("")(ctx, args)
 }
 
 func WriteFileToRoot(root string) Function {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, err := requireString(args, "path")
 		if err != nil {
 			return "", err
