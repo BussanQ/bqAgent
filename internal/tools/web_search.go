@@ -11,22 +11,32 @@ import (
 	"time"
 )
 
-const defaultSearchBaseURL = "https://api.tavily.com"
+const defaultSearchBaseURL = "https://api.firecrawl.dev/v2"
 
 type searchRequest struct {
-	APIKey     string `json:"api_key"`
-	Query      string `json:"query"`
-	MaxResults int    `json:"max_results"`
+	Query         string              `json:"query"`
+	Limit         int                 `json:"limit"`
+	Sources       []string            `json:"sources,omitempty"`
+	ScrapeOptions searchScrapeOptions `json:"scrapeOptions"`
+}
+
+type searchScrapeOptions struct {
+	Formats []string `json:"formats"`
 }
 
 type searchResult struct {
-	Title   string `json:"title"`
-	URL     string `json:"url"`
-	Content string `json:"content"`
+	Title       string `json:"title"`
+	URL         string `json:"url"`
+	Description string `json:"description"`
+	Markdown    string `json:"markdown"`
 }
 
 type searchResponse struct {
-	Results []searchResult `json:"results"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+	Data    struct {
+		Web []searchResult `json:"web"`
+	} `json:"data"`
 }
 
 func WebSearch(ctx context.Context, args map[string]any) (string, error) {
@@ -46,20 +56,31 @@ func WebSearchWithConfig(apiKey, baseURL string) Function {
 		}
 
 		if strings.TrimSpace(apiKey) == "" {
-			return "", fmt.Errorf("SEARCH_API_KEY is not set; web search requires a Tavily API key")
+			return "", fmt.Errorf("SEARCH_API_KEY or FIRECRAWL_API_KEY is not set; web search requires a Firecrawl API key")
 		}
 
 		body, err := json.Marshal(searchRequest{
-			APIKey:     apiKey,
-			Query:      query,
-			MaxResults: 5,
+			Query:   query,
+			Limit:   5,
+			Sources: []string{"web"},
+			ScrapeOptions: searchScrapeOptions{
+				Formats: []string{"markdown"},
+			},
 		})
 		if err != nil {
 			return "", err
 		}
 
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/search", bytes.NewReader(body))
+		if err != nil {
+			return "", err
+		}
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json")
+
 		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Post(baseURL+"/search", "application/json", bytes.NewReader(body))
+		resp, err := client.Do(request)
 		if err != nil {
 			return "", fmt.Errorf("web search request failed: %w", err)
 		}
@@ -74,17 +95,28 @@ func WebSearchWithConfig(apiKey, baseURL string) Function {
 		if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
 			return "", fmt.Errorf("failed to parse search response: %w", err)
 		}
+		if !decoded.Success && strings.TrimSpace(decoded.Error) != "" {
+			return "", fmt.Errorf("web search failed: %s", decoded.Error)
+		}
 
-		if len(decoded.Results) == 0 {
+		if len(decoded.Data.Web) == 0 {
 			return "No results found.", nil
 		}
 
 		var sb strings.Builder
-		for i, r := range decoded.Results {
+		for i, r := range decoded.Data.Web {
 			if i > 0 {
 				sb.WriteString("\n---\n")
 			}
-			fmt.Fprintf(&sb, "**%s**\n%s\n%s", r.Title, r.URL, r.Content)
+			title := r.Title
+			if strings.TrimSpace(title) == "" {
+				title = r.URL
+			}
+			content := r.Markdown
+			if strings.TrimSpace(content) == "" {
+				content = r.Description
+			}
+			fmt.Fprintf(&sb, "**%s**\n%s\n%s", title, r.URL, content)
 		}
 		return sb.String(), nil
 	}

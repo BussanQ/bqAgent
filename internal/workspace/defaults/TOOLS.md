@@ -16,7 +16,7 @@ It is guidance only — it does not change what tools are available.
 - **shell**: Run any shell command. Timeout: 60s. Use for builds, tests, installs.
 
 ## Web Search
-- **web_search**: Search the web for up-to-date information. Requires `SEARCH_API_KEY` (Tavily). Optional `SEARCH_BASE_URL`.
+- **web_search**: Search the web for up-to-date information via Firecrawl. Prefer `FIRECRAWL_API_KEY`; legacy `SEARCH_API_KEY` also works. Optional `FIRECRAWL_BASE_URL` or legacy `SEARCH_BASE_URL` defaults to `https://api.firecrawl.dev/v2`.
 
 ## Memory (implemented)
 - **mem_save**: Save knowledge to memory. Parameters: `target` ("daily" or "longterm"), `content` (text to save). Daily saves go to `.agent/memory/YYYY-MM-DD.md`, longterm saves go to `.agent/memory/MEMORY.md`. Use longterm for durable facts, preferences, and patterns. Use daily for session notes.

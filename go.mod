@@ -1,6 +1,6 @@
 module bqagent
 
-go 1.22
+go 1.26.2
 
 require github.com/mdp/qrterminal/v3 v3.2.1
 

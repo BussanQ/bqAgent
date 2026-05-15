@@ -42,12 +42,14 @@ type Runtime struct {
 
 func ConfigFromEnv(getenv func(string) string) Config {
 	defaults := agent.DefaultContextConfig()
+	searchAPIKey := firstNonEmpty(getenv("FIRECRAWL_API_KEY"), getenv("SEARCH_API_KEY"))
+	searchBaseURL := firstNonEmpty(getenv("FIRECRAWL_BASE_URL"), getenv("SEARCH_BASE_URL"))
 	return Config{
 		APIKey:                       getenv("OPENAI_API_KEY"),
 		BaseURL:                      getenv("OPENAI_BASE_URL"),
 		Model:                        getenv("OPENAI_MODEL"),
-		SearchAPIKey:                 getenv("SEARCH_API_KEY"),
-		SearchBaseURL:                getenv("SEARCH_BASE_URL"),
+		SearchAPIKey:                 searchAPIKey,
+		SearchBaseURL:                searchBaseURL,
 		ContextManagementEnabled:     envBool(getenv("CONTEXT_MANAGEMENT_ENABLED"), defaults.Enabled),
 		ContextMaxInputTokens:        envInt(getenv("CONTEXT_MAX_INPUT_TOKENS"), defaults.MaxInputTokens),
 		ContextTargetInputTokens:     envInt(getenv("CONTEXT_TARGET_INPUT_TOKENS"), defaults.TargetInputTokens),
@@ -57,6 +59,15 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		ContextSummaryTriggerTokens:  envInt(getenv("CONTEXT_SUMMARY_TRIGGER_TOKENS"), defaults.SummaryTriggerTokens),
 		ContextSummaryModel:          getenv("CONTEXT_SUMMARY_MODEL"),
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func envBool(raw string, fallback bool) bool {
