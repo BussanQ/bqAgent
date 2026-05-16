@@ -9,8 +9,8 @@ import (
 
 func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 8 {
-		t.Fatalf("definitions length = %d, want 8", len(definitions))
+	if len(definitions) != 9 {
+		t.Fatalf("definitions length = %d, want 9", len(definitions))
 	}
 
 	tests := []struct {
@@ -24,9 +24,10 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		{index: 2, name: "write_file", description: "Write to a file", required: []string{"path", "content"}},
 		{index: 3, name: "web_search", description: "Search the web for up-to-date information", required: []string{"query"}},
 		{index: 4, name: "web_fetch", description: "Fetch content from a web URL", required: []string{"url"}},
-		{index: 5, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
-		{index: 6, name: "mem_get", description: "Read memory contents. Use to recall saved knowledge and context.", required: []string{"target"}},
-		{index: 7, name: "run_skill", description: "Execute a workspace skill when one of the loaded skills is relevant to the task.", required: []string{"skill"}},
+		{index: 5, name: "install_skill", description: "Install a workspace skill from a URL into .agent/skills/<name>/SKILL.md.", required: []string{"url"}},
+		{index: 6, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
+		{index: 7, name: "mem_get", description: "Read memory contents. Use to recall saved knowledge and context.", required: []string{"target"}},
+		{index: 8, name: "run_skill", description: "Execute a workspace skill when one of the loaded skills is relevant to the task.", required: []string{"skill"}},
 	}
 
 	for _, testCase := range tests {
@@ -56,6 +57,14 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 				t.Fatal("web_fetch definition missing max_chars property")
 			}
 		}
+		if definition.Function.Name == "install_skill" {
+			if _, ok := definition.Function.Parameters.Properties["name"]; !ok {
+				t.Fatal("install_skill definition missing name property")
+			}
+			if _, ok := definition.Function.Parameters.Properties["overwrite"]; !ok {
+				t.Fatal("install_skill definition missing overwrite property")
+			}
+		}
 	}
 }
 
@@ -83,25 +92,34 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 	catalog := NewCatalog(Options{IncludePlan: true})
 	definitions := catalog.Definitions()
-	if len(definitions) != 9 {
-		t.Fatalf("definitions length = %d, want 9", len(definitions))
+	if len(definitions) != 10 {
+		t.Fatalf("definitions length = %d, want 10", len(definitions))
 	}
 	if definitions[len(definitions)-1].Function.Name != "plan" {
 		t.Fatalf("last definition name = %q, want %q", definitions[len(definitions)-1].Function.Name, "plan")
 	}
 	foundRunSkill := false
+	foundInstallSkill := false
 	for _, definition := range definitions {
 		if definition.Function.Name == "run_skill" {
 			foundRunSkill = true
-			break
+		}
+		if definition.Function.Name == "install_skill" {
+			foundInstallSkill = true
 		}
 	}
 	if !foundRunSkill {
 		t.Fatal("definitions missing run_skill")
 	}
+	if !foundInstallSkill {
+		t.Fatal("definitions missing install_skill")
+	}
 	registry := catalog.Registry()
-	if len(registry) != 7 {
-		t.Fatalf("registry length = %d, want 7", len(registry))
+	if len(registry) != 8 {
+		t.Fatalf("registry length = %d, want 8", len(registry))
+	}
+	if _, ok := registry["install_skill"]; !ok {
+		t.Fatal("registry missing install_skill")
 	}
 }
 

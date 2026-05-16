@@ -14,6 +14,7 @@ import (
 	appruntime "bqagent/internal/runtime"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
+	"bqagent/internal/workspace"
 )
 
 type ServiceOptions struct {
@@ -131,7 +132,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{}, err
 	}
 
-	if reply, handled, skillErr := service.handleSkillSlash(ctx, conversation.Messages, message, conversation.Recorder(), logWriter, systemPrompt); handled {
+	if reply, handled, skillErr := service.handleSkillCommand(ctx, message, conversation.Recorder(), logWriter, systemPrompt); handled {
 		if skillErr != nil {
 			writeTurnError(turnErrorWriter, skillErr)
 			_ = conversation.MarkFailed(skillErr)
@@ -238,19 +239,36 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	return TurnResponse{SessionID: conversation.Session.ID(), Reply: result, Streamed: options.Stream}, nil
 }
 
-func (service *Service) handleSkillSlash(ctx context.Context, _ []map[string]any, message string, recorder agent.MessageRecorder, logWriter io.Writer, systemPrompt string) (string, bool, error) {
+func (service *Service) handleSkillCommand(ctx context.Context, message string, recorder agent.MessageRecorder, logWriter io.Writer, systemPrompt string) (string, bool, error) {
 	message = strings.TrimSpace(message)
-	if !strings.HasPrefix(message, "/skill") {
+	token, rest := splitFirstToken(message)
+	if token == "" {
 		return "", false, nil
 	}
-	fields := strings.Fields(message)
-	if len(fields) < 2 {
-		return "", true, fmt.Errorf("skill name is required after /skill")
-	}
-	skillID := strings.TrimSpace(fields[1])
-	args := ""
-	if len(fields) > 2 {
-		args = strings.TrimSpace(strings.Join(fields[2:], " "))
+
+	var skillID string
+	var args string
+	if token == "/skill" {
+		skillToken, skillArgs := splitFirstToken(rest)
+		if skillToken == "" {
+			return "", true, fmt.Errorf("skill name is required after /skill")
+		}
+		resolved, _, err := service.resolveSkillToken(skillToken)
+		if err != nil {
+			return "", true, err
+		}
+		skillID = resolved
+		args = skillArgs
+	} else {
+		if strings.HasPrefix(token, "/") {
+			return "", false, nil
+		}
+		resolved, handled, err := service.resolveSkillToken(token)
+		if err != nil || !handled {
+			return "", handled, err
+		}
+		skillID = resolved
+		args = rest
 	}
 
 	app := agent.NewWithOptions(service.client, service.model, agent.Options{
@@ -265,6 +283,28 @@ func (service *Service) handleSkillSlash(ctx context.Context, _ []map[string]any
 	})
 	result, err := app.RunSkill(ctx, skillID, args, service.maxTurns)
 	return result, true, err
+}
+
+func (service *Service) resolveSkillToken(token string) (string, bool, error) {
+	ws := &workspace.Workspace{Root: service.workspaceRoot}
+	skill, handled, err := ws.ResolveSkill(token)
+	if err != nil || !handled {
+		return "", handled, err
+	}
+	return skill.ID, true, nil
+}
+
+func splitFirstToken(message string) (string, string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return "", ""
+	}
+	for index, r := range message {
+		if index > 0 && strings.ContainsRune(" \t\n\r", r) {
+			return message[:index], strings.TrimSpace(message[index:])
+		}
+	}
+	return message, ""
 }
 
 func (service *Service) currentSystemPrompt() (string, error) {

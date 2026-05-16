@@ -96,6 +96,81 @@ func TestLoadSkillReturnsStructuredSkill(t *testing.T) {
 	}
 }
 
+func TestLoadSkillParsesAliasesFromFrontMatter(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("failed to create skills directory: %v", err)
+	}
+	content := "---\naliases:\n  - aihot\n  - ai日报\nalias: hot\n---\n\n# Demo Skill\n\nHelps summarize repository changes."
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write skill file: %v", err)
+	}
+
+	skill, err := ws.LoadSkill("demo")
+	if err != nil {
+		t.Fatalf("LoadSkill returned error: %v", err)
+	}
+	if skill.Title != "Demo Skill" {
+		t.Fatalf("skill.Title = %q, want %q", skill.Title, "Demo Skill")
+	}
+	if skill.Summary != "Helps summarize repository changes." {
+		t.Fatalf("skill.Summary = %q, want summary", skill.Summary)
+	}
+	wantAliases := []string{"aihot", "ai日报", "hot"}
+	if len(skill.Aliases) != len(wantAliases) {
+		t.Fatalf("skill.Aliases = %v, want %v", skill.Aliases, wantAliases)
+	}
+	for index, want := range wantAliases {
+		if skill.Aliases[index] != want {
+			t.Fatalf("skill.Aliases[%d] = %q, want %q", index, skill.Aliases[index], want)
+		}
+	}
+}
+
+func TestResolveSkillMatchesIDAndAlias(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
+		t.Fatalf("failed to create skills directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("---\naliases: aihot, ai日报\n---\n\n# Demo Skill\n\nHelps summarize repository changes."), 0o644); err != nil {
+		t.Fatalf("failed to write skill file: %v", err)
+	}
+
+	byID, handled, err := ws.ResolveSkill("demo")
+	if err != nil || !handled || byID.ID != "demo" {
+		t.Fatalf("ResolveSkill by id = (%+v, %t, %v), want demo handled", byID, handled, err)
+	}
+	byAlias, handled, err := ws.ResolveSkill("aihot")
+	if err != nil || !handled || byAlias.ID != "demo" {
+		t.Fatalf("ResolveSkill by alias = (%+v, %t, %v), want demo handled", byAlias, handled, err)
+	}
+	_, handled, err = ws.ResolveSkill("missing")
+	if err != nil || handled {
+		t.Fatalf("ResolveSkill missing = handled %t err %v, want unhandled nil", handled, err)
+	}
+}
+
+func TestResolveSkillReturnsAmbiguousAliasError(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root}
+	for _, name := range []string{"first", "second"} {
+		dir := filepath.Join(root, ".agent", "skills", name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("failed to create skills directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nalias: aihot\n---\n\n# "+name+"\n\nSummary."), 0o644); err != nil {
+			t.Fatalf("failed to write skill file: %v", err)
+		}
+	}
+
+	_, handled, err := ws.ResolveSkill("aihot")
+	if !handled || err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ResolveSkill ambiguous = handled %t err %v, want ambiguity", handled, err)
+	}
+}
+
 func TestBuildSystemPromptIncludesWorkspaceDirectoryDocuments(t *testing.T) {
 	root := t.TempDir()
 	ws := &Workspace{Root: root}

@@ -18,6 +18,9 @@ It is guidance only — it does not change what tools are available.
 ## Web Search
 - **web_search**: Search the web for up-to-date information via Firecrawl. Prefer `FIRECRAWL_API_KEY`; legacy `SEARCH_API_KEY` also works. Optional `FIRECRAWL_BASE_URL` or legacy `SEARCH_BASE_URL` defaults to `https://api.firecrawl.dev/v2`.
 
+## Skills
+- **install_skill**: Install a skill from a URL into `.agent/skills/<name>/SKILL.md`. Provide `url`, optionally `name`, and `overwrite` as `true` when replacing an existing skill.
+
 ## Memory (implemented)
 - **mem_save**: Save knowledge to memory. Parameters: `target` ("daily" or "longterm"), `content` (text to save). Daily saves go to `.agent/memory/YYYY-MM-DD.md`, longterm saves go to `.agent/memory/MEMORY.md`. Use longterm for durable facts, preferences, and patterns. Use daily for session notes.
 - **mem_get**: Read memory contents. Parameter: `target` ("daily", "longterm", or "yesterday"). Use to recall saved knowledge and context.

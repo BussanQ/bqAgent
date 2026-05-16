@@ -54,6 +54,29 @@ func WebFetch(ctx context.Context, args map[string]any) (string, error) {
 }
 
 func WebFetchWithClient(client *http.Client, allowPrivateHosts bool) Function {
+	return func(ctx context.Context, args map[string]any) (string, error) {
+		rawURL, err := requireString(args, "url")
+		if err != nil {
+			return "", err
+		}
+		extractMode, err := parseExtractMode(args)
+		if err != nil {
+			return "", err
+		}
+		maxChars, err := parseOptionalMaxChars(args)
+		if err != nil {
+			return "", err
+		}
+
+		result, err := fetchReadableContent(ctx, client, allowPrivateHosts, rawURL, extractMode, maxChars)
+		if err != nil {
+			return "", err
+		}
+		return formatFetchResult(result), nil
+	}
+}
+
+func fetchReadableContent(ctx context.Context, client *http.Client, allowPrivateHosts bool, rawURL, extractMode string, maxChars int) (fetchResult, error) {
 	if client == nil {
 		client = &http.Client{Timeout: defaultFetchTimeout}
 	}
@@ -91,86 +114,70 @@ func WebFetchWithClient(client *http.Client, allowPrivateHosts bool) Function {
 		return validateRequestURL(req.URL, allowPrivateHosts)
 	}
 
-	return func(ctx context.Context, args map[string]any) (string, error) {
-		rawURL, err := requireString(args, "url")
-		if err != nil {
-			return "", err
-		}
-		extractMode, err := parseExtractMode(args)
-		if err != nil {
-			return "", err
-		}
-		maxChars, err := parseOptionalMaxChars(args)
-		if err != nil {
-			return "", err
-		}
-
-		parsedURL, err := url.Parse(strings.TrimSpace(rawURL))
-		if err != nil {
-			return "", fmt.Errorf("invalid url: %w", err)
-		}
-		if err := validateRequestURL(parsedURL, allowPrivateHosts); err != nil {
-			return "", err
-		}
-
-		request, err := http.NewRequest(http.MethodGet, parsedURL.String(), nil)
-		if err != nil {
-			return "", fmt.Errorf("failed to create request: %w", err)
-		}
-		request.Header.Set("User-Agent", "bqagent-web-fetch/1.0")
-
-		response, err := fetchClient.Do(request)
-		if err != nil {
-			return "", fmt.Errorf("web fetch request failed: %w", err)
-		}
-		defer response.Body.Close()
-
-		mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-		if err != nil {
-			mediaType = ""
-		}
-
-		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			payload, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-			details := strings.TrimSpace(renderErrorPayload(mediaType, payload))
-			if details == "" {
-				return "", fmt.Errorf("web fetch failed: %s", response.Status)
-			}
-			return "", fmt.Errorf("web fetch failed: %s: %s", response.Status, details)
-		}
-
-		body, err := io.ReadAll(io.LimitReader(response.Body, maxFetchBodyBytes+1))
-		if err != nil {
-			return "", fmt.Errorf("failed to read response body: %w", err)
-		}
-		if len(body) > maxFetchBodyBytes {
-			return "", fmt.Errorf("web fetch response exceeded %d bytes", maxFetchBodyBytes)
-		}
-
-		content, err := normalizeFetchedContent(mediaType, body, extractMode)
-		if err != nil {
-			return "", err
-		}
-		if content.Content == "" {
-			return "", fmt.Errorf("web fetch returned no readable content")
-		}
-
-		result := fetchResult{
-			OriginalURL: parsedURL.String(),
-			FinalURL:    response.Request.URL.String(),
-			ContentType: fallbackContentType(mediaType),
-			Title:       content.Title,
-			Content:     content.Content,
-		}
-		if maxChars > 0 {
-			result.Content, result.Truncated = truncateText(result.Content, maxChars)
-		}
-		if result.Content == "" {
-			return "", fmt.Errorf("web fetch returned no readable content")
-		}
-
-		return formatFetchResult(result), nil
+	parsedURL, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fetchResult{}, fmt.Errorf("invalid url: %w", err)
 	}
+	if err := validateRequestURL(parsedURL, allowPrivateHosts); err != nil {
+		return fetchResult{}, err
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	if err != nil {
+		return fetchResult{}, fmt.Errorf("failed to create request: %w", err)
+	}
+	request.Header.Set("User-Agent", "bqagent-web-fetch/1.0")
+
+	response, err := fetchClient.Do(request)
+	if err != nil {
+		return fetchResult{}, fmt.Errorf("web fetch request failed: %w", err)
+	}
+	defer response.Body.Close()
+
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil {
+		mediaType = ""
+	}
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		details := strings.TrimSpace(renderErrorPayload(mediaType, payload))
+		if details == "" {
+			return fetchResult{}, fmt.Errorf("web fetch failed: %s", response.Status)
+		}
+		return fetchResult{}, fmt.Errorf("web fetch failed: %s: %s", response.Status, details)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxFetchBodyBytes+1))
+	if err != nil {
+		return fetchResult{}, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if len(body) > maxFetchBodyBytes {
+		return fetchResult{}, fmt.Errorf("web fetch response exceeded %d bytes", maxFetchBodyBytes)
+	}
+
+	content, err := normalizeFetchedContent(mediaType, body, extractMode)
+	if err != nil {
+		return fetchResult{}, err
+	}
+	if content.Content == "" {
+		return fetchResult{}, fmt.Errorf("web fetch returned no readable content")
+	}
+
+	result := fetchResult{
+		OriginalURL: parsedURL.String(),
+		FinalURL:    response.Request.URL.String(),
+		ContentType: fallbackContentType(mediaType),
+		Title:       content.Title,
+		Content:     content.Content,
+	}
+	if maxChars > 0 {
+		result.Content, result.Truncated = truncateText(result.Content, maxChars)
+	}
+	if result.Content == "" {
+		return fetchResult{}, fmt.Errorf("web fetch returned no readable content")
+	}
+	return result, nil
 }
 
 func validateRequestURL(parsedURL *url.URL, allowPrivateHosts bool) error {

@@ -52,13 +52,14 @@ func Registry() map[string]Function {
 
 func RegistryWithOptions(options Options) map[string]Function {
 	return map[string]Function{
-		"execute_bash": ExecuteBashInDir(options.WorkspaceRoot),
-		"read_file":    ReadFileFromRoot(options.WorkspaceRoot),
-		"write_file":   WriteFileToRoot(options.WorkspaceRoot),
-		"web_search":   WebSearchWithConfig(options.SearchAPIKey, options.SearchBaseURL),
-		"web_fetch":    WebFetch,
-		"mem_save":     MemSaveInDir(options.MemoryDir),
-		"mem_get":      MemGetInDir(options.MemoryDir),
+		"execute_bash":  ExecuteBashInDir(options.WorkspaceRoot),
+		"read_file":     ReadFileFromRoot(options.WorkspaceRoot),
+		"write_file":    WriteFileToRoot(options.WorkspaceRoot),
+		"web_search":    WebSearchWithConfig(options.SearchAPIKey, options.SearchBaseURL),
+		"web_fetch":     WebFetch,
+		"install_skill": InstallSkillToRoot(options.WorkspaceRoot),
+		"mem_save":      MemSaveInDir(options.MemoryDir),
+		"mem_get":       MemGetInDir(options.MemoryDir),
 	}
 }
 
@@ -172,6 +173,22 @@ func builtinDefinitions() []Definition {
 						"url":          {Type: "string", Description: "The URL to fetch"},
 						"extract_mode": {Type: "string", Description: "Optional extraction mode: markdown (default) or text"},
 						"max_chars":    {Type: "string", Description: "Optional positive integer limit for extracted content length"},
+					},
+					Required: []string{"url"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "install_skill",
+				Description: "Install a workspace skill from a URL into .agent/skills/<name>/SKILL.md.",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"url":       {Type: "string", Description: "The URL to fetch skill markdown or readable skill instructions from"},
+						"name":      {Type: "string", Description: "Optional skill id; derived from the URL when omitted"},
+						"overwrite": {Type: "string", Description: "Optional true/false string; defaults to false"},
 					},
 					Required: []string{"url"},
 				},

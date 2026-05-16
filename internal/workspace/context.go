@@ -18,6 +18,7 @@ type Skill struct {
 	Summary string
 	Body    string
 	Path    string
+	Aliases []string
 }
 
 const memoryTailLines = 50
@@ -200,13 +201,15 @@ func (w *Workspace) LoadSkills() ([]Skill, error) {
 			return nil, err
 		}
 
-		title, summary := summarizeSkill(entry.Name(), string(content))
+		skillContent := string(content)
+		title, summary := summarizeSkill(entry.Name(), skillContent)
 		skills = append(skills, Skill{
 			ID:      entry.Name(),
 			Title:   title,
 			Summary: summary,
-			Body:    strings.TrimSpace(string(content)),
+			Body:    strings.TrimSpace(skillContent),
 			Path:    skillPath,
+			Aliases: parseSkillAliases(skillContent),
 		})
 	}
 	return skills, nil
@@ -229,6 +232,43 @@ func (w *Workspace) LoadSkill(id string) (Skill, error) {
 	return Skill{}, fmt.Errorf("skill %q not found", id)
 }
 
+func (w *Workspace) ResolveSkill(token string) (Skill, bool, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return Skill{}, false, nil
+	}
+	skills, err := w.LoadSkills()
+	if err != nil {
+		return Skill{}, false, err
+	}
+	for _, skill := range skills {
+		if strings.EqualFold(skill.ID, token) {
+			return skill, true, nil
+		}
+	}
+
+	matches := make([]Skill, 0, 1)
+	for _, skill := range skills {
+		for _, alias := range skill.Aliases {
+			if strings.EqualFold(alias, token) {
+				matches = append(matches, skill)
+				break
+			}
+		}
+	}
+	if len(matches) == 0 {
+		return Skill{}, false, nil
+	}
+	if len(matches) > 1 {
+		ids := make([]string, 0, len(matches))
+		for _, skill := range matches {
+			ids = append(ids, skill.ID)
+		}
+		return Skill{}, true, fmt.Errorf("skill alias %q is ambiguous: %s", token, strings.Join(ids, ", "))
+	}
+	return matches[0], true, nil
+}
+
 func (w *Workspace) loadSkillsSection() (string, error) {
 	skills, err := w.LoadSkills()
 	if err != nil {
@@ -243,13 +283,84 @@ func (w *Workspace) loadSkillsSection() (string, error) {
 		"Available executable skills can be run with the run_skill tool when one is clearly relevant.",
 	}
 	for _, skill := range skills {
-		lines = append(lines, fmt.Sprintf("- %s (%s): %s", skill.ID, skill.Title, skill.Summary))
+		line := fmt.Sprintf("- %s (%s): %s", skill.ID, skill.Title, skill.Summary)
+		if len(skill.Aliases) > 0 {
+			line += " Aliases: " + strings.Join(skill.Aliases, ", ")
+		}
+		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n"), nil
 }
 
 func loadSkillsSummary(w *Workspace) (string, error) {
 	return w.loadSkillsSection()
+}
+
+func parseSkillAliases(content string) []string {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return nil
+	}
+
+	aliases := make([]string, 0)
+	seen := make(map[string]bool)
+	inAliasesList := false
+	for index := 1; index < len(lines); index++ {
+		line := strings.TrimSpace(lines[index])
+		if line == "---" {
+			break
+		}
+		if line == "" {
+			continue
+		}
+
+		if inAliasesList {
+			if strings.HasPrefix(line, "-") {
+				aliases = appendUniqueAlias(aliases, seen, strings.TrimSpace(strings.TrimPrefix(line, "-")))
+				continue
+			}
+			inAliasesList = false
+		}
+
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		switch key {
+		case "alias":
+			aliases = appendUniqueAlias(aliases, seen, value)
+		case "aliases":
+			if value == "" {
+				inAliasesList = true
+				continue
+			}
+			for _, alias := range strings.Split(value, ",") {
+				aliases = appendUniqueAlias(aliases, seen, alias)
+			}
+		}
+	}
+	return aliases
+}
+
+func appendUniqueAlias(aliases []string, seen map[string]bool, raw string) []string {
+	alias := cleanSkillAlias(raw)
+	if alias == "" {
+		return aliases
+	}
+	key := strings.ToLower(alias)
+	if seen[key] {
+		return aliases
+	}
+	seen[key] = true
+	return append(aliases, alias)
+}
+
+func cleanSkillAlias(raw string) string {
+	alias := strings.TrimSpace(raw)
+	alias = strings.Trim(alias, `"'`)
+	return strings.TrimSpace(alias)
 }
 
 func summarizeSkill(fallbackName, content string) (string, string) {
