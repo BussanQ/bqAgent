@@ -63,8 +63,9 @@ type TurnResponse struct {
 }
 
 type TurnOptions struct {
-	OutputWriter io.Writer
-	Stream       bool
+	OutputWriter   io.Writer
+	ProgressWriter io.Writer
+	Stream         bool
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -123,6 +124,10 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 	defer logFile.Close()
 
+	progressWriter := options.ProgressWriter
+	if progressWriter == nil {
+		progressWriter = options.OutputWriter
+	}
 	logWriter := service.turnLogWriter(conversation.Session.ID(), logFile, options.OutputWriter)
 	turnErrorWriter := service.turnErrorWriter(conversation.Session.ID(), logFile, options.OutputWriter)
 
@@ -132,7 +137,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{}, err
 	}
 
-	if reply, handled, skillErr := service.handleSkillCommand(ctx, message, conversation.Recorder(), logWriter, systemPrompt); handled {
+	if reply, handled, skillErr := service.handleSkillCommand(ctx, message, conversation.Recorder(), logWriter, progressWriter, systemPrompt); handled {
 		if skillErr != nil {
 			writeTurnError(turnErrorWriter, skillErr)
 			_ = conversation.MarkFailed(skillErr)
@@ -220,6 +225,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		Recorder:        conversation.Recorder(),
 		Stream:          options.Stream,
 		WorkspaceRoot:   service.workspaceRoot,
+		ProgressWriter:  progressWriter,
 		Context:         service.context,
 	})
 
@@ -239,7 +245,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	return TurnResponse{SessionID: conversation.Session.ID(), Reply: result, Streamed: options.Stream}, nil
 }
 
-func (service *Service) handleSkillCommand(ctx context.Context, message string, recorder agent.MessageRecorder, logWriter io.Writer, systemPrompt string) (string, bool, error) {
+func (service *Service) handleSkillCommand(ctx context.Context, message string, recorder agent.MessageRecorder, logWriter io.Writer, progressWriter io.Writer, systemPrompt string) (string, bool, error) {
 	message = strings.TrimSpace(message)
 	token, rest := splitFirstToken(message)
 	if token == "" {
@@ -279,6 +285,7 @@ func (service *Service) handleSkillCommand(ctx context.Context, message string, 
 		Planner:         service.planner,
 		Recorder:        recorder,
 		WorkspaceRoot:   service.workspaceRoot,
+		ProgressWriter:  progressWriter,
 		Context:         service.context,
 	})
 	result, err := app.RunSkill(ctx, skillID, args, service.maxTurns)

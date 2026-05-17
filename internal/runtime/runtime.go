@@ -130,9 +130,14 @@ func (factory Factory) Build(includePlan bool) Runtime {
 }
 
 func (runtime Runtime) NewAgent(logWriter io.Writer, systemPrompt string, recorder agent.MessageRecorder, stream bool) *agent.Agent {
+	return runtime.NewAgentWithProgress(logWriter, logWriter, systemPrompt, recorder, stream)
+}
+
+func (runtime Runtime) NewAgentWithProgress(logWriter io.Writer, progressWriter io.Writer, systemPrompt string, recorder agent.MessageRecorder, stream bool) *agent.Agent {
 	return agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{
 		SystemPrompt:    systemPrompt,
 		LogWriter:       logWriter,
+		ProgressWriter:  progressWriter,
 		ToolDefinitions: runtime.Catalog.Definitions(),
 		Functions:       runtime.Catalog.Registry(),
 		Planner:         runtime.Planner,

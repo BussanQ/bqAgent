@@ -94,6 +94,31 @@ func TestIlinkChannelLoginEndpoints(t *testing.T) {
 	}
 }
 
+func TestChannelProgressWriterSendsProgressMessages(t *testing.T) {
+	var sent []string
+	writer := newChannelProgressWriter(context.Background(), func(_ context.Context, message string) error {
+		sent = append(sent, message)
+		return nil
+	})
+	if writer == nil {
+		t.Fatal("writer is nil")
+	}
+
+	written, err := writer.Write([]byte("仍在推理中：后台任务仍在运行。\n"))
+	if err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+	if written == 0 {
+		t.Fatal("Write returned zero bytes")
+	}
+	if len(sent) != 1 || sent[0] != "仍在推理中：后台任务仍在运行。" {
+		t.Fatalf("sent = %#v, want progress message", sent)
+	}
+	if empty := newChannelProgressWriter(context.Background(), nil); empty != nil {
+		t.Fatal("writer without send function should be nil")
+	}
+}
+
 func TestIlinkChannelProcessesConversation(t *testing.T) {
 	var llmCount atomic.Int32
 	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

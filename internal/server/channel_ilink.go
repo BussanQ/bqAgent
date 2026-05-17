@@ -306,10 +306,17 @@ func (channel *IlinkChannel) processUpdate(ctx context.Context, tokenState weixi
 			return channel.chats.Save(state)
 		},
 		SendReply: func(ctx context.Context, reply string) error {
-			return channel.client.SendTextMessage(ctx, tokenState.BaseURL, tokenState.BotToken, update.UserID, update.ClientID, update.ContextToken, reply)
+			return channel.sendIlinkText(ctx, tokenState, update, update.ContextToken, reply)
+		},
+		SendProgress: func(context.Context, string) error {
+			return nil
 		},
 	})
 	return err
+}
+
+func (channel *IlinkChannel) sendIlinkText(ctx context.Context, tokenState weixin.TokenState, update weixin.Update, contextToken string, text string) error {
+	return channel.client.SendTextMessage(ctx, tokenState.BaseURL, tokenState.BotToken, update.UserID, update.ClientID, contextToken, text)
 }
 
 func (channel *IlinkChannel) pollLoginStatus(qrcode string) {

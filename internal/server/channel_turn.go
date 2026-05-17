@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 type ChannelConversationState struct {
@@ -15,12 +16,20 @@ type ChannelConversationState struct {
 }
 
 type ChannelTurnOptions struct {
-	PeerKey   string
-	DedupeKey string
-	Message   string
-	LoadState func() (ChannelConversationState, error)
-	SaveState func(ChannelConversationState) error
-	SendReply func(context.Context, string) error
+	PeerKey      string
+	DedupeKey    string
+	Message      string
+	LoadState    func() (ChannelConversationState, error)
+	SaveState    func(ChannelConversationState) error
+	SendReply    func(context.Context, string) error
+	SendProgress func(context.Context, string) error
+}
+
+func (options ChannelTurnOptions) progressSender() func(context.Context, string) error {
+	if options.SendProgress != nil {
+		return options.SendProgress
+	}
+	return options.SendReply
 }
 
 type ChannelTurnRunner struct {
@@ -30,6 +39,35 @@ type ChannelTurnRunner struct {
 
 func NewChannelTurnRunner(service *Service) *ChannelTurnRunner {
 	return &ChannelTurnRunner{service: service, locker: NewKeyedLocker()}
+}
+
+type channelProgressWriter struct {
+	ctx          context.Context
+	sendProgress func(context.Context, string) error
+	mu           sync.Mutex
+}
+
+func newChannelProgressWriter(ctx context.Context, sendProgress func(context.Context, string) error) *channelProgressWriter {
+	if sendProgress == nil {
+		return nil
+	}
+	return &channelProgressWriter{ctx: ctx, sendProgress: sendProgress}
+}
+
+func (writer *channelProgressWriter) Write(data []byte) (int, error) {
+	if writer == nil || writer.sendProgress == nil {
+		return len(data), nil
+	}
+	message := strings.TrimSpace(string(data))
+	if message == "" {
+		return len(data), nil
+	}
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	if err := writer.sendProgress(writer.ctx, message); err != nil {
+		return 0, err
+	}
+	return len(data), nil
 }
 
 func (runner *ChannelTurnRunner) Process(ctx context.Context, options ChannelTurnOptions) (ChannelConversationState, error) {
@@ -71,7 +109,8 @@ func (runner *ChannelTurnRunner) Process(ctx context.Context, options ChannelTur
 		return state, options.SaveState(state)
 	}
 
-	response, err := runner.service.HandleTurn(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message})
+	progressWriter := newChannelProgressWriter(ctx, options.progressSender())
+	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message}, TurnOptions{ProgressWriter: progressWriter})
 	if err != nil {
 		state.LastError = err.Error()
 		if response.SessionID != "" {

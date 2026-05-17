@@ -50,6 +50,7 @@ type Options struct {
 	Recorder        MessageRecorder
 	Stream          bool
 	WorkspaceRoot   string
+	ProgressWriter  io.Writer
 	Context         ContextConfig
 }
 
@@ -65,6 +66,7 @@ type Agent struct {
 	checkpointSaver ContextCheckpointRecorder
 	stream          bool
 	workspaceRoot   string
+	progressWriter  io.Writer
 	contextConfig   ContextConfig
 }
 
@@ -77,7 +79,9 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		model = DefaultModel
 	}
 
-	client = instrumentChatCompletionClient(client, options.LogWriter)
+	logWriter := synchronizeLogWriter(options.LogWriter)
+	progressWriter := synchronizeLogWriter(options.ProgressWriter)
+	client = instrumentChatCompletionClient(client, logWriter, progressWriter)
 
 	systemPrompt := strings.TrimSpace(options.SystemPrompt)
 	if systemPrompt == "" {
@@ -109,7 +113,8 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 	return &Agent{
 		client:          client,
 		model:           model,
-		logWriter:       options.LogWriter,
+		logWriter:       logWriter,
+		progressWriter:  progressWriter,
 		systemPrompt:    systemPrompt,
 		toolDefinitions: definitions,
 		functions:       functions,
@@ -474,6 +479,7 @@ func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any,
 		client:          a.client,
 		model:           a.model,
 		logWriter:       a.logWriter,
+		progressWriter:  a.progressWriter,
 		systemPrompt:    a.systemPrompt,
 		toolDefinitions: a.toolDefinitionsForSkillRun(),
 		functions:       cloneFunctionMap(a.functions),

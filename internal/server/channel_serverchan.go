@@ -13,6 +13,7 @@ type ServerChanChannel struct {
 	service             *Service
 	serverChanClient    *serverchanclient.Client
 	botWebhookProcessor *BotWebhookProcessor
+	runner              *ChannelTurnRunner
 }
 
 func NewServerChanChannel(service *Service, serverChanClient *serverchanclient.Client, botWebhookProcessor *BotWebhookProcessor) *ServerChanChannel {
@@ -23,6 +24,7 @@ func NewServerChanChannel(service *Service, serverChanClient *serverchanclient.C
 		service:             service,
 		serverChanClient:    serverChanClient,
 		botWebhookProcessor: botWebhookProcessor,
+		runner:              NewChannelTurnRunner(service),
 	}
 }
 
@@ -64,21 +66,39 @@ func (channel *ServerChanChannel) handleChat(writer http.ResponseWriter, request
 	ctx, cancel := context.WithTimeout(request.Context(), requestTimeout)
 	defer cancel()
 
-	response, err := channel.service.HandleTurn(ctx, TurnRequest{SessionID: serverChanRequest.SessionID, Message: serverChanRequest.Message})
+	var state ChannelConversationState
+	var deliveredReply string
+	var delivery string
+	state, err = channel.runner.Process(ctx, ChannelTurnOptions{
+		PeerKey: "serverchan:" + serverChanRequest.SendKey,
+		Message: serverChanRequest.Message,
+		LoadState: func() (ChannelConversationState, error) {
+			return ChannelConversationState{SessionID: serverChanRequest.SessionID}, nil
+		},
+		SaveState: func(next ChannelConversationState) error {
+			state = next
+			return nil
+		},
+		SendReply: func(ctx context.Context, reply string) error {
+			deliveredReply = sanitizeChannelReply(reply)
+			title, desp := serverchanclient.BuildReply(serverChanRequest.Title, deliveredReply)
+			result, sendErr := channel.serverChanClient.Send(ctx, serverChanRequest.SendKey, title, desp)
+			if sendErr == nil {
+				delivery = result
+			}
+			return sendErr
+		},
+	})
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
+		statusCode := http.StatusInternalServerError
+		if state.SessionID != "" || deliveredReply != "" {
+			statusCode = http.StatusBadGateway
+		}
+		writeError(writer, statusCode, chatResponse{SessionID: state.SessionID, Reply: deliveredReply, Error: err.Error()})
 		return
 	}
-	response.Reply = sanitizeChannelReply(response.Reply)
 
-	title, desp := serverchanclient.BuildReply(serverChanRequest.Title, response.Reply)
-	delivery, err := channel.serverChanClient.Send(ctx, serverChanRequest.SendKey, title, desp)
-	if err != nil {
-		writeError(writer, http.StatusBadGateway, chatResponse{SessionID: response.SessionID, Reply: response.Reply, Error: err.Error()})
-		return
-	}
-
-	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, Reply: response.Reply, ServerChanResponse: delivery})
+	writeJSON(writer, http.StatusOK, chatResponse{SessionID: state.SessionID, Reply: deliveredReply, ServerChanResponse: delivery})
 }
 
 func (channel *ServerChanChannel) handleBotWebhook(writer http.ResponseWriter, request *http.Request) {

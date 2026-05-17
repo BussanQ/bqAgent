@@ -275,7 +275,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		WorkspaceRoot: ws.Root,
 		MemoryDir:     ws.WorkspaceMemoryDir(),
 	}.Build(true)
-	app := runtime.NewAgent(outputWriter, systemPrompt, conversation.Recorder(), false)
+	app := runtime.NewAgentWithProgress(outputWriter, stdout, systemPrompt, conversation.Recorder(), false)
 
 	if strings.TrimSpace(task) != "" && !options.plan {
 		if err := conversation.AddUserMessage(task); err != nil {
