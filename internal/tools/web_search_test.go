@@ -97,6 +97,27 @@ func TestWebSearchWithConfigRequiresFirecrawlAPIKey(t *testing.T) {
 	}
 }
 
+func TestRegistryWebSearchUsesFirecrawlEnvByDefault(t *testing.T) {
+	t.Setenv("FIRECRAWL_API_KEY", "firecrawl-env-token")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer firecrawl-env-token" {
+			t.Fatalf("Authorization = %q, want Bearer firecrawl-env-token", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"web":[{"title":"Env result","url":"https://example.com","markdown":"Env markdown"}]}}`))
+	}))
+	defer server.Close()
+	t.Setenv("FIRECRAWL_BASE_URL", server.URL)
+
+	result, err := Registry()["web_search"](context.Background(), map[string]any{"query": "news"})
+	if err != nil {
+		t.Fatalf("web_search returned error: %v", err)
+	}
+	if !strings.Contains(result, "Env result") {
+		t.Fatalf("result = %q, want Env result", result)
+	}
+}
+
 func TestWebSearchWithConfigIncludesNonOKResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad token", http.StatusUnauthorized)

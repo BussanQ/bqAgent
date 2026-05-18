@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
 
-const defaultSearchBaseURL = "https://api.firecrawl.dev/v2"
+const defaultFirecrawlBaseURL = "https://api.firecrawl.dev/v2"
 
 type searchRequest struct {
 	Query         string              `json:"query"`
@@ -40,12 +41,12 @@ type searchResponse struct {
 }
 
 func WebSearch(ctx context.Context, args map[string]any) (string, error) {
-	return WebSearchWithConfig("", "")(ctx, args)
+	return WebSearchWithConfig(os.Getenv("FIRECRAWL_API_KEY"), os.Getenv("FIRECRAWL_BASE_URL"))(ctx, args)
 }
 
 func WebSearchWithConfig(apiKey, baseURL string) Function {
 	if strings.TrimSpace(baseURL) == "" {
-		baseURL = defaultSearchBaseURL
+		baseURL = defaultFirecrawlBaseURL
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 

@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 )
 
 type JSONSchemaProperty struct {
@@ -51,16 +53,27 @@ func Registry() map[string]Function {
 }
 
 func RegistryWithOptions(options Options) map[string]Function {
+	searchAPIKey := firstConfigured(options.SearchAPIKey, os.Getenv("FIRECRAWL_API_KEY"))
+	searchBaseURL := firstConfigured(options.SearchBaseURL, os.Getenv("FIRECRAWL_BASE_URL"))
 	return map[string]Function{
 		"execute_bash":  ExecuteBashInDir(options.WorkspaceRoot),
 		"read_file":     ReadFileFromRoot(options.WorkspaceRoot),
 		"write_file":    WriteFileToRoot(options.WorkspaceRoot),
-		"web_search":    WebSearchWithConfig(options.SearchAPIKey, options.SearchBaseURL),
+		"web_search":    WebSearchWithConfig(searchAPIKey, searchBaseURL),
 		"web_fetch":     WebFetch,
 		"install_skill": InstallSkillToRoot(options.WorkspaceRoot),
 		"mem_save":      MemSaveInDir(options.MemoryDir),
 		"mem_get":       MemGetInDir(options.MemoryDir),
 	}
+}
+
+func firstConfigured(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func NewCatalog(options Options) Catalog {

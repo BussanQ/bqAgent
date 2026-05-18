@@ -15,7 +15,7 @@ import (
 const (
 	DefaultModel                        = "MiniMax-M2.5"
 	DefaultSystemPrompt                 = "You are a helpful assistant. Be concise."
-	DefaultMaxIterations                = 20
+	DefaultMaxIterations                = 40
 	DefaultContextMaxInputTokens        = 24000
 	DefaultContextResponseReserveTokens = 4000
 	DefaultContextKeepLastTurns         = 6

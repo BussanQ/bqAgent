@@ -145,11 +145,14 @@ type modelProgressReporter struct {
 var modelProgressInterval = 10 * time.Second
 
 var modelProgressMessages = []string{
-	"仍在推理中：好答案需要一点时间。",
-	"仍在推理中：我还在处理这个请求。",
-	"仍在推理中：正在等待模型返回。",
-	"仍在推理中：复杂问题需要多想一会儿。",
-	"仍在推理中：后台任务仍在运行。",
+	"Assembling…",
+	"Boiling…",
+	"Calculating…",
+	"Coalescing…",
+	"Smooshing…",
+	"Distilling…",
+	"Formatting…",
+	"Exploring…",
 }
 
 var newModelProgressTicker = func(interval time.Duration) modelProgressTicker {
