@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -66,7 +67,7 @@ func NewACPClient(spec CommandSpec, cwd string) (ACPClient, error) {
 
 func (c *stdioACPClient) Initialize(ctx context.Context) error {
 	response, err := c.request(ctx, "initialize", map[string]any{
-		"protocolVersion":   1,
+		"protocolVersion":    1,
 		"clientCapabilities": map[string]any{},
 	})
 	if err != nil {
@@ -200,7 +201,7 @@ func (c *stdioACPClient) request(ctx context.Context, method string, params any)
 		return rpcEnvelope{}, ctx.Err()
 	case response := <-responseCh:
 		if response.Error != nil {
-			return rpcEnvelope{}, fmt.Errorf(response.Error.Message)
+			return rpcEnvelope{}, errors.New(response.Error.Message)
 		}
 		return response, nil
 	}

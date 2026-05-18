@@ -77,6 +77,12 @@ func codexArgs(spec CommandSpec, resumeID string) []string {
 	if strings.TrimSpace(resumeID) == "" {
 		return append([]string{}, spec.Args...)
 	}
+	if separator := commandWrapperSeparator(spec.Args); separator >= 0 {
+		args := append([]string{}, spec.Args[:separator+2]...)
+		args = append(args, spec.Args[separator+2:]...)
+		args = append(args, "exec", "resume", strings.TrimSpace(resumeID))
+		return ensureCodexJSONFlags(args)
+	}
 	args := []string{"exec", "resume", strings.TrimSpace(resumeID)}
 	for _, arg := range spec.Args {
 		trimmed := strings.TrimSpace(arg)
@@ -89,7 +95,35 @@ func codexArgs(spec CommandSpec, resumeID string) []string {
 			args = append(args, arg)
 		}
 	}
+	return ensureCodexJSONFlags(args)
+}
+
+func commandWrapperSeparator(args []string) int {
+	for index, arg := range args {
+		if arg == "--" && index+1 < len(args) {
+			return index
+		}
+	}
+	return -1
+}
+
+func ensureCodexJSONFlags(args []string) []string {
+	if !hasArg(args, "--json") {
+		args = append(args, "--json")
+	}
+	if !hasArg(args, "--skip-git-repo-check") {
+		args = append(args, "--skip-git-repo-check")
+	}
 	return args
+}
+
+func hasArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }
 
 func parseClaudeJSON(payload []byte) (reply string, sessionID string) {

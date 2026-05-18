@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"bqagent/internal/qq"
 	appserver "bqagent/internal/server"
 	serverchanclient "bqagent/internal/serverchan"
 	"bqagent/internal/weixin"
@@ -59,6 +60,18 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 	channels := []appserver.Channel{
 		appserver.NewServerChanChannel(service, serverchanclient.NewClient(nil), botProcessor),
 	}
+	if qqBotEnabled(getenv) {
+		tokenClient := qq.NewTokenClient(getenv("QQ_BOT_APP_ID"), getenv("QQ_BOT_CLIENT_SECRET"), getenv("QQ_BOT_TOKEN_BASE_URL"), nil)
+		tokenSource := qq.NewCachedTokenSource(tokenClient)
+		apiBaseURL := getenv("QQ_BOT_API_BASE_URL")
+		channels = append(channels, appserver.NewQQChannel(
+			service,
+			qq.NewClient(tokenSource, apiBaseURL, nil),
+			qq.NewGatewayClient(tokenSource, apiBaseURL, nil),
+			qq.NewStateStore(ws.Root),
+			qq.NewGatewayStateStore(ws.Root),
+		))
+	}
 	if envEnabled(getenv("WEIXIN_ILINK_ENABLED")) {
 		channels = append(channels, appserver.NewIlinkChannel(
 			service,
@@ -108,4 +121,21 @@ func envEnabled(value string) bool {
 	default:
 		return false
 	}
+}
+
+func envEnabledStrict(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func qqBotEnabled(getenv func(string) string) bool {
+	switch strings.ToLower(strings.TrimSpace(getenv("QQ_BOT_ENABLED"))) {
+	case "0", "false", "no", "off":
+		return false
+	}
+	return strings.TrimSpace(getenv("QQ_BOT_APP_ID")) != "" && strings.TrimSpace(getenv("QQ_BOT_CLIENT_SECRET")) != ""
 }

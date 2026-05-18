@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -221,7 +222,7 @@ func responseError(response responseEnvelope, fallback string) error {
 	if message == "" {
 		message = fallback
 	}
-	return fmt.Errorf(message)
+	return errors.New(message)
 }
 
 func (client *Client) doJSON(ctx context.Context, method, baseURL, path string, query url.Values, token string, body any, out any) error {

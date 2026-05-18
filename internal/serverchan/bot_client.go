@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -102,7 +103,7 @@ func (client *BotClient) SendMessage(ctx context.Context, chatID int64, text str
 		if message == "" {
 			message = "serverchan bot send failed"
 		}
-		return decoded, fmt.Errorf(message)
+		return decoded, errors.New(message)
 	}
 	return decoded, nil
 }

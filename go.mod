@@ -2,7 +2,10 @@ module bqagent
 
 go 1.26.2
 
-require github.com/mdp/qrterminal/v3 v3.2.1
+require (
+	github.com/mdp/qrterminal/v3 v3.2.1
+	nhooyr.io/websocket v1.8.17
+)
 
 require (
 	golang.org/x/sys v0.29.0 // indirect
