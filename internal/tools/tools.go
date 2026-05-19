@@ -53,8 +53,8 @@ func Registry() map[string]Function {
 }
 
 func RegistryWithOptions(options Options) map[string]Function {
-	searchAPIKey := firstConfigured(options.SearchAPIKey, os.Getenv("FIRECRAWL_API_KEY"))
-	searchBaseURL := firstConfigured(options.SearchBaseURL, os.Getenv("FIRECRAWL_BASE_URL"))
+	searchAPIKey := firstConfigured(options.SearchAPIKey, os.Getenv("FIRECRAWL_API_KEY"), os.Getenv("SEARCH_API_KEY"))
+	searchBaseURL := firstConfigured(options.SearchBaseURL, os.Getenv("FIRECRAWL_BASE_URL"), os.Getenv("SEARCH_BASE_URL"))
 	return map[string]Function{
 		"execute_bash":  ExecuteBashInDir(options.WorkspaceRoot),
 		"read_file":     ReadFileFromRoot(options.WorkspaceRoot),
@@ -165,7 +165,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "web_search",
-				Description: "Search the web for up-to-date information",
+				Description: "Search the web for up-to-date information via Firecrawl. Requires FIRECRAWL_API_KEY; legacy SEARCH_API_KEY is also supported.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{

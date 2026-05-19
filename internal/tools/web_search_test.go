@@ -118,6 +118,27 @@ func TestRegistryWebSearchUsesFirecrawlEnvByDefault(t *testing.T) {
 	}
 }
 
+func TestRegistryWebSearchUsesLegacySearchEnv(t *testing.T) {
+	t.Setenv("SEARCH_API_KEY", "legacy-env-token")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer legacy-env-token" {
+			t.Fatalf("Authorization = %q, want Bearer legacy-env-token", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"web":[{"title":"Legacy env result","url":"https://example.com","markdown":"Legacy env markdown"}]}}`))
+	}))
+	defer server.Close()
+	t.Setenv("SEARCH_BASE_URL", server.URL)
+
+	result, err := Registry()["web_search"](context.Background(), map[string]any{"query": "news"})
+	if err != nil {
+		t.Fatalf("web_search returned error: %v", err)
+	}
+	if !strings.Contains(result, "Legacy env result") {
+		t.Fatalf("result = %q, want Legacy env result", result)
+	}
+}
+
 func TestWebSearchWithConfigIncludesNonOKResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad token", http.StatusUnauthorized)

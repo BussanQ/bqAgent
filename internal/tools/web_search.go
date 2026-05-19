@@ -41,7 +41,7 @@ type searchResponse struct {
 }
 
 func WebSearch(ctx context.Context, args map[string]any) (string, error) {
-	return WebSearchWithConfig(os.Getenv("FIRECRAWL_API_KEY"), os.Getenv("FIRECRAWL_BASE_URL"))(ctx, args)
+	return WebSearchWithConfig(firstConfigured(os.Getenv("FIRECRAWL_API_KEY"), os.Getenv("SEARCH_API_KEY")), firstConfigured(os.Getenv("FIRECRAWL_BASE_URL"), os.Getenv("SEARCH_BASE_URL")))(ctx, args)
 }
 
 func WebSearchWithConfig(apiKey, baseURL string) Function {
@@ -57,7 +57,7 @@ func WebSearchWithConfig(apiKey, baseURL string) Function {
 		}
 
 		if strings.TrimSpace(apiKey) == "" {
-			return "", fmt.Errorf("SEARCH_API_KEY or FIRECRAWL_API_KEY is not set; web search requires a Firecrawl API key")
+			return "", fmt.Errorf("FIRECRAWL_API_KEY or legacy SEARCH_API_KEY is not set; web search requires a Firecrawl API key")
 		}
 
 		body, err := json.Marshal(searchRequest{
