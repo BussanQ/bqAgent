@@ -16,7 +16,7 @@ It is guidance only — it does not change what tools are available.
 - **shell**: Run any shell command. Timeout: 60s. Use for builds, tests, installs.
 
 ## Web Search
-- **web_search**: Search the web for up-to-date information via Firecrawl. Prefer `FIRECRAWL_API_KEY`; legacy `SEARCH_API_KEY` also works. Optional `FIRECRAWL_BASE_URL` or legacy `SEARCH_BASE_URL` defaults to `https://api.firecrawl.dev/v2`.
+- **web_search**: Search the web for up-to-date information via Tavily by default. Configure `SEARCH_API_KEY`; optional `SEARCH_BASE_URL` defaults to `https://api.tavily.com`. Firecrawl remains supported as a compatibility fallback via `FIRECRAWL_API_KEY` and optional `FIRECRAWL_BASE_URL`.
 
 ## Skills
 - **install_skill**: Install a skill from a URL into `.agent/skills/<name>/SKILL.md`. Provide `url`, optionally `name`, and `overwrite` as `true` when replacing an existing skill.

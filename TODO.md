@@ -27,7 +27,7 @@
   - [x] 统一会话完成、失败、恢复状态更新逻辑
   - [x] 继续收敛 assistant / tool message 相关流程，评估是否还需要进一步抽象（已评估：`appendToolMessage` 已抽取，assistant message 录制模式一致，无需进一步抽象）
 - [x] 收口配置读取
-  - [x] 集中读取 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`、`FIRECRAWL_API_KEY` / `SEARCH_API_KEY`、`FIRECRAWL_BASE_URL` / `SEARCH_BASE_URL`
+  - [x] 集中读取 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`、`SEARCH_API_KEY` / `FIRECRAWL_API_KEY`、`SEARCH_BASE_URL` / `FIRECRAWL_BASE_URL`
   - [x] 避免 CLI 与 Server 分别拼装同一套依赖
 - [x] 降低入口文件复杂度
   - [x] 让 `cmd/agent/main.go` 更多只处理参数解析与模式分发

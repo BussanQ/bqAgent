@@ -9,7 +9,47 @@ import (
 	"testing"
 )
 
-func TestWebSearchWithConfigCallsFirecrawlSearch(t *testing.T) {
+func TestWebSearchWithConfigCallsTavilySearch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/search" {
+			t.Fatalf("path = %s, want /search", r.URL.Path)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("Content-Type = %q, want application/json", r.Header.Get("Content-Type"))
+		}
+
+		var body searchRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
+		}
+		if body.APIKey != "test-token" {
+			t.Fatalf("api_key = %q, want test-token", body.APIKey)
+		}
+		if body.Query != "latest AI news" {
+			t.Fatalf("query = %q, want latest AI news", body.Query)
+		}
+		if body.MaxResults != 5 {
+			t.Fatalf("max_results = %d, want 5", body.MaxResults)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"title":"Result title","url":"https://example.com","content":"Result content"}]}`))
+	}))
+	defer server.Close()
+
+	result, err := WebSearchWithConfig("test-token", server.URL)(context.Background(), map[string]any{"query": "latest AI news"})
+	if err != nil {
+		t.Fatalf("WebSearchWithConfig returned error: %v", err)
+	}
+	if !strings.Contains(result, "**Result title**") || !strings.Contains(result, "https://example.com") || !strings.Contains(result, "Result content") {
+		t.Fatalf("result = %q, want title, url, and content", result)
+	}
+}
+
+func TestWebSearchWithProviderConfigCallsFirecrawlSearch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("method = %s, want POST", r.Method)
@@ -24,7 +64,7 @@ func TestWebSearchWithConfigCallsFirecrawlSearch(t *testing.T) {
 			t.Fatalf("Content-Type = %q, want application/json", r.Header.Get("Content-Type"))
 		}
 
-		var body searchRequest
+		var body firecrawlSearchRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("failed to decode request body: %v", err)
 		}
@@ -46,25 +86,25 @@ func TestWebSearchWithConfigCallsFirecrawlSearch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := WebSearchWithConfig("test-token", server.URL)(context.Background(), map[string]any{"query": "latest AI news"})
+	result, err := WebSearchWithProviderConfig("firecrawl", "test-token", server.URL)(context.Background(), map[string]any{"query": "latest AI news"})
 	if err != nil {
-		t.Fatalf("WebSearchWithConfig returned error: %v", err)
+		t.Fatalf("WebSearchWithProviderConfig returned error: %v", err)
 	}
 	if !strings.Contains(result, "**Result title**") || !strings.Contains(result, "https://example.com") || !strings.Contains(result, "Result markdown") {
 		t.Fatalf("result = %q, want title, url, and markdown", result)
 	}
 }
 
-func TestWebSearchWithConfigFallsBackToDescription(t *testing.T) {
+func TestWebSearchWithProviderConfigFirecrawlFallsBackToDescription(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"success":true,"data":{"web":[{"title":"Result title","url":"https://example.com","description":"Result description"}]}}`))
 	}))
 	defer server.Close()
 
-	result, err := WebSearchWithConfig("test-token", server.URL)(context.Background(), map[string]any{"query": "latest AI news"})
+	result, err := WebSearchWithProviderConfig("firecrawl", "test-token", server.URL)(context.Background(), map[string]any{"query": "latest AI news"})
 	if err != nil {
-		t.Fatalf("WebSearchWithConfig returned error: %v", err)
+		t.Fatalf("WebSearchWithProviderConfig returned error: %v", err)
 	}
 	if !strings.Contains(result, "Result description") {
 		t.Fatalf("result = %q, want description fallback", result)
@@ -74,7 +114,7 @@ func TestWebSearchWithConfigFallsBackToDescription(t *testing.T) {
 func TestWebSearchWithConfigReturnsNoResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"web":[]}}`))
+		_, _ = w.Write([]byte(`{"results":[]}`))
 	}))
 	defer server.Close()
 
@@ -87,27 +127,31 @@ func TestWebSearchWithConfigReturnsNoResults(t *testing.T) {
 	}
 }
 
-func TestWebSearchWithConfigRequiresFirecrawlAPIKey(t *testing.T) {
+func TestWebSearchWithConfigRequiresTavilyAPIKey(t *testing.T) {
 	_, err := WebSearchWithConfig("", "http://example.test")(context.Background(), map[string]any{"query": "news"})
 	if err == nil {
 		t.Fatal("expected missing API key error")
 	}
-	if !strings.Contains(err.Error(), "Firecrawl") {
-		t.Fatalf("error = %q, want Firecrawl", err.Error())
+	if !strings.Contains(err.Error(), "Tavily") {
+		t.Fatalf("error = %q, want Tavily", err.Error())
 	}
 }
 
-func TestRegistryWebSearchUsesFirecrawlEnvByDefault(t *testing.T) {
-	t.Setenv("FIRECRAWL_API_KEY", "firecrawl-env-token")
+func TestRegistryWebSearchUsesTavilyEnvByDefault(t *testing.T) {
+	t.Setenv("SEARCH_API_KEY", "tavily-env-token")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer firecrawl-env-token" {
-			t.Fatalf("Authorization = %q, want Bearer firecrawl-env-token", r.Header.Get("Authorization"))
+		var body searchRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
+		}
+		if body.APIKey != "tavily-env-token" {
+			t.Fatalf("api_key = %q, want tavily-env-token", body.APIKey)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"web":[{"title":"Env result","url":"https://example.com","markdown":"Env markdown"}]}}`))
+		_, _ = w.Write([]byte(`{"results":[{"title":"Env result","url":"https://example.com","content":"Env content"}]}`))
 	}))
 	defer server.Close()
-	t.Setenv("FIRECRAWL_BASE_URL", server.URL)
+	t.Setenv("SEARCH_BASE_URL", server.URL)
 
 	result, err := Registry()["web_search"](context.Background(), map[string]any{"query": "news"})
 	if err != nil {
@@ -118,24 +162,24 @@ func TestRegistryWebSearchUsesFirecrawlEnvByDefault(t *testing.T) {
 	}
 }
 
-func TestRegistryWebSearchUsesLegacySearchEnv(t *testing.T) {
-	t.Setenv("SEARCH_API_KEY", "legacy-env-token")
+func TestRegistryWebSearchFallsBackToFirecrawlEnv(t *testing.T) {
+	t.Setenv("FIRECRAWL_API_KEY", "firecrawl-env-token")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer legacy-env-token" {
-			t.Fatalf("Authorization = %q, want Bearer legacy-env-token", r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "Bearer firecrawl-env-token" {
+			t.Fatalf("Authorization = %q, want Bearer firecrawl-env-token", r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"web":[{"title":"Legacy env result","url":"https://example.com","markdown":"Legacy env markdown"}]}}`))
+		_, _ = w.Write([]byte(`{"success":true,"data":{"web":[{"title":"Firecrawl env result","url":"https://example.com","markdown":"Firecrawl env markdown"}]}}`))
 	}))
 	defer server.Close()
-	t.Setenv("SEARCH_BASE_URL", server.URL)
+	t.Setenv("FIRECRAWL_BASE_URL", server.URL)
 
 	result, err := Registry()["web_search"](context.Background(), map[string]any{"query": "news"})
 	if err != nil {
 		t.Fatalf("web_search returned error: %v", err)
 	}
-	if !strings.Contains(result, "Legacy env result") {
-		t.Fatalf("result = %q, want Legacy env result", result)
+	if !strings.Contains(result, "Firecrawl env result") {
+		t.Fatalf("result = %q, want Firecrawl env result", result)
 	}
 }
 

@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -32,11 +31,12 @@ type Definition struct {
 type Function func(ctx context.Context, args map[string]any) (string, error)
 
 type Options struct {
-	WorkspaceRoot string
-	IncludePlan   bool
-	SearchAPIKey  string
-	SearchBaseURL string
-	MemoryDir     string
+	WorkspaceRoot  string
+	IncludePlan    bool
+	SearchProvider string
+	SearchAPIKey   string
+	SearchBaseURL  string
+	MemoryDir      string
 }
 
 type Catalog struct {
@@ -53,13 +53,14 @@ func Registry() map[string]Function {
 }
 
 func RegistryWithOptions(options Options) map[string]Function {
-	searchAPIKey := firstConfigured(options.SearchAPIKey, os.Getenv("FIRECRAWL_API_KEY"), os.Getenv("SEARCH_API_KEY"))
-	searchBaseURL := firstConfigured(options.SearchBaseURL, os.Getenv("FIRECRAWL_BASE_URL"), os.Getenv("SEARCH_BASE_URL"))
+	searchProvider := firstConfigured(options.SearchProvider, searchProviderFromEnv())
+	searchAPIKey := firstConfigured(options.SearchAPIKey, searchAPIKeyFromEnv())
+	searchBaseURL := firstConfigured(options.SearchBaseURL, searchBaseURLFromEnv())
 	return map[string]Function{
 		"execute_bash":  ExecuteBashInDir(options.WorkspaceRoot),
 		"read_file":     ReadFileFromRoot(options.WorkspaceRoot),
 		"write_file":    WriteFileToRoot(options.WorkspaceRoot),
-		"web_search":    WebSearchWithConfig(searchAPIKey, searchBaseURL),
+		"web_search":    WebSearchWithProviderConfig(searchProvider, searchAPIKey, searchBaseURL),
 		"web_fetch":     WebFetch,
 		"install_skill": InstallSkillToRoot(options.WorkspaceRoot),
 		"mem_save":      MemSaveInDir(options.MemoryDir),
@@ -165,7 +166,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "web_search",
-				Description: "Search the web for up-to-date information via Firecrawl. Requires FIRECRAWL_API_KEY; legacy SEARCH_API_KEY is also supported.",
+				Description: "Search the web for up-to-date information via Tavily. Requires SEARCH_API_KEY; Firecrawl env vars are supported as a compatibility fallback.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{

@@ -13,6 +13,7 @@ type Config struct {
 	APIKey                       string
 	BaseURL                      string
 	Model                        string
+	SearchProvider               string
 	SearchAPIKey                 string
 	SearchBaseURL                string
 	ContextManagementEnabled     bool
@@ -42,12 +43,14 @@ type Runtime struct {
 
 func ConfigFromEnv(getenv func(string) string) Config {
 	defaults := agent.DefaultContextConfig()
-	searchAPIKey := firstNonEmpty(getenv("FIRECRAWL_API_KEY"), getenv("SEARCH_API_KEY"))
-	searchBaseURL := firstNonEmpty(getenv("FIRECRAWL_BASE_URL"), getenv("SEARCH_BASE_URL"))
+	searchProvider := searchProviderFromEnv(getenv)
+	searchAPIKey := firstNonEmpty(getenv("SEARCH_API_KEY"), getenv("FIRECRAWL_API_KEY"))
+	searchBaseURL := firstNonEmpty(getenv("SEARCH_BASE_URL"), getenv("FIRECRAWL_BASE_URL"))
 	return Config{
 		APIKey:                       getenv("OPENAI_API_KEY"),
 		BaseURL:                      getenv("OPENAI_BASE_URL"),
 		Model:                        getenv("OPENAI_MODEL"),
+		SearchProvider:               searchProvider,
 		SearchAPIKey:                 searchAPIKey,
 		SearchBaseURL:                searchBaseURL,
 		ContextManagementEnabled:     envBool(getenv("CONTEXT_MANAGEMENT_ENABLED"), defaults.Enabled),
@@ -59,6 +62,16 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		ContextSummaryTriggerTokens:  envInt(getenv("CONTEXT_SUMMARY_TRIGGER_TOKENS"), defaults.SummaryTriggerTokens),
 		ContextSummaryModel:          getenv("CONTEXT_SUMMARY_MODEL"),
 	}
+}
+
+func searchProviderFromEnv(getenv func(string) string) string {
+	if firstNonEmpty(getenv("SEARCH_API_KEY"), getenv("SEARCH_BASE_URL")) != "" {
+		return "tavily"
+	}
+	if firstNonEmpty(getenv("FIRECRAWL_API_KEY"), getenv("FIRECRAWL_BASE_URL")) != "" {
+		return "firecrawl"
+	}
+	return "tavily"
 }
 
 func firstNonEmpty(values ...string) string {
@@ -103,11 +116,12 @@ func (factory Factory) Build(includePlan bool) Runtime {
 	}
 
 	catalog := tools.NewCatalog(tools.Options{
-		WorkspaceRoot: factory.WorkspaceRoot,
-		IncludePlan:   includePlan,
-		SearchAPIKey:  factory.Config.SearchAPIKey,
-		SearchBaseURL: factory.Config.SearchBaseURL,
-		MemoryDir:     factory.MemoryDir,
+		WorkspaceRoot:  factory.WorkspaceRoot,
+		IncludePlan:    includePlan,
+		SearchProvider: factory.Config.SearchProvider,
+		SearchAPIKey:   factory.Config.SearchAPIKey,
+		SearchBaseURL:  factory.Config.SearchBaseURL,
+		MemoryDir:      factory.MemoryDir,
 	})
 
 	return Runtime{

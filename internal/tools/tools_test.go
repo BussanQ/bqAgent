@@ -22,7 +22,7 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		{index: 0, name: "execute_bash", description: "Execute a bash command", required: []string{"command"}},
 		{index: 1, name: "read_file", description: "Read a file", required: []string{"path"}},
 		{index: 2, name: "write_file", description: "Write to a file", required: []string{"path", "content"}},
-		{index: 3, name: "web_search", description: "Search the web for up-to-date information via Firecrawl. Requires FIRECRAWL_API_KEY; legacy SEARCH_API_KEY is also supported.", required: []string{"query"}},
+		{index: 3, name: "web_search", description: "Search the web for up-to-date information via Tavily. Requires SEARCH_API_KEY; Firecrawl env vars are supported as a compatibility fallback.", required: []string{"query"}},
 		{index: 4, name: "web_fetch", description: "Fetch content from a web URL", required: []string{"url"}},
 		{index: 5, name: "install_skill", description: "Install a workspace skill from a URL into .agent/skills/<name>/SKILL.md.", required: []string{"url"}},
 		{index: 6, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
