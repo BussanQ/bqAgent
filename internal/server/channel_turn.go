@@ -2,10 +2,15 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 )
+
+var ErrChannelTurnInProgress = errors.New("channel turn already in progress")
+
+const channelTurnInProgressReply = "上一条消息仍在处理中，请稍后再试。"
 
 type ChannelConversationState struct {
 	SessionID        string
@@ -71,6 +76,14 @@ func (writer *channelProgressWriter) Write(data []byte) (int, error) {
 }
 
 func (runner *ChannelTurnRunner) Process(ctx context.Context, options ChannelTurnOptions) (ChannelConversationState, error) {
+	return runner.process(ctx, options, true)
+}
+
+func (runner *ChannelTurnRunner) TryProcess(ctx context.Context, options ChannelTurnOptions) (ChannelConversationState, error) {
+	return runner.process(ctx, options, false)
+}
+
+func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTurnOptions, waitForLock bool) (ChannelConversationState, error) {
 	if runner == nil || runner.service == nil {
 		return ChannelConversationState{}, fmt.Errorf("service is required")
 	}
@@ -84,10 +97,25 @@ func (runner *ChannelTurnRunner) Process(ctx context.Context, options ChannelTur
 		return ChannelConversationState{}, fmt.Errorf("send reply is required")
 	}
 
-	unlock := runner.locker.Lock(strings.TrimSpace(options.PeerKey))
+	var state ChannelConversationState
+	peerKey := strings.TrimSpace(options.PeerKey)
+	var unlock func()
+	if waitForLock {
+		unlock = runner.locker.Lock(peerKey)
+	} else {
+		var locked bool
+		unlock, locked = runner.locker.TryLock(peerKey)
+		if !locked {
+			if sendProgress := options.progressSender(); sendProgress != nil {
+				_ = sendProgress(ctx, channelTurnInProgressReply)
+			}
+			return state, ErrChannelTurnInProgress
+		}
+	}
 	defer unlock()
 
-	state, err := options.LoadState()
+	var err error
+	state, err = options.LoadState()
 	if err != nil {
 		return ChannelConversationState{}, err
 	}

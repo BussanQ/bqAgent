@@ -79,9 +79,8 @@ func (channel *QQChannel) runGateway(ctx context.Context) {
 			state.LastError = err.Error()
 		}
 		next, err := channel.gateway.Connect(ctx, state, func(_ context.Context, update qq.Update) error {
-			turnCtx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-			defer cancel()
-			return channel.processUpdate(turnCtx, update)
+			channel.dispatchUpdate(update)
+			return nil
 		})
 		if saveErr := channel.gatewayStates.Save(next); saveErr != nil {
 			log.Printf("qq gateway state save failed: %v", saveErr)
@@ -108,12 +107,22 @@ func (channel *QQChannel) runGateway(ctx context.Context) {
 	}
 }
 
+func (channel *QQChannel) dispatchUpdate(update qq.Update) {
+	go func() {
+		turnCtx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+		defer cancel()
+		if err := channel.processUpdate(turnCtx, update); err != nil && !errors.Is(err, ErrChannelTurnInProgress) {
+			log.Printf("qq update processing failed: %v", err)
+		}
+	}()
+}
+
 func (channel *QQChannel) processUpdate(ctx context.Context, update qq.Update) error {
 	if !channel.Configured() {
 		return errors.New("qq bot is not configured")
 	}
 	sender := newQQUpdateSender(channel.client, update)
-	_, err := channel.runner.Process(ctx, ChannelTurnOptions{
+	_, err := channel.runner.TryProcess(ctx, ChannelTurnOptions{
 		PeerKey:   update.PeerKey,
 		DedupeKey: update.DedupeKey,
 		Message:   update.Text,

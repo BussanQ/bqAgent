@@ -26,6 +26,12 @@ type fakeQQGateway struct {
 	calls      atomic.Int32
 }
 
+type sequencedQQGateway struct {
+	configured   bool
+	updates      []qqclient.Update
+	firstStarted <-chan struct{}
+}
+
 func (gateway *fakeQQGateway) Configured() bool {
 	return gateway != nil && gateway.configured
 }
@@ -41,6 +47,29 @@ func (gateway *fakeQQGateway) Connect(ctx context.Context, state qqclient.Gatewa
 		state.Seq++
 	}
 	return state, context.Canceled
+}
+
+func (gateway *sequencedQQGateway) Configured() bool {
+	return gateway != nil && gateway.configured
+}
+
+func (gateway *sequencedQQGateway) Connect(ctx context.Context, state qqclient.GatewaySessionState, handler func(context.Context, qqclient.Update) error) (qqclient.GatewaySessionState, error) {
+	state.SessionID = "gateway-session-1"
+	for index, update := range gateway.updates {
+		if err := handler(ctx, update); err != nil {
+			return state, err
+		}
+		state.Seq++
+		if index == 0 && gateway.firstStarted != nil {
+			select {
+			case <-gateway.firstStarted:
+			case <-ctx.Done():
+				return state, ctx.Err()
+			}
+		}
+	}
+	<-ctx.Done()
+	return state, ctx.Err()
 }
 
 func TestQQChannelStartProcessesC2CConversation(t *testing.T) {
@@ -100,6 +129,55 @@ func TestQQChannelStartProcessesC2CConversation(t *testing.T) {
 	}
 	if len(messages) != 3 {
 		t.Fatalf("messages length = %d, want 3", len(messages))
+	}
+	if llmCount.Load() != 1 {
+		t.Fatalf("LLM request count = %d, want 1", llmCount.Load())
+	}
+}
+
+func TestQQGatewayKeepsReadingWhilePeerTurnRuns(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var llmCount atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		count := llmCount.Add(1)
+		if count == 1 {
+			close(firstStarted)
+			<-releaseFirst
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(fmt.Sprintf(`{"choices":[{"message":{"role":"assistant","content":"reply-%d"}}]}`, count)))
+	}))
+	defer llmServer.Close()
+
+	sentMessages := make(chan qqSendCapture, 3)
+	qqServer := newTestQQAPIServer(t, sentMessages, nil)
+	defer qqServer.Close()
+
+	root := t.TempDir()
+	service := newTestService(root, llmServer.URL)
+	gateway := &sequencedQQGateway{
+		configured: true,
+		updates: []qqclient.Update{
+			c2cUpdate("event-1", "message-1", "slow task"),
+			c2cUpdate("event-2", "message-2", "next message"),
+		},
+		firstStarted: firstStarted,
+	}
+	channel := newTestQQChannel(root, service, qqServer.URL, gateway)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	channel.Start(ctx)
+
+	busy := waitForQQSend(t, sentMessages)
+	if busy.Payload.Content != channelTurnInProgressReply || busy.Payload.MsgID != "message-2" || busy.Payload.MsgSeq != 1 {
+		t.Fatalf("busy payload = %+v", busy.Payload)
+	}
+	close(releaseFirst)
+
+	reply := waitForQQSend(t, sentMessages)
+	if reply.Payload.Content != "reply-1" || reply.Payload.MsgID != "message-1" || reply.Payload.MsgSeq != 1 {
+		t.Fatalf("reply payload = %+v", reply.Payload)
 	}
 	if llmCount.Load() != 1 {
 		t.Fatalf("LLM request count = %d, want 1", llmCount.Load())
