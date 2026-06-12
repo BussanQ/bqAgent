@@ -119,7 +119,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 
 	logFile, err := conversation.Session.OpenOutputFile()
 	if err != nil {
-		_ = conversation.MarkFailed(err)
+		markConversationFailed(conversation, err)
 		return TurnResponse{}, err
 	}
 	defer logFile.Close()
@@ -133,20 +133,20 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 
 	if err := conversation.AddUserMessage(message); err != nil {
 		writeTurnError(turnErrorWriter, err)
-		_ = conversation.MarkFailed(err)
+		markConversationFailed(conversation, err)
 		return TurnResponse{}, err
 	}
 
 	if reply, handled, skillErr := service.handleSkillCommand(ctx, message, conversation.Recorder(), logWriter, progressWriter, systemPrompt); handled {
 		if skillErr != nil {
 			writeTurnError(turnErrorWriter, skillErr)
-			_ = conversation.MarkFailed(skillErr)
+			markConversationFailed(conversation, skillErr)
 			return TurnResponse{}, skillErr
 		}
 		assistantMessage := map[string]any{"role": "assistant", "content": reply}
 		if err := conversation.Session.RecordMessage(assistantMessage); err != nil {
 			writeTurnError(turnErrorWriter, err)
-			_ = conversation.MarkFailed(err)
+			markConversationFailed(conversation, err)
 			return TurnResponse{}, err
 		}
 		conversation.Messages = append(conversation.Messages, assistantMessage)
@@ -163,20 +163,20 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		routedAgent, routedPrompt, _, routeErr := service.externalBroker.Resolve(message, conversation.Session.ID())
 		if routeErr != nil {
 			writeTurnError(turnErrorWriter, routeErr)
-			_ = conversation.MarkFailed(routeErr)
+			markConversationFailed(conversation, routeErr)
 			return TurnResponse{}, routeErr
 		}
 		if routedAgent == extagent.AgentDefault {
 			if err := service.externalBroker.Clear(conversation.Session.ID()); err != nil {
 				writeTurnError(turnErrorWriter, err)
-				_ = conversation.MarkFailed(err)
+				markConversationFailed(conversation, err)
 				return TurnResponse{}, err
 			}
 			reply := "switched to default model"
 			assistantMessage := map[string]any{"role": "assistant", "content": reply}
 			if err := conversation.Session.RecordMessage(assistantMessage); err != nil {
 				writeTurnError(turnErrorWriter, err)
-				_ = conversation.MarkFailed(err)
+				markConversationFailed(conversation, err)
 				return TurnResponse{}, err
 			}
 			conversation.Messages = append(conversation.Messages, assistantMessage)
@@ -196,13 +196,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			})
 			if err != nil {
 				writeTurnError(turnErrorWriter, err)
-				_ = conversation.MarkFailed(err)
+				markConversationFailed(conversation, err)
 				return TurnResponse{}, err
 			}
 			assistantMessage := map[string]any{"role": "assistant", "content": result.Reply}
 			if err := conversation.Session.RecordMessage(assistantMessage); err != nil {
 				writeTurnError(turnErrorWriter, err)
-				_ = conversation.MarkFailed(err)
+				markConversationFailed(conversation, err)
 				return TurnResponse{}, err
 			}
 			conversation.Messages = append(conversation.Messages, assistantMessage)
@@ -232,7 +232,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	result, _, err := app.RunConversationTurn(ctx, conversation.Messages, service.maxTurns)
 	if err != nil {
 		writeTurnError(turnErrorWriter, err)
-		_ = conversation.MarkFailed(err)
+		markConversationFailed(conversation, err)
 		return TurnResponse{}, err
 	}
 	if err := conversation.MarkCompleted(); err != nil {
@@ -334,6 +334,15 @@ func cloneFunctions(functions map[string]tools.Function) map[string]tools.Functi
 		cloned[name] = function
 	}
 	return cloned
+}
+
+// markConversationFailed marks the session as failed and logs when even that
+// bookkeeping write fails, since the session status would otherwise silently
+// stay "running".
+func markConversationFailed(conversation *appruntime.Conversation, err error) {
+	if markErr := conversation.MarkFailed(err); markErr != nil {
+		log.Printf("session mark-failed failed: %v", markErr)
+	}
 }
 
 func (service *Service) appendMemory(task, result string) {

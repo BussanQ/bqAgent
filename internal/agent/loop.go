@@ -298,7 +298,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		for _, toolCall := range message.ToolCalls {
 			parsedArguments, err := parseArguments(toolCall.Function.Arguments)
 			if err != nil {
-				toolMessage, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, fmt.Sprintf("Error: Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err))
+				toolMessage, recordErr := a.appendToolError(updatedMessages, toolCall.ID, "Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err)
 				updatedMessages = toolMessage
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
@@ -310,7 +310,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 
 			arguments, ok := parsedArguments.(map[string]any)
 			if !ok {
-				toolMessage, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name))
+				toolMessage, recordErr := a.appendToolError(updatedMessages, toolCall.ID, "Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
 				updatedMessages = toolMessage
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
@@ -367,30 +367,21 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 }
 
 func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) (string, []map[string]any, error) {
-	task, err := requireStringArgument(arguments, "task")
+	task, err := requireStringArgument("plan", arguments, "task")
 	if err != nil {
-		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: %v", err))
-		if recordErr != nil {
-			return "", updatedMessages, recordErr
-		}
-		return "", updatedMessages, nil
+		updatedMessages, recordErr := a.appendToolError(messages, toolCall.ID, "%v", err)
+		return "", updatedMessages, recordErr
 	}
 
 	a.logf("[Plan] Breaking down: %s\n", task)
 	steps, err := a.planner.Generate(ctx, task)
 	if err != nil {
-		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: plan generation failed: %v", err))
-		if recordErr != nil {
-			return "", updatedMessages, recordErr
-		}
-		return "", updatedMessages, nil
+		updatedMessages, recordErr := a.appendToolError(messages, toolCall.ID, "plan generation failed: %v", err)
+		return "", updatedMessages, recordErr
 	}
 	if len(steps) == 0 {
-		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, "Error: planner returned no steps for this task")
-		if recordErr != nil {
-			return "", updatedMessages, recordErr
-		}
-		return "", updatedMessages, nil
+		updatedMessages, recordErr := a.appendToolError(messages, toolCall.ID, "planner returned no steps for this task")
+		return "", updatedMessages, recordErr
 	}
 
 	a.logf("[Plan] Created %d steps\n", len(steps))
@@ -425,41 +416,25 @@ func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, 
 }
 
 func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) ([]map[string]any, error) {
-	skillID, err := requireStringArgument(arguments, "skill")
+	skillID, err := requireStringArgument("run_skill", arguments, "skill")
 	if err != nil {
-		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: %v", err))
-		if recordErr != nil {
-			return updatedMessages, recordErr
-		}
-		return updatedMessages, nil
+		return a.appendToolError(messages, toolCall.ID, "%v", err)
 	}
 	if strings.TrimSpace(a.workspaceRoot) == "" {
-		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, "Error: workspace root is not configured for run_skill")
-		if recordErr != nil {
-			return updatedMessages, recordErr
-		}
-		return updatedMessages, nil
+		return a.appendToolError(messages, toolCall.ID, "workspace root is not configured for run_skill")
 	}
 
 	ws := &workspace.Workspace{Root: a.workspaceRoot}
 	skill, err := ws.LoadSkill(skillID)
 	if err != nil {
-		updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, fmt.Sprintf("Error: %v", err))
-		if recordErr != nil {
-			return updatedMessages, recordErr
-		}
-		return updatedMessages, nil
+		return a.appendToolError(messages, toolCall.ID, "%v", err)
 	}
 
 	argsText := ""
 	if rawArgs, ok := arguments["args"]; ok {
 		text, ok := rawArgs.(string)
 		if !ok {
-			updatedMessages, recordErr := a.appendToolMessage(messages, toolCall.ID, "Error: argument \"args\" must be a string")
-			if recordErr != nil {
-				return updatedMessages, recordErr
-			}
-			return updatedMessages, nil
+			return a.appendToolError(messages, toolCall.ID, "tool %q argument %q must be a string", "run_skill", "args")
 		}
 		argsText = strings.TrimSpace(text)
 	}
@@ -564,7 +539,9 @@ func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any
 		return nil, false
 	}
 	if a.checkpointSaver != nil {
-		_ = a.checkpointSaver.SaveCheckpointSummary(summary, tail, a.systemPrompt)
+		if err := a.checkpointSaver.SaveCheckpointSummary(summary, tail, a.systemPrompt); err != nil {
+			a.logf("[Context] checkpoint save failed: %v\n", err)
+		}
 	}
 
 	summarized := make([]map[string]any, 0, len(tail)+2)
@@ -699,15 +676,15 @@ func parseArguments(raw string) (any, error) {
 	return parsed, nil
 }
 
-func requireStringArgument(args map[string]any, key string) (string, error) {
+func requireStringArgument(toolName string, args map[string]any, key string) (string, error) {
 	value, ok := args[key]
 	if !ok {
-		return "", fmt.Errorf("missing required argument %q", key)
+		return "", fmt.Errorf("tool %q missing required argument %q", toolName, key)
 	}
 
 	text, ok := value.(string)
 	if !ok {
-		return "", fmt.Errorf("argument %q must be a string", key)
+		return "", fmt.Errorf("tool %q argument %q must be a string", toolName, key)
 	}
 	return text, nil
 }
@@ -846,6 +823,10 @@ func (a *Agent) logf(format string, arguments ...any) {
 		return
 	}
 	fmt.Fprintf(a.logWriter, format, arguments...)
+}
+
+func (a *Agent) appendToolError(messages []map[string]any, toolCallID, format string, arguments ...any) ([]map[string]any, error) {
+	return a.appendToolMessage(messages, toolCallID, "Error: "+fmt.Sprintf(format, arguments...))
 }
 
 func (a *Agent) appendToolMessage(messages []map[string]any, toolCallID, content string) ([]map[string]any, error) {

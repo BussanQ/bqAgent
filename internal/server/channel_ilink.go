@@ -223,6 +223,7 @@ func (channel *IlinkChannel) run(ctx context.Context) {
 		cancel()
 		if err != nil {
 			pollerState.LastError = err.Error()
+			// Best-effort persist; the poll error is surfaced via setLastError.
 			_ = channel.poller.Save(pollerState)
 			channel.setLastError(err.Error())
 			if !sleepContext(ctx, ilinkIdleInterval) {
@@ -246,7 +247,7 @@ func (channel *IlinkChannel) run(ctx context.Context) {
 				processed = false
 				break
 			}
-			turnCtx, turnCancel := context.WithTimeout(ctx, requestTimeout)
+			turnCtx, turnCancel := context.WithTimeout(ctx, ChannelTurnTimeout())
 			err = channel.processUpdate(turnCtx, tokenState, update)
 			turnCancel()
 			if err != nil {
@@ -276,35 +277,32 @@ func (channel *IlinkChannel) run(ctx context.Context) {
 }
 
 func (channel *IlinkChannel) processUpdate(ctx context.Context, tokenState weixin.TokenState, update weixin.Update) error {
-	_, err := channel.runner.Process(ctx, ChannelTurnOptions{
-		PeerKey:   update.UserID,
-		DedupeKey: update.ContextToken,
-		Message:   update.Text,
-		LoadState: func() (ChannelConversationState, error) {
-			state, err := channel.chats.Load(update.UserID)
-			if err != nil {
-				return ChannelConversationState{}, err
-			}
+	loadState, saveState := channelStateFuncs(
+		func() (weixin.ChatState, error) { return channel.chats.Load(update.UserID) },
+		func(state weixin.ChatState) ChannelConversationState {
 			return ChannelConversationState{
 				SessionID:        state.SessionID,
 				LastCompletedKey: state.LastCompletedContextToken,
 				PendingKey:       state.PendingContextToken,
 				PendingReply:     state.PendingReply,
 				LastError:        state.LastError,
-			}, nil
-		},
-		SaveState: func(next ChannelConversationState) error {
-			state, err := channel.chats.Load(update.UserID)
-			if err != nil {
-				return err
 			}
+		},
+		func(state *weixin.ChatState, next ChannelConversationState) {
 			state.SessionID = next.SessionID
 			state.LastCompletedContextToken = next.LastCompletedKey
 			state.PendingContextToken = next.PendingKey
 			state.PendingReply = next.PendingReply
 			state.LastError = next.LastError
-			return channel.chats.Save(state)
 		},
+		channel.chats.Save,
+	)
+	_, err := channel.runner.Process(ctx, ChannelTurnOptions{
+		PeerKey:   update.UserID,
+		DedupeKey: update.ContextToken,
+		Message:   update.Text,
+		LoadState: loadState,
+		SaveState: saveState,
 		SendReply: func(ctx context.Context, reply string) error {
 			return channel.sendIlinkText(ctx, tokenState, update, update.ContextToken, reply)
 		},

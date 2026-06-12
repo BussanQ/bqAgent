@@ -36,6 +36,7 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 		}
 		messages, err = savedSession.LoadMessages()
 		if err != nil {
+			// Best effort; the load error below is the one that matters.
 			_ = savedSession.MarkFailed(err)
 			return nil, err
 		}
@@ -50,6 +51,7 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 	}
 	if err := conversation.EnsureSystemMessage(systemPrompt); err != nil {
 		if savedSession != nil {
+			// Best effort; the primary error is returned below.
 			_ = savedSession.MarkFailed(err)
 		}
 		return nil, err

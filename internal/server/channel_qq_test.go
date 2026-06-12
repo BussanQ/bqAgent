@@ -347,6 +347,92 @@ func TestQQUpdateSenderSendsProgressWithIncrementingMsgSeq(t *testing.T) {
 	}
 }
 
+func TestQQChannelCancelStopsInflightTurns(t *testing.T) {
+	llmStarted := make(chan struct{})
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		close(llmStarted)
+		<-request.Context().Done()
+	}))
+	defer llmServer.Close()
+
+	sentMessages := make(chan qqSendCapture, 1)
+	qqServer := newTestQQAPIServer(t, sentMessages, nil)
+	defer qqServer.Close()
+
+	root := t.TempDir()
+	service := newTestService(root, llmServer.URL)
+	channel := newTestQQChannel(root, service, qqServer.URL, &fakeQQGateway{configured: true, updates: []qqclient.Update{c2cUpdate("event-1", "message-1", "slow task")}})
+	ctx, cancel := context.WithCancel(context.Background())
+	channel.Start(ctx)
+
+	select {
+	case <-llmStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for LLM request to start")
+	}
+	cancel()
+
+	turnsDone := make(chan struct{})
+	go func() {
+		channel.WaitTurns()
+		close(turnsDone)
+	}()
+	select {
+	case <-turnsDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for in-flight turn to stop after cancel")
+	}
+}
+
+func TestQQChannelNotifiesUserWhenTurnFails(t *testing.T) {
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+		_, _ = writer.Write([]byte("model unavailable"))
+	}))
+	defer llmServer.Close()
+
+	sentMessages := make(chan qqSendCapture, 1)
+	qqServer := newTestQQAPIServer(t, sentMessages, nil)
+	defer qqServer.Close()
+
+	root := t.TempDir()
+	service := newTestService(root, llmServer.URL)
+	channel := newTestQQChannel(root, service, qqServer.URL, &fakeQQGateway{configured: true})
+	if err := channel.processUpdate(context.Background(), c2cUpdate("event-1", "message-1", "hello")); err == nil {
+		t.Fatal("processUpdate() error = nil, want turn failure")
+	}
+
+	notice := waitForQQSend(t, sentMessages)
+	if notice.Payload.Content != channelTurnFailedReply {
+		t.Fatalf("notice content = %q, want %q", notice.Payload.Content, channelTurnFailedReply)
+	}
+}
+
+func TestQQChannelNotifiesUserWhenTurnTimesOut(t *testing.T) {
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
+	}))
+	defer llmServer.Close()
+
+	sentMessages := make(chan qqSendCapture, 1)
+	qqServer := newTestQQAPIServer(t, sentMessages, nil)
+	defer qqServer.Close()
+
+	root := t.TempDir()
+	service := newTestService(root, llmServer.URL)
+	channel := newTestQQChannel(root, service, qqServer.URL, &fakeQQGateway{configured: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := channel.processUpdate(ctx, c2cUpdate("event-1", "message-1", "hello")); err == nil {
+		t.Fatal("processUpdate() error = nil, want deadline exceeded")
+	}
+
+	notice := waitForQQSend(t, sentMessages)
+	if notice.Payload.Content != channelTurnTimedOutReply {
+		t.Fatalf("notice content = %q, want %q", notice.Payload.Content, channelTurnTimedOutReply)
+	}
+}
+
 func newTestQQChannel(root string, service *Service, qqBaseURL string, gateway qqGateway) *QQChannel {
 	tokenClient := qqclient.NewTokenClient("app-1", "secret-1", qqBaseURL, nil)
 	tokenSource := qqclient.NewCachedTokenSource(tokenClient)

@@ -26,6 +26,10 @@ const (
 	opHeartbeatACK = 11
 
 	IntentGroupAndC2C = 1 << 25
+
+	// maxHeartbeatFailures is the number of consecutive heartbeat write
+	// failures tolerated before the connection is torn down for a reconnect.
+	maxHeartbeatFailures = 2
 )
 
 var (
@@ -174,23 +178,20 @@ func (client *GatewayClient) Connect(ctx context.Context, state GatewaySessionSt
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-heartbeatCtx.Done():
-				return
-			case <-ticker.C:
-				stateMu.Lock()
-				seq := state.Seq
-				stateMu.Unlock()
-				var data any
-				if seq > 0 {
-					data = seq
-				}
-				_ = writeGatewayPayload(ctx, conn, &writeMu, gatewayPayload(opHeartbeat, data))
+		sendHeartbeats(heartbeatCtx, interval, func() error {
+			stateMu.Lock()
+			seq := state.Seq
+			stateMu.Unlock()
+			var data any
+			if seq > 0 {
+				data = seq
 			}
-		}
+			return writeGatewayPayload(ctx, conn, &writeMu, gatewayPayload(opHeartbeat, data))
+		}, func() {
+			// Close the connection so the read loop fails and Connect
+			// returns, letting the caller reconnect.
+			_ = conn.Close(websocket.StatusInternalError, "heartbeat write failed")
+		})
 	}()
 	defer func() {
 		heartbeatCancel()
@@ -244,6 +245,31 @@ func (client *GatewayClient) Connect(ctx context.Context, state GatewaySessionSt
 			return state, ErrGatewayInvalidSession
 		case opHeartbeatACK:
 			continue
+		}
+	}
+}
+
+// sendHeartbeats writes a heartbeat every interval and calls teardown after
+// maxHeartbeatFailures consecutive write failures, so a dead connection is
+// torn down instead of lingering until the server drops it.
+func sendHeartbeats(ctx context.Context, interval time.Duration, write func() error, teardown func()) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	failures := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := write(); err != nil {
+				failures++
+				if failures >= maxHeartbeatFailures {
+					teardown()
+					return
+				}
+				continue
+			}
+			failures = 0
 		}
 	}
 }

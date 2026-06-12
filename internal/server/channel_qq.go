@@ -25,6 +25,8 @@ type QQChannel struct {
 	runner        *ChannelTurnRunner
 	mu            sync.Mutex
 	started       bool
+	baseCtx       context.Context
+	turns         sync.WaitGroup
 }
 
 func NewQQChannel(service *Service, client *qq.Client, gateway qqGateway, states *qq.StateStore, gatewayStates *qq.GatewayStateStore) *QQChannel {
@@ -62,6 +64,7 @@ func (channel *QQChannel) Start(ctx context.Context) {
 		return
 	}
 	channel.started = true
+	channel.baseCtx = ctx
 	channel.mu.Unlock()
 	if !channel.Configured() {
 		log.Printf("qq bot is not configured")
@@ -108,8 +111,18 @@ func (channel *QQChannel) runGateway(ctx context.Context) {
 }
 
 func (channel *QQChannel) dispatchUpdate(update qq.Update) {
+	channel.mu.Lock()
+	baseCtx := channel.baseCtx
+	channel.mu.Unlock()
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	channel.turns.Add(1)
+	// Derive from the channel's root context (not the gateway connection
+	// context) so a turn survives gateway reconnects but stops on shutdown.
 	go func() {
-		turnCtx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+		defer channel.turns.Done()
+		turnCtx, cancel := context.WithTimeout(baseCtx, ChannelTurnTimeout())
 		defer cancel()
 		if err := channel.processUpdate(turnCtx, update); err != nil && !errors.Is(err, ErrChannelTurnInProgress) {
 			log.Printf("qq update processing failed: %v", err)
@@ -117,40 +130,42 @@ func (channel *QQChannel) dispatchUpdate(update qq.Update) {
 	}()
 }
 
+// WaitTurns blocks until all in-flight update goroutines finish.
+func (channel *QQChannel) WaitTurns() {
+	channel.turns.Wait()
+}
+
 func (channel *QQChannel) processUpdate(ctx context.Context, update qq.Update) error {
 	if !channel.Configured() {
 		return errors.New("qq bot is not configured")
 	}
 	sender := newQQUpdateSender(channel.client, update)
-	_, err := channel.runner.TryProcess(ctx, ChannelTurnOptions{
-		PeerKey:   update.PeerKey,
-		DedupeKey: update.DedupeKey,
-		Message:   update.Text,
-		LoadState: func() (ChannelConversationState, error) {
-			state, err := channel.states.Load(update.PeerKey)
-			if err != nil {
-				return ChannelConversationState{}, err
-			}
+	loadState, saveState := channelStateFuncs(
+		func() (qq.ChatState, error) { return channel.states.Load(update.PeerKey) },
+		func(state qq.ChatState) ChannelConversationState {
 			return ChannelConversationState{
 				SessionID:        state.SessionID,
 				LastCompletedKey: state.LastCompletedKey,
 				PendingKey:       state.PendingKey,
 				PendingReply:     state.PendingReply,
 				LastError:        state.LastError,
-			}, nil
-		},
-		SaveState: func(next ChannelConversationState) error {
-			state, err := channel.states.Load(update.PeerKey)
-			if err != nil {
-				return err
 			}
+		},
+		func(state *qq.ChatState, next ChannelConversationState) {
 			state.SessionID = next.SessionID
 			state.LastCompletedKey = next.LastCompletedKey
 			state.PendingKey = next.PendingKey
 			state.PendingReply = next.PendingReply
 			state.LastError = next.LastError
-			return channel.states.Save(state)
 		},
+		channel.states.Save,
+	)
+	_, err := channel.runner.TryProcess(ctx, ChannelTurnOptions{
+		PeerKey:      update.PeerKey,
+		DedupeKey:    update.DedupeKey,
+		Message:      update.Text,
+		LoadState:    loadState,
+		SaveState:    saveState,
 		SendReply:    sender.SendReply,
 		SendProgress: sender.SendProgress,
 	})

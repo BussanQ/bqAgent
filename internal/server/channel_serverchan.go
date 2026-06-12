@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	serverchanclient "bqagent/internal/serverchan"
 )
@@ -14,6 +15,9 @@ type ServerChanChannel struct {
 	serverChanClient    *serverchanclient.Client
 	botWebhookProcessor *BotWebhookProcessor
 	runner              *ChannelTurnRunner
+	mu                  sync.Mutex
+	baseCtx             context.Context
+	turns               sync.WaitGroup
 }
 
 func NewServerChanChannel(service *Service, serverChanClient *serverchanclient.Client, botWebhookProcessor *BotWebhookProcessor) *ServerChanChannel {
@@ -44,7 +48,16 @@ func (channel *ServerChanChannel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/serverchan/bot/webhook", channel.handleBotWebhook)
 }
 
-func (channel *ServerChanChannel) Start(context.Context) {}
+func (channel *ServerChanChannel) Start(ctx context.Context) {
+	channel.mu.Lock()
+	channel.baseCtx = ctx
+	channel.mu.Unlock()
+}
+
+// WaitTurns blocks until all in-flight webhook goroutines finish.
+func (channel *ServerChanChannel) WaitTurns() {
+	channel.turns.Wait()
+}
 
 func (channel *ServerChanChannel) handleChat(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodPost {
@@ -131,8 +144,16 @@ func (channel *ServerChanChannel) handleBotWebhook(writer http.ResponseWriter, r
 	}
 
 	writePlainText(writer, http.StatusOK, "ok")
+	channel.mu.Lock()
+	baseCtx := channel.baseCtx
+	channel.mu.Unlock()
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	channel.turns.Add(1)
 	go func(update serverchanclient.BotUpdate) {
-		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+		defer channel.turns.Done()
+		ctx, cancel := context.WithTimeout(baseCtx, ChannelTurnTimeout())
 		defer cancel()
 		if err := channel.botWebhookProcessor.ProcessUpdate(ctx, update); err != nil {
 			log.Printf("serverchan bot webhook processing failed: %v", err)

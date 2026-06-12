@@ -4,11 +4,16 @@ import "sync"
 
 type KeyedLocker struct {
 	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	locks map[string]*lockEntry
+}
+
+type lockEntry struct {
+	mu   sync.Mutex
+	refs int
 }
 
 func NewKeyedLocker() *KeyedLocker {
-	return &KeyedLocker{locks: make(map[string]*sync.Mutex)}
+	return &KeyedLocker{locks: make(map[string]*lockEntry)}
 }
 
 func (locker *KeyedLocker) Lock(key string) func() {
@@ -16,9 +21,12 @@ func (locker *KeyedLocker) Lock(key string) func() {
 		return func() {}
 	}
 
-	mutex := locker.mutexFor(key)
-	mutex.Lock()
-	return mutex.Unlock
+	entry := locker.acquireEntry(key)
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		locker.releaseEntry(key, entry)
+	}
 }
 
 func (locker *KeyedLocker) TryLock(key string) (func(), bool) {
@@ -26,20 +34,34 @@ func (locker *KeyedLocker) TryLock(key string) (func(), bool) {
 		return func() {}, true
 	}
 
-	mutex := locker.mutexFor(key)
-	if !mutex.TryLock() {
+	entry := locker.acquireEntry(key)
+	if !entry.mu.TryLock() {
+		locker.releaseEntry(key, entry)
 		return nil, false
 	}
-	return mutex.Unlock, true
+	return func() {
+		entry.mu.Unlock()
+		locker.releaseEntry(key, entry)
+	}, true
 }
 
-func (locker *KeyedLocker) mutexFor(key string) *sync.Mutex {
+func (locker *KeyedLocker) acquireEntry(key string) *lockEntry {
 	locker.mu.Lock()
 	defer locker.mu.Unlock()
-	mutex, ok := locker.locks[key]
+	entry, ok := locker.locks[key]
 	if !ok {
-		mutex = &sync.Mutex{}
-		locker.locks[key] = mutex
+		entry = &lockEntry{}
+		locker.locks[key] = entry
 	}
-	return mutex
+	entry.refs++
+	return entry
+}
+
+func (locker *KeyedLocker) releaseEntry(key string, entry *lockEntry) {
+	locker.mu.Lock()
+	defer locker.mu.Unlock()
+	entry.refs--
+	if entry.refs <= 0 {
+		delete(locker.locks, key)
+	}
 }

@@ -6,11 +6,39 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 var ErrChannelTurnInProgress = errors.New("channel turn already in progress")
 
-const channelTurnInProgressReply = "上一条消息仍在处理中，请稍后再试。"
+const (
+	channelTurnInProgressReply = "上一条消息仍在处理中，请稍后再试。"
+	channelTurnTimedOutReply   = "处理超时，请稍后重试。"
+	channelTurnFailedReply     = "处理出错，请稍后重试。"
+)
+
+// defaultChannelTurnTimeout bounds one full channel turn (all agent loop
+// iterations and tool calls); each LLM HTTP request is separately bounded by
+// the client's own timeout.
+const defaultChannelTurnTimeout = 10 * time.Minute
+
+var channelTurnTimeoutNanos atomic.Int64
+
+func ChannelTurnTimeout() time.Duration {
+	if nanos := channelTurnTimeoutNanos.Load(); nanos > 0 {
+		return time.Duration(nanos)
+	}
+	return defaultChannelTurnTimeout
+}
+
+func SetChannelTurnTimeout(timeout time.Duration) {
+	if timeout <= 0 {
+		channelTurnTimeoutNanos.Store(0)
+		return
+	}
+	channelTurnTimeoutNanos.Store(int64(timeout))
+}
 
 type ChannelConversationState struct {
 	SessionID        string
@@ -107,6 +135,7 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 		unlock, locked = runner.locker.TryLock(peerKey)
 		if !locked {
 			if sendProgress := options.progressSender(); sendProgress != nil {
+				// Best-effort busy notice; the caller still gets ErrChannelTurnInProgress.
 				_ = sendProgress(ctx, channelTurnInProgressReply)
 			}
 			return state, ErrChannelTurnInProgress
@@ -127,6 +156,7 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 		state.PendingReply = sanitizeChannelReply(state.PendingReply)
 		if err := options.SendReply(ctx, state.PendingReply); err != nil {
 			state.LastError = err.Error()
+			// Best-effort persist; the send error below is the one that matters.
 			_ = options.SaveState(state)
 			return state, err
 		}
@@ -144,7 +174,9 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 		if response.SessionID != "" {
 			state.SessionID = response.SessionID
 		}
+		// Best-effort persist; the turn error below is the one that matters.
 		_ = options.SaveState(state)
+		notifyChannelTurnFailure(options, err)
 		return state, err
 	}
 
@@ -157,6 +189,7 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 	}
 	if err := options.SendReply(ctx, state.PendingReply); err != nil {
 		state.LastError = err.Error()
+		// Best-effort persist; the send error below is the one that matters.
 		_ = options.SaveState(state)
 		return state, err
 	}
@@ -166,4 +199,55 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 	state.PendingReply = ""
 	state.LastError = ""
 	return state, options.SaveState(state)
+}
+
+// notifyChannelTurnFailure tells the user a turn failed. It only uses the
+// explicit SendProgress sender: synchronous callers (HTTP chat) already
+// surface the error in their response, and only async channels configure
+// progress delivery. The turn context is usually already expired or canceled
+// at this point, so delivery uses a fresh short-lived context. Cancellation
+// (e.g. shutdown) sends nothing.
+func notifyChannelTurnFailure(options ChannelTurnOptions, turnErr error) {
+	if errors.Is(turnErr, context.Canceled) {
+		return
+	}
+	sender := options.SendProgress
+	if sender == nil {
+		return
+	}
+	reply := channelTurnFailedReply
+	if errors.Is(turnErr, context.DeadlineExceeded) {
+		reply = channelTurnTimedOutReply
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_ = sender(ctx, reply)
+}
+
+// channelStateFuncs adapts a channel-specific chat-state store to the
+// LoadState/SaveState callbacks of ChannelTurnOptions, so each channel only
+// supplies the field mapping. SaveState reloads before writing to avoid
+// clobbering fields the conversation state does not carry.
+func channelStateFuncs[S any](
+	load func() (S, error),
+	get func(S) ChannelConversationState,
+	set func(*S, ChannelConversationState),
+	save func(S) error,
+) (func() (ChannelConversationState, error), func(ChannelConversationState) error) {
+	loadState := func() (ChannelConversationState, error) {
+		state, err := load()
+		if err != nil {
+			return ChannelConversationState{}, err
+		}
+		return get(state), nil
+	}
+	saveState := func(next ChannelConversationState) error {
+		state, err := load()
+		if err != nil {
+			return err
+		}
+		set(&state, next)
+		return save(state)
+	}
+	return loadState, saveState
 }

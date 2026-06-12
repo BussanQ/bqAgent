@@ -201,7 +201,9 @@ func runInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace.Works
 
 	executable, err := deps.executable()
 	if err != nil {
-		_ = savedSession.MarkFailed(err)
+		if markErr := savedSession.MarkFailed(err); markErr != nil {
+			fmt.Fprintf(stderr, "mark session failed: %v\n", markErr)
+		}
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -213,7 +215,9 @@ func runInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace.Works
 	childArgs = append(childArgs, taskArgs...)
 
 	if err := deps.startBackground(executable, childArgs, ws.Root, savedSession.OutputPath()); err != nil {
-		_ = savedSession.MarkFailed(err)
+		if markErr := savedSession.MarkFailed(err); markErr != nil {
+			fmt.Fprintf(stderr, "mark session failed: %v\n", markErr)
+		}
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -249,6 +253,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		}
 		defer func() {
 			if logFile != nil {
+				// Best-effort close of the session log file on exit.
 				_ = logFile.Close()
 			}
 		}()
@@ -291,12 +296,16 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		result, err = app.RunConversation(ctx, conversation.Messages, agent.DefaultMaxIterations)
 	}
 	if err != nil {
-		_ = conversation.MarkFailed(err)
+		if markErr := conversation.MarkFailed(err); markErr != nil {
+			fmt.Fprintf(errorWriter, "mark session failed: %v\n", markErr)
+		}
 		fmt.Fprintln(errorWriter, err)
 		return 1
 	}
 
-	_ = conversation.MarkCompleted()
+	if markErr := conversation.MarkCompleted(); markErr != nil {
+		fmt.Fprintf(errorWriter, "mark session completed: %v\n", markErr)
+	}
 	if ws.MemoryEnabled() && strings.TrimSpace(task) != "" {
 		if memoryErr := ws.AppendMemory(task, result); memoryErr != nil {
 			fmt.Fprintln(errorWriter, memoryErr)

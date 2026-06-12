@@ -76,6 +76,10 @@ func (processor *BotWebhookProcessor) ProcessUpdate(ctx context.Context, update 
 			_, err := processor.client.SendMessage(ctx, update.ChatID, reply)
 			return err
 		},
+		SendProgress: func(ctx context.Context, message string) error {
+			_, err := processor.client.SendMessage(ctx, update.ChatID, message)
+			return err
+		},
 	})
 	return err
 }

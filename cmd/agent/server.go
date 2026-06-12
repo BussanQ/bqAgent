@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"bqagent/internal/qq"
 	appserver "bqagent/internal/server"
@@ -46,6 +47,14 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 	if strings.TrimSpace(getenv("OPENAI_API_KEY")) == "" {
 		fmt.Fprintln(stderr, "OPENAI_API_KEY is required for server mode")
 		return 1
+	}
+
+	if raw := strings.TrimSpace(getenv("CHANNEL_TURN_TIMEOUT")); raw != "" {
+		if timeout, err := time.ParseDuration(raw); err == nil && timeout > 0 {
+			appserver.SetChannelTurnTimeout(timeout)
+		} else {
+			fmt.Fprintf(stderr, "invalid CHANNEL_TURN_TIMEOUT %q, using default\n", raw)
+		}
 	}
 
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, stdout)
