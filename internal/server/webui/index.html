@@ -331,6 +331,13 @@
     background: rgba(255, 107, 138, .08);
     border-color: rgba(255, 107, 138, .55);
   }
+  .bubble.notice {
+    color: var(--text);
+    background:
+      linear-gradient(135deg, rgba(84, 240, 255, .10), rgba(109, 243, 182, .08)),
+      var(--panel-strong);
+    border-color: rgba(84, 240, 255, .36);
+  }
   .bubble.rendered { white-space: normal; }
   .bubble.rendered p:first-child { margin-top: 0; }
   .bubble.rendered p:last-child { margin-bottom: 0; }
@@ -578,6 +585,26 @@
     return out;
   }
 
+  function complexTaskNotice(text) {
+    var match = String(text || "").match(/^Agent stopped: reached maximum of (\d+) iterations without completing\.$/);
+    if (!match) return "";
+    return [
+      "复杂任务还没有完成。",
+      "",
+      "本轮已达到最大迭代次数（" + match[1] + " 次）。你可以继续发送“继续”，我会沿着当前会话接着处理；如果经常遇到这个提示，可以在 `.env` 中设置 `AGENT_MAX_ITERATIONS=200` 后重启服务。"
+    ].join("\n");
+  }
+
+  function renderReply(bubble, reply) {
+    var notice = complexTaskNotice(reply);
+    if (notice) {
+      bubble.classList.add("notice");
+      bubble.innerHTML = renderMarkdown(notice);
+      return;
+    }
+    bubble.innerHTML = renderMarkdown(reply);
+  }
+
   function parseSSE(raw) {
     var event = "message";
     var dataLines = [];
@@ -652,7 +679,7 @@
               localStorage.setItem(SESSION_KEY, sessionId);
             }
             bubble.classList.add("rendered");
-            bubble.innerHTML = renderMarkdown(done.reply || streamed);
+            renderReply(bubble, done.reply || streamed);
           } else if (evt.event === "error") {
             finished = true;
             var errPayload = JSON.parse(evt.data);
@@ -674,7 +701,11 @@
       if (!finished) {
         caret.remove();
         bubble.classList.add("rendered");
-        bubble.innerHTML = renderMarkdown(streamed) || "<em>（无回复）</em>";
+        if (streamed) {
+          renderReply(bubble, streamed);
+        } else {
+          bubble.innerHTML = "<em>（无回复）</em>";
+        }
       }
     } catch (err) {
       caret.remove();

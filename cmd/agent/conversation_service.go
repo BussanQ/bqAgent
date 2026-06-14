@@ -34,10 +34,11 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	}
 
 	service := appserver.NewService(appserver.ServiceOptions{
-		WorkspaceRoot: ws.Root,
-		Client:        runtime.Client,
-		Model:         runtime.Model,
-		SystemPrompt:  systemPrompt,
+		WorkspaceRoot:   ws.Root,
+		Client:          runtime.Client,
+		Model:           runtime.Model,
+		DefaultMaxTurns: runtime.MaxIterations,
+		SystemPrompt:    systemPrompt,
 		SystemPromptBuilder: func() (string, error) {
 			return ws.BuildSystemPrompt(agent.DefaultSystemPrompt)
 		},

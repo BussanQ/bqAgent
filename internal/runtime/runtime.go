@@ -9,10 +9,13 @@ import (
 	"bqagent/internal/tools"
 )
 
+const DefaultServiceMaxIterations = 120
+
 type Config struct {
 	APIKey                       string
 	BaseURL                      string
 	Model                        string
+	MaxIterations                int
 	SearchProvider               string
 	SearchAPIKey                 string
 	SearchBaseURL                string
@@ -37,6 +40,7 @@ type Runtime struct {
 	Planner       *agent.Planner
 	Catalog       tools.Catalog
 	Model         string
+	MaxIterations int
 	WorkspaceRoot string
 	Context       agent.ContextConfig
 }
@@ -50,6 +54,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		APIKey:                       getenv("OPENAI_API_KEY"),
 		BaseURL:                      getenv("OPENAI_BASE_URL"),
 		Model:                        getenv("OPENAI_MODEL"),
+		MaxIterations:                envInt(getenv("AGENT_MAX_ITERATIONS"), DefaultServiceMaxIterations),
 		SearchProvider:               searchProvider,
 		SearchAPIKey:                 searchAPIKey,
 		SearchBaseURL:                searchBaseURL,
@@ -129,6 +134,7 @@ func (factory Factory) Build(includePlan bool) Runtime {
 		Planner:       planner,
 		Catalog:       catalog,
 		Model:         factory.Config.Model,
+		MaxIterations: factory.Config.MaxIterations,
 		WorkspaceRoot: factory.WorkspaceRoot,
 		Context: agent.ContextConfig{
 			Enabled:               factory.Config.ContextManagementEnabled,

@@ -13,6 +13,9 @@ func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	if config.ContextManagementEnabled != defaults.Enabled {
 		t.Fatalf("ContextManagementEnabled = %t, want %t", config.ContextManagementEnabled, defaults.Enabled)
 	}
+	if config.MaxIterations != DefaultServiceMaxIterations {
+		t.Fatalf("MaxIterations = %d, want %d", config.MaxIterations, DefaultServiceMaxIterations)
+	}
 	if config.ContextMaxInputTokens != defaults.MaxInputTokens {
 		t.Fatalf("ContextMaxInputTokens = %d, want %d", config.ContextMaxInputTokens, defaults.MaxInputTokens)
 	}
@@ -41,6 +44,8 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 		switch key {
 		case "CONTEXT_MANAGEMENT_ENABLED":
 			return "not-bool"
+		case "AGENT_MAX_ITERATIONS":
+			return "bad"
 		case "CONTEXT_MAX_INPUT_TOKENS":
 			return "bad"
 		case "CONTEXT_TARGET_INPUT_TOKENS":
@@ -62,6 +67,9 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 	if config.ContextManagementEnabled != defaults.Enabled {
 		t.Fatalf("ContextManagementEnabled = %t, want fallback %t", config.ContextManagementEnabled, defaults.Enabled)
 	}
+	if config.MaxIterations != DefaultServiceMaxIterations {
+		t.Fatalf("MaxIterations = %d, want fallback %d", config.MaxIterations, DefaultServiceMaxIterations)
+	}
 	if config.ContextMaxInputTokens != defaults.MaxInputTokens {
 		t.Fatalf("ContextMaxInputTokens = %d, want fallback %d", config.ContextMaxInputTokens, defaults.MaxInputTokens)
 	}
@@ -79,5 +87,18 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 	}
 	if config.ContextSummaryTriggerTokens != defaults.SummaryTriggerTokens {
 		t.Fatalf("ContextSummaryTriggerTokens = %d, want fallback %d", config.ContextSummaryTriggerTokens, defaults.SummaryTriggerTokens)
+	}
+}
+
+func TestConfigFromEnvUsesAgentMaxIterations(t *testing.T) {
+	config := ConfigFromEnv(func(key string) string {
+		if key == "AGENT_MAX_ITERATIONS" {
+			return "200"
+		}
+		return ""
+	})
+
+	if config.MaxIterations != 200 {
+		t.Fatalf("MaxIterations = %d, want 200", config.MaxIterations)
 	}
 }

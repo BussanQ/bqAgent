@@ -258,6 +258,7 @@ The command immediately prints the session ID, session directory, and log path.
 
 Context behavior is configurable through environment variables:
 
+- `AGENT_MAX_ITERATIONS` (service/chat turn limit; defaults to `120`)
 - `CONTEXT_MANAGEMENT_ENABLED`
 - `CONTEXT_MAX_INPUT_TOKENS`
 - `CONTEXT_TARGET_INPUT_TOKENS`
