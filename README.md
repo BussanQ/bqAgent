@@ -256,9 +256,17 @@ The command immediately prints the session ID, session directory, and log path.
 
 `--server --background` runs this server in the background and writes service logs to `.agent/server/server.log`. For real webhook use, expose `/api/v1/serverchan/bot/webhook` through a public HTTPS endpoint or reverse proxy.
 
+By default the loop behaves like an auto-compacting agent: when the conversation
+approaches the input-token budget it summarizes (compacts) the older turns and
+**continues** on the compacted context, rather than stopping at a fixed turn
+count. The iteration cap is therefore just a runaway safety valve (defaults to a
+high `1000`); the raw on-disk transcript stays complete. Summarization is enabled
+by default — set `CONTEXT_SUMMARY_MODEL` to summarize with a cheaper model on long
+tasks, or `CONTEXT_SUMMARIZATION_ENABLED=false` to fall back to plain pruning.
+
 Context behavior is configurable through environment variables:
 
-- `AGENT_MAX_ITERATIONS` (service/chat turn limit; defaults to `120`)
+- `AGENT_MAX_ITERATIONS` (loop runaway safety valve, all modes; defaults to `1000`)
 - `CONTEXT_MANAGEMENT_ENABLED`
 - `CONTEXT_MAX_INPUT_TOKENS`
 - `CONTEXT_TARGET_INPUT_TOKENS`

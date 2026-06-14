@@ -256,9 +256,11 @@ project/
 
 `--server --background` 会把该服务放到后台运行，并把服务日志写入 `.agent/server/server.log`。如果要真正接 webhook，需要把 `/api/v1/serverchan/bot/webhook` 通过公网 HTTPS 地址或反向代理暴露出去。
 
+默认情况下循环表现为"自动压缩续跑"：当对话接近输入 token 预算时，会把更早的对话摘要（压缩）后**继续**在压缩上下文上推进，而不是在固定轮数处停下。因此轮数上限只是失控保险（默认很高，为 `1000`）；磁盘上的原始 transcript 仍保持完整。摘要默认开启——长任务可设 `CONTEXT_SUMMARY_MODEL` 用更便宜的模型做摘要，或设 `CONTEXT_SUMMARIZATION_ENABLED=false` 退回纯裁剪。
+
 上下文管理可通过环境变量配置：
 
-- `AGENT_MAX_ITERATIONS`（服务/对话单轮最大迭代次数，默认 `120`）
+- `AGENT_MAX_ITERATIONS`（循环失控保险上限，对所有模式生效，默认 `1000`）
 - `CONTEXT_MANAGEMENT_ENABLED`
 - `CONTEXT_MAX_INPUT_TOKENS`
 - `CONTEXT_TARGET_INPUT_TOKENS`

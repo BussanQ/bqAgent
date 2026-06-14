@@ -9,8 +9,6 @@ import (
 	"bqagent/internal/tools"
 )
 
-const DefaultServiceMaxIterations = 120
-
 type Config struct {
 	APIKey                       string
 	BaseURL                      string
@@ -54,7 +52,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		APIKey:                       getenv("OPENAI_API_KEY"),
 		BaseURL:                      getenv("OPENAI_BASE_URL"),
 		Model:                        getenv("OPENAI_MODEL"),
-		MaxIterations:                envInt(getenv("AGENT_MAX_ITERATIONS"), DefaultServiceMaxIterations),
+		MaxIterations:                envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
 		SearchProvider:               searchProvider,
 		SearchAPIKey:                 searchAPIKey,
 		SearchBaseURL:                searchBaseURL,

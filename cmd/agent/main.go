@@ -291,9 +291,9 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 
 	var result string
 	if options.plan {
-		result, err = app.RunPlannedConversation(ctx, conversation.Messages, task, agent.DefaultMaxIterations)
+		result, err = app.RunPlannedConversation(ctx, conversation.Messages, task, runtime.MaxIterations)
 	} else {
-		result, err = app.RunConversation(ctx, conversation.Messages, agent.DefaultMaxIterations)
+		result, err = app.RunConversation(ctx, conversation.Messages, runtime.MaxIterations)
 	}
 	if err != nil {
 		if markErr := conversation.MarkFailed(err); markErr != nil {

@@ -13,8 +13,8 @@ func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	if config.ContextManagementEnabled != defaults.Enabled {
 		t.Fatalf("ContextManagementEnabled = %t, want %t", config.ContextManagementEnabled, defaults.Enabled)
 	}
-	if config.MaxIterations != DefaultServiceMaxIterations {
-		t.Fatalf("MaxIterations = %d, want %d", config.MaxIterations, DefaultServiceMaxIterations)
+	if config.MaxIterations != agent.DefaultMaxIterations {
+		t.Fatalf("MaxIterations = %d, want %d", config.MaxIterations, agent.DefaultMaxIterations)
 	}
 	if config.ContextMaxInputTokens != defaults.MaxInputTokens {
 		t.Fatalf("ContextMaxInputTokens = %d, want %d", config.ContextMaxInputTokens, defaults.MaxInputTokens)
@@ -67,8 +67,8 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 	if config.ContextManagementEnabled != defaults.Enabled {
 		t.Fatalf("ContextManagementEnabled = %t, want fallback %t", config.ContextManagementEnabled, defaults.Enabled)
 	}
-	if config.MaxIterations != DefaultServiceMaxIterations {
-		t.Fatalf("MaxIterations = %d, want fallback %d", config.MaxIterations, DefaultServiceMaxIterations)
+	if config.MaxIterations != agent.DefaultMaxIterations {
+		t.Fatalf("MaxIterations = %d, want fallback %d", config.MaxIterations, agent.DefaultMaxIterations)
 	}
 	if config.ContextMaxInputTokens != defaults.MaxInputTokens {
 		t.Fatalf("ContextMaxInputTokens = %d, want fallback %d", config.ContextMaxInputTokens, defaults.MaxInputTokens)
@@ -100,5 +100,14 @@ func TestConfigFromEnvUsesAgentMaxIterations(t *testing.T) {
 
 	if config.MaxIterations != 200 {
 		t.Fatalf("MaxIterations = %d, want 200", config.MaxIterations)
+	}
+}
+
+// The iteration cap is a single canonical runaway safety valve (agent.DefaultMaxIterations),
+// not a task limit: with auto-compaction the loop continues on a budget-bounded context,
+// so the default is intentionally high and shared by every mode.
+func TestDefaultMaxIterationsIsHighSafetyValve(t *testing.T) {
+	if agent.DefaultMaxIterations != 1000 {
+		t.Fatalf("agent.DefaultMaxIterations = %d, want 1000", agent.DefaultMaxIterations)
 	}
 }

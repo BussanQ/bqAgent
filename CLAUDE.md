@@ -50,7 +50,7 @@ The dependency direction is `cmd/agent → internal/{server,runtime} → interna
 
 ### The agent loop — `internal/agent`
 
-[internal/agent/loop.go](internal/agent/loop.go) `runConversation` is the heart of the system. Each iteration (capped at `DefaultMaxIterations = 40`):
+[internal/agent/loop.go](internal/agent/loop.go) `runConversation` is the heart of the system. The iteration cap is a **runaway safety valve, not a task limit**: there is a single canonical constant `agent.DefaultMaxIterations = 1000`, used as both the in-loop fallback and the default for `runtime.MaxIterations` (env `AGENT_MAX_ITERATIONS`); all modes share it. Each iteration:
 
 - builds the request payload via `buildRequestMessages` (context management, below),
 - calls the model (streaming or not),
@@ -62,7 +62,7 @@ The dependency direction is `cmd/agent → internal/{server,runtime} → interna
 
 **Messages are untyped `[]map[string]any`** in OpenAI chat shape (`role`, `content`, `tool_calls`, `tool_call_id`). This convention runs end to end — session persistence, context pruning, and channel state all operate on these maps.
 
-**Context-window management is request-time only** (`buildRequestMessages`): it sanitizes completed tool scaffolding, prunes to a token budget, and optionally summarizes older turns into a synthetic message — but the on-disk transcript stays complete. When summarization fires it also writes a `context_checkpoint.json` for faster resume. All of this is tunable via `CONTEXT_*` env vars (see `runtime.ConfigFromEnv`); estimation is a crude `chars/4`.
+**Context management** (`buildRequestMessages`): it sanitizes completed tool scaffolding, prunes to a token budget, and — when over `SummaryTriggerTokens` and summarization is enabled (**on by default**) — summarizes older turns into a synthetic message and writes `context_checkpoint.json`. `buildRequestMessages` returns `(request, compacted)`: the disabled/under-budget/pruned paths return `compacted == nil` and leave the working set untouched (purely request-time), but when summarization fires it returns the compacted set and the loop **adopts it** as its new in-memory working history (`messages`/`updatedMessages`) so subsequent turns continue on the compacted context instead of re-summarizing the full history every turn — auto-compact-and-continue, like Claude Code. The synthetic summary lives only in the working set + checkpoint; it is never recorded, so the on-disk `messages.jsonl` stays complete. All tunable via `CONTEXT_*` env vars (see `runtime.ConfigFromEnv`); estimation is a crude `chars/4`.
 
 ### System prompt assembly — `internal/workspace`
 

@@ -13,9 +13,12 @@ import (
 )
 
 const (
-	DefaultModel                        = "MiniMax-M2.5"
-	DefaultSystemPrompt                 = "You are a helpful assistant. Be concise."
-	DefaultMaxIterations                = 40
+	DefaultModel        = "MiniMax-M2.5"
+	DefaultSystemPrompt = "You are a helpful assistant. Be concise."
+	// DefaultMaxIterations is the single canonical loop cap shared by every mode.
+	// With auto-compaction the loop continues on a budget-bounded context, so this
+	// is a runaway safety valve, not a task limit. Override with AGENT_MAX_ITERATIONS.
+	DefaultMaxIterations                = 1000
 	DefaultContextMaxInputTokens        = 24000
 	DefaultContextResponseReserveTokens = 4000
 	DefaultContextKeepLastTurns         = 6
@@ -158,7 +161,7 @@ func DefaultContextConfig() ContextConfig {
 		ResponseReserveTokens: DefaultContextResponseReserveTokens,
 		TargetInputTokens:     DefaultContextMaxInputTokens - DefaultContextResponseReserveTokens,
 		KeepLastTurns:         DefaultContextKeepLastTurns,
-		SummarizationEnabled:  false,
+		SummarizationEnabled:  true,
 		SummaryTriggerTokens:  DefaultContextMaxInputTokens - DefaultContextResponseReserveTokens,
 	}
 }
@@ -263,7 +266,11 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		actualIterations = iteration + 1
-		requestMessages := a.buildRequestMessages(ctx, messages)
+		requestMessages, compacted := a.buildRequestMessages(ctx, messages)
+		if compacted != nil {
+			messages = compacted
+			updatedMessages = compacted
+		}
 		var (
 			message    AssistantMessage
 			requestErr error
@@ -481,33 +488,41 @@ func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any,
 	return messages, nil
 }
 
-func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]any) []map[string]any {
+// buildRequestMessages returns the message payload to send to the model and,
+// when summarization compacted the history, a non-nil compacted working set the
+// loop should adopt in place of its full in-memory history. compacted is nil for
+// the disabled / under-budget / pruned paths, leaving the working set untouched
+// exactly as before — only the (expensive) summarize path is adopted so the loop
+// continues on the compacted context instead of re-summarizing from scratch each
+// turn. The synthetic summary message lives only in this returned set (and in
+// context_checkpoint.json); it is never recorded to the raw transcript.
+func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]any) (request []map[string]any, compacted []map[string]any) {
 	sanitized := sanitizeCompletedToolHistory(duplicateMessages(messages))
 	if !a.contextConfig.Enabled {
-		return sanitized
+		return sanitized, nil
 	}
 
 	estimatedTokens := estimateMessagesTokens(sanitized)
 	if estimatedTokens <= a.contextConfig.TargetInputTokens {
 		a.logContextBudget(len(messages), len(sanitized), len(sanitized), estimatedTokens, false, false)
-		return sanitized
+		return sanitized, nil
 	}
 
 	pruned := pruneMessagesToBudget(sanitized, a.contextConfig)
 	prunedTokens := estimateMessagesTokens(pruned)
 	if !a.contextConfig.SummarizationEnabled || !shouldSummarize(estimatedTokens, a.contextConfig) {
 		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedTokens, true, false)
-		return pruned
+		return pruned, nil
 	}
 
 	summarized, ok := a.summarizeMessages(ctx, sanitized)
 	if !ok {
 		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedTokens, true, false)
-		return pruned
+		return pruned, nil
 	}
 	summaryTokens := estimateMessagesTokens(summarized)
 	a.logContextBudget(len(messages), len(sanitized), len(summarized), summaryTokens, true, true)
-	return summarized
+	return summarized, summarized
 }
 
 func pruneMessagesToBudget(messages []map[string]any, config ContextConfig) []map[string]any {
