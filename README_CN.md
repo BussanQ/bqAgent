@@ -239,12 +239,16 @@ project/
 
 `--server` 会启动一个常驻 HTTP 服务，默认监听 `127.0.0.1:8080`，提供：
 
+- `GET /`（内嵌网页对话界面）
 - `GET /healthz`
 - `POST /api/v1/chat`
+- `POST /api/v1/webui/chat`
 - `POST /api/v1/serverchan/chat`
 - `POST /api/v1/serverchan/bot/webhook`
 
 其中 `/api/v1/chat` 用于基于 `session_id` 的接口对话。
+
+`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖），界面参考 llama.cpp 的 Web UI。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；会话 `session_id` 存在浏览器 `localStorage`，刷新页面可续接同一会话，「新建对话」按钮可重新开始。该网页渠道**默认开启**；设置 `WEBUI_ENABLED=false` 可关闭（此时 `GET /` 返回 404）。
 
 `/api/v1/serverchan/chat` 保留为现有的 sendkey 推送型接口：它会生成回复，然后按 demo 中的 `text` / `desp` / `sendkey` 语义把结果推送出去。
 

@@ -68,6 +68,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 	)
 	channels := []appserver.Channel{
 		appserver.NewServerChanChannel(service, serverchanclient.NewClient(nil), botProcessor),
+		appserver.NewWebUIChannel(service, envEnabled(getenv("WEBUI_ENABLED"))),
 	}
 	if qqBotEnabled(getenv) {
 		tokenClient := qq.NewTokenClient(getenv("QQ_BOT_APP_ID"), getenv("QQ_BOT_CLIENT_SECRET"), getenv("QQ_BOT_TOKEN_BASE_URL"), nil)

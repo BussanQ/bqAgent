@@ -239,12 +239,16 @@ The command immediately prints the session ID, session directory, and log path.
 
 `--server` starts a long-lived HTTP service on `127.0.0.1:8080` by default and exposes:
 
+- `GET /` (embedded web chat UI)
 - `GET /healthz`
 - `POST /api/v1/chat`
+- `POST /api/v1/webui/chat`
 - `POST /api/v1/serverchan/chat`
 - `POST /api/v1/serverchan/bot/webhook`
 
 `/api/v1/chat` continues conversations by `session_id`.
+
+`GET /` serves a self-contained, single-page chat UI (HTML/CSS/JS embedded in the binary, no external assets) inspired by the llama.cpp web UI. Open `http://127.0.0.1:8080` in a browser and chat directly. Replies stream token-by-token over Server-Sent Events from `POST /api/v1/webui/chat`; the conversation `session_id` is kept in browser `localStorage` so a page refresh continues the same session, and a "新建对话" button starts a fresh one. The web UI is **enabled by default**; set `WEBUI_ENABLED=false` to disable it (then `GET /` returns 404).
 
 `/api/v1/serverchan/chat` is the existing sendkey-based push adapter: it generates a reply and forwards it through ServerChan using the `text` / `desp` / `sendkey` shape from the Go demo.
 

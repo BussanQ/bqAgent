@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>bqagent</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --bg-elev: #f6f7f9;
+    --bg-input: #ffffff;
+    --border: #e3e6ea;
+    --text: #1c1e21;
+    --text-dim: #6b7280;
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --user-bg: #2563eb;
+    --user-text: #ffffff;
+    --assistant-bg: #f3f4f6;
+    --code-bg: #f0f1f3;
+    --danger: #dc2626;
+    --radius: 14px;
+    --maxw: 760px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --bg-elev: #151821;
+      --bg-input: #1a1d27;
+      --border: #262a35;
+      --text: #e6e8ec;
+      --text-dim: #9aa1ad;
+      --accent: #4d7cfe;
+      --user-bg: #2f4ed8;
+      --user-text: #ffffff;
+      --assistant-bg: #1a1d27;
+      --code-bg: #0c0e13;
+      --danger: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elev);
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .brand h1 { font-size: 16px; font-weight: 650; margin: 0; letter-spacing: .2px; }
+  .brand span { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text);
+    padding: 7px 14px;
+    transition: background .15s, opacity .15s, border-color .15s;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  main {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+  }
+  .thread {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 24px 16px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .empty {
+    color: var(--text-dim);
+    text-align: center;
+    margin-top: 18vh;
+    font-size: 15px;
+  }
+  .empty .big { font-size: 22px; color: var(--text); font-weight: 600; margin-bottom: 8px; }
+  .msg { display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .bubble {
+    max-width: 86%;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+  .msg.user .bubble {
+    background: var(--user-bg);
+    color: var(--user-text);
+    border-bottom-right-radius: 4px;
+  }
+  .msg.assistant .bubble {
+    background: var(--assistant-bg);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .bubble.error { color: var(--danger); background: transparent; border: 1px dashed var(--danger); }
+  .bubble.rendered { white-space: normal; }
+  .bubble.rendered p:first-child { margin-top: 0; }
+  .bubble.rendered p:last-child { margin-bottom: 0; }
+  .bubble pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    overflow-x: auto;
+    margin: 8px 0;
+  }
+  .bubble code {
+    font-family: "SF Mono", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+    font-size: 13px;
+  }
+  .bubble :not(pre) > code {
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 5px;
+  }
+  .bubble pre code { display: block; }
+  .bubble h1, .bubble h2, .bubble h3, .bubble h4 { margin: 12px 0 6px; line-height: 1.3; }
+  .bubble a { color: var(--accent); }
+  .caret {
+    display: inline-block;
+    width: 7px; height: 1.05em;
+    background: var(--text-dim);
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: blink 1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  footer {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--border);
+    background: var(--bg-elev);
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .composer {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+  textarea {
+    flex: 1 1 auto;
+    resize: none;
+    font: inherit;
+    color: var(--text);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    max-height: 180px;
+    outline: none;
+  }
+  textarea:focus { border-color: var(--accent); }
+  .send {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+    padding: 10px 18px;
+    font-weight: 600;
+  }
+  .send:hover { opacity: .9; border-color: var(--accent); }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>bqagent</h1>
+      <span>网页对话</span>
+    </div>
+    <button id="new-chat" type="button">新建对话</button>
+  </header>
+  <main id="main">
+    <div class="thread" id="thread">
+      <div class="empty" id="empty">
+        <div class="big">开始新的对话</div>
+        <div>输入消息，Enter 发送 · Shift+Enter 换行</div>
+      </div>
+    </div>
+  </main>
+  <footer>
+    <div class="composer">
+      <textarea id="input" rows="1" placeholder="给 bqagent 发消息…" autofocus></textarea>
+      <button class="send" id="send" type="button">发送</button>
+    </div>
+  </footer>
+
+<script>
+(function () {
+  "use strict";
+  var SESSION_KEY = "bqagent.webui.session";
+  var thread = document.getElementById("thread");
+  var main = document.getElementById("main");
+  var input = document.getElementById("input");
+  var sendBtn = document.getElementById("send");
+  var newChatBtn = document.getElementById("new-chat");
+  var sessionId = localStorage.getItem(SESSION_KEY) || "";
+  var busy = false;
+
+  function scrollToBottom() {
+    main.scrollTop = main.scrollHeight;
+  }
+
+  function removeEmpty() {
+    var empty = document.getElementById("empty");
+    if (empty) empty.remove();
+  }
+
+  function addMessage(role) {
+    removeEmpty();
+    var msg = document.createElement("div");
+    msg.className = "msg " + role;
+    var bubble = document.createElement("div");
+    bubble.className = "bubble";
+    msg.appendChild(bubble);
+    thread.appendChild(msg);
+    scrollToBottom();
+    return bubble;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function renderInline(s) {
+    s = s.replace(/`([^`]+)`/g, function (m, c) { return "<code>" + c + "</code>"; });
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    return s;
+  }
+
+  // Minimal, dependency-free Markdown rendering. Everything is HTML-escaped
+  // before any markup is added, so model output can never inject HTML.
+  function renderMarkdown(text) {
+    var blocks = text.split("```");
+    var out = "";
+    for (var i = 0; i < blocks.length; i++) {
+      if (i % 2 === 1) {
+        var body = blocks[i].replace(/^[a-zA-Z0-9_+\-.]*\n/, "");
+        out += "<pre><code>" + escapeHtml(body) + "</code></pre>";
+      } else {
+        var lines = escapeHtml(blocks[i]).split("\n");
+        var rendered = lines.map(function (line) {
+          var h = line.match(/^(#{1,6})\s+(.*)$/);
+          if (h) {
+            var lvl = h[1].length;
+            return "<h" + lvl + ">" + renderInline(h[2]) + "</h" + lvl + ">";
+          }
+          return renderInline(line);
+        }).join("\n");
+        out += rendered.replace(/\n/g, "<br>");
+      }
+    }
+    return out;
+  }
+
+  function parseSSE(raw) {
+    var event = "message";
+    var dataLines = [];
+    raw.split("\n").forEach(function (line) {
+      if (line.indexOf("event:") === 0) {
+        event = line.slice(6).trim();
+      } else if (line.indexOf("data:") === 0) {
+        dataLines.push(line.slice(5).replace(/^ /, ""));
+      }
+    });
+    return { event: event, data: dataLines.join("\n") };
+  }
+
+  function setBusy(on) {
+    busy = on;
+    sendBtn.disabled = on;
+    input.disabled = on;
+    if (!on) input.focus();
+  }
+
+  function autoGrow() {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 180) + "px";
+  }
+
+  async function send() {
+    if (busy) return;
+    var text = input.value.trim();
+    if (!text) return;
+
+    addMessage("user").textContent = text;
+    input.value = "";
+    autoGrow();
+
+    var bubble = addMessage("assistant");
+    var caret = document.createElement("span");
+    caret.className = "caret";
+    bubble.appendChild(caret);
+    var streamed = "";
+
+    setBusy(true);
+    try {
+      var res = await fetch("/api/v1/webui/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, session_id: sessionId })
+      });
+      if (!res.ok || !res.body) {
+        throw new Error("HTTP " + res.status);
+      }
+
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = "";
+      var finished = false;
+
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        var idx;
+        while ((idx = buffer.indexOf("\n\n")) >= 0) {
+          var rawEvent = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          if (!rawEvent.trim()) continue;
+          var evt = parseSSE(rawEvent);
+          if (evt.event === "done") {
+            finished = true;
+            var done = JSON.parse(evt.data);
+            if (done.session_id) {
+              sessionId = done.session_id;
+              localStorage.setItem(SESSION_KEY, sessionId);
+            }
+            bubble.classList.add("rendered");
+            bubble.innerHTML = renderMarkdown(done.reply || streamed);
+          } else if (evt.event === "error") {
+            finished = true;
+            var errPayload = JSON.parse(evt.data);
+            bubble.classList.add("error");
+            bubble.textContent = "出错：" + (errPayload.error || "未知错误");
+          } else {
+            var payload = JSON.parse(evt.data);
+            if (payload.delta) {
+              streamed += payload.delta;
+              caret.remove();
+              bubble.textContent = streamed;
+              bubble.appendChild(caret);
+            }
+          }
+          scrollToBottom();
+        }
+      }
+
+      if (!finished) {
+        caret.remove();
+        bubble.classList.add("rendered");
+        bubble.innerHTML = renderMarkdown(streamed) || "<em>（无回复）</em>";
+      }
+    } catch (err) {
+      caret.remove();
+      bubble.classList.add("error");
+      bubble.textContent = "出错：" + (err && err.message ? err.message : err);
+    } finally {
+      setBusy(false);
+      scrollToBottom();
+    }
+  }
+
+  function newChat() {
+    if (busy) return;
+    sessionId = "";
+    localStorage.removeItem(SESSION_KEY);
+    thread.innerHTML =
+      '<div class="empty" id="empty"><div class="big">开始新的对话</div>' +
+      '<div>输入消息，Enter 发送 · Shift+Enter 换行</div></div>';
+    input.focus();
+  }
+
+  sendBtn.addEventListener("click", send);
+  newChatBtn.addEventListener("click", newChat);
+  input.addEventListener("input", autoGrow);
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      send();
+    }
+  });
+})();
+</script>
+</body>
+</html>

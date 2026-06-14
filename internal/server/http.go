@@ -55,6 +55,15 @@ func (recorder *responseRecorder) WriteHeader(statusCode int) {
 	recorder.ResponseWriter.WriteHeader(statusCode)
 }
 
+// Flush keeps streaming (SSE) handlers working through the logging wrapper:
+// embedding the ResponseWriter interface does not promote the underlying
+// Flusher, so we delegate explicitly when the wrapped writer supports it.
+func (recorder *responseRecorder) Flush() {
+	if flusher, ok := recorder.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 func withRequestLogging(next http.Handler) http.Handler {
 	if next == nil {
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

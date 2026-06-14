@@ -51,6 +51,7 @@ type Options struct {
 	Stream          bool
 	WorkspaceRoot   string
 	ProgressWriter  io.Writer
+	TokenSink       io.Writer
 	Context         ContextConfig
 }
 
@@ -67,6 +68,7 @@ type Agent struct {
 	stream          bool
 	workspaceRoot   string
 	progressWriter  io.Writer
+	tokenSink       io.Writer
 	contextConfig   ContextConfig
 }
 
@@ -81,6 +83,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 
 	logWriter := synchronizeLogWriter(options.LogWriter)
 	progressWriter := synchronizeLogWriter(options.ProgressWriter)
+	tokenSink := synchronizeLogWriter(options.TokenSink)
 	client = instrumentChatCompletionClient(client, logWriter, progressWriter)
 
 	systemPrompt := strings.TrimSpace(options.SystemPrompt)
@@ -123,6 +126,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		checkpointSaver: checkpointSaver,
 		stream:          options.Stream,
 		workspaceRoot:   options.WorkspaceRoot,
+		tokenSink:       tokenSink,
 		contextConfig:   contextConfig,
 	}
 }
@@ -266,8 +270,12 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		)
 		if a.stream {
 			message, requestErr = a.client.CreateChatCompletionStream(ctx, a.model, requestMessages, definitions, func(chunk string) {
-				if a.logWriter != nil {
-					_, _ = io.WriteString(a.logWriter, chunk)
+				sink := a.tokenSink
+				if sink == nil {
+					sink = a.logWriter
+				}
+				if sink != nil {
+					_, _ = io.WriteString(sink, chunk)
 				}
 			})
 		} else {

@@ -65,6 +65,7 @@ type TurnResponse struct {
 type TurnOptions struct {
 	OutputWriter   io.Writer
 	ProgressWriter io.Writer
+	TokenSink      io.Writer
 	Stream         bool
 }
 
@@ -226,6 +227,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		Stream:          options.Stream,
 		WorkspaceRoot:   service.workspaceRoot,
 		ProgressWriter:  progressWriter,
+		TokenSink:       options.TokenSink,
 		Context:         service.context,
 	})
 
