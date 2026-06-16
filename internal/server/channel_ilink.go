@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"bqagent/internal/agent"
 	"bqagent/internal/weixin"
 )
 
@@ -241,6 +242,11 @@ func (channel *IlinkChannel) run(ctx context.Context) {
 			update, err := weixin.ParseUpdate(message)
 			if err != nil {
 				if errors.Is(err, weixin.ErrIgnoreUpdate) {
+					// Surface any unrecognized non-text item so an operator can
+					// capture an unknown image wire format via the status endpoint.
+					if raw, ok := weixin.UnhandledItemsJSON(message); ok {
+						channel.setLastError("unhandled inbound items: " + raw)
+					}
 					continue
 				}
 				channel.setLastError(err.Error())
@@ -297,10 +303,13 @@ func (channel *IlinkChannel) processUpdate(ctx context.Context, tokenState weixi
 		},
 		channel.chats.Save,
 	)
+	images := channel.fetchImages(ctx, update)
+
 	_, err := channel.runner.Process(ctx, ChannelTurnOptions{
 		PeerKey:   update.UserID,
 		DedupeKey: update.ContextToken,
 		Message:   update.Text,
+		Images:    images,
 		LoadState: loadState,
 		SaveState: saveState,
 		SendReply: func(ctx context.Context, reply string) error {
@@ -311,6 +320,26 @@ func (channel *IlinkChannel) processUpdate(ctx context.Context, tokenState weixi
 		},
 	})
 	return err
+}
+
+// fetchImages downloads each parsed inbound image into bytes the model can
+// consume. Failures are best-effort: a failed download is surfaced via lastError
+// and skipped rather than aborting the turn, so any text and other images still
+// reach the model.
+func (channel *IlinkChannel) fetchImages(ctx context.Context, update weixin.Update) []agent.ImageAttachment {
+	if len(update.Images) == 0 {
+		return nil
+	}
+	attachments := make([]agent.ImageAttachment, 0, len(update.Images))
+	for _, image := range update.Images {
+		data, mimeType, err := channel.client.FetchImage(ctx, image)
+		if err != nil {
+			channel.setLastError(fmt.Sprintf("fetch inbound image: %v", err))
+			continue
+		}
+		attachments = append(attachments, agent.ImageAttachment{MIMEType: mimeType, Data: data})
+	}
+	return attachments
 }
 
 func (channel *IlinkChannel) sendIlinkText(ctx context.Context, tokenState weixin.TokenState, update weixin.Update, contextToken string, text string) error {

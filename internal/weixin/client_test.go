@@ -1,10 +1,14 @@
 package weixin
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -77,6 +81,86 @@ func TestClientGetUpdates(t *testing.T) {
 	if response.GetUpdatesBuf != "cursor-2" {
 		t.Fatalf("GetUpdatesBuf = %q, want %q", response.GetUpdatesBuf, "cursor-2")
 	}
+}
+
+func TestFetchImageDownloadsAndDecrypts(t *testing.T) {
+	// A 1x1 PNG plaintext.
+	pngBytes := []byte{
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+		0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89,
+	}
+	keyHex := "000102030405060708090a0b0c0d0e0f"
+	key, _ := hex.DecodeString(keyHex)
+	encrypted, err := encryptAESECBForTest(pngBytes, key)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		gotPath = request.URL.Path + "?" + request.URL.RawQuery
+		_, _ = writer.Write(encrypted)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SetCDNBaseURL(server.URL)
+	data, mimeType, err := client.FetchImage(context.Background(), InboundImage{
+		EncryptQueryParam: "qp 1&x",
+		AESKeyHex:         keyHex,
+	})
+	if err != nil {
+		t.Fatalf("FetchImage returned error: %v", err)
+	}
+	if !strings.HasPrefix(gotPath, "/download?encrypted_query_param=") {
+		t.Fatalf("download path = %q", gotPath)
+	}
+	if !strings.Contains(gotPath, "qp+1%26x") {
+		t.Fatalf("download path = %q, want url-encoded query param", gotPath)
+	}
+	if mimeType != "image/png" {
+		t.Fatalf("mimeType = %q, want image/png", mimeType)
+	}
+	if !bytes.Equal(data, pngBytes) {
+		t.Fatalf("decrypted bytes mismatch")
+	}
+}
+
+func TestFetchImagePlainWhenNoKey(t *testing.T) {
+	gifBytes := []byte("GIF89a\x01\x00\x01\x00\x00\x00\x00\x3b")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write(gifBytes)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.SetCDNBaseURL(server.URL)
+	data, mimeType, err := client.FetchImage(context.Background(), InboundImage{EncryptQueryParam: "qp-1"})
+	if err != nil {
+		t.Fatalf("FetchImage returned error: %v", err)
+	}
+	if mimeType != "image/gif" {
+		t.Fatalf("mimeType = %q, want image/gif", mimeType)
+	}
+	if !bytes.Equal(data, gifBytes) {
+		t.Fatalf("plain bytes mismatch")
+	}
+}
+
+func encryptAESECBForTest(plaintext, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	blockSize := block.BlockSize()
+	padLen := blockSize - len(plaintext)%blockSize
+	padded := append(append([]byte{}, plaintext...), bytes.Repeat([]byte{byte(padLen)}, padLen)...)
+	out := make([]byte, len(padded))
+	for start := 0; start < len(padded); start += blockSize {
+		block.Encrypt(out[start:start+blockSize], padded[start:start+blockSize])
+	}
+	return out, nil
 }
 
 func TestClientSendTextMessage(t *testing.T) {

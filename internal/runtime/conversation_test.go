@@ -5,8 +5,73 @@ import (
 	"strings"
 	"testing"
 
+	"bqagent/internal/agent"
 	"bqagent/internal/session"
 )
+
+func TestAddUserMessageWithImagesPlainText(t *testing.T) {
+	conversation, err := PrepareConversation(nil, "", nil, "system prompt")
+	if err != nil {
+		t.Fatalf("PrepareConversation returned error: %v", err)
+	}
+	if err := conversation.AddUserMessageWithImages("hello", nil); err != nil {
+		t.Fatalf("AddUserMessageWithImages returned error: %v", err)
+	}
+	last := conversation.Messages[len(conversation.Messages)-1]
+	if content, ok := last["content"].(string); !ok || content != "hello" {
+		t.Fatalf("content = %#v, want plain string \"hello\"", last["content"])
+	}
+}
+
+func TestAddUserMessageWithImagesBuildsMultimodalContent(t *testing.T) {
+	conversation, err := PrepareConversation(nil, "", nil, "system prompt")
+	if err != nil {
+		t.Fatalf("PrepareConversation returned error: %v", err)
+	}
+	images := []agent.ImageAttachment{{MIMEType: "image/png", Data: []byte{1, 2, 3}}}
+	if err := conversation.AddUserMessageWithImages("describe", images); err != nil {
+		t.Fatalf("AddUserMessageWithImages returned error: %v", err)
+	}
+	last := conversation.Messages[len(conversation.Messages)-1]
+	parts, ok := last["content"].([]any)
+	if !ok {
+		t.Fatalf("content = %#v, want []any", last["content"])
+	}
+	if len(parts) != 2 {
+		t.Fatalf("parts = %d, want 2 (text + image)", len(parts))
+	}
+	textPart, _ := parts[0].(map[string]any)
+	if textPart["type"] != "text" || textPart["text"] != "describe" {
+		t.Fatalf("text part = %#v", parts[0])
+	}
+	imagePart, _ := parts[1].(map[string]any)
+	if imagePart["type"] != "image_url" {
+		t.Fatalf("image part type = %#v, want image_url", imagePart["type"])
+	}
+	imageURL, _ := imagePart["image_url"].(map[string]any)
+	url, _ := imageURL["url"].(string)
+	if !strings.HasPrefix(url, "data:image/png;base64,") {
+		t.Fatalf("image url = %q, want data:image/png;base64, prefix", url)
+	}
+}
+
+func TestAddUserMessageWithImagesImageOnly(t *testing.T) {
+	conversation, err := PrepareConversation(nil, "", nil, "system prompt")
+	if err != nil {
+		t.Fatalf("PrepareConversation returned error: %v", err)
+	}
+	images := []agent.ImageAttachment{{MIMEType: "image/jpeg", Data: []byte{9}}}
+	if err := conversation.AddUserMessageWithImages("", images); err != nil {
+		t.Fatalf("AddUserMessageWithImages returned error: %v", err)
+	}
+	parts, ok := conversation.Messages[len(conversation.Messages)-1]["content"].([]any)
+	if !ok {
+		t.Fatalf("content not multimodal: %#v", conversation.Messages[len(conversation.Messages)-1]["content"])
+	}
+	if len(parts) != 1 {
+		t.Fatalf("parts = %d, want 1 (image only)", len(parts))
+	}
+}
 
 func TestPrepareConversationInitializesSystemMessageWithoutSession(t *testing.T) {
 	conversation, err := PrepareConversation(nil, "", nil, "system prompt")

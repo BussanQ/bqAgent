@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"bqagent/internal/agent"
 )
 
 var ErrChannelTurnInProgress = errors.New("channel turn already in progress")
@@ -52,6 +54,7 @@ type ChannelTurnOptions struct {
 	PeerKey      string
 	DedupeKey    string
 	Message      string
+	Images       []agent.ImageAttachment
 	LoadState    func() (ChannelConversationState, error)
 	SaveState    func(ChannelConversationState) error
 	SendReply    func(context.Context, string) error
@@ -168,7 +171,7 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 	}
 
 	progressWriter := newChannelProgressWriter(ctx, options.progressSender())
-	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message}, TurnOptions{ProgressWriter: progressWriter})
+	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message, Images: options.Images}, TurnOptions{ProgressWriter: progressWriter})
 	if err != nil {
 		state.LastError = err.Error()
 		if response.SessionID != "" {

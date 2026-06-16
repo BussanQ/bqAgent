@@ -23,12 +23,16 @@ const (
 	inboundMessageType       = 1
 	outboundMessageType      = 2
 	outboundMessageStateDone = 2
+	// defaultCDNBaseURL is the WeChat c2c CDN that hosts inbound media. Media is
+	// AES-128-ECB encrypted; see FetchImage.
+	defaultCDNBaseURL = "https://novac2c.cdn.weixin.qq.com/c2c"
 )
 
 type Client struct {
 	httpClient     *http.Client
 	baseURL        string
 	channelVersion string
+	cdnBaseURL     string
 }
 
 type BaseInfo struct {
@@ -85,6 +89,27 @@ type MessageItem struct {
 	TextItem  *TextItem  `json:"text_item,omitempty"`
 	VoiceItem *VoiceItem `json:"voice_item,omitempty"`
 	FileItem  *FileItem  `json:"file_item,omitempty"`
+	ImageItem *ImageItem `json:"image_item,omitempty"`
+	// Raw keeps the original item object so the image parser can recover image
+	// references even when the iLink wire format uses field names we have not
+	// modeled yet. It is populated on unmarshal only and omitted on marshal.
+	Raw map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the known item shape and additionally captures the raw
+// object into Raw for tolerant image extraction / debugging.
+func (item *MessageItem) UnmarshalJSON(data []byte) error {
+	type messageItemAlias MessageItem
+	var alias messageItemAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*item = MessageItem(alias)
+	raw := map[string]json.RawMessage{}
+	if err := json.Unmarshal(data, &raw); err == nil {
+		item.Raw = raw
+	}
+	return nil
 }
 
 type TextItem struct {
@@ -97,6 +122,25 @@ type VoiceItem struct {
 
 type FileItem struct {
 	FileName string `json:"file_name,omitempty"`
+}
+
+// CDNMedia is a reference to AES-128-ECB encrypted media on the WeChat c2c CDN.
+// aes_key is base64-encoded in JSON (either base64 of the raw 16 bytes, or base64
+// of a 32-char hex string of the key).
+type CDNMedia struct {
+	EncryptQueryParam string `json:"encrypt_query_param,omitempty"`
+	AESKey            string `json:"aes_key,omitempty"`
+	EncryptType       int    `json:"encrypt_type,omitempty"`
+}
+
+// ImageItem is an inbound image (item type 2). media points at the full image on
+// the CDN; aeskey (a hex string of the 16-byte key) is preferred over
+// media.aes_key for decryption when present.
+type ImageItem struct {
+	Media      *CDNMedia `json:"media,omitempty"`
+	ThumbMedia *CDNMedia `json:"thumb_media,omitempty"`
+	AESKey     string    `json:"aeskey,omitempty"`
+	URL        string    `json:"url,omitempty"`
 }
 
 type SendMessageRequest struct {
@@ -132,6 +176,15 @@ func NewClientWithBaseURL(baseURL, channelVersion string, httpClient *http.Clien
 		httpClient:     httpClient,
 		baseURL:        strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		channelVersion: strings.TrimSpace(channelVersion),
+		cdnBaseURL:     defaultCDNBaseURL,
+	}
+}
+
+// SetCDNBaseURL overrides the CDN base used for inbound media downloads. An empty
+// value keeps the current/default base.
+func (client *Client) SetCDNBaseURL(cdnBaseURL string) {
+	if trimmed := strings.TrimRight(strings.TrimSpace(cdnBaseURL), "/"); trimmed != "" {
+		client.cdnBaseURL = trimmed
 	}
 }
 
@@ -211,6 +264,75 @@ func (client *Client) SendMessage(ctx context.Context, baseURL, token string, me
 		return responseError(response, "send message failed")
 	}
 	return nil
+}
+
+// maxInboundImageBytes caps a single downloaded/decrypted image to keep memory
+// and the model context bounded.
+const maxInboundImageBytes = 12 << 20 // 12 MiB
+
+// FetchImage downloads an inbound image from the CDN and AES-128-ECB decrypts it
+// when a key is present (the c2c CDN stores media encrypted). It returns the
+// plaintext image bytes plus a best-effort MIME type sniffed from the content.
+func (client *Client) FetchImage(ctx context.Context, image InboundImage) ([]byte, string, error) {
+	queryParam := strings.TrimSpace(image.EncryptQueryParam)
+	if queryParam == "" {
+		return nil, "", fmt.Errorf("image has no encrypt_query_param")
+	}
+	cdnBaseURL := strings.TrimRight(strings.TrimSpace(client.cdnBaseURL), "/")
+	if cdnBaseURL == "" {
+		cdnBaseURL = defaultCDNBaseURL
+	}
+	downloadURL := cdnBaseURL + "/download?encrypted_query_param=" + url.QueryEscape(queryParam)
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return nil, "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, "", fmt.Errorf("download image failed: %s", response.Status)
+	}
+	encrypted, err := io.ReadAll(io.LimitReader(response.Body, maxInboundImageBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(encrypted) > maxInboundImageBytes {
+		return nil, "", fmt.Errorf("image exceeds %d bytes", maxInboundImageBytes)
+	}
+
+	data := encrypted
+	if key, ok, keyErr := image.aesKey(); keyErr != nil {
+		return nil, "", keyErr
+	} else if ok {
+		decrypted, decErr := decryptAESECB(encrypted, key)
+		if decErr != nil {
+			return nil, "", fmt.Errorf("decrypt image: %w", decErr)
+		}
+		data = decrypted
+	}
+	return data, sniffImageMIME(data, image.FileName), nil
+}
+
+func sniffImageMIME(data []byte, fileName string) string {
+	if detected := http.DetectContentType(data); strings.HasPrefix(detected, "image/") {
+		return strings.SplitN(detected, ";", 2)[0]
+	}
+	name := strings.ToLower(strings.TrimSpace(fileName))
+	switch {
+	case strings.HasSuffix(name, ".png"):
+		return "image/png"
+	case strings.HasSuffix(name, ".gif"):
+		return "image/gif"
+	case strings.HasSuffix(name, ".webp"):
+		return "image/webp"
+	case strings.HasSuffix(name, ".bmp"):
+		return "image/bmp"
+	}
+	return "image/jpeg"
 }
 
 func (response QRCodeStatusResponse) ResolvedBaseURL() string {

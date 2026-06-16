@@ -83,9 +83,11 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 		))
 	}
 	if envEnabled(getenv("WEIXIN_ILINK_ENABLED")) {
+		ilinkClient := weixin.NewClientWithBaseURL(getenv("WEIXIN_ILINK_BASE_URL"), getenv("WEIXIN_ILINK_CHANNEL_VERSION"), nil)
+		ilinkClient.SetCDNBaseURL(getenv("WEIXIN_ILINK_CDN_BASE_URL"))
 		channels = append(channels, appserver.NewIlinkChannel(
 			service,
-			weixin.NewClientWithBaseURL(getenv("WEIXIN_ILINK_BASE_URL"), getenv("WEIXIN_ILINK_CHANNEL_VERSION"), nil),
+			ilinkClient,
 			weixin.NewTokenStore(ws.Root),
 			weixin.NewPollerStateStore(ws.Root),
 			weixin.NewChatStateStore(ws.Root),

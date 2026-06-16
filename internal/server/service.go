@@ -54,7 +54,15 @@ type Service struct {
 type TurnRequest struct {
 	SessionID string `json:"session_id"`
 	Message   string `json:"message"`
+	// Images are decoded inbound images attached to this turn. They are set by
+	// channels (e.g. iLink) and sent to the model as a multimodal user message.
+	Images []agent.ImageAttachment `json:"-"`
 }
+
+// imageOnlyPlaceholder is the synthetic task/memory text used when a turn carries
+// images but no text. It keeps session bookkeeping and memory readable; the model
+// still receives the actual image content.
+const imageOnlyPlaceholder = "[图片]"
 
 type TurnResponse struct {
 	SessionID string `json:"session_id"`
@@ -99,12 +107,18 @@ func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (Tu
 
 func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnRequest, options TurnOptions) (TurnResponse, error) {
 	message := strings.TrimSpace(request.Message)
-	if message == "" {
+	if message == "" && len(request.Images) == 0 {
 		return TurnResponse{}, fmt.Errorf("message is required")
+	}
+	// effectiveText is what session bookkeeping and memory record; for image-only
+	// turns it falls back to a placeholder so those stay readable.
+	effectiveText := message
+	if effectiveText == "" {
+		effectiveText = imageOnlyPlaceholder
 	}
 
 	sessionID := strings.TrimSpace(request.SessionID)
-	createOptions := &session.CreateOptions{Task: message, Planned: service.planner != nil, Chat: true}
+	createOptions := &session.CreateOptions{Task: effectiveText, Planned: service.planner != nil, Chat: true}
 	if sessionID != "" {
 		unlock := service.locker.Lock(sessionID)
 		defer unlock()
@@ -132,7 +146,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	logWriter := service.turnLogWriter(conversation.Session.ID(), logFile, options.OutputWriter)
 	turnErrorWriter := service.turnErrorWriter(conversation.Session.ID(), logFile, options.OutputWriter)
 
-	if err := conversation.AddUserMessage(message); err != nil {
+	if err := conversation.AddUserMessageWithImages(message, request.Images); err != nil {
 		writeTurnError(turnErrorWriter, err)
 		markConversationFailed(conversation, err)
 		return TurnResponse{}, err
@@ -241,7 +255,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		writeTurnError(turnErrorWriter, err)
 		return TurnResponse{}, err
 	}
-	service.appendMemory(message, result)
+	service.appendMemory(effectiveText, result)
 	writeTurnReply(logWriter, result, options.Stream)
 
 	return TurnResponse{SessionID: conversation.Session.ID(), Reply: result, Streamed: options.Stream}, nil

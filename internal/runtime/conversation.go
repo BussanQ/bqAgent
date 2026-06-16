@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/base64"
 	"strings"
 
 	"bqagent/internal/agent"
@@ -120,6 +121,48 @@ func (conversation *Conversation) AddUserMessage(content string) error {
 		return conversation.Session.RecordMessage(userMessage)
 	}
 	return nil
+}
+
+// AddUserMessageWithImages appends a user message that may carry images. With no
+// images the content stays a plain string (identical to AddUserMessage); with
+// images the content becomes an OpenAI multimodal array of text + image_url
+// parts, each image inlined as a base64 data URI. The full message (including the
+// base64 payload) is recorded to the transcript so resume reconstructs it.
+func (conversation *Conversation) AddUserMessageWithImages(content string, images []agent.ImageAttachment) error {
+	userMessage := map[string]any{"role": "user", "content": userMessageContent(content, images)}
+	conversation.Messages = append(conversation.Messages, userMessage)
+	if conversation.Session != nil {
+		return conversation.Session.RecordMessage(userMessage)
+	}
+	return nil
+}
+
+func userMessageContent(content string, images []agent.ImageAttachment) any {
+	if len(images) == 0 {
+		return content
+	}
+	parts := make([]any, 0, len(images)+1)
+	if strings.TrimSpace(content) != "" {
+		parts = append(parts, map[string]any{"type": "text", "text": content})
+	}
+	for _, image := range images {
+		if len(image.Data) == 0 {
+			continue
+		}
+		mimeType := strings.TrimSpace(image.MIMEType)
+		if mimeType == "" {
+			mimeType = "image/jpeg"
+		}
+		dataURI := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(image.Data)
+		parts = append(parts, map[string]any{
+			"type":      "image_url",
+			"image_url": map[string]any{"url": dataURI},
+		})
+	}
+	if len(parts) == 0 {
+		return content
+	}
+	return parts
 }
 
 func (conversation *Conversation) Recorder() agent.MessageRecorder {
