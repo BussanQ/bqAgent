@@ -94,6 +94,61 @@ func TestParseGatewayDispatchIgnoresEmptyContent(t *testing.T) {
 	}
 }
 
+func TestParseGatewayDispatchParsesImageAttachment(t *testing.T) {
+	update, err := ParseGatewayDispatch(strings.NewReader(`{
+		"id":"event-1",
+		"op":0,
+		"t":"C2C_MESSAGE_CREATE",
+		"d":{
+			"author":{"user_openid":"user-1"},
+			"content":"look at this",
+			"id":"message-1",
+			"attachments":[
+				{"content_type":"image/jpeg","filename":"a.jpg","url":"gchat.qpic.cn/x/a.jpg","width":100,"height":80},
+				{"content_type":"voice/silk","url":"gchat.qpic.cn/v/b.silk"}
+			]
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseGatewayDispatch() error = %v", err)
+	}
+	if update.Text != "look at this" {
+		t.Fatalf("Text = %q", update.Text)
+	}
+	if len(update.Images) != 1 {
+		t.Fatalf("Images = %d, want 1 (non-image attachment ignored)", len(update.Images))
+	}
+	if update.Images[0].URL != "https://gchat.qpic.cn/x/a.jpg" {
+		t.Fatalf("image URL = %q, want scheme prepended", update.Images[0].URL)
+	}
+	if update.Images[0].ContentType != "image/jpeg" {
+		t.Fatalf("image ContentType = %q", update.Images[0].ContentType)
+	}
+}
+
+func TestParseGatewayDispatchAcceptsImageOnlyMessage(t *testing.T) {
+	update, err := ParseGatewayDispatch(strings.NewReader(`{
+		"id":"event-1",
+		"op":0,
+		"t":"C2C_MESSAGE_CREATE",
+		"d":{
+			"author":{"user_openid":"user-1"},
+			"content":"   ",
+			"id":"message-1",
+			"attachments":[{"content_type":"image/png","url":"https://gchat.qpic.cn/x/c.png"}]
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseGatewayDispatch() error = %v", err)
+	}
+	if update.Text != "" {
+		t.Fatalf("Text = %q, want empty", update.Text)
+	}
+	if len(update.Images) != 1 || update.Images[0].URL != "https://gchat.qpic.cn/x/c.png" {
+		t.Fatalf("images = %+v", update.Images)
+	}
+}
+
 func TestParseGatewayDispatchRequiresIdentifiers(t *testing.T) {
 	_, err := ParseGatewayDispatch(strings.NewReader(`{
 		"id":"event-1",

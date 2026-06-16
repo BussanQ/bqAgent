@@ -38,10 +38,19 @@ type Update struct {
 	PeerKey      string
 	DedupeKey    string
 	Text         string
+	Images       []InboundImage
 	UserOpenID   string
 	MemberOpenID string
 	GroupOpenID  string
 	Timestamp    string
+}
+
+// InboundImage is an image attachment reference parsed from a QQ message event.
+// QQ rich-media URLs are plain (unencrypted) and downloadable directly.
+type InboundImage struct {
+	URL         string
+	ContentType string
+	FileName    string
 }
 
 type messageEvent struct {
@@ -49,10 +58,44 @@ type messageEvent struct {
 		UserOpenID   string `json:"user_openid,omitempty"`
 		MemberOpenID string `json:"member_openid,omitempty"`
 	} `json:"author"`
-	Content     string `json:"content,omitempty"`
-	ID          string `json:"id,omitempty"`
-	GroupOpenID string `json:"group_openid,omitempty"`
-	Timestamp   string `json:"timestamp,omitempty"`
+	Content     string          `json:"content,omitempty"`
+	ID          string          `json:"id,omitempty"`
+	GroupOpenID string          `json:"group_openid,omitempty"`
+	Timestamp   string          `json:"timestamp,omitempty"`
+	Attachments []messageAttach `json:"attachments,omitempty"`
+}
+
+type messageAttach struct {
+	ContentType string `json:"content_type,omitempty"`
+	Filename    string `json:"filename,omitempty"`
+	URL         string `json:"url,omitempty"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	Size        int    `json:"size,omitempty"`
+}
+
+// imageAttachments returns the image attachments from a message event, normalizing
+// each URL to an absolute https URL (QQ often omits the scheme).
+func (message messageEvent) imageAttachments() []InboundImage {
+	var images []InboundImage
+	for _, attachment := range message.Attachments {
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(attachment.ContentType)), "image/") {
+			continue
+		}
+		rawURL := strings.TrimSpace(attachment.URL)
+		if rawURL == "" {
+			continue
+		}
+		if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+			rawURL = "https://" + rawURL
+		}
+		images = append(images, InboundImage{
+			URL:         rawURL,
+			ContentType: strings.TrimSpace(attachment.ContentType),
+			FileName:    strings.TrimSpace(attachment.Filename),
+		})
+	}
+	return images
 }
 
 func ParseGatewayDispatchPayload(payload GatewayPayload) (Update, error) {
@@ -95,7 +138,8 @@ func parseC2CUpdate(payload GatewayPayload) (Update, error) {
 		return Update{}, fmt.Errorf("message id is required")
 	}
 	text := strings.TrimSpace(message.Content)
-	if text == "" {
+	images := message.imageAttachments()
+	if text == "" && len(images) == 0 {
 		return Update{}, ErrIgnoreUpdate
 	}
 	return Update{
@@ -106,6 +150,7 @@ func parseC2CUpdate(payload GatewayPayload) (Update, error) {
 		PeerKey:    "qq:c2c:" + openid,
 		DedupeKey:  firstNonEmpty(strings.TrimSpace(payload.ID), strings.TrimSpace(message.ID)),
 		Text:       text,
+		Images:     images,
 		UserOpenID: openid,
 		Timestamp:  strings.TrimSpace(message.Timestamp),
 	}, nil
@@ -128,7 +173,8 @@ func parseGroupUpdate(payload GatewayPayload) (Update, error) {
 		return Update{}, fmt.Errorf("message id is required")
 	}
 	text := strings.TrimSpace(message.Content)
-	if text == "" {
+	images := message.imageAttachments()
+	if text == "" && len(images) == 0 {
 		return Update{}, ErrIgnoreUpdate
 	}
 	return Update{
@@ -139,6 +185,7 @@ func parseGroupUpdate(payload GatewayPayload) (Update, error) {
 		PeerKey:      "qq:group:" + groupOpenID + ":" + memberOpenID,
 		DedupeKey:    firstNonEmpty(strings.TrimSpace(payload.ID), strings.TrimSpace(message.ID)),
 		Text:         text,
+		Images:       images,
 		MemberOpenID: memberOpenID,
 		GroupOpenID:  groupOpenID,
 		Timestamp:    strings.TrimSpace(message.Timestamp),

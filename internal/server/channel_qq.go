@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"bqagent/internal/agent"
 	"bqagent/internal/qq"
 )
 
@@ -164,12 +165,32 @@ func (channel *QQChannel) processUpdate(ctx context.Context, update qq.Update) e
 		PeerKey:      update.PeerKey,
 		DedupeKey:    update.DedupeKey,
 		Message:      update.Text,
+		Images:       channel.fetchImages(ctx, update),
 		LoadState:    loadState,
 		SaveState:    saveState,
 		SendReply:    sender.SendReply,
 		SendProgress: sender.SendProgress,
 	})
 	return err
+}
+
+// fetchImages downloads each image attachment into bytes the model can consume.
+// Failures are best-effort: a failed download is logged and skipped so any text
+// and other images still reach the model.
+func (channel *QQChannel) fetchImages(ctx context.Context, update qq.Update) []agent.ImageAttachment {
+	if len(update.Images) == 0 {
+		return nil
+	}
+	attachments := make([]agent.ImageAttachment, 0, len(update.Images))
+	for _, image := range update.Images {
+		data, mimeType, err := channel.client.FetchImage(ctx, image)
+		if err != nil {
+			log.Printf("qq inbound image download failed: %v", err)
+			continue
+		}
+		attachments = append(attachments, agent.ImageAttachment{MIMEType: mimeType, Data: data})
+	}
+	return attachments
 }
 
 type qqUpdateSender struct {
