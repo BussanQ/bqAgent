@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"encoding/base64"
+	"errors"
+	"log"
+	"os"
 	"strings"
 
 	"bqagent/internal/agent"
@@ -23,6 +26,10 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 	switch {
 	case sessionID != "":
 		savedSession, err = store.Open(sessionID)
+		if err != nil && errors.Is(err, os.ErrNotExist) && createOptions != nil {
+			log.Printf("session %s not found on disk; starting fresh session", sessionID)
+			savedSession, err = store.Create(*createOptions)
+		}
 	case createOptions != nil:
 		savedSession, err = store.Create(*createOptions)
 	}

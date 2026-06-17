@@ -168,6 +168,29 @@ func TestPrepareConversationRefreshesExistingSystemMessage(t *testing.T) {
 	}
 }
 
+func TestPrepareConversationFallsBackToFreshSessionWhenMissing(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	createOptions := &session.CreateOptions{Task: "hello", Chat: true}
+
+	conversation, err := PrepareConversation(store, "does-not-exist", createOptions, "system prompt")
+	if err != nil {
+		t.Fatalf("PrepareConversation returned error: %v", err)
+	}
+	if conversation.Session == nil {
+		t.Fatal("expected a fresh session, got nil")
+	}
+	if id := conversation.Session.ID(); id == "" || id == "does-not-exist" {
+		t.Fatalf("session id = %q, want a freshly generated id", id)
+	}
+	if len(conversation.Messages) != 1 || conversation.Messages[0]["role"] != "system" {
+		t.Fatalf("messages = %#v, want a single system message", conversation.Messages)
+	}
+
+	if _, err := store.Open(conversation.Session.ID()); err != nil {
+		t.Fatalf("fresh session was not persisted: %v", err)
+	}
+}
+
 func TestPrepareConversationRestoresCheckpointSummaryAndTail(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	createOptions := &session.CreateOptions{Task: "hello", Chat: true}

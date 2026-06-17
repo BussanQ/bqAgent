@@ -1,13 +1,11 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log"
 	"strings"
-	"time"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
@@ -30,7 +28,6 @@ type ServiceOptions struct {
 	ExternalBroker      *extagent.Broker
 	MemoryAppend        func(task, result string) error
 	Context             agent.ContextConfig
-	ServerLogWriter     io.Writer
 }
 
 type Service struct {
@@ -48,7 +45,6 @@ type Service struct {
 	externalBroker      *extagent.Broker
 	memoryAppend        func(task, result string) error
 	context             agent.ContextConfig
-	serverLogWriter     io.Writer
 }
 
 type TurnRequest struct {
@@ -97,7 +93,6 @@ func NewService(options ServiceOptions) *Service {
 		externalBroker:      options.ExternalBroker,
 		memoryAppend:        options.MemoryAppend,
 		context:             options.Context,
-		serverLogWriter:     options.ServerLogWriter,
 	}
 }
 
@@ -143,8 +138,8 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if progressWriter == nil {
 		progressWriter = options.OutputWriter
 	}
-	logWriter := service.turnLogWriter(conversation.Session.ID(), logFile, options.OutputWriter)
-	turnErrorWriter := service.turnErrorWriter(conversation.Session.ID(), logFile, options.OutputWriter)
+	logWriter := service.turnLogWriter(logFile, options.OutputWriter)
+	turnErrorWriter := service.turnErrorWriter(logFile, options.OutputWriter)
 
 	if err := conversation.AddUserMessageWithImages(message, request.Images); err != nil {
 		writeTurnError(turnErrorWriter, err)
@@ -370,63 +365,15 @@ func (service *Service) appendMemory(task, result string) {
 	}
 }
 
-func (service *Service) turnLogWriter(sessionID string, sessionWriter io.Writer, outputWriter io.Writer) io.Writer {
-	if service == nil {
-		return sessionWriter
-	}
-	if service.serverLogWriter != nil {
-		serverWriter := io.Writer(newServerLogWriter(service.serverLogWriter, sessionID))
-		if outputWriter != nil {
-			return io.MultiWriter(outputWriter, serverWriter)
-		}
-		return serverWriter
-	}
+func (service *Service) turnLogWriter(sessionWriter io.Writer, outputWriter io.Writer) io.Writer {
 	if outputWriter != nil {
 		return io.MultiWriter(outputWriter, sessionWriter)
 	}
 	return sessionWriter
 }
 
-func (service *Service) turnErrorWriter(sessionID string, sessionWriter io.Writer, outputWriter io.Writer) io.Writer {
-	if service == nil || service.serverLogWriter == nil {
-		return sessionWriter
-	}
-	serverWriter := io.Writer(newServerLogWriter(service.serverLogWriter, sessionID))
-	if outputWriter != nil {
-		return io.MultiWriter(outputWriter, serverWriter)
-	}
-	return serverWriter
-}
-
-type serverLogWriter struct {
-	writer    io.Writer
-	sessionID string
-	buffer    bytes.Buffer
-}
-
-func newServerLogWriter(writer io.Writer, sessionID string) *serverLogWriter {
-	return &serverLogWriter{writer: writer, sessionID: strings.TrimSpace(sessionID)}
-}
-
-func (writer *serverLogWriter) Write(data []byte) (int, error) {
-	if _, err := writer.buffer.Write(data); err != nil {
-		return 0, err
-	}
-	for {
-		line, err := writer.buffer.ReadString('\n')
-		if err != nil {
-			writer.buffer.WriteString(line)
-			return len(data), nil
-		}
-		if _, writeErr := io.WriteString(writer.writer, writer.formatLine(strings.TrimSuffix(line, "\n"))+"\n"); writeErr != nil {
-			return 0, writeErr
-		}
-	}
-}
-
-func (writer *serverLogWriter) formatLine(line string) string {
-	line = strings.TrimRight(line, "\r")
-	return fmt.Sprintf("[%s] [session:%s] %s", time.Now().UTC().Format(time.RFC3339), writer.sessionID, line)
+func (service *Service) turnErrorWriter(sessionWriter io.Writer, outputWriter io.Writer) io.Writer {
+	return service.turnLogWriter(sessionWriter, outputWriter)
 }
 
 func writeTurnReply(writer io.Writer, reply string, streamed bool) {

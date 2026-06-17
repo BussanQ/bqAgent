@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -809,16 +808,14 @@ func (failingChatClient) CreateChatCompletionStream(context.Context, string, []m
 	return agent.AssistantMessage{}, errors.New("upstream unavailable")
 }
 
-func TestServiceHandleTurnWritesServerLogWithSessionIDAndTimestamp(t *testing.T) {
+func TestServiceHandleTurnReturnsUpstreamError(t *testing.T) {
 	root := t.TempDir()
-	var serverLog strings.Builder
 	service := NewService(ServiceOptions{
 		WorkspaceRoot:   root,
 		Client:          failingChatClient{},
 		SystemPrompt:    "You are a helpful assistant. Be concise.",
 		ToolDefinitions: tools.NewCatalog(tools.Options{WorkspaceRoot: root}).Definitions(),
 		Functions:       tools.NewCatalog(tools.Options{WorkspaceRoot: root}).Registry(),
-		ServerLogWriter: &serverLog,
 	})
 
 	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "hello"})
@@ -830,24 +827,6 @@ func TestServiceHandleTurnWritesServerLogWithSessionIDAndTimestamp(t *testing.T)
 	}
 	if response.SessionID != "" {
 		t.Fatalf("session id = %q, want empty on failure response", response.SessionID)
-	}
-
-	logs := serverLog.String()
-	if !strings.Contains(logs, "[session:") {
-		t.Fatalf("server log = %q, want session prefix", logs)
-	}
-	if !strings.Contains(logs, "[Model]") || !strings.Contains(logs, "status=error") {
-		t.Fatalf("server log = %q, want model error log", logs)
-	}
-	if !strings.Contains(logs, "upstream unavailable") {
-		t.Fatalf("server log = %q, want upstream error text", logs)
-	}
-	matched, matchErr := regexp.MatchString(`\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[^\]]+\] \[session:[^\]]+\]`, logs)
-	if matchErr != nil {
-		t.Fatalf("failed to match log prefix: %v", matchErr)
-	}
-	if !matched {
-		t.Fatalf("server log = %q, want timestamp and session prefix", logs)
 	}
 }
 
