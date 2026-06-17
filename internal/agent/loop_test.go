@@ -292,6 +292,54 @@ func TestRunReturnsMaxIterationsReached(t *testing.T) {
 	}
 }
 
+func TestRunConversationExecutesIndependentToolsInOrder(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{Role: "assistant", ToolCalls: []ToolCall{
+			{ID: "call-1", Type: "function", Function: FunctionCall{Name: "tool_a", Arguments: "{}"}},
+			{ID: "call-2", Type: "function", Function: FunctionCall{Name: "tool_b", Arguments: "{}"}},
+		}},
+		{Role: "assistant", Content: "done"},
+	}}
+	var logs bytes.Buffer
+	functions := map[string]tools.Function{
+		"tool_a": func(context.Context, map[string]any) (string, error) { return "result-A", nil },
+		"tool_b": func(context.Context, map[string]any) (string, error) { return "result-B", nil },
+	}
+	app := NewWithOptions(client, "", Options{
+		LogWriter:       &logs,
+		Context:         ContextConfig{Enabled: false},
+		Functions:       functions,
+		ToolDefinitions: []tools.Definition{},
+	})
+
+	result, updated, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "go"}}, 5)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q, want %q", result, "done")
+	}
+
+	type toolMsg struct{ id, content string }
+	var toolMessages []toolMsg
+	for _, message := range updated {
+		if message["role"] == "tool" {
+			id, _ := message["tool_call_id"].(string)
+			content, _ := message["content"].(string)
+			toolMessages = append(toolMessages, toolMsg{id, content})
+		}
+	}
+	if len(toolMessages) != 2 {
+		t.Fatalf("tool messages = %d, want 2", len(toolMessages))
+	}
+	if toolMessages[0].id != "call-1" || toolMessages[0].content != "result-A" {
+		t.Fatalf("tool message 0 = %+v, want call-1/result-A", toolMessages[0])
+	}
+	if toolMessages[1].id != "call-2" || toolMessages[1].content != "result-B" {
+		t.Fatalf("tool message 1 = %+v, want call-2/result-B", toolMessages[1])
+	}
+}
+
 func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
 	var logs bytes.Buffer

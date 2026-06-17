@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"bqagent/internal/tools"
@@ -23,6 +24,9 @@ const (
 	DefaultContextResponseReserveTokens = 4000
 	DefaultContextKeepLastTurns         = 6
 	EarlierConversationSummaryPrefix    = "Summary of earlier conversation:\n"
+	// maxParallelTools caps how many independent tool calls in one assistant turn
+	// run concurrently.
+	maxParallelTools = 8
 )
 
 type MessageRecorder interface {
@@ -310,70 +314,88 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			return message.FinalContent(), updatedMessages, nil
 		}
 
-		for _, toolCall := range message.ToolCalls {
-			parsedArguments, err := parseArguments(toolCall.Function.Arguments)
-			if err != nil {
-				toolMessage, recordErr := a.appendToolError(updatedMessages, toolCall.ID, "Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err)
-				updatedMessages = toolMessage
+		// plan and run_skill recurse and mutate the working history in place, so a
+		// turn containing either runs sequentially. A turn of only regular tools
+		// runs them concurrently and appends results in the original order.
+		if a.hasSpecialToolCalls(message.ToolCalls, allowPlan) {
+			for _, toolCall := range message.ToolCalls {
+				parsedArguments, err := parseArguments(toolCall.Function.Arguments)
+				if err != nil {
+					toolMessage, recordErr := a.appendToolError(updatedMessages, toolCall.ID, "Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err)
+					updatedMessages = toolMessage
+					if recordErr != nil {
+						return "", updatedMessages, recordErr
+					}
+					messages = updatedMessages
+					continue
+				}
+				a.logf("[Tool] %s(%v)\n", toolCall.Function.Name, parsedArguments)
+
+				arguments, ok := parsedArguments.(map[string]any)
+				if !ok {
+					toolMessage, recordErr := a.appendToolError(updatedMessages, toolCall.ID, "Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
+					updatedMessages = toolMessage
+					if recordErr != nil {
+						return "", updatedMessages, recordErr
+					}
+					messages = updatedMessages
+					continue
+				}
+
+				if toolCall.Function.Name == "plan" && allowPlan && a.planner != nil {
+					result, updatedPlanMessages, planErr := a.executePlanTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
+					updatedMessages = updatedPlanMessages
+					messages = updatedMessages
+					if planErr != nil {
+						return "", updatedMessages, planErr
+					}
+					if result != "" {
+						return result, updatedMessages, nil
+					}
+					continue
+				}
+
+				if toolCall.Function.Name == "run_skill" {
+					updatedSkillMessages, skillErr := a.executeSkillTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
+					updatedMessages = updatedSkillMessages
+					messages = updatedMessages
+					if skillErr != nil {
+						return "", updatedMessages, skillErr
+					}
+					continue
+				}
+
+				_, toolResult := a.runRegularToolCall(ctx, toolCall)
+				updatedToolMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, toolResult)
+				updatedMessages = updatedToolMessages
+				messages = updatedMessages
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
 				}
-				messages = updatedMessages
-				continue
 			}
-			a.logf("[Tool] %s(%v)\n", toolCall.Function.Name, parsedArguments)
+		} else {
+			results := make([]string, len(message.ToolCalls))
+			semaphore := make(chan struct{}, maxParallelTools)
+			var waitGroup sync.WaitGroup
+			for index, toolCall := range message.ToolCalls {
+				waitGroup.Add(1)
+				go func(index int, toolCall ToolCall) {
+					defer waitGroup.Done()
+					semaphore <- struct{}{}
+					defer func() { <-semaphore }()
+					_, content := a.runRegularToolCall(ctx, toolCall)
+					results[index] = content
+				}(index, toolCall)
+			}
+			waitGroup.Wait()
 
-			arguments, ok := parsedArguments.(map[string]any)
-			if !ok {
-				toolMessage, recordErr := a.appendToolError(updatedMessages, toolCall.ID, "Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
-				updatedMessages = toolMessage
+			for index, toolCall := range message.ToolCalls {
+				updatedToolMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, results[index])
+				updatedMessages = updatedToolMessages
+				messages = updatedMessages
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
 				}
-				messages = updatedMessages
-				continue
-			}
-
-			if toolCall.Function.Name == "plan" && allowPlan && a.planner != nil {
-				result, updatedMessages, planErr := a.executePlanTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
-				messages = updatedMessages
-				if planErr != nil {
-					return "", updatedMessages, planErr
-				}
-				if result != "" {
-					return result, updatedMessages, nil
-				}
-				continue
-			}
-
-			if toolCall.Function.Name == "run_skill" {
-				updatedMessages, skillErr := a.executeSkillTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
-				messages = updatedMessages
-				if skillErr != nil {
-					return "", updatedMessages, skillErr
-				}
-				continue
-			}
-
-			toolStartedAt := time.Now()
-			toolResult := ""
-			var toolErr error
-			function, ok := a.functions[toolCall.Function.Name]
-			if !ok {
-				toolErr = fmt.Errorf("unknown tool '%s'", toolCall.Function.Name)
-				toolResult = fmt.Sprintf("Error: Unknown tool '%s'", toolCall.Function.Name)
-			} else {
-				toolResult, toolErr = function(ctx, arguments)
-				if toolErr != nil {
-					toolResult = fmt.Sprintf("Error: %v", toolErr)
-				}
-			}
-			logToolTiming(a.logWriter, toolCall.Function.Name, time.Since(toolStartedAt), toolErr)
-
-			updatedMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, toolResult)
-			messages = updatedMessages
-			if recordErr != nil {
-				return "", updatedMessages, recordErr
 			}
 		}
 	}
@@ -850,6 +872,70 @@ func (a *Agent) logf(format string, arguments ...any) {
 
 func (a *Agent) appendToolError(messages []map[string]any, toolCallID, format string, arguments ...any) ([]map[string]any, error) {
 	return a.appendToolMessage(messages, toolCallID, "Error: "+fmt.Sprintf(format, arguments...))
+}
+
+// hasSpecialToolCalls reports whether the batch contains a tool that must run
+// sequentially because it recurses and mutates the working history in place.
+func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall, allowPlan bool) bool {
+	for _, toolCall := range toolCalls {
+		switch toolCall.Function.Name {
+		case "run_skill":
+			return true
+		case "plan":
+			if allowPlan && a.planner != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// runRegularToolCall parses, dispatches, and times one non-special tool call,
+// returning its tool_call_id and the result content (errors are rendered as
+// "Error: ..." content, matching appendToolError). It is safe to call from
+// multiple goroutines; the log/progress writers are synchronized.
+func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (string, string) {
+	parsedArguments, err := parseArguments(toolCall.Function.Arguments)
+	if err != nil {
+		return toolCall.ID, fmt.Sprintf("Error: Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err)
+	}
+	a.logf("[Tool] %s(%v)\n", toolCall.Function.Name, parsedArguments)
+
+	arguments, ok := parsedArguments.(map[string]any)
+	if !ok {
+		return toolCall.ID, fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
+	}
+
+	toolStartedAt := time.Now()
+	toolResult := ""
+	var toolErr error
+	function, ok := a.functions[toolCall.Function.Name]
+	if !ok {
+		toolErr = fmt.Errorf("unknown tool '%s'", toolCall.Function.Name)
+		toolResult = fmt.Sprintf("Error: Unknown tool '%s'", toolCall.Function.Name)
+	} else {
+		toolResult, toolErr = function(ctx, arguments)
+		if toolErr != nil {
+			toolResult = fmt.Sprintf("Error: %v", toolErr)
+		}
+	}
+	logToolTiming(a.logWriter, toolCall.Function.Name, time.Since(toolStartedAt), toolErr)
+	if toolCall.Function.Name == "todo_write" && toolErr == nil {
+		a.writeProgress(toolResult)
+	}
+	return toolCall.ID, toolResult
+}
+
+// writeProgress surfaces a message to the progress writer (chat/channel/webui),
+// if one is configured.
+func (a *Agent) writeProgress(text string) {
+	if a.progressWriter == nil {
+		return
+	}
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	_, _ = io.WriteString(a.progressWriter, text+"\n")
 }
 
 func (a *Agent) appendToolMessage(messages []map[string]any, toolCallID, content string) ([]map[string]any, error) {

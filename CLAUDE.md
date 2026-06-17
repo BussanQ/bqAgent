@@ -82,7 +82,9 @@ The `Broker` can route a turn to an external coding agent instead of the built-i
 
 ## Built-in tools — `internal/tools`
 
-`execute_bash`, `read_file`, `write_file`, `web_search` (Tavily, with Firecrawl env vars as fallback), `web_fetch`, `install_skill`, `mem_save`/`mem_get`, plus `plan` and `run_skill` (added conditionally). Tools are assembled into a `Catalog` (definitions + a name→`Function` registry) so the CLI, chat, and server all expose the same set. To add a tool: add its `Definition` in `builtinDefinitions()` and its implementation to `RegistryWithOptions`.
+`execute_bash`, `read_file` (with optional `offset`/`limit`), `write_file`, `edit_file` (exact string replacement, like Claude Code's Edit), `grep` (pure-Go regexp content search; no external ripgrep), `glob` (filename match, supports `**`), `todo_write` (session task list; `todos` is a JSON-array string since the `JSONSchema` type only models flat string props), `web_search` (Tavily, with Firecrawl env vars as fallback), `web_fetch`, `install_skill`, `mem_save`/`mem_get`, plus `plan` and `run_skill` (added conditionally). Tools are assembled into a `Catalog` (definitions + a name→`Function` registry) so the CLI, chat, and server all expose the same set. To add a tool: add its `Definition` in `builtinDefinitions()` and its implementation to `RegistryWithOptions`.
+
+Within one assistant turn, independent tool calls run **concurrently** (capped at `maxParallelTools`), with results appended in the original order; a turn containing `plan` or `run_skill` falls back to sequential execution since those recurse and mutate the working history in place. `todo_write` results are mirrored to the agent's `ProgressWriter`.
 
 ## Conventions & gotchas
 

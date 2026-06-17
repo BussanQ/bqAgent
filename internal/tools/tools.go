@@ -37,6 +37,9 @@ type Options struct {
 	SearchAPIKey   string
 	SearchBaseURL  string
 	MemoryDir      string
+	// Todos backs the todo_write tool. When nil a fresh store is created so the
+	// tool still works (its list is just not shared with the caller).
+	Todos *TodoStore
 }
 
 type Catalog struct {
@@ -56,10 +59,18 @@ func RegistryWithOptions(options Options) map[string]Function {
 	searchProvider := firstConfigured(options.SearchProvider, searchProviderFromEnv())
 	searchAPIKey := firstConfigured(options.SearchAPIKey, searchAPIKeyFromEnv())
 	searchBaseURL := firstConfigured(options.SearchBaseURL, searchBaseURLFromEnv())
+	todoStore := options.Todos
+	if todoStore == nil {
+		todoStore = NewTodoStore()
+	}
 	return map[string]Function{
 		"execute_bash":  ExecuteBashInDir(options.WorkspaceRoot),
 		"read_file":     ReadFileFromRoot(options.WorkspaceRoot),
 		"write_file":    WriteFileToRoot(options.WorkspaceRoot),
+		"edit_file":     EditFileInRoot(options.WorkspaceRoot),
+		"grep":          GrepInRoot(options.WorkspaceRoot),
+		"glob":          GlobInRoot(options.WorkspaceRoot),
+		"todo_write":    TodoWriteWithStore(todoStore),
 		"web_search":    WebSearchWithProviderConfig(searchProvider, searchAPIKey, searchBaseURL),
 		"web_fetch":     WebFetch,
 		"install_skill": InstallSkillToRoot(options.WorkspaceRoot),
@@ -137,11 +148,13 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "read_file",
-				Description: "Read a file",
+				Description: "Read a file. Optionally pass offset (1-based start line) and limit (number of lines) to read part of a large file.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
-						"path": {Type: "string"},
+						"path":   {Type: "string"},
+						"offset": {Type: "string", Description: "Optional 1-based start line"},
+						"limit":  {Type: "string", Description: "Optional number of lines to read"},
 					},
 					Required: []string{"path"},
 				},
@@ -151,7 +164,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "write_file",
-				Description: "Write to a file",
+				Description: "Write to a file (overwrites the whole file). For changing part of an existing file, prefer edit_file.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
@@ -159,6 +172,70 @@ func builtinDefinitions() []Definition {
 						"content": {Type: "string"},
 					},
 					Required: []string{"path", "content"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "edit_file",
+				Description: "Replace an exact string in a file. old_string must match exactly once unless replace_all is true. Far more efficient than rewriting the whole file.",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"path":        {Type: "string"},
+						"old_string":  {Type: "string", Description: "Exact text to replace (include surrounding context to make it unique)"},
+						"new_string":  {Type: "string", Description: "Replacement text"},
+						"replace_all": {Type: "string", Description: "Optional true/false; replace every occurrence. Defaults to false."},
+					},
+					Required: []string{"path", "old_string", "new_string"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "grep",
+				Description: "Search file contents by regular expression (Go regexp). Returns path:line:text. Skips .git and binary files.",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"pattern":     {Type: "string", Description: "Go regexp to search for"},
+						"path":        {Type: "string", Description: "Optional file or directory to search (defaults to the workspace root)"},
+						"glob":        {Type: "string", Description: "Optional filename filter, e.g. *.go"},
+						"ignore_case": {Type: "string", Description: "Optional true/false for case-insensitive search"},
+						"max_results": {Type: "string", Description: "Optional cap on the number of matching lines"},
+					},
+					Required: []string{"pattern"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "glob",
+				Description: "Find files by glob pattern (supports ** for any depth, e.g. **/*.go). Returns paths, most-recently-modified first.",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"pattern": {Type: "string", Description: "Glob pattern, e.g. **/*.go"},
+						"path":    {Type: "string", Description: "Optional base directory (defaults to the workspace root)"},
+					},
+					Required: []string{"pattern"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "todo_write",
+				Description: "Create or update the task list for the current work. Pass todos as a JSON array string of {content, status, activeForm}, status in pending|in_progress|completed. Keep one item in_progress at a time.",
+				Parameters: JSONSchema{
+					Type: "object",
+					Properties: map[string]JSONSchemaProperty{
+						"todos": {Type: "string", Description: "JSON array of {content, status, activeForm}"},
+					},
+					Required: []string{"todos"},
 				},
 			},
 		},
