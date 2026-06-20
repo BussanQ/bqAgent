@@ -191,8 +191,11 @@ project/
 - `.agent/sessions/<session-id>/output.log`
   - human-readable execution log
 - `.agent/mcp.json`
-  - reserved path for future MCP-style tool definitions
-  - live MCP transport is **not** implemented yet
+  - MCP server config (`mcpServers` map). **Streamable HTTP** servers listed here are connected at
+    startup; their tools are discovered via `tools/list` and exposed to the model as
+    `mcp__<server>__<tool>`. Header values support `${ENV}` expansion (e.g. `Bearer ${DASHSCOPE_API_KEY}`).
+  - Discovery is best-effort: a server marked `"disabled": true`, missing, or unreachable is skipped
+    (a warning is logged) and never blocks startup. Only the Streamable HTTP transport is supported.
 
 ## Built-in tools
 
@@ -280,7 +283,7 @@ This is still intentionally a small implementation:
 
 - the one-shot background task path is not a daemon
 - no queue server
-- no live MCP runtime
+- MCP support is client-side and Streamable-HTTP-only (no stdio/SSE transports, no MCP server mode)
 - no vector memory
 
 ## Examples

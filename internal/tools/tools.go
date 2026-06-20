@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -21,6 +22,33 @@ type FunctionDefinition struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
 	Parameters  JSONSchema `json:"parameters"`
+	// RawParameters, when set, is sent to the model as the "parameters" JSON
+	// schema verbatim instead of the structured Parameters field. It lets MCP
+	// tools (whose input schemas are arbitrary nested JSON) pass through
+	// unchanged. Builtin tools leave it nil and keep using Parameters.
+	RawParameters json.RawMessage `json:"-"`
+}
+
+// MarshalJSON emits "parameters" from RawParameters when present, otherwise
+// from the structured Parameters. This is the only place tool serialization
+// diverges between builtin and MCP-sourced definitions.
+func (f FunctionDefinition) MarshalJSON() ([]byte, error) {
+	type alias struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
+	}
+	out := alias{Name: f.Name, Description: f.Description}
+	if len(f.RawParameters) > 0 {
+		out.Parameters = f.RawParameters
+	} else {
+		encoded, err := json.Marshal(f.Parameters)
+		if err != nil {
+			return nil, err
+		}
+		out.Parameters = encoded
+	}
+	return json.Marshal(out)
 }
 
 type Definition struct {
@@ -40,6 +68,11 @@ type Options struct {
 	// Todos backs the todo_write tool. When nil a fresh store is created so the
 	// tool still works (its list is just not shared with the caller).
 	Todos *TodoStore
+	// ExtraDefinitions / ExtraFunctions let an outside package (e.g. MCP) inject
+	// additional tools into the catalog without tools importing it. Builtin
+	// tools win on name conflict.
+	ExtraDefinitions []Definition
+	ExtraFunctions   map[string]Function
 }
 
 type Catalog struct {
@@ -63,7 +96,7 @@ func RegistryWithOptions(options Options) map[string]Function {
 	if todoStore == nil {
 		todoStore = NewTodoStore()
 	}
-	return map[string]Function{
+	registry := map[string]Function{
 		"execute_bash":  ExecuteBashInDir(options.WorkspaceRoot),
 		"read_file":     ReadFileFromRoot(options.WorkspaceRoot),
 		"write_file":    WriteFileToRoot(options.WorkspaceRoot),
@@ -77,6 +110,13 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"mem_save":      MemSaveInDir(options.MemoryDir),
 		"mem_get":       MemGetInDir(options.MemoryDir),
 	}
+	for name, function := range options.ExtraFunctions {
+		if _, exists := registry[name]; exists {
+			continue // builtin tools win on name conflict
+		}
+		registry[name] = function
+	}
+	return registry
 }
 
 func firstConfigured(values ...string) string {
@@ -92,6 +132,17 @@ func NewCatalog(options Options) Catalog {
 	definitions := Definitions()
 	if options.IncludePlan {
 		definitions = append(definitions, PlanDefinition())
+	}
+	existing := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		existing[definition.Function.Name] = struct{}{}
+	}
+	for _, definition := range options.ExtraDefinitions {
+		if _, clash := existing[definition.Function.Name]; clash {
+			continue // builtin tools win on name conflict
+		}
+		definitions = append(definitions, definition)
+		existing[definition.Function.Name] = struct{}{}
 	}
 	return Catalog{
 		definitions: definitions,

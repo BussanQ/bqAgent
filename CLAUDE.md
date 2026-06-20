@@ -78,7 +78,11 @@ Each session is a directory under `.agent/sessions/<id>/` with `meta.json` (stat
 
 ### External agents — `internal/extagent`
 
-The `Broker` can route a turn to an external coding agent instead of the built-in loop. A message starting with `/claude`, `/codex`, `/cursor`, or `/opencode` routes explicitly (and sticks to that agent for the session); `/default` switches back. Transports are **ACP** (JSON-RPC over the agent's stdio) or **CLI** (one-shot exec), auto-detected from `AGENT_<NAME>_ACP_CMD/ARGS` and `AGENT_<NAME>_CLI_CMD/ARGS`. `.agent/mcp.json` is a reserved path — live MCP transport is **not** implemented.
+The `Broker` can route a turn to an external coding agent instead of the built-in loop. A message starting with `/claude`, `/codex`, `/cursor`, or `/opencode` routes explicitly (and sticks to that agent for the session); `/default` switches back. Transports are **ACP** (JSON-RPC over the agent's stdio) or **CLI** (one-shot exec), auto-detected from `AGENT_<NAME>_ACP_CMD/ARGS` and `AGENT_<NAME>_CLI_CMD/ARGS`.
+
+### MCP client — `internal/mcp`
+
+`.agent/mcp.json` (`mcpServers` map) configures **Streamable HTTP** MCP servers. `runtime.Factory.Build` calls `mcp.Discover` (best-effort, bounded by a 15s timeout): for each enabled server it runs the MCP handshake (`initialize` + `notifications/initialized`), lists tools (`tools/list`), and adapts each into a `tools.Definition` (name `mcp__<server>__<tool>`, carrying the server's raw `inputSchema` via `FunctionDefinition.RawParameters`) plus a `tools.Function` that proxies to `tools/call`. These flow into the Catalog through `tools.Options.ExtraDefinitions/ExtraFunctions` (so `internal/tools` never imports `internal/mcp`). Header values support `${ENV}` expansion. A disabled/missing/unreachable server is logged and skipped. Only the Streamable HTTP transport is implemented — no stdio/SSE, no MCP server mode.
 
 ## Built-in tools — `internal/tools`
 

@@ -279,6 +279,9 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		Config:        appruntime.ConfigFromEnv(getenv),
 		WorkspaceRoot: ws.Root,
 		MemoryDir:     ws.WorkspaceMemoryDir(),
+		Getenv:        getenv,
+		MCPConfigPath: ws.MCPConfigPath(),
+		LogWriter:     stderr,
 	}.Build(true)
 	app := runtime.NewAgentWithProgress(outputWriter, stdout, systemPrompt, conversation.Recorder(), false)
 

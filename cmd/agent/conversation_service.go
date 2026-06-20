@@ -17,6 +17,9 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		Config:        appruntime.ConfigFromEnv(getenv),
 		WorkspaceRoot: ws.Root,
 		MemoryDir:     ws.WorkspaceMemoryDir(),
+		Getenv:        getenv,
+		MCPConfigPath: ws.MCPConfigPath(),
+		LogWriter:     statusWriter,
 	}.Build(includePlan)
 
 	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)

@@ -1,13 +1,21 @@
 package runtime
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/mcp"
 	"bqagent/internal/tools"
 )
+
+// mcpDiscoveryTimeout bounds the startup connect+list round trip to all
+// configured MCP servers so a slow or unreachable server cannot hang startup.
+const mcpDiscoveryTimeout = 15 * time.Second
 
 type Config struct {
 	APIKey                       string
@@ -31,6 +39,13 @@ type Factory struct {
 	Config        Config
 	WorkspaceRoot string
 	MemoryDir     string
+	// Getenv resolves environment variables for MCP config ${VAR} expansion.
+	// Nil falls back to os.Getenv inside the MCP loader.
+	Getenv func(string) string
+	// MCPConfigPath points at .agent/mcp.json. Empty disables MCP discovery.
+	MCPConfigPath string
+	// LogWriter receives best-effort MCP discovery warnings. Nil discards them.
+	LogWriter io.Writer
 }
 
 type Runtime struct {
@@ -118,13 +133,17 @@ func (factory Factory) Build(includePlan bool) Runtime {
 		planner = agent.NewPlanner(client, factory.Config.Model)
 	}
 
+	mcpDefinitions, mcpFunctions := factory.discoverMCPTools()
+
 	catalog := tools.NewCatalog(tools.Options{
-		WorkspaceRoot:  factory.WorkspaceRoot,
-		IncludePlan:    includePlan,
-		SearchProvider: factory.Config.SearchProvider,
-		SearchAPIKey:   factory.Config.SearchAPIKey,
-		SearchBaseURL:  factory.Config.SearchBaseURL,
-		MemoryDir:      factory.MemoryDir,
+		WorkspaceRoot:    factory.WorkspaceRoot,
+		IncludePlan:      includePlan,
+		SearchProvider:   factory.Config.SearchProvider,
+		SearchAPIKey:     factory.Config.SearchAPIKey,
+		SearchBaseURL:    factory.Config.SearchBaseURL,
+		MemoryDir:        factory.MemoryDir,
+		ExtraDefinitions: mcpDefinitions,
+		ExtraFunctions:   mcpFunctions,
 	})
 
 	return Runtime{
@@ -145,6 +164,30 @@ func (factory Factory) Build(includePlan bool) Runtime {
 			SummaryModel:          factory.Config.ContextSummaryModel,
 		},
 	}
+}
+
+// discoverMCPTools loads .agent/mcp.json and, when it lists enabled servers,
+// connects to each to discover its tools. It is best-effort: a missing config
+// or an unreachable server yields no tools and never aborts startup.
+func (factory Factory) discoverMCPTools() ([]tools.Definition, map[string]tools.Function) {
+	cfg, err := mcp.LoadConfig(factory.MCPConfigPath, factory.Getenv)
+	if err != nil {
+		factory.logf("[MCP] failed to load config: %v\n", err)
+		return nil, nil
+	}
+	if !cfg.HasEnabledServers() {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), mcpDiscoveryTimeout)
+	defer cancel()
+	return mcp.Discover(ctx, cfg, factory.Getenv, nil, factory.logf)
+}
+
+func (factory Factory) logf(format string, args ...any) {
+	if factory.LogWriter == nil {
+		return
+	}
+	fmt.Fprintf(factory.LogWriter, format, args...)
 }
 
 func (runtime Runtime) NewAgent(logWriter io.Writer, systemPrompt string, recorder agent.MessageRecorder, stream bool) *agent.Agent {

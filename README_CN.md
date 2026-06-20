@@ -191,8 +191,11 @@ project/
 - `.agent/sessions/<session-id>/output.log`
   - 人类可读的执行日志
 - `.agent/mcp.json`
-  - 为后续 MCP 风格工具定义预留的路径
-  - 当前 **还没有** 实现 live MCP 传输层
+  - MCP 服务器配置（`mcpServers` 映射）。这里配置的 **Streamable HTTP** 服务器会在启动时连接，
+    通过 `tools/list` 发现其工具，并以 `mcp__<server>__<tool>` 的形式暴露给大模型。header 值支持
+    `${ENV}` 展开（例如 `Bearer ${DASHSCOPE_API_KEY}`）。
+  - 发现过程是 best-effort：标记 `"disabled": true`、文件缺失或服务器不可达都会被跳过（仅记录一条
+    警告），不会阻塞启动。当前仅支持 Streamable HTTP 传输。
 
 ## 内建工具
 
@@ -274,7 +277,7 @@ project/
 
 - 最小后台任务模式本身仍然不是 daemon
 - 不做队列服务
-- 不做 live MCP runtime
+- MCP 仅做客户端、且只支持 Streamable HTTP 传输（不支持 stdio/SSE，也不做 MCP server 端）
 - 不做向量记忆
 
 ## 示例

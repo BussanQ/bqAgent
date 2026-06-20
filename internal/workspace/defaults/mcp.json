@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dashscope-websearch": {
+      "type": "streamable-http",
+      "url": "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DASHSCOPE_API_KEY}"
+      },
+      "disabled": true
+    }
+  }
+}

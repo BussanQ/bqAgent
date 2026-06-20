@@ -103,7 +103,7 @@ func (w *Workspace) workspaceSection() string {
 		"Rules directory: .agent/rules/*.md",
 		"Skills directory: .agent/skills/*/SKILL.md",
 		"Sessions directory: .agent/sessions/",
-		"MCP config: .agent/mcp.json (definition only; live MCP is not enabled yet)",
+		"MCP config: .agent/mcp.json (Streamable HTTP MCP servers listed here are connected at startup; their tools appear as mcp__<server>__<tool>)",
 	}
 	return strings.Join(lines, "\n")
 }
