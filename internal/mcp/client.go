@@ -135,16 +135,18 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 
 func flattenContent(parts []toolContent) string {
 	var builder strings.Builder
-	for _, part := range parts {
+	for i, part := range parts {
+		if i > 0 {
+			builder.WriteString("\n")
+		}
 		switch part.Type {
 		case "text", "":
 			builder.WriteString(part.Text)
 		default:
 			fmt.Fprintf(&builder, "[%s content omitted]", part.Type)
 		}
-		builder.WriteString("\n")
 	}
-	return strings.TrimRight(builder.String(), "\n")
+	return builder.String()
 }
 
 // call sends a request expecting a response and returns its result payload.
@@ -268,7 +270,7 @@ func readSSEResponse(body io.Reader, wantID int) (*rpcResponse, error) {
 		}
 		var decoded rpcResponse
 		if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
-			return nil, false, nil // skip non-JSON-RPC events
+			return nil, false, fmt.Errorf("decode SSE event: %w", err)
 		}
 		if decoded.ID != nil && *decoded.ID == wantID {
 			return &decoded, true, nil

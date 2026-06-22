@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 
@@ -28,6 +29,10 @@ func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpC
 	}
 	var definitions []tools.Definition
 	functions := make(map[string]tools.Function)
+	// seen maps a sanitized tool name to the "server/tool" that first claimed it,
+	// so collisions (two servers whose names differ only in special chars) are
+	// detected and skipped rather than silently producing a schema/function mismatch.
+	seen := make(map[string]string)
 
 	for name, server := range cfg.EnabledServers(getenv) {
 		client := NewClient(httpClient, server.URL, server.Headers)
@@ -43,6 +48,11 @@ func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpC
 		added := 0
 		for _, spec := range specs {
 			toolName := toolNamePrefix + sanitizeName(name) + "__" + sanitizeName(spec.Name)
+			if prior, clash := seen[toolName]; clash {
+				logf("[MCP] server %q tool %q: name %q collides with %s, skipping\n", name, spec.Name, toolName, prior)
+				continue
+			}
+			seen[toolName] = fmt.Sprintf("%q/%q", name, spec.Name)
 			definitions = append(definitions, tools.Definition{
 				Type: "function",
 				Function: tools.FunctionDefinition{
