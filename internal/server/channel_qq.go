@@ -93,12 +93,21 @@ func (channel *QQChannel) runGateway(ctx context.Context) {
 			return
 		}
 		if err != nil {
-			if errors.Is(err, qq.ErrGatewayInvalidSession) {
+			switch {
+			case errors.Is(err, qq.ErrGatewayReconnect):
+				// Expected: the QQ gateway periodically (~30 min) sends an op-7
+				// Reconnect to rotate the connection; reconnecting Resumes the
+				// session seamlessly. Reset backoff so we reconnect promptly and
+				// don't log noise on every cycle.
+				backoff = time.Second
+			case errors.Is(err, qq.ErrGatewayInvalidSession):
 				if clearErr := channel.gatewayStates.ClearSession(); clearErr != nil {
 					log.Printf("qq gateway session clear failed: %v", clearErr)
 				}
+				log.Printf("qq gateway connection ended: %v", err)
+			default:
+				log.Printf("qq gateway connection ended: %v", err)
 			}
-			log.Printf("qq gateway connection ended: %v", err)
 		}
 		select {
 		case <-ctx.Done():
