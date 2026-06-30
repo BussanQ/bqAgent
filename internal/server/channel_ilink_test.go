@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"bqagent/internal/agent"
 	"bqagent/internal/session"
+	"bqagent/internal/tools"
 	"bqagent/internal/weixin"
 )
 
@@ -283,6 +285,202 @@ func TestIlinkChannelConsumesFailedTurn(t *testing.T) {
 	if got := sendCount.Load(); got != 0 {
 		t.Fatalf("sendmessage count = %d, want 0 (ilink progress sender is no-op on turn failure)", got)
 	}
+}
+
+func TestIlinkChannelKeepsPollingWhilePeerTurnRuns(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"sleep 60"}`}}}},
+		{Content: "done"},
+	}}
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
+	functions := catalog.Registry()
+	toolStarted := make(chan struct{})
+	releaseTool := make(chan struct{})
+	functions["execute_bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
+		close(toolStarted)
+		select {
+		case <-releaseTool:
+			return "", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       functions,
+	})
+
+	var updatesCount atomic.Int32
+	sentMessages := make(chan weixin.SendMessageRequest, 4)
+	ilinkServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/ilink/bot/getupdates":
+			count := updatesCount.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			if count == 1 {
+				_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-run","msgs":[{"from_user_id":"user-1","client_id":"client-1","message_type":1,"context_token":"ctx-run","item_list":[{"type":1,"text_item":{"text":"run long command"}}]}]}`))
+				return
+			}
+			if count == 2 {
+				select {
+				case <-toolStarted:
+				case <-time.After(2 * time.Second):
+					_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-run","msgs":[]}`))
+					return
+				}
+				_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-busy","msgs":[{"from_user_id":"user-1","client_id":"client-1","message_type":1,"context_token":"ctx-busy","item_list":[{"type":1,"text_item":{"text":"are you done?"}}]}]}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-busy","msgs":[]}`))
+		case "/ilink/bot/sendmessage":
+			var payload weixin.SendMessageRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("failed to decode sendmessage payload: %v", err)
+			}
+			sentMessages <- payload
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"ret":0}`))
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ilinkServer.Close()
+
+	if err := weixin.NewTokenStore(root).Save(weixin.TokenState{BotToken: "token-1", BaseURL: ilinkServer.URL, AccountID: "account-1", UserID: "user-1"}); err != nil {
+		t.Fatalf("failed to seed token store: %v", err)
+	}
+	channel := NewIlinkChannel(service, weixin.NewClientWithBaseURL(ilinkServer.URL, "1.0.2", ilinkServer.Client()), weixin.NewTokenStore(root), weixin.NewPollerStateStore(root), weixin.NewChatStateStore(root))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	channel.Start(ctx)
+
+	select {
+	case <-toolStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for execute_bash to start")
+	}
+	busy := waitForIlinkSend(t, sentMessages)
+	if busy.Msg.ContextToken != "ctx-busy" {
+		t.Fatalf("busy ContextToken = %q, want ctx-busy", busy.Msg.ContextToken)
+	}
+	if got := busy.Msg.ItemList[0].TextItem.Text; got != channelTurnInProgressReply {
+		t.Fatalf("busy reply = %q, want %q", got, channelTurnInProgressReply)
+	}
+	close(releaseTool)
+	channel.WaitTurns()
+}
+
+func TestIlinkChannelStopCancelsRunningProcessGroup(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"sleep 60"}`}}}},
+		{Content: "stopped"},
+	}}
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
+	functions := catalog.Registry()
+	toolStarted := make(chan struct{})
+	toolCanceled := make(chan struct{})
+	functions["execute_bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
+		close(toolStarted)
+		<-ctx.Done()
+		close(toolCanceled)
+		return "", ctx.Err()
+	}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       functions,
+	})
+
+	var updatesCount atomic.Int32
+	sentMessages := make(chan weixin.SendMessageRequest, 4)
+	ilinkServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/ilink/bot/getupdates":
+			count := updatesCount.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			if count == 1 {
+				_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-run","msgs":[{"from_user_id":"user-1","client_id":"client-1","message_type":1,"context_token":"ctx-run","item_list":[{"type":1,"text_item":{"text":"run long command"}}]}]}`))
+				return
+			}
+			if count == 2 {
+				select {
+				case <-toolStarted:
+				case <-time.After(2 * time.Second):
+					_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-run","msgs":[]}`))
+					return
+				}
+				_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-stop","msgs":[{"from_user_id":"user-1","client_id":"client-1","message_type":1,"context_token":"ctx-stop","item_list":[{"type":1,"text_item":{"text":"/stop"}}]}]}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-stop","msgs":[]}`))
+		case "/ilink/bot/sendmessage":
+			var payload weixin.SendMessageRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("failed to decode sendmessage payload: %v", err)
+			}
+			sentMessages <- payload
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"ret":0}`))
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ilinkServer.Close()
+
+	if err := weixin.NewTokenStore(root).Save(weixin.TokenState{BotToken: "token-1", BaseURL: ilinkServer.URL, AccountID: "account-1", UserID: "user-1"}); err != nil {
+		t.Fatalf("failed to seed token store: %v", err)
+	}
+	channel := NewIlinkChannel(
+		service,
+		weixin.NewClientWithBaseURL(ilinkServer.URL, "1.0.2", ilinkServer.Client()),
+		weixin.NewTokenStore(root),
+		weixin.NewPollerStateStore(root),
+		weixin.NewChatStateStore(root),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	channel.Start(ctx)
+
+	select {
+	case <-toolStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for execute_bash to start")
+	}
+	var stopReply *weixin.SendMessageRequest
+	deadline := time.After(3 * time.Second)
+	for stopReply == nil {
+		select {
+		case sent := <-sentMessages:
+			if sent.Msg.ContextToken == "ctx-stop" {
+				copy := sent
+				stopReply = &copy
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for /stop reply")
+		}
+	}
+	if got := stopReply.Msg.ItemList[0].TextItem.Text; got != stopCommandStoppedReply {
+		t.Fatalf("stop reply = %q, want %q", got, stopCommandStoppedReply)
+	}
+	select {
+	case <-toolCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for process group cancellation")
+	}
+
+	pollerStore := weixin.NewPollerStateStore(root)
+	waitForCondition(t, 2*time.Second, func() bool {
+		state, err := pollerStore.Load()
+		return err == nil && state.GetUpdatesBuf == "cursor-stop"
+	}, "ilink poller cursor to advance after /stop")
+	channel.WaitTurns()
 }
 
 func waitForIlinkSend(t *testing.T, requests <-chan weixin.SendMessageRequest) weixin.SendMessageRequest {

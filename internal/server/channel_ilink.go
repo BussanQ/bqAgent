@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -25,6 +26,8 @@ type IlinkChannel struct {
 
 	mu            sync.Mutex
 	started       bool
+	baseCtx       context.Context
+	turns         sync.WaitGroup
 	pollerRunning bool
 	lastError     string
 	login         ilinkLoginState
@@ -92,6 +95,7 @@ func (channel *IlinkChannel) Start(ctx context.Context) {
 		return
 	}
 	channel.started = true
+	channel.baseCtx = ctx
 	channel.mu.Unlock()
 	go channel.run(ctx)
 }
@@ -253,14 +257,7 @@ func (channel *IlinkChannel) run(ctx context.Context) {
 				processed = false
 				break
 			}
-			turnCtx, turnCancel := context.WithTimeout(ctx, ChannelTurnTimeout())
-			err = channel.processUpdate(turnCtx, tokenState, update)
-			turnCancel()
-			if err != nil {
-				channel.setLastError(err.Error())
-				processed = false
-				break
-			}
+			channel.dispatchUpdate(tokenState, update)
 		}
 		if !processed {
 			if !sleepContext(ctx, ilinkIdleInterval) {
@@ -280,6 +277,38 @@ func (channel *IlinkChannel) run(ctx context.Context) {
 		}
 		channel.setLastError("")
 	}
+}
+
+func (channel *IlinkChannel) dispatchUpdate(tokenState weixin.TokenState, update weixin.Update) {
+	channel.mu.Lock()
+	baseCtx := channel.baseCtx
+	channel.mu.Unlock()
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	channel.turns.Add(1)
+	go func() {
+		defer channel.turns.Done()
+		turnCtx, cancel := context.WithTimeout(baseCtx, ChannelTurnTimeout())
+		defer cancel()
+		if err := channel.processUpdate(turnCtx, tokenState, update); err != nil {
+			if errors.Is(err, ErrChannelTurnInProgress) {
+				busyCtx, busyCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer busyCancel()
+				if sendErr := channel.sendIlinkText(busyCtx, tokenState, update, update.ContextToken, channelTurnInProgressReply); sendErr != nil {
+					channel.setLastError(sendErr.Error())
+				}
+				return
+			}
+			channel.setLastError(err.Error())
+			log.Printf("ilink update processing failed: %v", err)
+		}
+	}()
+}
+
+// WaitTurns blocks until all in-flight update goroutines finish.
+func (channel *IlinkChannel) WaitTurns() {
+	channel.turns.Wait()
 }
 
 func (channel *IlinkChannel) processUpdate(ctx context.Context, tokenState weixin.TokenState, update weixin.Update) error {
@@ -305,7 +334,7 @@ func (channel *IlinkChannel) processUpdate(ctx context.Context, tokenState weixi
 	)
 	images := channel.fetchImages(ctx, update)
 
-	_, err := channel.runner.Process(ctx, ChannelTurnOptions{
+	_, err := channel.runner.TryProcess(ctx, ChannelTurnOptions{
 		PeerKey:   update.UserID,
 		DedupeKey: update.ContextToken,
 		Message:   update.Text,
