@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1036,6 +1037,101 @@ func (client *sequenceChatClient) CreateChatCompletionStream(ctx context.Context
 	return client.CreateChatCompletion(ctx, model, messages, definitions)
 }
 
+func TestChannelTurnRunnerStopCancelsRunningProcessGroup(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"sleep 60"}`}}}},
+		{Content: "should not be used"},
+	}}
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
+	functions := catalog.Registry()
+	toolStarted := make(chan struct{})
+	toolCanceled := make(chan struct{})
+	functions["execute_bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
+		close(toolStarted)
+		<-ctx.Done()
+		close(toolCanceled)
+		return "", ctx.Err()
+	}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: catalog.Definitions(),
+		Functions:       functions,
+	})
+	runner := NewChannelTurnRunner(service)
+
+	var mu sync.Mutex
+	var state ChannelConversationState
+	loadState := func() (ChannelConversationState, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return state, nil
+	}
+	saveState := func(next ChannelConversationState) error {
+		mu.Lock()
+		defer mu.Unlock()
+		state = next
+		return nil
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := runner.Process(context.Background(), ChannelTurnOptions{
+			PeerKey:   "peer-1",
+			DedupeKey: "ctx-1",
+			Message:   "run a shell command",
+			LoadState: loadState,
+			SaveState: saveState,
+			SendReply: func(context.Context, string) error { return nil },
+		})
+		firstDone <- err
+	}()
+
+	select {
+	case <-toolStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for execute_bash to start")
+	}
+
+	var stopReplies []string
+	stopState, stopErr := runner.TryProcess(context.Background(), ChannelTurnOptions{
+		PeerKey:   "peer-1",
+		DedupeKey: "ctx-stop",
+		Message:   "/stop",
+		LoadState: loadState,
+		SaveState: saveState,
+		SendReply: func(_ context.Context, reply string) error {
+			stopReplies = append(stopReplies, reply)
+			return nil
+		},
+	})
+	if stopErr != nil {
+		t.Fatalf("/stop returned error: %v", stopErr)
+	}
+	if len(stopReplies) != 1 || stopReplies[0] != stopCommandStoppedReply {
+		t.Fatalf("stop replies = %#v, want stopped reply", stopReplies)
+	}
+	if stopState.LastCompletedKey != "ctx-stop" {
+		t.Fatalf("stop LastCompletedKey = %q, want ctx-stop", stopState.LastCompletedKey)
+	}
+
+	select {
+	case <-toolCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for execute_bash context cancellation")
+	}
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first turn returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first turn to finish")
+	}
+}
+
 func TestChannelTurnRunnerReleasesPeerLockAfterToolTimeout(t *testing.T) {
 	root := t.TempDir()
 	client := &sequenceChatClient{responses: []agent.AssistantMessage{
@@ -1066,7 +1162,7 @@ func TestChannelTurnRunnerReleasesPeerLockAfterToolTimeout(t *testing.T) {
 
 	firstCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, firstErr := runner.Process(firstCtx, ChannelTurnOptions{
+	firstState, firstErr := runner.Process(firstCtx, ChannelTurnOptions{
 		PeerKey:   "peer-1",
 		DedupeKey: "ctx-1",
 		Message:   "first",
@@ -1074,11 +1170,14 @@ func TestChannelTurnRunnerReleasesPeerLockAfterToolTimeout(t *testing.T) {
 		SaveState: saveState,
 		SendReply: func(context.Context, string) error { return nil },
 	})
-	if firstErr == nil {
-		t.Fatal("first Process returned nil error, want timeout")
+	if firstErr != nil {
+		t.Fatalf("first Process returned error: %v", firstErr)
 	}
-	if !errors.Is(firstErr, context.DeadlineExceeded) {
-		t.Fatalf("first error = %v, want context deadline exceeded", firstErr)
+	if firstState.LastCompletedKey != "ctx-1" {
+		t.Fatalf("first LastCompletedKey = %q, want ctx-1", firstState.LastCompletedKey)
+	}
+	if !strings.Contains(firstState.LastError, context.DeadlineExceeded.Error()) {
+		t.Fatalf("first LastError = %q, want deadline error", firstState.LastError)
 	}
 
 	secondCtx, secondCancel := context.WithTimeout(context.Background(), time.Second)

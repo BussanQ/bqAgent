@@ -218,6 +218,73 @@ func TestIlinkChannelProcessesConversation(t *testing.T) {
 	}
 }
 
+func TestIlinkChannelConsumesFailedTurn(t *testing.T) {
+	var llmCount atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		llmCount.Add(1)
+		writeError(writer, http.StatusInternalServerError, chatResponse{Error: "boom"})
+	}))
+	defer llmServer.Close()
+
+	var updatesCount atomic.Int32
+	var sendCount atomic.Int32
+	ilinkServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/ilink/bot/getupdates":
+			count := updatesCount.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			if count == 1 {
+				_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-failed","msgs":[{"from_user_id":"user-1","client_id":"client-1","message_type":1,"context_token":"ctx-failed","item_list":[{"type":1,"text_item":{"text":"run long command"}}]}]}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-failed","msgs":[]}`))
+		case "/ilink/bot/sendmessage":
+			sendCount.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"ret":0}`))
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ilinkServer.Close()
+
+	root := t.TempDir()
+	if err := weixin.NewTokenStore(root).Save(weixin.TokenState{BotToken: "token-1", BaseURL: ilinkServer.URL, AccountID: "account-1", UserID: "user-1"}); err != nil {
+		t.Fatalf("failed to seed token store: %v", err)
+	}
+	service := newTestService(root, llmServer.URL)
+	channel := NewIlinkChannel(
+		service,
+		weixin.NewClientWithBaseURL(ilinkServer.URL, "1.0.2", ilinkServer.Client()),
+		weixin.NewTokenStore(root),
+		weixin.NewPollerStateStore(root),
+		weixin.NewChatStateStore(root),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	channel.Start(ctx)
+
+	chatStore := weixin.NewChatStateStore(root)
+	waitForCondition(t, 2*time.Second, func() bool {
+		state, err := chatStore.Load("user-1")
+		return err == nil && state.LastCompletedContextToken == "ctx-failed" && state.PendingReply == "" && state.LastError != ""
+	}, "failed ilink turn to be consumed")
+
+	pollerStore := weixin.NewPollerStateStore(root)
+	waitForCondition(t, 2*time.Second, func() bool {
+		state, err := pollerStore.Load()
+		return err == nil && state.GetUpdatesBuf == "cursor-failed"
+	}, "ilink poller cursor to advance after failed turn")
+
+	waitForCondition(t, 2*time.Second, func() bool { return updatesCount.Load() >= 2 }, "poller to continue after failed turn")
+	if got := llmCount.Load(); got != 1 {
+		t.Fatalf("LLM request count = %d, want 1 (failed update must not replay)", got)
+	}
+	if got := sendCount.Load(); got != 0 {
+		t.Fatalf("sendmessage count = %d, want 0 (ilink progress sender is no-op on turn failure)", got)
+	}
+}
+
 func waitForIlinkSend(t *testing.T, requests <-chan weixin.SendMessageRequest) weixin.SendMessageRequest {
 	t.Helper()
 	select {

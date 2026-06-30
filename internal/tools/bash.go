@@ -48,6 +48,10 @@ func ExecuteBashInDir(root string) Function {
 		cmd.Stderr = &stderr
 
 		err = cmd.Run()
+		output := stdout.String() + stderr.String()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return output, ctxErr
+		}
 		if err != nil {
 			var exitErr *exec.ExitError
 			if !errors.As(err, &exitErr) {
@@ -55,7 +59,7 @@ func ExecuteBashInDir(root string) Function {
 			}
 		}
 
-		return stdout.String() + stderr.String(), nil
+		return output, nil
 	}
 }
 

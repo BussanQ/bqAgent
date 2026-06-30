@@ -114,6 +114,29 @@ func (runner *ChannelTurnRunner) TryProcess(ctx context.Context, options Channel
 	return runner.process(ctx, options, false)
 }
 
+func (runner *ChannelTurnRunner) processStopCommand(ctx context.Context, options ChannelTurnOptions, peerKey string, dedupeKey string) (ChannelConversationState, error) {
+	state, err := options.LoadState()
+	if err != nil {
+		return ChannelConversationState{}, err
+	}
+	if dedupeKey != "" && dedupeKey == state.LastCompletedKey {
+		return state, nil
+	}
+	reply := runner.service.stopProcessGroupReply(peerKey, state.SessionID)
+	if err := options.SendReply(ctx, reply); err != nil {
+		state.LastError = err.Error()
+		_ = options.SaveState(state)
+		return state, err
+	}
+	if dedupeKey != "" {
+		state.LastCompletedKey = dedupeKey
+	}
+	state.PendingKey = ""
+	state.PendingReply = ""
+	state.LastError = ""
+	return state, options.SaveState(state)
+}
+
 func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTurnOptions, waitForLock bool) (ChannelConversationState, error) {
 	if runner == nil || runner.service == nil {
 		return ChannelConversationState{}, fmt.Errorf("service is required")
@@ -130,6 +153,10 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 
 	var state ChannelConversationState
 	peerKey := strings.TrimSpace(options.PeerKey)
+	dedupeKey := strings.TrimSpace(options.DedupeKey)
+	if isStopCommand(options.Message) {
+		return runner.processStopCommand(ctx, options, peerKey, dedupeKey)
+	}
 	var unlock func()
 	if waitForLock {
 		unlock = runner.locker.Lock(peerKey)
@@ -151,7 +178,6 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 	if err != nil {
 		return ChannelConversationState{}, err
 	}
-	dedupeKey := strings.TrimSpace(options.DedupeKey)
 	if dedupeKey != "" && dedupeKey == state.LastCompletedKey {
 		return state, nil
 	}
@@ -171,15 +197,21 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 	}
 
 	progressWriter := newChannelProgressWriter(ctx, options.progressSender())
-	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message, Images: options.Images}, TurnOptions{ProgressWriter: progressWriter})
+	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message, PeerKey: peerKey, Images: options.Images}, TurnOptions{ProgressWriter: progressWriter})
 	if err != nil {
 		state.LastError = err.Error()
 		if response.SessionID != "" {
 			state.SessionID = response.SessionID
 		}
+		notifyChannelTurnFailure(options, err)
+		if dedupeKey != "" {
+			state.LastCompletedKey = dedupeKey
+			state.PendingKey = ""
+			state.PendingReply = ""
+			return state, options.SaveState(state)
+		}
 		// Best-effort persist; the turn error below is the one that matters.
 		_ = options.SaveState(state)
-		notifyChannelTurnFailure(options, err)
 		return state, err
 	}
 

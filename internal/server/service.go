@@ -45,11 +45,15 @@ type Service struct {
 	externalBroker      *extagent.Broker
 	memoryAppend        func(task, result string) error
 	context             agent.ContextConfig
+	processGroupStops   *processGroupStopRegistry
 }
 
 type TurnRequest struct {
 	SessionID string `json:"session_id"`
 	Message   string `json:"message"`
+	// PeerKey identifies the async channel peer that owns this turn. It is used
+	// for control commands such as /stop and is not accepted from HTTP JSON.
+	PeerKey string `json:"-"`
 	// Images are decoded inbound images attached to this turn. They are set by
 	// channels (e.g. iLink) and sent to the model as a multimodal user message.
 	Images []agent.ImageAttachment `json:"-"`
@@ -93,6 +97,7 @@ func NewService(options ServiceOptions) *Service {
 		externalBroker:      options.ExternalBroker,
 		memoryAppend:        options.MemoryAppend,
 		context:             options.Context,
+		processGroupStops:   newProcessGroupStopRegistry(),
 	}
 }
 
@@ -100,8 +105,48 @@ func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (Tu
 	return service.HandleTurnWithOptions(ctx, request, TurnOptions{})
 }
 
+func (service *Service) stopProcessGroupReply(peerKey string, sessionID string) string {
+	if service.stopProcessGroup(peerKey, sessionID) > 0 {
+		return stopCommandStoppedReply
+	}
+	return stopCommandIdleReply
+}
+
+func (service *Service) stopProcessGroup(peerKey string, sessionID string) int {
+	if service == nil || service.processGroupStops == nil {
+		return 0
+	}
+	return service.processGroupStops.Stop(stopKeys(peerKey, sessionID))
+}
+
+func (service *Service) functionsForTurn(peerKey string, sessionID string) map[string]tools.Function {
+	functions := cloneFunctions(service.functions)
+	original, ok := functions["execute_bash"]
+	keys := stopKeys(peerKey, sessionID)
+	if !ok || len(keys) == 0 || service.processGroupStops == nil {
+		return functions
+	}
+	functions["execute_bash"] = func(ctx context.Context, args map[string]any) (string, error) {
+		toolCtx, cancel := context.WithCancel(ctx)
+		unregister := service.processGroupStops.Register(keys, commandFromArgs(args), cancel)
+		defer unregister()
+		defer cancel()
+		return original(toolCtx, args)
+	}
+	return functions
+}
+
+func commandFromArgs(args map[string]any) string {
+	command, _ := args["command"].(string)
+	return command
+}
+
 func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnRequest, options TurnOptions) (TurnResponse, error) {
 	message := strings.TrimSpace(request.Message)
+	if isStopCommand(message) {
+		reply := service.stopProcessGroupReply(request.PeerKey, request.SessionID)
+		return TurnResponse{SessionID: strings.TrimSpace(request.SessionID), Reply: reply}, nil
+	}
 	if message == "" && len(request.Images) == 0 {
 		return TurnResponse{}, fmt.Errorf("message is required")
 	}
@@ -226,11 +271,12 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		}
 	}
 
+	functions := service.functionsForTurn(request.PeerKey, conversation.Session.ID())
 	app := agent.NewWithOptions(service.client, service.model, agent.Options{
 		SystemPrompt:    systemPrompt,
 		LogWriter:       logWriter,
 		ToolDefinitions: service.toolDefinitions,
-		Functions:       service.functions,
+		Functions:       functions,
 		Planner:         service.planner,
 		Recorder:        conversation.Recorder(),
 		Stream:          options.Stream,
