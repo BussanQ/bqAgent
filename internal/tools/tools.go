@@ -185,7 +185,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "execute_bash",
-				Description: "Execute a bash command",
+				Description: "Execute a bash command. Do not repeatedly retry package/toolchain install or repair commands after they fail or time out; fall back to generating output or ask the user to repair the environment.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{

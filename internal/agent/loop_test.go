@@ -125,6 +125,42 @@ func TestRunReturnsUnknownToolErrorToLoop(t *testing.T) {
 	}
 }
 
+func TestRunRegularToolErrorPreservesOutput(t *testing.T) {
+	client := &stubClient{
+		responses: []AssistantMessage{
+			{ToolCalls: []ToolCall{{ID: "tc-1", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"rustup install stable"}`}}}},
+			{Content: "fallback"},
+		},
+	}
+	app := NewWithOptions(client, "", Options{
+		Functions: map[string]tools.Function{
+			"execute_bash": func(context.Context, map[string]any) (string, error) {
+				return "stdout before timeout\nstderr detail", context.DeadlineExceeded
+			},
+		},
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "execute_bash"}}},
+	})
+
+	result, err := app.Run(context.Background(), "run", 2)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result != "fallback" {
+		t.Fatalf("Run returned %q, want fallback", result)
+	}
+	toolMessages := extractToolMessages(client.messages[1])
+	if len(toolMessages) != 1 {
+		t.Fatalf("saw %d tool messages, want 1", len(toolMessages))
+	}
+	content, _ := toolMessages[0]["content"].(string)
+	if !strings.Contains(content, "Error: context deadline exceeded") {
+		t.Fatalf("tool content = %q, want deadline error", content)
+	}
+	if !strings.Contains(content, "stdout before timeout") || !strings.Contains(content, "stderr detail") {
+		t.Fatalf("tool content = %q, want preserved output", content)
+	}
+}
+
 func TestRunReturnsMalformedArgumentsAsToolError(t *testing.T) {
 	client := &stubClient{
 		responses: []AssistantMessage{

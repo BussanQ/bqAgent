@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -46,6 +47,7 @@ type Service struct {
 	memoryAppend        func(task, result string) error
 	context             agent.ContextConfig
 	processGroupStops   *processGroupStopRegistry
+	environmentCommands *environmentCommandGuard
 }
 
 type TurnRequest struct {
@@ -98,6 +100,7 @@ func NewService(options ServiceOptions) *Service {
 		memoryAppend:        options.MemoryAppend,
 		context:             options.Context,
 		processGroupStops:   newProcessGroupStopRegistry(),
+		environmentCommands: newEnvironmentCommandGuard(0),
 	}
 }
 
@@ -127,11 +130,29 @@ func (service *Service) functionsForTurn(peerKey string, sessionID string) map[s
 		return functions
 	}
 	functions["execute_bash"] = func(ctx context.Context, args map[string]any) (string, error) {
+		command := commandFromArgs(args)
+		if message, blocked := service.environmentCommands.BlockedMessage(keys, command); blocked {
+			return message, fmt.Errorf("environment install/repair command blocked after previous failure")
+		}
 		toolCtx, cancel := context.WithCancel(ctx)
-		unregister := service.processGroupStops.Register(keys, commandFromArgs(args), cancel)
-		defer unregister()
 		defer cancel()
-		return original(toolCtx, args)
+		tracked := false
+		if _, ok := classifyEnvironmentCommand(command); ok {
+			tracked = true
+			timeoutCtx, timeoutCancel := context.WithTimeout(toolCtx, service.environmentCommands.CommandTimeout())
+			defer timeoutCancel()
+			toolCtx = timeoutCtx
+		}
+		unregister := service.processGroupStops.Register(keys, command, cancel)
+		defer unregister()
+		output, err := original(toolCtx, args)
+		if tracked {
+			service.environmentCommands.Record(keys, command, output, err)
+			if err != nil && errors.Is(err, context.DeadlineExceeded) {
+				return output, fmt.Errorf("%s", environmentCommandTimeoutMessage(command, service.environmentCommands.CommandTimeout()))
+			}
+		}
+		return output, err
 	}
 	return functions
 }

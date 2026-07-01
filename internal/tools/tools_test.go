@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -19,7 +21,7 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		description string
 		required    []string
 	}{
-		{index: 0, name: "execute_bash", description: "Execute a bash command", required: []string{"command"}},
+		{index: 0, name: "execute_bash", description: "Execute a bash command. Do not repeatedly retry package/toolchain install or repair commands after they fail or time out; fall back to generating output or ask the user to repair the environment.", required: []string{"command"}},
 		{index: 1, name: "read_file", description: "Read a file. Optionally pass offset (1-based start line) and limit (number of lines) to read part of a large file.", required: []string{"path"}},
 		{index: 2, name: "write_file", description: "Write to a file (overwrites the whole file). For changing part of an existing file, prefer edit_file.", required: []string{"path", "content"}},
 		{index: 3, name: "edit_file", description: "Replace an exact string in a file. old_string must match exactly once unless replace_all is true. Far more efficient than rewriting the whole file.", required: []string{"path", "old_string", "new_string"}},
@@ -124,6 +126,20 @@ func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 	}
 	if _, ok := registry["install_skill"]; !ok {
 		t.Fatal("registry missing install_skill")
+	}
+}
+
+func TestExecuteBashReturnsErrorAndOutputOnNonZeroExit(t *testing.T) {
+	command := "printf sentinel; exit 7"
+	if runtime.GOOS == "windows" {
+		command = "echo sentinel && exit /b 7"
+	}
+	output, err := ExecuteBash(context.Background(), map[string]any{"command": command})
+	if err == nil {
+		t.Fatal("expected non-zero exit error")
+	}
+	if !strings.Contains(output, "sentinel") {
+		t.Fatalf("output = %q, want sentinel", output)
 	}
 }
 

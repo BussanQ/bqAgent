@@ -916,7 +916,7 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 	} else {
 		toolResult, toolErr = function(ctx, arguments)
 		if toolErr != nil {
-			toolResult = fmt.Sprintf("Error: %v", toolErr)
+			toolResult = formatToolError(toolErr, toolResult)
 		}
 	}
 	logToolTiming(a.logWriter, toolCall.Function.Name, time.Since(toolStartedAt), toolErr)
@@ -924,6 +924,20 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 		a.writeProgress(toolResult)
 	}
 	return toolCall.ID, toolResult
+}
+
+const maxToolErrorOutputChars = 12 * 1024
+
+func formatToolError(err error, output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return fmt.Sprintf("Error: %v", err)
+	}
+	if len(output) > maxToolErrorOutputChars {
+		output = output[len(output)-maxToolErrorOutputChars:]
+		output = "... [truncated]\n" + output
+	}
+	return fmt.Sprintf("Error: %v\n\nOutput before failure:\n%s", err, output)
 }
 
 // writeProgress surfaces a message to the progress writer (chat/channel/webui),

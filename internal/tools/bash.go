@@ -54,9 +54,10 @@ func ExecuteBashInDir(root string) Function {
 		}
 		if err != nil {
 			var exitErr *exec.ExitError
-			if !errors.As(err, &exitErr) {
-				return "", fmt.Errorf("command execution failed: %w", err)
+			if errors.As(err, &exitErr) {
+				return output, fmt.Errorf("command exited with status %d", exitErr.ExitCode())
 			}
+			return "", fmt.Errorf("command execution failed: %w", err)
 		}
 
 		return output, nil
