@@ -263,6 +263,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 	}
 
 	definitions := a.toolDefinitionsForRun(allowPlan)
+	guard := newNoProgressGuard()
 	actualIterations := 0
 	defer func() {
 		logTurnTiming(a.logWriter, actualIterations, allowPlan, time.Since(startedAt), err)
@@ -279,8 +280,10 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			message    AssistantMessage
 			requestErr error
 		)
+		requestMessages = guard.appendFinalizationReminder(requestMessages)
+		requestDefinitions := guard.requestDefinitions(definitions)
 		if a.stream {
-			message, requestErr = a.client.CreateChatCompletionStream(ctx, a.model, requestMessages, definitions, func(chunk string) {
+			message, requestErr = a.client.CreateChatCompletionStream(ctx, a.model, requestMessages, requestDefinitions, func(chunk string) {
 				sink := a.tokenSink
 				if sink == nil {
 					sink = a.logWriter
@@ -290,7 +293,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 			})
 		} else {
-			message, requestErr = a.client.CreateChatCompletion(ctx, a.model, requestMessages, definitions)
+			message, requestErr = a.client.CreateChatCompletion(ctx, a.model, requestMessages, requestDefinitions)
 		}
 		if requestErr != nil {
 			err = requestErr
@@ -312,6 +315,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		if len(message.ToolCalls) == 0 {
 			return message.FinalContent(), updatedMessages, nil
+		}
+		if guard.finalizing {
+			return guard.stoppedMessage(), updatedMessages, nil
 		}
 
 		// plan and run_skill recurse and mutate the working history in place, so a
@@ -365,7 +371,12 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					continue
 				}
 
-				_, toolResult := a.runRegularToolCall(ctx, toolCall)
+				decision := guard.before(toolCall)
+				toolResult := decision.Content
+				if !decision.Skipped {
+					_, toolResult = a.runRegularToolCall(ctx, toolCall)
+					guard.after(toolCall, decision, toolResult)
+				}
 				updatedToolMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, toolResult)
 				updatedMessages = updatedToolMessages
 				messages = updatedMessages
@@ -375,9 +386,16 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 		} else {
 			results := make([]string, len(message.ToolCalls))
+			decisions := make([]toolExecutionDecision, len(message.ToolCalls))
 			semaphore := make(chan struct{}, maxParallelTools)
 			var waitGroup sync.WaitGroup
 			for index, toolCall := range message.ToolCalls {
+				decision := guard.before(toolCall)
+				decisions[index] = decision
+				if decision.Skipped {
+					results[index] = decision.Content
+					continue
+				}
 				waitGroup.Add(1)
 				go func(index int, toolCall ToolCall) {
 					defer waitGroup.Done()
@@ -388,6 +406,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}(index, toolCall)
 			}
 			waitGroup.Wait()
+			for index, toolCall := range message.ToolCalls {
+				guard.after(toolCall, decisions[index], results[index])
+			}
 
 			for index, toolCall := range message.ToolCalls {
 				updatedToolMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, results[index])

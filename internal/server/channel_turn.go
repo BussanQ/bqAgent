@@ -25,7 +25,12 @@ const (
 // the client's own timeout.
 const defaultChannelTurnTimeout = 10 * time.Minute
 
+// DefaultChannelMaxIterations bounds one async-channel agent turn. CLI and
+// direct HTTP keep using the larger AGENT_MAX_ITERATIONS runaway valve.
+const DefaultChannelMaxIterations = 64
+
 var channelTurnTimeoutNanos atomic.Int64
+var channelMaxIterations atomic.Int64
 
 func ChannelTurnTimeout() time.Duration {
 	if nanos := channelTurnTimeoutNanos.Load(); nanos > 0 {
@@ -40,6 +45,21 @@ func SetChannelTurnTimeout(timeout time.Duration) {
 		return
 	}
 	channelTurnTimeoutNanos.Store(int64(timeout))
+}
+
+func ChannelMaxIterations() int {
+	if value := channelMaxIterations.Load(); value > 0 {
+		return int(value)
+	}
+	return DefaultChannelMaxIterations
+}
+
+func SetChannelMaxIterations(maxIterations int) {
+	if maxIterations <= 0 {
+		channelMaxIterations.Store(0)
+		return
+	}
+	channelMaxIterations.Store(int64(maxIterations))
 }
 
 type ChannelConversationState struct {
@@ -197,7 +217,7 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 	}
 
 	progressWriter := newChannelProgressWriter(ctx, options.progressSender())
-	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message, PeerKey: peerKey, Images: options.Images}, TurnOptions{ProgressWriter: progressWriter})
+	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message, PeerKey: peerKey, Images: options.Images}, TurnOptions{ProgressWriter: progressWriter, MaxIterations: ChannelMaxIterations()})
 	if err != nil {
 		state.LastError = err.Error()
 		if response.SessionID != "" {

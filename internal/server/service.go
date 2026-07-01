@@ -77,6 +77,7 @@ type TurnOptions struct {
 	ProgressWriter io.Writer
 	TokenSink      io.Writer
 	Stream         bool
+	MaxIterations  int
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -307,7 +308,11 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		Context:         service.context,
 	})
 
-	result, _, err := app.RunConversationTurn(ctx, conversation.Messages, service.maxTurns)
+	maxTurns := service.maxTurns
+	if options.MaxIterations > 0 {
+		maxTurns = options.MaxIterations
+	}
+	result, _, err := app.RunConversationTurn(ctx, conversation.Messages, maxTurns)
 	if err != nil {
 		writeTurnError(turnErrorWriter, err)
 		markConversationFailed(conversation, err)

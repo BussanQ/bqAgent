@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	appserver "bqagent/internal/server"
 )
 
 func TestRunWithServerBackgroundLaunchesChild(t *testing.T) {
@@ -99,6 +102,54 @@ func TestRunServerRequiresAPIKey(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "OPENAI_API_KEY is required for server mode") {
 		t.Fatalf("stderr = %q, want missing api key error", stderr.String())
+	}
+}
+
+func TestConfigureServerChannelLimitsReadsMaxIterations(t *testing.T) {
+	previousMax := appserver.ChannelMaxIterations()
+	previousTimeout := appserver.ChannelTurnTimeout()
+	defer appserver.SetChannelMaxIterations(previousMax)
+	defer appserver.SetChannelTurnTimeout(previousTimeout)
+
+	var stderr bytes.Buffer
+	configureServerChannelLimits(&stderr, func(key string) string {
+		switch key {
+		case "CHANNEL_AGENT_MAX_ITERATIONS":
+			return "12"
+		case "CHANNEL_TURN_TIMEOUT":
+			return "3s"
+		default:
+			return ""
+		}
+	})
+	if appserver.ChannelMaxIterations() != 12 {
+		t.Fatalf("ChannelMaxIterations = %d, want 12", appserver.ChannelMaxIterations())
+	}
+	if appserver.ChannelTurnTimeout() != 3*time.Second {
+		t.Fatalf("ChannelTurnTimeout = %s, want 3s", appserver.ChannelTurnTimeout())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestConfigureServerChannelLimitsWarnsOnInvalidMaxIterations(t *testing.T) {
+	previousMax := appserver.ChannelMaxIterations()
+	defer appserver.SetChannelMaxIterations(previousMax)
+	appserver.SetChannelMaxIterations(9)
+
+	var stderr bytes.Buffer
+	configureServerChannelLimits(&stderr, func(key string) string {
+		if key == "CHANNEL_AGENT_MAX_ITERATIONS" {
+			return "bad"
+		}
+		return ""
+	})
+	if appserver.ChannelMaxIterations() != 9 {
+		t.Fatalf("ChannelMaxIterations = %d, want unchanged 9", appserver.ChannelMaxIterations())
+	}
+	if !strings.Contains(stderr.String(), "invalid CHANNEL_AGENT_MAX_ITERATIONS") {
+		t.Fatalf("stderr = %q, want invalid max iterations warning", stderr.String())
 	}
 }
 

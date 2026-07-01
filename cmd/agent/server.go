@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,13 +50,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 		return 1
 	}
 
-	if raw := strings.TrimSpace(getenv("CHANNEL_TURN_TIMEOUT")); raw != "" {
-		if timeout, err := time.ParseDuration(raw); err == nil && timeout > 0 {
-			appserver.SetChannelTurnTimeout(timeout)
-		} else {
-			fmt.Fprintf(stderr, "invalid CHANNEL_TURN_TIMEOUT %q, using default\n", raw)
-		}
-	}
+	configureServerChannelLimits(stderr, getenv)
 
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, stdout)
 	defer externalBroker.Close()
@@ -114,6 +109,23 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 		return 1
 	}
 	return 0
+}
+
+func configureServerChannelLimits(stderr io.Writer, getenv func(string) string) {
+	if raw := strings.TrimSpace(getenv("CHANNEL_TURN_TIMEOUT")); raw != "" {
+		if timeout, err := time.ParseDuration(raw); err == nil && timeout > 0 {
+			appserver.SetChannelTurnTimeout(timeout)
+		} else {
+			fmt.Fprintf(stderr, "invalid CHANNEL_TURN_TIMEOUT %q, using default\n", raw)
+		}
+	}
+	if raw := strings.TrimSpace(getenv("CHANNEL_AGENT_MAX_ITERATIONS")); raw != "" {
+		if maxIterations, err := strconv.Atoi(raw); err == nil && maxIterations > 0 {
+			appserver.SetChannelMaxIterations(maxIterations)
+		} else {
+			fmt.Fprintf(stderr, "invalid CHANNEL_AGENT_MAX_ITERATIONS %q, using default\n", raw)
+		}
+	}
 }
 
 func serverOutputPath(ws *workspace.Workspace) (string, error) {

@@ -1019,9 +1019,11 @@ func waitForBotSend(t *testing.T, requests <-chan serverchanclient.BotSendMessag
 
 type sequenceChatClient struct {
 	responses []agent.AssistantMessage
+	requests  int
 }
 
 func (client *sequenceChatClient) CreateChatCompletion(ctx context.Context, _ string, _ []map[string]any, _ []tools.Definition) (agent.AssistantMessage, error) {
+	client.requests++
 	if err := ctx.Err(); err != nil {
 		return agent.AssistantMessage{}, err
 	}
@@ -1035,6 +1037,78 @@ func (client *sequenceChatClient) CreateChatCompletion(ctx context.Context, _ st
 
 func (client *sequenceChatClient) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, _ func(string)) (agent.AssistantMessage, error) {
 	return client.CreateChatCompletion(ctx, model, messages, definitions)
+}
+
+func TestServiceHandleTurnOptionsMaxIterationsOverridesDefault(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "missing_tool", Arguments: `{}`}}}},
+	}}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "missing_tool"}}},
+		DefaultMaxTurns: 100,
+	})
+
+	response, err := service.HandleTurnWithOptions(context.Background(), TurnRequest{Message: "loop"}, TurnOptions{MaxIterations: 1})
+	if err != nil {
+		t.Fatalf("HandleTurnWithOptions returned error: %v", err)
+	}
+	if client.requests != 1 {
+		t.Fatalf("requests = %d, want 1", client.requests)
+	}
+	if !strings.Contains(response.Reply, "reached maximum of 1 iterations") {
+		t.Fatalf("reply = %q, want max iteration override", response.Reply)
+	}
+}
+
+func TestChannelTurnRunnerUsesChannelMaxIterations(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "missing_tool", Arguments: `{}`}}}},
+	}}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "missing_tool"}}},
+		DefaultMaxTurns: 100,
+	})
+	runner := NewChannelTurnRunner(service)
+	previous := ChannelMaxIterations()
+	SetChannelMaxIterations(1)
+	defer SetChannelMaxIterations(previous)
+
+	var state ChannelConversationState
+	var replies []string
+	_, err := runner.Process(context.Background(), ChannelTurnOptions{
+		PeerKey:   "peer-1",
+		DedupeKey: "ctx-1",
+		Message:   "loop",
+		LoadState: func() (ChannelConversationState, error) { return state, nil },
+		SaveState: func(next ChannelConversationState) error {
+			state = next
+			return nil
+		},
+		SendReply: func(_ context.Context, reply string) error {
+			replies = append(replies, reply)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if client.requests != 1 {
+		t.Fatalf("requests = %d, want 1", client.requests)
+	}
+	if len(replies) != 1 || !strings.Contains(replies[0], "reached maximum of 1 iterations") {
+		t.Fatalf("replies = %#v, want max iteration reply", replies)
+	}
+	if state.LastCompletedKey != "ctx-1" {
+		t.Fatalf("LastCompletedKey = %q, want ctx-1", state.LastCompletedKey)
+	}
 }
 
 func TestChannelTurnRunnerStopCancelsRunningProcessGroup(t *testing.T) {

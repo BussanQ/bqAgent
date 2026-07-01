@@ -18,10 +18,12 @@ type stubClient struct {
 	optionMessages  [][]map[string]any
 	optionResponses []AssistantMessage
 	optionErrors    []error
+	definitions     [][]tools.Definition
 }
 
-func (s *stubClient) CreateChatCompletion(_ context.Context, _ string, messages []map[string]any, _ []tools.Definition) (AssistantMessage, error) {
+func (s *stubClient) CreateChatCompletion(_ context.Context, _ string, messages []map[string]any, definitions []tools.Definition) (AssistantMessage, error) {
 	s.messages = append(s.messages, cloneMessages(messages))
+	s.definitions = append(s.definitions, append([]tools.Definition{}, definitions...))
 	if len(s.responses) == 0 {
 		return AssistantMessage{}, errors.New("no response configured")
 	}
@@ -373,6 +375,165 @@ func TestRunConversationExecutesIndependentToolsInOrder(t *testing.T) {
 	}
 	if toolMessages[1].id != "call-2" || toolMessages[1].content != "result-B" {
 		t.Fatalf("tool message 1 = %+v, want call-2/result-B", toolMessages[1])
+	}
+}
+
+func TestRunSkipsRepeatedReadFileAndThenFinalizes(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "call-1", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"Cargo.toml"}`}}}},
+		{ToolCalls: []ToolCall{{ID: "call-2", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"Cargo.toml"}`}}}},
+		{ToolCalls: []ToolCall{{ID: "call-3", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"Cargo.toml"}`}}}},
+		{Content: "final answer"},
+	}}
+	calls := 0
+	app := NewWithOptions(client, "", Options{
+		Context: ContextConfig{Enabled: false},
+		Functions: map[string]tools.Function{
+			"read_file": func(context.Context, map[string]any) (string, error) {
+				calls++
+				return "cargo manifest", nil
+			},
+		},
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}}},
+	})
+
+	result, err := app.Run(context.Background(), "inspect", 5)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result != "final answer" {
+		t.Fatalf("result = %q, want final answer", result)
+	}
+	if calls != 2 {
+		t.Fatalf("read_file calls = %d, want 2", calls)
+	}
+	toolMessages := extractToolMessages(client.messages[3])
+	if len(toolMessages) != 1 {
+		t.Fatalf("third follow-up tool messages = %d, want 1", len(toolMessages))
+	}
+	content, _ := toolMessages[0]["content"].(string)
+	if !strings.Contains(content, "Tool call skipped by no-progress guard") || !strings.Contains(content, "read_file:path=Cargo.toml") {
+		t.Fatalf("guard tool content = %q", content)
+	}
+}
+
+func TestRunFinalizesAfterRepeatedNoProgressSkips(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "call-1", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"Cargo.toml"}`}}}},
+		{ToolCalls: []ToolCall{{ID: "call-2", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"Cargo.toml"}`}}}},
+		{ToolCalls: []ToolCall{{ID: "call-3", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"Cargo.toml"}`}}}},
+		{ToolCalls: []ToolCall{{ID: "call-4", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"Cargo.toml"}`}}}},
+		{Content: "answer from existing observations"},
+	}}
+	calls := 0
+	app := NewWithOptions(client, "", Options{
+		Context: ContextConfig{Enabled: false},
+		Functions: map[string]tools.Function{
+			"read_file": func(context.Context, map[string]any) (string, error) {
+				calls++
+				return "cargo manifest", nil
+			},
+		},
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}}},
+	})
+
+	result, err := app.Run(context.Background(), "inspect", 6)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result != "answer from existing observations" {
+		t.Fatalf("result = %q, want finalization answer", result)
+	}
+	if calls != 2 {
+		t.Fatalf("read_file calls = %d, want 2", calls)
+	}
+	if len(client.definitions) < 5 {
+		t.Fatalf("definition requests = %d, want at least 5", len(client.definitions))
+	}
+	if len(client.definitions[4]) != 0 {
+		t.Fatalf("finalization definitions = %d, want 0", len(client.definitions[4]))
+	}
+	lastRequest := client.messages[4]
+	lastContent, _ := lastRequest[len(lastRequest)-1]["content"].(string)
+	if !strings.Contains(lastContent, "Do not use more tools") {
+		t.Fatalf("finalization reminder = %q", lastContent)
+	}
+}
+
+func TestRunAllowsRepeatedReadAfterFileMutation(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "read-1", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"src/main.rs"}`}}}},
+		{ToolCalls: []ToolCall{{ID: "read-2", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"src/main.rs"}`}}}},
+		{ToolCalls: []ToolCall{{ID: "edit-1", Type: "function", Function: FunctionCall{Name: "edit_file", Arguments: `{"path":"src/main.rs","old_string":"old","new_string":"new"}`}}}},
+		{ToolCalls: []ToolCall{{ID: "read-3", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"src/main.rs"}`}}}},
+		{Content: "done"},
+	}}
+	readCalls := 0
+	app := NewWithOptions(client, "", Options{
+		Context: ContextConfig{Enabled: false},
+		Functions: map[string]tools.Function{
+			"read_file": func(context.Context, map[string]any) (string, error) {
+				readCalls++
+				return "main", nil
+			},
+			"edit_file": func(context.Context, map[string]any) (string, error) { return "Edited src/main.rs", nil },
+		},
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}}, {Type: "function", Function: tools.FunctionDefinition{Name: "edit_file"}}},
+	})
+
+	result, err := app.Run(context.Background(), "modify", 6)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q, want done", result)
+	}
+	if readCalls != 3 {
+		t.Fatalf("read_file calls = %d, want 3", readCalls)
+	}
+}
+
+func TestRunConversationKeepsToolOrderWithSkippedRepeatedTool(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "pre-1", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"Cargo.toml"}`}}}},
+		{ToolCalls: []ToolCall{{ID: "pre-2", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"Cargo.toml"}`}}}},
+		{ToolCalls: []ToolCall{
+			{ID: "skip-3", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"Cargo.toml"}`}},
+			{ID: "other-1", Type: "function", Function: FunctionCall{Name: "tool_b", Arguments: `{}`}},
+		}},
+		{Content: "done"},
+	}}
+	app := NewWithOptions(client, "", Options{
+		Context: ContextConfig{Enabled: false},
+		Functions: map[string]tools.Function{
+			"read_file": func(context.Context, map[string]any) (string, error) { return "manifest", nil },
+			"tool_b":    func(context.Context, map[string]any) (string, error) { return "result-B", nil },
+		},
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}}, {Type: "function", Function: tools.FunctionDefinition{Name: "tool_b"}}},
+	})
+
+	result, updated, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "go"}}, 6)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q, want done", result)
+	}
+	var latest []map[string]any
+	for _, message := range updated {
+		if message["role"] == "tool" {
+			latest = append(latest, message)
+		}
+	}
+	if len(latest) < 4 {
+		t.Fatalf("tool messages = %d, want at least 4", len(latest))
+	}
+	latest = latest[len(latest)-2:]
+	if latest[0]["tool_call_id"] != "skip-3" || !strings.Contains(latest[0]["content"].(string), "no-progress guard") {
+		t.Fatalf("first latest tool message = %#v", latest[0])
+	}
+	if latest[1]["tool_call_id"] != "other-1" || latest[1]["content"] != "result-B" {
+		t.Fatalf("second latest tool message = %#v", latest[1])
 	}
 }
 
