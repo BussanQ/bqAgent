@@ -25,9 +25,9 @@ const (
 // the client's own timeout.
 const defaultChannelTurnTimeout = 10 * time.Minute
 
-// DefaultChannelMaxIterations bounds one async-channel agent turn. CLI and
-// direct HTTP keep using the larger AGENT_MAX_ITERATIONS runaway valve.
-const DefaultChannelMaxIterations = 64
+// DefaultChannelMaxIterations uses the same high runaway safety valve as CLI and
+// direct HTTP. CHANNEL_AGENT_MAX_ITERATIONS can still override it explicitly.
+const DefaultChannelMaxIterations = agent.DefaultMaxIterations
 
 var channelTurnTimeoutNanos atomic.Int64
 var channelMaxIterations atomic.Int64

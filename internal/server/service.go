@@ -10,6 +10,7 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
+	"bqagent/internal/logging"
 	appruntime "bqagent/internal/runtime"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
@@ -201,12 +202,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 	defer logFile.Close()
 
+	sessionLogWriter := logging.NewTimestampWriter(logFile)
 	progressWriter := options.ProgressWriter
 	if progressWriter == nil {
 		progressWriter = options.OutputWriter
 	}
-	logWriter := service.turnLogWriter(logFile, options.OutputWriter)
-	turnErrorWriter := service.turnErrorWriter(logFile, options.OutputWriter)
+	logWriter := service.turnLogWriter(sessionLogWriter, options.OutputWriter)
+	turnErrorWriter := service.turnErrorWriter(sessionLogWriter, options.OutputWriter)
 
 	if err := conversation.AddUserMessageWithImages(message, request.Images); err != nil {
 		writeTurnError(turnErrorWriter, err)

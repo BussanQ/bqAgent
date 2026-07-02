@@ -103,6 +103,9 @@ func TestRunServerRequiresAPIKey(t *testing.T) {
 	if !strings.Contains(stderr.String(), "OPENAI_API_KEY is required for server mode") {
 		t.Fatalf("stderr = %q, want missing api key error", stderr.String())
 	}
+	if !hasTimestampPrefix(stderr.String()) {
+		t.Fatalf("stderr = %q, want timestamp prefix", stderr.String())
+	}
 }
 
 func TestConfigureServerChannelLimitsReadsMaxIterations(t *testing.T) {
@@ -151,6 +154,13 @@ func TestConfigureServerChannelLimitsWarnsOnInvalidMaxIterations(t *testing.T) {
 	if !strings.Contains(stderr.String(), "invalid CHANNEL_AGENT_MAX_ITERATIONS") {
 		t.Fatalf("stderr = %q, want invalid max iterations warning", stderr.String())
 	}
+}
+
+func hasTimestampPrefix(line string) bool {
+	if len(line) < len("2006-01-02 15:04:05 ") {
+		return false
+	}
+	return line[4] == '-' && line[7] == '-' && line[10] == ' ' && line[13] == ':' && line[16] == ':' && line[19] == ' '
 }
 
 func TestEnvEnabledDefaultsToTrue(t *testing.T) {

@@ -185,7 +185,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "execute_bash",
-				Description: "Execute a bash command when it verifies or produces information needed for the task. Do not rerun the same build/run/test command after it succeeds or fails unless files or configuration changed; use the previous output to decide next steps or answer. Do not repeatedly retry package/toolchain install or repair commands after they fail or time out; fall back to generating output or ask the user to repair the environment.",
+				Description: "Execute a bash command when it verifies or produces information needed for the task.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
@@ -199,7 +199,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "read_file",
-				Description: "Read a file when you need content not already observed. Optionally pass offset (1-based start line) and limit (number of lines) to read part of a large file. Do not reread the same file/range unless the file changed or the previous read was incomplete; use prior observations to answer.",
+				Description: "Read a file. Optionally pass offset (1-based start line) and limit (number of lines) to read part of a large file.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
@@ -247,7 +247,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "grep",
-				Description: "Search file contents by regular expression (Go regexp) when locating unknown symbols, files, or usages. Returns path:line:text. Skips .git and binary files. Do not repeat the same pattern/path/glob after results are returned; read relevant matched files or answer from the results.",
+				Description: "Search file contents by regular expression (Go regexp) when locating unknown symbols, files, or usages. Returns path:line:text. Skips .git and binary files.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{

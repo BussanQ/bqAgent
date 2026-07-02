@@ -87,6 +87,13 @@ func TestChatEndpointCreatesAndResumesSession(t *testing.T) {
 	if len(messages) != 5 {
 		t.Fatalf("messages length = %d, want 5", len(messages))
 	}
+	output, err := os.ReadFile(savedSession.OutputPath())
+	if err != nil {
+		t.Fatalf("failed to read output log: %v", err)
+	}
+	if !hasTimestampedLineContaining(string(output), "reply-1") {
+		t.Fatalf("output log = %q, want timestamped reply line", string(output))
+	}
 }
 
 func TestServerChanChatEndpointSendsReply(t *testing.T) {
@@ -984,6 +991,21 @@ func postJSON(t *testing.T, url string, body string) *http.Response {
 	return response
 }
 
+func hasTimestampedLineContaining(content string, needle string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if !strings.Contains(line, needle) {
+			continue
+		}
+		if len(line) < len("2006-01-02 15:04:05 ") {
+			continue
+		}
+		if line[4] == '-' && line[7] == '-' && line[10] == ' ' && line[13] == ':' && line[16] == ':' && line[19] == ' ' {
+			return true
+		}
+	}
+	return false
+}
+
 func postBotWebhook(t *testing.T, url string, secret string, body string) (int, string) {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
@@ -1061,6 +1083,12 @@ func TestServiceHandleTurnOptionsMaxIterationsOverridesDefault(t *testing.T) {
 	}
 	if !strings.Contains(response.Reply, "reached maximum of 1 iterations") {
 		t.Fatalf("reply = %q, want max iteration override", response.Reply)
+	}
+}
+
+func TestDefaultChannelMaxIterationsMatchesAgentSafetyValve(t *testing.T) {
+	if DefaultChannelMaxIterations != agent.DefaultMaxIterations {
+		t.Fatalf("DefaultChannelMaxIterations = %d, want %d", DefaultChannelMaxIterations, agent.DefaultMaxIterations)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/logging"
 	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
 	"bqagent/internal/session"
@@ -56,6 +57,10 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if options.sessionRun || options.serverRun {
+		stdout = logging.NewTimestampWriter(stdout)
+		stderr = logging.NewTimestampWriter(stderr)
 	}
 
 	if options.ilinkLogin {
@@ -264,8 +269,9 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 				fmt.Fprintln(stderr, err)
 				return 1
 			}
-			outputWriter = io.MultiWriter(stdout, logFile)
-			errorWriter = io.MultiWriter(stderr, logFile)
+			timestampedLogFile := logging.NewTimestampWriter(logFile)
+			outputWriter = io.MultiWriter(stdout, timestampedLogFile)
+			errorWriter = io.MultiWriter(stderr, timestampedLogFile)
 		}
 	} else {
 		conversation, err = appruntime.PrepareConversation(nil, "", nil, systemPrompt)

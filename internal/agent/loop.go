@@ -263,7 +263,6 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 	}
 
 	definitions := a.toolDefinitionsForRun(allowPlan)
-	guard := newNoProgressGuard()
 	actualIterations := 0
 	defer func() {
 		logTurnTiming(a.logWriter, actualIterations, allowPlan, time.Since(startedAt), err)
@@ -280,10 +279,8 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			message    AssistantMessage
 			requestErr error
 		)
-		requestMessages = guard.appendFinalizationReminder(requestMessages)
-		requestDefinitions := guard.requestDefinitions(definitions)
 		if a.stream {
-			message, requestErr = a.client.CreateChatCompletionStream(ctx, a.model, requestMessages, requestDefinitions, func(chunk string) {
+			message, requestErr = a.client.CreateChatCompletionStream(ctx, a.model, requestMessages, definitions, func(chunk string) {
 				sink := a.tokenSink
 				if sink == nil {
 					sink = a.logWriter
@@ -293,7 +290,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 			})
 		} else {
-			message, requestErr = a.client.CreateChatCompletion(ctx, a.model, requestMessages, requestDefinitions)
+			message, requestErr = a.client.CreateChatCompletion(ctx, a.model, requestMessages, definitions)
 		}
 		if requestErr != nil {
 			err = requestErr
@@ -316,13 +313,10 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if len(message.ToolCalls) == 0 {
 			return message.FinalContent(), updatedMessages, nil
 		}
-		if guard.finalizing {
-			return guard.stoppedMessage(), updatedMessages, nil
-		}
 
-		// plan and run_skill recurse and mutate the working history in place, so a
-		// turn containing either runs sequentially. A turn of only regular tools
-		// runs them concurrently and appends results in the original order.
+		// Some tools recurse or mutate state that later tool calls may depend on, so
+		// a turn containing them runs sequentially. A turn of only independent tools
+		// runs concurrently and appends results in the original order.
 		if a.hasSpecialToolCalls(message.ToolCalls, allowPlan) {
 			for _, toolCall := range message.ToolCalls {
 				parsedArguments, err := parseArguments(toolCall.Function.Arguments)
@@ -371,12 +365,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					continue
 				}
 
-				decision := guard.before(toolCall)
-				toolResult := decision.Content
-				if !decision.Skipped {
-					_, toolResult = a.runRegularToolCall(ctx, toolCall)
-					guard.after(toolCall, decision, toolResult)
-				}
+				_, toolResult := a.runRegularToolCall(ctx, toolCall)
 				updatedToolMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, toolResult)
 				updatedMessages = updatedToolMessages
 				messages = updatedMessages
@@ -386,16 +375,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 		} else {
 			results := make([]string, len(message.ToolCalls))
-			decisions := make([]toolExecutionDecision, len(message.ToolCalls))
 			semaphore := make(chan struct{}, maxParallelTools)
 			var waitGroup sync.WaitGroup
 			for index, toolCall := range message.ToolCalls {
-				decision := guard.before(toolCall)
-				decisions[index] = decision
-				if decision.Skipped {
-					results[index] = decision.Content
-					continue
-				}
 				waitGroup.Add(1)
 				go func(index int, toolCall ToolCall) {
 					defer waitGroup.Done()
@@ -406,9 +388,6 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}(index, toolCall)
 			}
 			waitGroup.Wait()
-			for index, toolCall := range message.ToolCalls {
-				guard.after(toolCall, decisions[index], results[index])
-			}
 
 			for index, toolCall := range message.ToolCalls {
 				updatedToolMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, results[index])
@@ -896,10 +875,12 @@ func (a *Agent) appendToolError(messages []map[string]any, toolCallID, format st
 }
 
 // hasSpecialToolCalls reports whether the batch contains a tool that must run
-// sequentially because it recurses and mutates the working history in place.
+// sequentially because it recurses or mutates state later calls may depend on.
 func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall, allowPlan bool) bool {
 	for _, toolCall := range toolCalls {
 		switch toolCall.Function.Name {
+		case "write_file", "edit_file":
+			return true
 		case "run_skill":
 			return true
 		case "plan":

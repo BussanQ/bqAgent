@@ -269,7 +269,8 @@ tasks, or `CONTEXT_SUMMARIZATION_ENABLED=false` to fall back to plain pruning.
 
 Context behavior is configurable through environment variables:
 
-- `AGENT_MAX_ITERATIONS` (loop runaway safety valve, all modes; defaults to `1000`)
+- `AGENT_MAX_ITERATIONS` (loop runaway safety valve; defaults to `1000`)
+- `CHANNEL_AGENT_MAX_ITERATIONS` (optional override for async channels; defaults to the same `1000`)
 - `CONTEXT_MANAGEMENT_ENABLED`
 - `CONTEXT_MAX_INPUT_TOKENS`
 - `CONTEXT_TARGET_INPUT_TOKENS`

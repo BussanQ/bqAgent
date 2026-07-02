@@ -14,15 +14,14 @@ Module `bqagent`, Go 1.26. Only two non-stdlib deps: `nhooyr.io/websocket` (QQ g
 make build          # go build -trimpath -ldflags '-s -w' -o bqagent ./cmd/agent
 make build-amd      # CGO_ENABLED=0 GOOS=linux  GOARCH=amd64  (Linux artifact)
 make build-windows  # CGO_ENABLED=0 GOOS=windows GOARCH=amd64
-make test           # go test ./...
 make clean
 
-# Single package / single test
+# Targeted package / single test
 go test ./internal/agent
 go test ./internal/agent -run TestRunConversation -v
 ```
 
-There is no linter config beyond the Go toolchain; use `go vet ./...` and `gofmt`. `make build-amd` and a `publish` (upload to server) flow also exist as `.claude/skills`.
+Do not run broad `go test ./...` for this project; use targeted package or single-test commands that match the files changed. There is no linter config beyond the Go toolchain; use `gofmt` and targeted Go checks. `make build-amd` and a `publish` (upload to server) flow also exist as `.claude/skills`.
 
 ## Running
 
@@ -50,7 +49,7 @@ The dependency direction is `cmd/agent → internal/{server,runtime} → interna
 
 ### The agent loop — `internal/agent`
 
-[internal/agent/loop.go](internal/agent/loop.go) `runConversation` is the heart of the system. The iteration cap is a **runaway safety valve, not a task limit**: there is a single canonical constant `agent.DefaultMaxIterations = 1000`, used as both the in-loop fallback and the default for `runtime.MaxIterations` (env `AGENT_MAX_ITERATIONS`); all modes share it. Each iteration:
+[internal/agent/loop.go](internal/agent/loop.go) `runConversation` is the heart of the system. The iteration cap is a **runaway safety valve, not a task limit**: there is a single canonical constant `agent.DefaultMaxIterations = 1000`, used as both the in-loop fallback and the default for `runtime.MaxIterations` (env `AGENT_MAX_ITERATIONS`). Async channels also default to this value and can be overridden with `CHANNEL_AGENT_MAX_ITERATIONS`. Each iteration:
 
 - builds the request payload via `buildRequestMessages` (context management, below),
 - calls the model (streaming or not),
