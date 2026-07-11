@@ -79,6 +79,7 @@ type TurnOptions struct {
 	TokenSink      io.Writer
 	Stream         bool
 	MaxIterations  int
+	Stage          agent.StageConfig
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -229,7 +230,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			return TurnResponse{}, err
 		}
 		conversation.Messages = append(conversation.Messages, assistantMessage)
-		if err := conversation.MarkCompleted(); err != nil {
+		if err := service.completeConversation(conversation); err != nil {
 			writeTurnError(turnErrorWriter, err)
 			return TurnResponse{}, err
 		}
@@ -259,7 +260,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 				return TurnResponse{}, err
 			}
 			conversation.Messages = append(conversation.Messages, assistantMessage)
-			if err := conversation.MarkCompleted(); err != nil {
+			if err := service.completeConversation(conversation); err != nil {
 				writeTurnError(turnErrorWriter, err)
 				return TurnResponse{}, err
 			}
@@ -285,7 +286,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 				return TurnResponse{}, err
 			}
 			conversation.Messages = append(conversation.Messages, assistantMessage)
-			if err := conversation.MarkCompleted(); err != nil {
+			if err := service.completeConversation(conversation); err != nil {
 				writeTurnError(turnErrorWriter, err)
 				return TurnResponse{}, err
 			}
@@ -308,19 +309,25 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		ProgressWriter:  progressWriter,
 		TokenSink:       options.TokenSink,
 		Context:         service.context,
+		Stage:           options.Stage,
 	})
 
 	maxTurns := service.maxTurns
 	if options.MaxIterations > 0 {
 		maxTurns = options.MaxIterations
 	}
-	result, _, err := app.RunConversationTurn(ctx, conversation.Messages, maxTurns)
+	result, updatedMessages, err := app.RunConversationTurn(ctx, conversation.Messages, maxTurns)
 	if err != nil {
+		conversation.Messages = agent.BoundWorkingMessages(updatedMessages, service.context)
+		// Best effort: even a failed model/tool request may already have pruned a
+		// legacy oversized transcript into a safe working context for the retry.
+		_ = conversation.SaveWorkingContext()
 		writeTurnError(turnErrorWriter, err)
 		markConversationFailed(conversation, err)
 		return TurnResponse{}, err
 	}
-	if err := conversation.MarkCompleted(); err != nil {
+	conversation.Messages = updatedMessages
+	if err := service.completeConversation(conversation); err != nil {
 		writeTurnError(turnErrorWriter, err)
 		return TurnResponse{}, err
 	}
@@ -328,6 +335,14 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	writeTurnReply(logWriter, result, options.Stream)
 
 	return TurnResponse{SessionID: conversation.Session.ID(), Reply: result, Streamed: options.Stream}, nil
+}
+
+func (service *Service) completeConversation(conversation *appruntime.Conversation) error {
+	conversation.Messages = agent.BoundWorkingMessages(conversation.Messages, service.context)
+	if err := conversation.SaveWorkingContext(); err != nil {
+		return err
+	}
+	return conversation.MarkCompleted()
 }
 
 func (service *Service) handleSkillCommand(ctx context.Context, message string, recorder agent.MessageRecorder, logWriter io.Writer, progressWriter io.Writer, systemPrompt string) (string, bool, error) {

@@ -126,6 +126,34 @@ func configureServerChannelLimits(stderr io.Writer, getenv func(string) string) 
 			fmt.Fprintf(stderr, "invalid CHANNEL_AGENT_MAX_ITERATIONS %q, using default\n", raw)
 		}
 	}
+	if raw := strings.TrimSpace(getenv("CHANNEL_STAGE_TIMEOUT")); raw != "" {
+		if timeout, err := time.ParseDuration(raw); err == nil && timeout > 0 {
+			appserver.SetChannelStageTimeout(timeout)
+		} else {
+			fmt.Fprintf(stderr, "invalid CHANNEL_STAGE_TIMEOUT %q, using default\n", raw)
+		}
+	}
+	if raw := strings.TrimSpace(getenv("CHANNEL_STAGE_MAX_ITERATIONS")); raw != "" {
+		if maxIterations, err := strconv.Atoi(raw); err == nil && maxIterations > 0 {
+			appserver.SetChannelStageMaxIterations(maxIterations)
+		} else {
+			fmt.Fprintf(stderr, "invalid CHANNEL_STAGE_MAX_ITERATIONS %q, using default\n", raw)
+		}
+	}
+	if raw := strings.TrimSpace(getenv("WEBUI_STAGE_TIMEOUT")); raw != "" {
+		if timeout, err := time.ParseDuration(raw); err == nil && timeout > 0 {
+			appserver.SetWebUIStageTimeout(timeout)
+		} else {
+			fmt.Fprintf(stderr, "invalid WEBUI_STAGE_TIMEOUT %q, using default\n", raw)
+		}
+	}
+	if raw := strings.TrimSpace(getenv("WEBUI_STAGE_MAX_ITERATIONS")); raw != "" {
+		if maxIterations, err := strconv.Atoi(raw); err == nil && maxIterations > 0 {
+			appserver.SetWebUIStageMaxIterations(maxIterations)
+		} else {
+			fmt.Fprintf(stderr, "invalid WEBUI_STAGE_MAX_ITERATIONS %q, using default\n", raw)
+		}
+	}
 }
 
 func serverOutputPath(ws *workspace.Workspace) (string, error) {

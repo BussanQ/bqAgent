@@ -283,7 +283,7 @@ func TestIlinkChannelConsumesFailedTurn(t *testing.T) {
 		t.Fatalf("LLM request count = %d, want 1 (failed update must not replay)", got)
 	}
 	if got := sendCount.Load(); got != 0 {
-		t.Fatalf("sendmessage count = %d, want 0 (ilink progress sender is no-op on turn failure)", got)
+		t.Fatalf("sendmessage count = %d, want 0 because iLink reserves its context token for the final reply", got)
 	}
 }
 
@@ -315,7 +315,7 @@ func TestIlinkChannelKeepsPollingWhilePeerTurnRuns(t *testing.T) {
 	})
 
 	var updatesCount atomic.Int32
-	sentMessages := make(chan weixin.SendMessageRequest, 4)
+	sentMessages := make(chan weixin.SendMessageRequest, 16)
 	ilinkServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/ilink/bot/getupdates":
@@ -363,7 +363,10 @@ func TestIlinkChannelKeepsPollingWhilePeerTurnRuns(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for execute_bash to start")
 	}
-	busy := waitForIlinkSend(t, sentMessages)
+	var busy weixin.SendMessageRequest
+	for busy.Msg.ContextToken != "ctx-busy" {
+		busy = waitForIlinkSend(t, sentMessages)
+	}
 	if busy.Msg.ContextToken != "ctx-busy" {
 		t.Fatalf("busy ContextToken = %q, want ctx-busy", busy.Msg.ContextToken)
 	}

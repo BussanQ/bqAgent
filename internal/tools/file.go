@@ -28,7 +28,11 @@ func ReadFileFromRoot(root string) Function {
 			return "", err
 		}
 
-		content, err := os.ReadFile(resolvePath(root, path))
+		resolvedPath, _, err := normalizeWorkspacePath(root, path)
+		if err != nil {
+			return "", err
+		}
+		content, err := os.ReadFile(resolvedPath)
 		if err != nil {
 			return "", fmt.Errorf("failed to read %q: %w", path, err)
 		}
@@ -99,11 +103,14 @@ func WriteFileToRoot(root string) Function {
 			return "", err
 		}
 
-		resolvedPath := resolvePath(root, path)
+		resolvedPath, relativePath, err := normalizeWorkspacePath(root, path)
+		if err != nil {
+			return "", err
+		}
 		if err := os.WriteFile(resolvedPath, []byte(content), 0o644); err != nil {
 			return "", fmt.Errorf("failed to write %q: %w", path, err)
 		}
-		return fmt.Sprintf("Wrote to %s", resolvedPath), nil
+		return fmt.Sprintf("Wrote to %s", relativePath), nil
 	}
 }
 
@@ -133,7 +140,10 @@ func EditFileInRoot(root string) Function {
 		}
 		replaceAll := parseBoolArg(args, "replace_all")
 
-		resolvedPath := resolvePath(root, path)
+		resolvedPath, relativePath, err := normalizeWorkspacePath(root, path)
+		if err != nil {
+			return "", err
+		}
 		data, err := os.ReadFile(resolvedPath)
 		if err != nil {
 			return "", fmt.Errorf("failed to read %q: %w", path, err)
@@ -157,7 +167,7 @@ func EditFileInRoot(root string) Function {
 		if err := os.WriteFile(resolvedPath, []byte(updated), 0o644); err != nil {
 			return "", fmt.Errorf("failed to write %q: %w", path, err)
 		}
-		return fmt.Sprintf("Edited %s (%d replacement(s))", resolvedPath, count), nil
+		return fmt.Sprintf("Edited %s (%d replacement(s))", relativePath, count), nil
 	}
 }
 
@@ -177,9 +187,80 @@ func parseBoolArg(args map[string]any, key string) bool {
 	return false
 }
 
-func resolvePath(root, path string) string {
-	if root == "" || filepath.IsAbs(path) {
-		return path
+// normalizeWorkspacePath accepts workspace-relative paths and also tolerates an
+// absolute path when it resolves inside root. Paths outside the workspace are
+// rejected instead of being passed to the filesystem, which gives the model a
+// fast, actionable error rather than letting a malformed absolute path loop.
+func normalizeWorkspacePath(root, path string) (absolute string, relative string, err error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", "", fmt.Errorf("path is required and must be workspace-relative")
 	}
-	return filepath.Join(root, path)
+	if strings.TrimSpace(root) == "" {
+		return path, path, nil
+	}
+
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	rootAbs = filepath.Clean(rootAbs)
+
+	var candidate string
+	if isAbsoluteLike(path) {
+		candidate = filepath.Clean(filepath.FromSlash(path))
+		if !filepath.IsAbs(candidate) {
+			return "", "", fmt.Errorf("path %q is an absolute path for another platform; use a workspace-relative path such as the paths returned by glob", path)
+		}
+	} else {
+		candidate = filepath.Join(rootAbs, filepath.FromSlash(path))
+	}
+	candidate, err = filepath.Abs(candidate)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve path %q: %w", path, err)
+	}
+	candidate = filepath.Clean(candidate)
+	rel, err := filepath.Rel(rootAbs, candidate)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("path %q is outside workspace %q; use a workspace-relative path such as the paths returned by glob", path, filepath.ToSlash(rootAbs))
+	}
+	if err := ensureWorkspaceSymlinkBoundary(rootAbs, candidate); err != nil {
+		return "", "", fmt.Errorf("path %q is outside workspace through a symbolic link; use a workspace-relative path inside the workspace: %w", path, err)
+	}
+	return candidate, filepath.ToSlash(rel), nil
+}
+
+func ensureWorkspaceSymlinkBoundary(root, candidate string) error {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		resolvedRoot = root
+	}
+	existing := candidate
+	for {
+		if _, statErr := os.Lstat(existing); statErr == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return nil
+		}
+		existing = parent
+	}
+	resolvedExisting, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolvedExisting)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("resolved path %q is not under %q", resolvedExisting, resolvedRoot)
+	}
+	return nil
+}
+
+func isAbsoluteLike(path string) bool {
+	path = strings.TrimSpace(path)
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\\`) {
+		return true
+	}
+	return len(path) >= 3 && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':' && (path[2] == '/' || path[2] == '\\')
 }

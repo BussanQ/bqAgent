@@ -76,6 +76,80 @@ func extractToolMessages(messages []map[string]any) []map[string]any {
 	return toolMessages
 }
 
+func TestRunConversationStageCheckpointPersistsSummary(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "read-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"main.go"}`}}}},
+		{Content: "已发现\n- 找到入口\n\n未完成\n- 依赖分析\n\n建议下一步\n- 回复“继续”"},
+	}}
+	var progress bytes.Buffer
+	reads := 0
+	app := NewWithOptions(client, "", Options{
+		Context:        ContextConfig{Enabled: false},
+		ProgressWriter: &progress,
+		Stage:          StageConfig{MaxIterations: 1, LoopProtection: true, ImmediateProgress: true, EmitProgress: true},
+		Functions: map[string]tools.Function{
+			"read_file": func(context.Context, map[string]any) (string, error) {
+				reads++
+				return "package main", nil
+			},
+		},
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}}},
+	})
+
+	result, updated, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "分析架构"}}, 30)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if reads != 1 {
+		t.Fatalf("read calls = %d, want 1", reads)
+	}
+	if !strings.Contains(result, "已发现") || !strings.Contains(result, "继续") {
+		t.Fatalf("checkpoint result = %q", result)
+	}
+	lastContent, _ := updated[len(updated)-1]["content"].(string)
+	if updated[len(updated)-1]["role"] != "assistant" || lastContent != result {
+		t.Fatalf("checkpoint was not appended to updated messages: %#v", updated[len(updated)-1])
+	}
+	for _, want := range []string{"Starting analysis iteration 1", "Running read_file on main.go", "Preparing stage summary", "Stage summary completed"} {
+		if !strings.Contains(progress.String(), want) {
+			t.Fatalf("progress %q missing %q", progress.String(), want)
+		}
+	}
+}
+
+func TestRunConversationLoopProtectionStopsRepeatedFailures(t *testing.T) {
+	toolResponse := func(id string) AssistantMessage {
+		return AssistantMessage{ToolCalls: []ToolCall{{ID: id, Function: FunctionCall{Name: "read_file", Arguments: `{"path":"missing.go"}`}}}}
+	}
+	client := &stubClient{responses: []AssistantMessage{
+		toolResponse("read-1"), toolResponse("read-2"), toolResponse("read-3"),
+		{Content: "已发现\n- 路径持续失败\n\n未完成\n- 文件读取\n\n建议下一步\n- 回复“继续”"},
+	}}
+	calls := 0
+	app := NewWithOptions(client, "", Options{
+		Context: ContextConfig{Enabled: false},
+		Stage:   StageConfig{MaxIterations: 20, LoopProtection: true, RepeatedFailureLimit: 3},
+		Functions: map[string]tools.Function{
+			"read_file": func(context.Context, map[string]any) (string, error) {
+				calls++
+				return "", errors.New("missing")
+			},
+		},
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}}},
+	})
+
+	result, err := app.Run(context.Background(), "inspect", 30)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("tool calls = %d, want loop guard at 3", calls)
+	}
+	if !strings.Contains(result, "路径持续失败") {
+		t.Fatalf("result = %q, want checkpoint summary", result)
+	}
+}
+
 func TestRunReturnsUnknownToolErrorToLoop(t *testing.T) {
 	client := &stubClient{
 		responses: []AssistantMessage{
@@ -475,7 +549,7 @@ func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
 	}
 }
 
-func TestRunConversationTurnSanitizesCompletedToolHistory(t *testing.T) {
+func TestRunConversationTurnPreservesCompletedToolHistoryAsEvidence(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "next reply"}}}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{LogWriter: &logs, Context: ContextConfig{Enabled: false}})
@@ -500,9 +574,10 @@ func TestRunConversationTurnSanitizesCompletedToolHistory(t *testing.T) {
 		t.Fatalf("client saw %d requests, want 1", len(client.messages))
 	}
 	request := client.messages[0]
-	if len(request) != 4 {
-		t.Fatalf("request messages = %d, want 4 after sanitizing tool history", len(request))
+	if len(request) != 5 {
+		t.Fatalf("request messages = %d, want 5 after compacting tool history", len(request))
 	}
+	preservedEvidence := false
 	for _, message := range request {
 		role, _ := message["role"].(string)
 		if role == "tool" {
@@ -512,7 +587,14 @@ func TestRunConversationTurnSanitizesCompletedToolHistory(t *testing.T) {
 			if _, ok := message["tool_calls"]; ok {
 				t.Fatalf("request still contains assistant tool call scaffolding: %#v", message)
 			}
+			content, _ := message["content"].(string)
+			if strings.Contains(content, "search results") && strings.Contains(content, "web_search") {
+				preservedEvidence = true
+			}
 		}
+	}
+	if !preservedEvidence {
+		t.Fatalf("request did not preserve completed tool evidence: %#v", request)
 	}
 	if len(updated) != 7 {
 		t.Fatalf("updated messages = %d, want 7 after appending final assistant reply to full conversation history", len(updated))
@@ -592,8 +674,8 @@ func TestRunContextPrunesOldMessages(t *testing.T) {
 		LogWriter: &logs,
 		Context: ContextConfig{
 			Enabled:               true,
-			MaxInputTokens:        60,
-			TargetInputTokens:     20,
+			MaxInputTokens:        80,
+			TargetInputTokens:     40,
 			ResponseReserveTokens: 10,
 			KeepLastTurns:         1,
 		},
@@ -606,7 +688,7 @@ func TestRunContextPrunesOldMessages(t *testing.T) {
 		{"role": "user", "content": strings.Repeat("recent-user-", 8)},
 	}
 
-	_, _, err := app.RunConversationTurn(context.Background(), messages, 2)
+	_, updated, err := app.RunConversationTurn(context.Background(), messages, 2)
 	if err != nil {
 		t.Fatalf("RunConversationTurn returned error: %v", err)
 	}
@@ -623,8 +705,56 @@ func TestRunContextPrunesOldMessages(t *testing.T) {
 	if request[1]["content"] != strings.Repeat("recent-user-", 8) {
 		t.Fatalf("last kept content = %#v, want most recent user turn", request[1]["content"])
 	}
+	if len(updated) != 3 || updated[len(updated)-1]["content"] != "reply" {
+		t.Fatalf("updated working set = %#v, want pruned request plus reply", updated)
+	}
 	if !strings.Contains(logs.String(), "[Context]") || !strings.Contains(logs.String(), "pruned=true") {
 		t.Fatalf("logs did not include context budget line: %q", logs.String())
+	}
+}
+
+func TestHardPruneMessagesEnforcesBudgetForHugeRecentToolResult(t *testing.T) {
+	messages := []map[string]any{
+		{"role": "system", "content": "system"},
+		{"role": "user", "content": "analyze the project"},
+		{"role": "assistant", "tool_calls": []ToolCall{{ID: "tool-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"large.txt"}`}}}},
+		{"role": "tool", "tool_call_id": "tool-1", "content": strings.Repeat("large tool output\n", 20000)},
+	}
+
+	pruned := hardPruneMessagesToBudget(messages, 1000)
+	if tokens := estimateMessagesTokens(pruned); tokens > 1000 {
+		t.Fatalf("pruned tokens = %d, want <= 1000", tokens)
+	}
+	if len(pruned) < 3 {
+		t.Fatalf("pruned messages = %#v, want system and valid tool-call pair", pruned)
+	}
+	lastRole, _ := pruned[len(pruned)-1]["role"].(string)
+	if lastRole != "tool" {
+		t.Fatalf("last role = %q, want tool", lastRole)
+	}
+	lastContent, _ := pruned[len(pruned)-1]["content"].(string)
+	if !strings.Contains(lastContent, "content truncated") {
+		t.Fatalf("tool content was not explicitly truncated: %q", lastContent)
+	}
+}
+
+func TestHardPruneMessagesPreservesConversationSummary(t *testing.T) {
+	messages := []map[string]any{
+		{"role": "system", "content": "system"},
+		{"role": "assistant", "content": EarlierConversationSummaryPrefix + "important decisions"},
+		{"role": "assistant", "content": strings.Repeat("old evidence", 10000)},
+		{"role": "user", "content": "continue"},
+	}
+
+	pruned := hardPruneMessagesToBudget(messages, 500)
+	if tokens := estimateMessagesTokens(pruned); tokens > 500 {
+		t.Fatalf("pruned tokens = %d, want <= 500", tokens)
+	}
+	if len(pruned) < 3 || !strings.Contains(pruned[1]["content"].(string), "important decisions") {
+		t.Fatalf("summary was not preserved: %#v", pruned)
+	}
+	if pruned[len(pruned)-1]["content"] != "continue" {
+		t.Fatalf("latest user message was not preserved: %#v", pruned)
 	}
 }
 
@@ -638,8 +768,8 @@ func TestRunContextSummarizesOldMessages(t *testing.T) {
 		LogWriter: &logs,
 		Context: ContextConfig{
 			Enabled:               true,
-			MaxInputTokens:        60,
-			TargetInputTokens:     10,
+			MaxInputTokens:        80,
+			TargetInputTokens:     50,
 			ResponseReserveTokens: 10,
 			KeepLastTurns:         1,
 			SummarizationEnabled:  true,
@@ -693,8 +823,8 @@ func TestRunContextFallsBackWhenSummarizationFails(t *testing.T) {
 		LogWriter: &logs,
 		Context: ContextConfig{
 			Enabled:               true,
-			MaxInputTokens:        60,
-			TargetInputTokens:     10,
+			MaxInputTokens:        80,
+			TargetInputTokens:     40,
 			ResponseReserveTokens: 10,
 			KeepLastTurns:         1,
 			SummarizationEnabled:  true,

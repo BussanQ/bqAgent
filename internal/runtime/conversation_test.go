@@ -168,6 +168,45 @@ func TestPrepareConversationRefreshesExistingSystemMessage(t *testing.T) {
 	}
 }
 
+func TestPrepareConversationPrefersWorkingContextSnapshot(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	conversation, err := PrepareConversation(store, "", &session.CreateOptions{Task: "hello", Chat: true}, "system prompt")
+	if err != nil {
+		t.Fatalf("PrepareConversation returned error: %v", err)
+	}
+	if err := conversation.Session.RecordMessages(
+		map[string]any{"role": "user", "content": "large raw history"},
+		map[string]any{"role": "assistant", "content": "raw reply"},
+	); err != nil {
+		t.Fatalf("RecordMessages returned error: %v", err)
+	}
+	working := []map[string]any{
+		{"role": "system", "content": "system prompt"},
+		{"role": "assistant", "content": "compact summary"},
+	}
+	if err := conversation.Session.SaveWorkingMessages(working); err != nil {
+		t.Fatalf("SaveWorkingMessages returned error: %v", err)
+	}
+
+	restored, err := PrepareConversation(store, conversation.Session.ID(), nil, "system prompt")
+	if err != nil {
+		t.Fatalf("PrepareConversation restore returned error: %v", err)
+	}
+	if !restored.UsingWorkingContext {
+		t.Fatal("restored conversation did not use working context")
+	}
+	if len(restored.Messages) != 2 || restored.Messages[1]["content"] != "compact summary" {
+		t.Fatalf("restored messages = %#v", restored.Messages)
+	}
+	raw, err := restored.Session.LoadMessages()
+	if err != nil {
+		t.Fatalf("LoadMessages returned error: %v", err)
+	}
+	if len(raw) != 3 {
+		t.Fatalf("raw transcript messages = %d, want 3", len(raw))
+	}
+}
+
 func TestPrepareConversationFallsBackToFreshSessionWhenMissing(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	createOptions := &session.CreateOptions{Task: "hello", Chat: true}

@@ -81,6 +81,9 @@ func TestWebUIStreamChat(t *testing.T) {
 	if !strings.Contains(first.raw, `"delta":"Hello"`) {
 		t.Fatalf("stream missing delta events:\n%s", first.raw)
 	}
+	if !strings.Contains(first.raw, "event: progress") || !strings.Contains(first.raw, "Starting analysis iteration 1") {
+		t.Fatalf("stream missing progress event:\n%s", first.raw)
+	}
 	if first.done.Reply != "Hello, world" {
 		t.Fatalf("reply = %q, want %q", first.done.Reply, "Hello, world")
 	}

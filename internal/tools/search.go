@@ -51,9 +51,12 @@ func GrepInRoot(root string) Function {
 			return "", fmt.Errorf("invalid pattern: %w", err)
 		}
 
-		base := resolvePath(root, searchPath)
+		base, _, err := normalizeWorkspacePath(root, searchPath)
 		if strings.TrimSpace(searchPath) == "" {
-			base = resolvePath(root, ".")
+			base, _, err = normalizeWorkspacePath(root, ".")
+		}
+		if err != nil {
+			return "", err
 		}
 
 		var matches []string
@@ -112,9 +115,24 @@ func GlobInRoot(root string) Function {
 		}
 		pattern = filepath.ToSlash(strings.TrimSpace(pattern))
 		searchPath, _ := optionalString(args, "path")
-		base := resolvePath(root, searchPath)
+		if isAbsoluteLike(pattern) {
+			if strings.TrimSpace(root) == "" {
+				return "", fmt.Errorf("absolute glob patterns are not supported; pass the directory in path and use a relative pattern")
+			}
+			rootSlash := strings.TrimSuffix(filepath.ToSlash(filepath.Clean(root)), "/")
+			workspacePrefix := rootSlash + "/"
+			if len(pattern) >= len(workspacePrefix) && strings.EqualFold(pattern[:len(workspacePrefix)], workspacePrefix) {
+				pattern = pattern[len(workspacePrefix):]
+			} else {
+				return "", fmt.Errorf("glob pattern %q is outside the workspace or uses another platform; use a relative pattern such as **/*.go", pattern)
+			}
+		}
+		base, _, err := normalizeWorkspacePath(root, searchPath)
 		if strings.TrimSpace(searchPath) == "" {
-			base = resolvePath(root, ".")
+			base, _, err = normalizeWorkspacePath(root, ".")
+		}
+		if err != nil {
+			return "", err
 		}
 
 		type entry struct {

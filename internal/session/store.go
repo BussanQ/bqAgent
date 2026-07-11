@@ -131,8 +131,26 @@ func (session *Session) CheckpointPath() string {
 	return filepath.Join(session.Dir(), "context_checkpoint.json")
 }
 
+func (session *Session) WorkingMessagesPath() string {
+	return filepath.Join(session.Dir(), "working_messages.jsonl")
+}
+
 func (session *Session) LoadMessages() ([]map[string]any, error) {
 	return readMessagesJSONL(session.MessagesPath())
+}
+
+func (session *Session) LoadWorkingMessages() ([]map[string]any, error) {
+	if _, err := os.Stat(session.WorkingMessagesPath()); err != nil {
+		return nil, err
+	}
+	return readMessagesJSONL(session.WorkingMessagesPath())
+}
+
+func (session *Session) SaveWorkingMessages(messages []map[string]any) error {
+	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
+		return err
+	}
+	return writeMessagesJSONL(session.WorkingMessagesPath(), messages)
 }
 
 func (session *Session) RecordMessage(message map[string]any) error {

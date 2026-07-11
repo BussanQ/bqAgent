@@ -25,12 +25,20 @@ const (
 // the client's own timeout.
 const defaultChannelTurnTimeout = 10 * time.Minute
 
-// DefaultChannelMaxIterations uses the same high runaway safety valve as CLI and
-// direct HTTP. CHANNEL_AGENT_MAX_ITERATIONS can still override it explicitly.
-const DefaultChannelMaxIterations = agent.DefaultMaxIterations
+const (
+	defaultChannelStageTimeout       = 90 * time.Second
+	defaultChannelStageMaxIterations = 20
+)
+
+// Channel entry points are interactive, so their default is deliberately more
+// conservative than the CLI runaway valve. CHANNEL_AGENT_MAX_ITERATIONS can
+// still override it explicitly.
+const DefaultChannelMaxIterations = 30
 
 var channelTurnTimeoutNanos atomic.Int64
 var channelMaxIterations atomic.Int64
+var channelStageTimeoutNanos atomic.Int64
+var channelStageMaxIterations atomic.Int64
 
 func ChannelTurnTimeout() time.Duration {
 	if nanos := channelTurnTimeoutNanos.Load(); nanos > 0 {
@@ -62,6 +70,44 @@ func SetChannelMaxIterations(maxIterations int) {
 	channelMaxIterations.Store(int64(maxIterations))
 }
 
+func ChannelStageTimeout() time.Duration {
+	if value := channelStageTimeoutNanos.Load(); value > 0 {
+		return time.Duration(value)
+	}
+	return defaultChannelStageTimeout
+}
+
+func SetChannelStageTimeout(timeout time.Duration) {
+	if timeout <= 0 {
+		channelStageTimeoutNanos.Store(0)
+		return
+	}
+	channelStageTimeoutNanos.Store(int64(timeout))
+}
+
+func ChannelStageMaxIterations() int {
+	if value := channelStageMaxIterations.Load(); value > 0 {
+		return int(value)
+	}
+	return defaultChannelStageMaxIterations
+}
+
+func SetChannelStageMaxIterations(maxIterations int) {
+	if maxIterations <= 0 {
+		channelStageMaxIterations.Store(0)
+		return
+	}
+	channelStageMaxIterations.Store(int64(maxIterations))
+}
+
+func InteractiveChannelStageConfig() agent.StageConfig {
+	return agent.StageConfig{
+		MaxIterations:  ChannelStageMaxIterations(),
+		Timeout:        ChannelStageTimeout(),
+		LoopProtection: true,
+	}
+}
+
 type ChannelConversationState struct {
 	SessionID        string
 	LastCompletedKey string
@@ -79,6 +125,7 @@ type ChannelTurnOptions struct {
 	SaveState    func(ChannelConversationState) error
 	SendReply    func(context.Context, string) error
 	SendProgress func(context.Context, string) error
+	Stage        agent.StageConfig
 }
 
 func (options ChannelTurnOptions) progressSender() func(context.Context, string) error {
@@ -217,7 +264,7 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 	}
 
 	progressWriter := newChannelProgressWriter(ctx, options.progressSender())
-	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message, PeerKey: peerKey, Images: options.Images}, TurnOptions{ProgressWriter: progressWriter, MaxIterations: ChannelMaxIterations()})
+	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message, PeerKey: peerKey, Images: options.Images}, TurnOptions{ProgressWriter: progressWriter, MaxIterations: ChannelMaxIterations(), Stage: options.Stage})
 	if err != nil {
 		state.LastError = err.Error()
 		if response.SessionID != "" {

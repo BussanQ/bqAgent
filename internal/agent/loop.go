@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +50,21 @@ type ContextConfig struct {
 	SummaryModel          string
 }
 
+// StageConfig bounds one interactive exploration stage without changing the
+// higher global runaway limit used by CLI runs. When a budget or loop guard is
+// reached, the agent produces and persists a checkpoint summary so the next
+// user turn can continue from the same session.
+type StageConfig struct {
+	MaxIterations        int
+	Timeout              time.Duration
+	LoopProtection       bool
+	ImmediateProgress    bool
+	EmitProgress         bool
+	DuplicateCallLimit   int
+	RepeatedFailureLimit int
+	EmptyAssistantLimit  int
+}
+
 type Options struct {
 	SystemPrompt    string
 	LogWriter       io.Writer
@@ -60,6 +77,7 @@ type Options struct {
 	ProgressWriter  io.Writer
 	TokenSink       io.Writer
 	Context         ContextConfig
+	Stage           StageConfig
 }
 
 type Agent struct {
@@ -77,6 +95,7 @@ type Agent struct {
 	progressWriter  io.Writer
 	tokenSink       io.Writer
 	contextConfig   ContextConfig
+	stageConfig     StageConfig
 }
 
 func New(client ChatCompletionClient, model string, logWriter io.Writer) *Agent {
@@ -135,7 +154,21 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		workspaceRoot:   options.WorkspaceRoot,
 		tokenSink:       tokenSink,
 		contextConfig:   contextConfig,
+		stageConfig:     normalizeStageConfig(options.Stage),
 	}
+}
+
+func normalizeStageConfig(config StageConfig) StageConfig {
+	if config.DuplicateCallLimit <= 0 {
+		config.DuplicateCallLimit = 4
+	}
+	if config.RepeatedFailureLimit <= 0 {
+		config.RepeatedFailureLimit = 3
+	}
+	if config.EmptyAssistantLimit <= 0 {
+		config.EmptyAssistantLimit = 8
+	}
+	return config
 }
 
 func (a *Agent) Run(ctx context.Context, userMessage string, maxIterations int) (string, error) {
@@ -168,6 +201,19 @@ func DefaultContextConfig() ContextConfig {
 		SummarizationEnabled:  true,
 		SummaryTriggerTokens:  DefaultContextMaxInputTokens - DefaultContextResponseReserveTokens,
 	}
+}
+
+// BoundWorkingMessages creates a request-safe working snapshot without calling
+// the model. Server paths use it for turns handled by external agents or command
+// shortcuts that do not pass through runConversation's context manager.
+func BoundWorkingMessages(messages []map[string]any, config ContextConfig) []map[string]any {
+	config = normalizeContextConfig(config)
+	working := sanitizeCompletedToolHistory(duplicateMessages(messages))
+	if !config.Enabled || estimateMessagesTokens(working) <= config.TargetInputTokens {
+		return working
+	}
+	working = pruneMessagesToBudget(working, config)
+	return hardPruneMessagesToBudget(working, config.TargetInputTokens)
 }
 
 func normalizeContextConfig(config ContextConfig) ContextConfig {
@@ -264,13 +310,26 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 
 	definitions := a.toolDefinitionsForRun(allowPlan)
 	actualIterations := 0
+	explorationCtx := ctx
+	cancelExploration := func() {}
+	if a.stageConfig.Timeout > 0 {
+		explorationCtx, cancelExploration = context.WithTimeout(ctx, a.stageConfig.Timeout)
+	}
+	defer cancelExploration()
+	loopGuard := newLoopGuard(a.stageConfig)
 	defer func() {
 		logTurnTiming(a.logWriter, actualIterations, allowPlan, time.Since(startedAt), err)
 	}()
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
+		if reason := a.stageBoundaryReason(iteration, explorationCtx); reason != "" {
+			return a.finishStageCheckpoint(ctx, updatedMessages, reason, actualIterations)
+		}
 		actualIterations = iteration + 1
-		requestMessages, compacted := a.buildRequestMessages(ctx, messages)
+		if a.stageConfig.ImmediateProgress {
+			a.writeStageProgress(fmt.Sprintf("Starting analysis iteration %d", actualIterations))
+		}
+		requestMessages, compacted := a.buildRequestMessages(explorationCtx, messages)
 		if compacted != nil {
 			messages = compacted
 			updatedMessages = compacted
@@ -280,7 +339,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			requestErr error
 		)
 		if a.stream {
-			message, requestErr = a.client.CreateChatCompletionStream(ctx, a.model, requestMessages, definitions, func(chunk string) {
+			message, requestErr = a.client.CreateChatCompletionStream(explorationCtx, a.model, requestMessages, definitions, func(chunk string) {
 				sink := a.tokenSink
 				if sink == nil {
 					sink = a.logWriter
@@ -290,9 +349,12 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 			})
 		} else {
-			message, requestErr = a.client.CreateChatCompletion(ctx, a.model, requestMessages, definitions)
+			message, requestErr = a.client.CreateChatCompletion(explorationCtx, a.model, requestMessages, definitions)
 		}
 		if requestErr != nil {
+			if errors.Is(requestErr, context.DeadlineExceeded) && ctx.Err() == nil && a.stageConfig.Timeout > 0 {
+				return a.finishStageCheckpoint(ctx, updatedMessages, "stage time budget reached", actualIterations)
+			}
 			err = requestErr
 			return "", updatedMessages, err
 		}
@@ -304,6 +366,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			return "", updatedMessages, err
 		}
 		messages = updatedMessages
+		if reason := loopGuard.observeAssistant(message); reason != "" {
+			return a.finishStageCheckpoint(ctx, updatedMessages, reason, actualIterations)
+		}
 
 		if a.stream && len(message.ToolCalls) == 0 {
 			// content already streamed via onChunk; skip log line
@@ -312,6 +377,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		if len(message.ToolCalls) == 0 {
 			return message.FinalContent(), updatedMessages, nil
+		}
+		if !a.stageConfig.ImmediateProgress {
+			a.writeStageProgress(fmt.Sprintf("Analyzing tool requests in iteration %d", actualIterations))
 		}
 
 		// Some tools recurse or mutate state that later tool calls may depend on, so
@@ -365,12 +433,15 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					continue
 				}
 
-				_, toolResult := a.runRegularToolCall(ctx, toolCall)
+				_, toolResult := a.runRegularToolCall(explorationCtx, toolCall)
 				updatedToolMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, toolResult)
 				updatedMessages = updatedToolMessages
 				messages = updatedMessages
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
+				}
+				if reason := loopGuard.observeTool(toolCall, toolResult); reason != "" {
+					return a.finishStageCheckpoint(ctx, updatedMessages, reason, actualIterations)
 				}
 			}
 		} else {
@@ -383,12 +454,13 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					defer waitGroup.Done()
 					semaphore <- struct{}{}
 					defer func() { <-semaphore }()
-					_, content := a.runRegularToolCall(ctx, toolCall)
+					_, content := a.runRegularToolCall(explorationCtx, toolCall)
 					results[index] = content
 				}(index, toolCall)
 			}
 			waitGroup.Wait()
 
+			loopReason := ""
 			for index, toolCall := range message.ToolCalls {
 				updatedToolMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, results[index])
 				updatedMessages = updatedToolMessages
@@ -396,11 +468,123 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
 				}
+				if reason := loopGuard.observeTool(toolCall, results[index]); reason != "" && loopReason == "" {
+					loopReason = reason
+				}
+			}
+			if loopReason != "" {
+				return a.finishStageCheckpoint(ctx, updatedMessages, loopReason, actualIterations)
+			}
+		}
+		a.writeStageProgress(fmt.Sprintf("Completed analysis iteration %d", actualIterations))
+	}
+
+	if a.stageConfig.MaxIterations > 0 || a.stageConfig.Timeout > 0 || a.stageConfig.LoopProtection {
+		return a.finishStageCheckpoint(ctx, updatedMessages, fmt.Sprintf("maximum turn iterations reached (%d)", maxIterations), actualIterations)
+	}
+	return fmt.Sprintf("Agent stopped: reached maximum of %d iterations without completing.", maxIterations), updatedMessages, nil
+}
+
+func (a *Agent) stageBoundaryReason(iteration int, explorationCtx context.Context) string {
+	if a.stageConfig.MaxIterations > 0 && iteration >= a.stageConfig.MaxIterations {
+		return fmt.Sprintf("stage iteration budget reached (%d)", a.stageConfig.MaxIterations)
+	}
+	if explorationCtx.Err() != nil && a.stageConfig.Timeout > 0 {
+		return "stage time budget reached"
+	}
+	return ""
+}
+
+func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string]any, reason string, iterations int) (string, []map[string]any, error) {
+	a.writeStageProgress(fmt.Sprintf("Preparing stage summary after %d iterations", iterations))
+	request, compacted := a.buildRequestMessages(ctx, messages)
+	if compacted != nil {
+		messages = compacted
+	}
+	request = append(request, map[string]any{
+		"role":    "user",
+		"content": fmt.Sprintf("The current interactive analysis stage must stop now because %s. Based only on the work and tool results above, provide a concise checkpoint with exactly these sections: 已发现, 未完成, 建议下一步. State that the user can reply ‘继续’ to resume from this session. Do not call tools.", reason),
+	})
+	message, summaryErr := a.client.CreateChatCompletion(ctx, a.model, request, nil)
+	summary := strings.TrimSpace(message.FinalContent())
+	if summaryErr != nil || summary == "" {
+		summary = fmt.Sprintf("阶段已暂停（%s）。\n\n已发现\n- 已完成 %d 轮探索，相关工具结果已保留在当前会话中。\n\n未完成\n- 仍需基于现有结果继续分析。\n\n建议下一步\n- 回复“继续”，我会沿用当前 session 和已保存的上下文继续。", reason, iterations)
+	}
+	checkpoint := map[string]any{"role": "assistant", "content": summary}
+	messages = append(messages, checkpoint)
+	if recordErr := a.recordMessages(checkpoint); recordErr != nil {
+		return "", messages, recordErr
+	}
+	a.writeStageProgress("Stage summary completed; waiting for confirmation to continue")
+	return summary, messages, nil
+}
+
+type loopGuard struct {
+	config          StageConfig
+	callCounts      map[string]int
+	failureCounts   map[string]int
+	pathFailures    map[string]int
+	emptyAssistants int
+}
+
+func newLoopGuard(config StageConfig) *loopGuard {
+	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, pathFailures: map[string]int{}}
+}
+
+func (guard *loopGuard) observeAssistant(message AssistantMessage) string {
+	if guard == nil || !guard.config.LoopProtection {
+		return ""
+	}
+	if strings.TrimSpace(message.FinalContent()) == "" && len(message.ToolCalls) > 0 {
+		guard.emptyAssistants++
+	} else {
+		guard.emptyAssistants = 0
+	}
+	if guard.emptyAssistants >= guard.config.EmptyAssistantLimit {
+		return fmt.Sprintf("loop protection: %d consecutive empty assistant tool rounds", guard.emptyAssistants)
+	}
+	return ""
+}
+
+func (guard *loopGuard) observeTool(call ToolCall, result string) string {
+	if guard == nil || !guard.config.LoopProtection {
+		return ""
+	}
+	signature := call.Function.Name + "\x00" + strings.TrimSpace(call.Function.Arguments)
+	guard.callCounts[signature]++
+	if strings.HasPrefix(strings.TrimSpace(result), "Error:") {
+		guard.failureCounts[signature]++
+		if guard.failureCounts[signature] >= guard.config.RepeatedFailureLimit {
+			return fmt.Sprintf("loop protection: repeated failing tool call %s", call.Function.Name)
+		}
+		if pathSignature := failedPathSignature(call); pathSignature != "" {
+			guard.pathFailures[pathSignature]++
+			if guard.pathFailures[pathSignature] >= guard.config.RepeatedFailureLimit {
+				return fmt.Sprintf("loop protection: repeated failing path in %s", call.Function.Name)
 			}
 		}
 	}
+	if guard.callCounts[signature] >= guard.config.DuplicateCallLimit {
+		return fmt.Sprintf("loop protection: repeated tool call %s", call.Function.Name)
+	}
+	return ""
+}
 
-	return fmt.Sprintf("Agent stopped: reached maximum of %d iterations without completing.", maxIterations), updatedMessages, nil
+func failedPathSignature(call ToolCall) string {
+	parsed, err := parseArguments(call.Function.Arguments)
+	if err != nil {
+		return ""
+	}
+	arguments, ok := parsed.(map[string]any)
+	if !ok {
+		return ""
+	}
+	path, _ := arguments["path"].(string)
+	path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if path == "" {
+		return ""
+	}
+	return call.Function.Name + "\x00" + path
 }
 
 func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) (string, []map[string]any, error) {
@@ -511,13 +695,11 @@ func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any,
 }
 
 // buildRequestMessages returns the message payload to send to the model and,
-// when summarization compacted the history, a non-nil compacted working set the
-// loop should adopt in place of its full in-memory history. compacted is nil for
-// the disabled / under-budget / pruned paths, leaving the working set untouched
-// exactly as before — only the (expensive) summarize path is adopted so the loop
-// continues on the compacted context instead of re-summarizing from scratch each
-// turn. The synthetic summary message lives only in this returned set (and in
-// context_checkpoint.json); it is never recorded to the raw transcript.
+// when pruning or summarization compacted the history, a non-nil bounded working
+// set the loop should adopt in place of its full in-memory history. This working
+// set can be persisted separately from the complete raw transcript. The
+// synthetic summary lives only in the working set and context checkpoint; it is
+// never recorded to messages.jsonl.
 func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]any) (request []map[string]any, compacted []map[string]any) {
 	sanitized := sanitizeCompletedToolHistory(duplicateMessages(messages))
 	if !a.contextConfig.Enabled {
@@ -531,18 +713,23 @@ func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]
 	}
 
 	pruned := pruneMessagesToBudget(sanitized, a.contextConfig)
+	pruned = hardPruneMessagesToBudget(pruned, a.contextConfig.TargetInputTokens)
 	prunedTokens := estimateMessagesTokens(pruned)
 	if !a.contextConfig.SummarizationEnabled || !shouldSummarize(estimatedTokens, a.contextConfig) {
 		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedTokens, true, false)
-		return pruned, nil
+		return pruned, pruned
 	}
 
 	summarized, ok := a.summarizeMessages(ctx, sanitized)
 	if !ok {
 		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedTokens, true, false)
-		return pruned, nil
+		return pruned, pruned
 	}
 	summaryTokens := estimateMessagesTokens(summarized)
+	if summaryTokens > a.contextConfig.TargetInputTokens {
+		summarized = hardPruneMessagesToBudget(summarized, a.contextConfig.TargetInputTokens)
+		summaryTokens = estimateMessagesTokens(summarized)
+	}
 	a.logContextBudget(len(messages), len(sanitized), len(summarized), summaryTokens, true, true)
 	return summarized, summarized
 }
@@ -570,6 +757,164 @@ func pruneMessagesToBudget(messages []map[string]any, config ContextConfig) []ma
 	return pruned
 }
 
+// hardPruneMessagesToBudget is the final request-size guard. Turn-based pruning
+// can still exceed the token target when one recent turn contains many or very
+// large tool results. This keeps a contiguous, valid tail and truncates the
+// newest group only when that group alone would exceed the remaining budget.
+func hardPruneMessagesToBudget(messages []map[string]any, targetTokens int) []map[string]any {
+	if targetTokens <= 0 || len(messages) == 0 || estimateMessagesTokens(messages) <= targetTokens {
+		return messages
+	}
+
+	protectedEnd := 0
+	result := make([]map[string]any, 0, len(messages))
+	remaining := targetTokens
+	latestUserIndex := -1
+	for index := len(messages) - 1; index >= 0; index-- {
+		if role, _ := messages[index]["role"].(string); role == "user" {
+			latestUserIndex = index
+			break
+		}
+	}
+	var reservedUser []map[string]any
+	reservedUserTokens := 0
+	if latestUserIndex >= 0 {
+		userBudget := targetTokens * 3 / 4
+		if userBudget < 1 {
+			userBudget = 1
+		}
+		reservedUser = truncateMessageGroupToBudget(messages[latestUserIndex:latestUserIndex+1], userBudget)
+		reservedUserTokens = estimateMessagesTokens(reservedUser)
+	}
+	if role, _ := messages[0]["role"].(string); role == "system" {
+		result = append(result, messages[0])
+		remaining -= estimateMessagesTokens(messages[:1])
+		protectedEnd = 1
+	}
+	if protectedEnd < len(messages) {
+		if content, _ := messages[protectedEnd]["content"].(string); strings.HasPrefix(content, EarlierConversationSummaryPrefix) {
+			summaryBudget := remaining - reservedUserTokens
+			if summaryBudget > 0 {
+				clippedSummary := truncateMessageGroupToBudget(messages[protectedEnd:protectedEnd+1], summaryBudget)
+				result = append(result, clippedSummary...)
+				remaining -= estimateMessagesTokens(clippedSummary)
+			}
+			protectedEnd++
+		}
+	}
+	if remaining <= 0 || protectedEnd >= len(messages) {
+		return result
+	}
+
+	groups := messageTailGroups(messages, protectedEnd)
+	selected := make([]messageGroup, 0, len(groups))
+	latestUserGroup := -1
+	for index, group := range groups {
+		if group.start == latestUserIndex {
+			latestUserGroup = index
+			break
+		}
+	}
+	for index := len(groups) - 1; index >= 0; index-- {
+		group := groups[index]
+		groupMessages := group.messages
+		if index == latestUserGroup && len(reservedUser) > 0 {
+			groupMessages = reservedUser
+		}
+		available := remaining
+		if latestUserGroup >= 0 && index > latestUserGroup {
+			available -= reservedUserTokens
+		}
+		if available <= 0 {
+			continue
+		}
+		cost := estimateMessagesTokens(groupMessages)
+		if cost > available {
+			if index > latestUserGroup || (latestUserGroup < 0 && len(selected) == 0) {
+				clipped := truncateMessageGroupToBudget(groupMessages, available)
+				if len(clipped) > 0 {
+					selected = append(selected, messageGroup{start: group.start, messages: clipped})
+					remaining -= estimateMessagesTokens(clipped)
+				}
+				continue
+			}
+			break
+		}
+		selected = append(selected, messageGroup{start: group.start, messages: groupMessages})
+		remaining -= cost
+	}
+	for index := len(selected) - 1; index >= 0; index-- {
+		result = append(result, selected[index].messages...)
+	}
+	return result
+}
+
+type messageGroup struct {
+	start    int
+	messages []map[string]any
+}
+
+func messageTailGroups(messages []map[string]any, start int) []messageGroup {
+	groups := make([]messageGroup, 0, len(messages)-start)
+	for index := start; index < len(messages); {
+		end := index + 1
+		role, _ := messages[index]["role"].(string)
+		if role == "assistant" && len(extractToolCallsFromMessageMap(messages[index])) > 0 {
+			for end < len(messages) {
+				nextRole, _ := messages[end]["role"].(string)
+				if nextRole != "tool" {
+					break
+				}
+				end++
+			}
+		}
+		groups = append(groups, messageGroup{start: index, messages: messages[index:end]})
+		index = end
+	}
+	return groups
+}
+
+func truncateMessageGroupToBudget(group []map[string]any, budgetTokens int) []map[string]any {
+	cloned := duplicateMessages(group)
+	if budgetTokens <= 0 {
+		return nil
+	}
+	for estimateMessagesTokens(cloned) > budgetTokens {
+		largestIndex := -1
+		largestContent := ""
+		for index, message := range cloned {
+			content, _ := message["content"].(string)
+			if len(content) > len(largestContent) {
+				largestIndex = index
+				largestContent = content
+			}
+		}
+		if largestIndex < 0 || len(largestContent) <= 16 {
+			break
+		}
+		maxChars := len(largestContent) / 2
+		if maxChars < 16 {
+			maxChars = 16
+		}
+		cloned[largestIndex]["content"] = truncateTextMiddle(largestContent, maxChars)
+	}
+	return cloned
+}
+
+func truncateTextMiddle(text string, maxChars int) string {
+	if maxChars <= 0 || len(text) <= maxChars {
+		return text
+	}
+	marker := "\n... [content truncated to fit context budget] ...\n"
+	if maxChars <= len(marker)+2 {
+		return text[:maxChars]
+	}
+	available := maxChars - len(marker)
+	head := available * 2 / 3
+	tail := available - head
+	return text[:head] + marker + text[len(text)-tail:]
+}
+
 func shouldSummarize(estimatedTokens int, config ContextConfig) bool {
 	return config.SummarizationEnabled && estimatedTokens > config.SummaryTriggerTokens
 }
@@ -583,11 +928,6 @@ func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any
 	if err != nil || strings.TrimSpace(summary) == "" {
 		return nil, false
 	}
-	if a.checkpointSaver != nil {
-		if err := a.checkpointSaver.SaveCheckpointSummary(summary, tail, a.systemPrompt); err != nil {
-			a.logf("[Context] checkpoint save failed: %v\n", err)
-		}
-	}
 
 	summarized := make([]map[string]any, 0, len(tail)+2)
 	if len(prefix) > 0 {
@@ -600,6 +940,23 @@ func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any
 		"content": EarlierConversationSummaryPrefix + summary,
 	})
 	summarized = append(summarized, tail...)
+	summarized = hardPruneMessagesToBudget(summarized, a.contextConfig.TargetInputTokens)
+	if a.checkpointSaver != nil {
+		checkpointTail := summarized
+		if len(checkpointTail) > 0 {
+			if role, _ := checkpointTail[0]["role"].(string); role == "system" {
+				checkpointTail = checkpointTail[1:]
+			}
+		}
+		if len(checkpointTail) > 0 {
+			if content, _ := checkpointTail[0]["content"].(string); strings.HasPrefix(content, EarlierConversationSummaryPrefix) {
+				checkpointTail = checkpointTail[1:]
+			}
+		}
+		if err := a.checkpointSaver.SaveCheckpointSummary(summary, checkpointTail, a.systemPrompt); err != nil {
+			a.logf("[Context] checkpoint save failed: %v\n", err)
+		}
+	}
 	return summarized, true
 }
 
@@ -628,6 +985,7 @@ func (a *Agent) generateSummary(ctx context.Context, messages []map[string]any) 
 	if model == "" {
 		model = a.model
 	}
+	messages = hardPruneMessagesToBudget(messages, a.contextConfig.TargetInputTokens)
 	promptMessages := []map[string]any{
 		{"role": "system", "content": "Summarize the earlier conversation for future continuation. Preserve goals, constraints, decisions, unresolved questions, and important factual context. Be concise."},
 		{"role": "user", "content": buildSummaryInput(messages)},
@@ -830,18 +1188,48 @@ func sanitizeCompletedToolHistory(messages []map[string]any) []map[string]any {
 		if role == "tool" {
 			if pendingAssistantIndex >= 0 && i >= pendingToolStart {
 				sanitized = append(sanitized, message)
+			} else {
+				content, _ := message["content"].(string)
+				sanitized = append(sanitized, map[string]any{"role": "assistant", "content": "Completed tool result:\n" + content})
 			}
 			continue
 		}
 		if role == "assistant" && len(extractToolCallsFromMessageMap(message)) > 0 {
 			if i == pendingAssistantIndex {
 				sanitized = append(sanitized, message)
+				continue
 			}
+			end := i + 1
+			for end < len(messages) {
+				nextRole, _ := messages[end]["role"].(string)
+				if nextRole != "tool" {
+					break
+				}
+				end++
+			}
+			sanitized = append(sanitized, summarizeCompletedToolBatch(message, messages[i+1:end]))
+			i = end - 1
 			continue
 		}
 		sanitized = append(sanitized, message)
 	}
 	return sanitized
+}
+
+func summarizeCompletedToolBatch(assistant map[string]any, results []map[string]any) map[string]any {
+	parts := []string{"Completed tool activity (retain this evidence for later reasoning):"}
+	if content, _ := assistant["content"].(string); strings.TrimSpace(content) != "" {
+		parts = append(parts, "Assistant note: "+strings.TrimSpace(content))
+	}
+	if calls, err := json.Marshal(assistant["tool_calls"]); err == nil {
+		parts = append(parts, "Calls: "+string(calls))
+	}
+	for _, result := range results {
+		id, _ := result["tool_call_id"].(string)
+		content, _ := result["content"].(string)
+		parts = append(parts, fmt.Sprintf("Result %s:\n%s", id, content))
+	}
+	return map[string]any{"role": "assistant", "content": strings.Join(parts, "\n")}
 }
 
 func extractToolCallsFromMessageMap(message map[string]any) []any {
@@ -907,6 +1295,11 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 	if !ok {
 		return toolCall.ID, fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
 	}
+	if path, _ := arguments["path"].(string); strings.TrimSpace(path) != "" {
+		a.writeStageProgress(fmt.Sprintf("Running %s on %s", toolCall.Function.Name, path))
+	} else {
+		a.writeStageProgress(fmt.Sprintf("Running tool %s", toolCall.Function.Name))
+	}
 
 	toolStartedAt := time.Now()
 	toolResult := ""
@@ -922,6 +1315,11 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 		}
 	}
 	logToolTiming(a.logWriter, toolCall.Function.Name, time.Since(toolStartedAt), toolErr)
+	status := "completed"
+	if toolErr != nil {
+		status = "failed"
+	}
+	a.writeStageProgress(fmt.Sprintf("Tool %s %s", toolCall.Function.Name, status))
 	if toolCall.Function.Name == "todo_write" && toolErr == nil {
 		a.writeProgress(toolResult)
 	}
@@ -952,6 +1350,16 @@ func (a *Agent) writeProgress(text string) {
 		return
 	}
 	_, _ = io.WriteString(a.progressWriter, text+"\n")
+}
+
+func (a *Agent) writeStageProgress(text string) {
+	if !a.stageConfig.EmitProgress {
+		return
+	}
+	if a.stageConfig.MaxIterations <= 0 && a.stageConfig.Timeout <= 0 && !a.stageConfig.LoopProtection {
+		return
+	}
+	a.writeProgress(text)
 }
 
 func (a *Agent) appendToolMessage(messages []map[string]any, toolCallID, content string) ([]map[string]any, error) {

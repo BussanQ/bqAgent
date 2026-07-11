@@ -111,8 +111,16 @@ func TestRunServerRequiresAPIKey(t *testing.T) {
 func TestConfigureServerChannelLimitsReadsMaxIterations(t *testing.T) {
 	previousMax := appserver.ChannelMaxIterations()
 	previousTimeout := appserver.ChannelTurnTimeout()
+	previousStageMax := appserver.WebUIStageMaxIterations()
+	previousStageTimeout := appserver.WebUIStageTimeout()
+	previousChannelStageMax := appserver.ChannelStageMaxIterations()
+	previousChannelStageTimeout := appserver.ChannelStageTimeout()
 	defer appserver.SetChannelMaxIterations(previousMax)
 	defer appserver.SetChannelTurnTimeout(previousTimeout)
+	defer appserver.SetWebUIStageMaxIterations(previousStageMax)
+	defer appserver.SetWebUIStageTimeout(previousStageTimeout)
+	defer appserver.SetChannelStageMaxIterations(previousChannelStageMax)
+	defer appserver.SetChannelStageTimeout(previousChannelStageTimeout)
 
 	var stderr bytes.Buffer
 	configureServerChannelLimits(&stderr, func(key string) string {
@@ -121,6 +129,14 @@ func TestConfigureServerChannelLimitsReadsMaxIterations(t *testing.T) {
 			return "12"
 		case "CHANNEL_TURN_TIMEOUT":
 			return "3s"
+		case "WEBUI_STAGE_MAX_ITERATIONS":
+			return "7"
+		case "WEBUI_STAGE_TIMEOUT":
+			return "45s"
+		case "CHANNEL_STAGE_MAX_ITERATIONS":
+			return "8"
+		case "CHANNEL_STAGE_TIMEOUT":
+			return "50s"
 		default:
 			return ""
 		}
@@ -130,6 +146,18 @@ func TestConfigureServerChannelLimitsReadsMaxIterations(t *testing.T) {
 	}
 	if appserver.ChannelTurnTimeout() != 3*time.Second {
 		t.Fatalf("ChannelTurnTimeout = %s, want 3s", appserver.ChannelTurnTimeout())
+	}
+	if appserver.WebUIStageMaxIterations() != 7 {
+		t.Fatalf("WebUIStageMaxIterations = %d, want 7", appserver.WebUIStageMaxIterations())
+	}
+	if appserver.WebUIStageTimeout() != 45*time.Second {
+		t.Fatalf("WebUIStageTimeout = %s, want 45s", appserver.WebUIStageTimeout())
+	}
+	if appserver.ChannelStageMaxIterations() != 8 {
+		t.Fatalf("ChannelStageMaxIterations = %d, want 8", appserver.ChannelStageMaxIterations())
+	}
+	if appserver.ChannelStageTimeout() != 50*time.Second {
+		t.Fatalf("ChannelStageTimeout = %s, want 50s", appserver.ChannelStageTimeout())
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())

@@ -199,7 +199,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "read_file",
-				Description: "Read a file. Optionally pass offset (1-based start line) and limit (number of lines) to read part of a large file.",
+				Description: "Read a workspace file using a workspace-relative path, preferably copied from glob output. Absolute paths are accepted only when they are inside the workspace. Optionally pass offset and limit.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
@@ -215,7 +215,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "write_file",
-				Description: "Write to a file (overwrites the whole file). For changing part of an existing file, prefer edit_file.",
+				Description: "Write a workspace file using a workspace-relative path (overwrites the whole file). Absolute paths outside the workspace are rejected. Prefer edit_file for partial changes.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
@@ -230,7 +230,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "edit_file",
-				Description: "Replace an exact string in a file. old_string must match exactly once unless replace_all is true. Far more efficient than rewriting the whole file.",
+				Description: "Replace an exact string in a workspace file using a workspace-relative path. old_string must match exactly once unless replace_all is true.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
@@ -247,7 +247,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "grep",
-				Description: "Search file contents by regular expression (Go regexp) when locating unknown symbols, files, or usages. Returns path:line:text. Skips .git and binary files.",
+				Description: "Search workspace file contents by Go regular expression. Use a workspace-relative path when provided. Returns path:line:text and skips .git and binary files.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
@@ -265,7 +265,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "glob",
-				Description: "Find files by glob pattern (supports ** for any depth, e.g. **/*.go). Returns paths, most-recently-modified first.",
+				Description: "Find workspace files by a relative glob pattern (supports **, e.g. **/*.go). Returns workspace-relative paths; reuse those paths in file tools.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{

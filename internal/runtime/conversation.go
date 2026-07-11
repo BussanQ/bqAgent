@@ -12,8 +12,9 @@ import (
 )
 
 type Conversation struct {
-	Session  *session.Session
-	Messages []map[string]any
+	Session             *session.Session
+	Messages            []map[string]any
+	UsingWorkingContext bool
 }
 
 func PrepareConversation(store *session.Store, sessionID string, createOptions *session.CreateOptions, systemPrompt string) (*Conversation, error) {
@@ -42,15 +43,28 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 		if err := savedSession.MarkRunning(); err != nil {
 			return nil, err
 		}
-		messages, err = savedSession.LoadMessages()
+		usingWorkingContext := false
+		messages, err = savedSession.LoadWorkingMessages()
+		if err == nil {
+			usingWorkingContext = true
+		} else if errors.Is(err, os.ErrNotExist) {
+			messages, err = savedSession.LoadMessages()
+			if err == nil {
+				if checkpoint, checkpointErr := savedSession.LoadCheckpoint(); checkpointErr == nil {
+					messages = restoreCheckpointMessages(messages, checkpoint, systemPrompt)
+				}
+			}
+		}
 		if err != nil {
-			// Best effort; the load error below is the one that matters.
 			_ = savedSession.MarkFailed(err)
 			return nil, err
 		}
-		if checkpoint, checkpointErr := savedSession.LoadCheckpoint(); checkpointErr == nil {
-			messages = restoreCheckpointMessages(messages, checkpoint, systemPrompt)
+		conversation := &Conversation{Session: savedSession, Messages: messages, UsingWorkingContext: usingWorkingContext}
+		if err := conversation.EnsureSystemMessage(systemPrompt); err != nil {
+			_ = savedSession.MarkFailed(err)
+			return nil, err
 		}
+		return conversation, nil
 	}
 
 	conversation := &Conversation{
@@ -88,6 +102,9 @@ func (conversation *Conversation) EnsureSystemMessage(systemPrompt string) error
 		conversation.Messages = append([]map[string]any{systemMessage}, conversation.Messages...)
 	}
 	if conversation.Session != nil {
+		if conversation.UsingWorkingContext {
+			return conversation.Session.SaveWorkingMessages(conversation.Messages)
+		}
 		return conversation.Session.RewriteMessages(conversation.Messages)
 	}
 	return nil
@@ -184,6 +201,17 @@ func (conversation *Conversation) MarkCompleted() error {
 		return nil
 	}
 	return conversation.Session.MarkCompleted()
+}
+
+func (conversation *Conversation) SaveWorkingContext() error {
+	if conversation == nil || conversation.Session == nil {
+		return nil
+	}
+	if err := conversation.Session.SaveWorkingMessages(conversation.Messages); err != nil {
+		return err
+	}
+	conversation.UsingWorkingContext = true
+	return nil
 }
 
 func (conversation *Conversation) MarkFailed(err error) error {

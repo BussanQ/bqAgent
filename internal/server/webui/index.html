@@ -644,6 +644,7 @@
     caret.className = "caret";
     bubble.appendChild(caret);
     var streamed = "";
+    var progress = "";
 
     setBusy(true);
     try {
@@ -685,11 +686,21 @@
             var errPayload = JSON.parse(evt.data);
             bubble.classList.add("error");
             bubble.textContent = "出错：" + (errPayload.error || "未知错误");
+          } else if (evt.event === "progress") {
+            var progressPayload = JSON.parse(evt.data);
+            if (progressPayload.message && !streamed) {
+              progress = progressPayload.message;
+              caret.remove();
+              bubble.classList.add("notice");
+              bubble.textContent = progress;
+              bubble.appendChild(caret);
+            }
           } else {
             var payload = JSON.parse(evt.data);
             if (payload.delta) {
               streamed += payload.delta;
               caret.remove();
+              bubble.classList.remove("notice");
               bubble.textContent = streamed;
               bubble.appendChild(caret);
             }

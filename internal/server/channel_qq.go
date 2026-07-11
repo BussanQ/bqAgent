@@ -179,6 +179,7 @@ func (channel *QQChannel) processUpdate(ctx context.Context, update qq.Update) e
 		SaveState:    saveState,
 		SendReply:    sender.SendReply,
 		SendProgress: sender.SendProgress,
+		Stage:        InteractiveChannelStageConfig(),
 	})
 	return err
 }

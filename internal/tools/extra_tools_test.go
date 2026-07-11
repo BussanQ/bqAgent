@@ -32,6 +32,49 @@ func TestReadFileOffsetLimit(t *testing.T) {
 	}
 }
 
+func TestWorkspacePathsNormalizeInsideAndRejectOutside(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "inside.txt")
+	if err := os.WriteFile(inside, []byte("inside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	read := ReadFileFromRoot(root)
+	content, err := read(context.Background(), map[string]any{"path": inside})
+	if err != nil || content != "inside" {
+		t.Fatalf("absolute inside read = %q, err = %v", content, err)
+	}
+
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := read(context.Background(), map[string]any{"path": outside}); err == nil || !strings.Contains(err.Error(), "outside workspace") {
+		t.Fatalf("outside path error = %v, want clear workspace rejection", err)
+	}
+	if _, err := read(context.Background(), map[string]any{"path": "/Users/example/project/main.go"}); err == nil || (!strings.Contains(err.Error(), "another platform") && !strings.Contains(err.Error(), "outside workspace")) {
+		t.Fatalf("foreign absolute path error = %v, want fast actionable rejection", err)
+	}
+}
+
+func TestGlobAcceptsAbsoluteWorkspacePatternAndReturnsRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "main.go"), []byte("package internal"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pattern := filepath.ToSlash(filepath.Join(root, "**", "*.go"))
+	out, err := GlobInRoot(root)(context.Background(), map[string]any{"pattern": pattern})
+	if err != nil {
+		t.Fatalf("absolute workspace glob error: %v", err)
+	}
+	if strings.TrimSpace(out) != "internal/main.go" {
+		t.Fatalf("glob output = %q, want workspace-relative path", out)
+	}
+}
+
 func TestEditFileUniqueReplacement(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "f.txt")

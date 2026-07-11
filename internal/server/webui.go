@@ -5,8 +5,53 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"bqagent/internal/agent"
 )
+
+const (
+	defaultWebUIStageTimeout       = 90 * time.Second
+	defaultWebUIStageMaxIterations = 20
+)
+
+var webUIStageTimeoutNanos atomic.Int64
+var webUIStageMaxIterations atomic.Int64
+
+func WebUIStageTimeout() time.Duration {
+	if value := webUIStageTimeoutNanos.Load(); value > 0 {
+		return time.Duration(value)
+	}
+	return defaultWebUIStageTimeout
+}
+
+func SetWebUIStageTimeout(timeout time.Duration) {
+	if timeout <= 0 {
+		webUIStageTimeoutNanos.Store(0)
+		return
+	}
+	webUIStageTimeoutNanos.Store(int64(timeout))
+}
+
+func WebUIStageMaxIterations() int {
+	if value := webUIStageMaxIterations.Load(); value > 0 {
+		return int(value)
+	}
+	return defaultWebUIStageMaxIterations
+}
+
+func SetWebUIStageMaxIterations(maxIterations int) {
+	if maxIterations <= 0 {
+		webUIStageMaxIterations.Store(0)
+		return
+	}
+	webUIStageMaxIterations.Store(int64(maxIterations))
+}
 
 //go:embed webui/index.html
 var webUIIndex []byte
@@ -97,11 +142,23 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	ctx, cancel := context.WithTimeout(request.Context(), ChannelTurnTimeout())
 	defer cancel()
 
-	sink := &sseTokenWriter{writer: writer, flusher: flusher}
+	stream := &sseStream{writer: writer, flusher: flusher}
 	response, err := channel.service.HandleTurnWithOptions(ctx, TurnRequest{
 		SessionID: turnRequest.SessionID,
 		Message:   turnRequest.Message,
-	}, TurnOptions{Stream: true, TokenSink: sink})
+	}, TurnOptions{
+		Stream:         true,
+		TokenSink:      sseEventWriter{stream: stream, event: "message"},
+		ProgressWriter: sseEventWriter{stream: stream, event: "progress"},
+		MaxIterations:  ChannelMaxIterations(),
+		Stage: agent.StageConfig{
+			MaxIterations:     WebUIStageMaxIterations(),
+			Timeout:           WebUIStageTimeout(),
+			LoopProtection:    true,
+			ImmediateProgress: true,
+			EmitProgress:      true,
+		},
+	})
 	if err != nil {
 		writeSSEEvent(writer, flusher, "error", map[string]string{"error": err.Error()})
 		return
@@ -113,25 +170,47 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	})
 }
 
-// sseTokenWriter turns each streamed token chunk into a `data:` SSE event. The
-// agent serializes writes to this sink, so no extra locking is needed here.
-type sseTokenWriter struct {
+type sseStream struct {
+	mu      sync.Mutex
 	writer  http.ResponseWriter
 	flusher http.Flusher
 }
 
-func (sink *sseTokenWriter) Write(data []byte) (int, error) {
+type sseEventWriter struct {
+	stream *sseStream
+	event  string
+}
+
+func (sink sseEventWriter) Write(data []byte) (int, error) {
 	if len(data) == 0 {
 		return 0, nil
 	}
-	payload, err := json.Marshal(map[string]string{"delta": string(data)})
+	if sink.stream == nil {
+		return 0, io.ErrClosedPipe
+	}
+	message := string(data)
+	payloadValue := map[string]string{"delta": message}
+	if sink.event == "progress" {
+		message = strings.TrimSpace(message)
+		if message == "" {
+			return len(data), nil
+		}
+		payloadValue = map[string]string{"message": message}
+	}
+	payload, err := json.Marshal(payloadValue)
 	if err != nil {
 		return 0, err
 	}
-	if _, err := fmt.Fprintf(sink.writer, "data: %s\n\n", payload); err != nil {
+	sink.stream.mu.Lock()
+	defer sink.stream.mu.Unlock()
+	prefix := ""
+	if sink.event != "" && sink.event != "message" {
+		prefix = "event: " + sink.event + "\n"
+	}
+	if _, err := fmt.Fprintf(sink.stream.writer, "%sdata: %s\n\n", prefix, payload); err != nil {
 		return 0, err
 	}
-	sink.flusher.Flush()
+	sink.stream.flusher.Flush()
 	return len(data), nil
 }
 

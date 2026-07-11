@@ -1044,6 +1044,39 @@ type sequenceChatClient struct {
 	requests  int
 }
 
+func TestServicePersistsWorkingContextSnapshot(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{{Content: "reply"}}}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot: root,
+		Client:        client,
+		SystemPrompt:  "system prompt",
+	})
+
+	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "hello"})
+	if err != nil {
+		t.Fatalf("HandleTurn returned error: %v", err)
+	}
+	savedSession, err := session.NewStore(root).Open(response.SessionID)
+	if err != nil {
+		t.Fatalf("Open session returned error: %v", err)
+	}
+	working, err := savedSession.LoadWorkingMessages()
+	if err != nil {
+		t.Fatalf("LoadWorkingMessages returned error: %v", err)
+	}
+	if len(working) != 3 || working[len(working)-1]["content"] != "reply" {
+		t.Fatalf("working messages = %#v", working)
+	}
+	raw, err := savedSession.LoadMessages()
+	if err != nil {
+		t.Fatalf("LoadMessages returned error: %v", err)
+	}
+	if len(raw) != 3 {
+		t.Fatalf("raw transcript messages = %d, want 3", len(raw))
+	}
+}
+
 func (client *sequenceChatClient) CreateChatCompletion(ctx context.Context, _ string, _ []map[string]any, _ []tools.Definition) (agent.AssistantMessage, error) {
 	client.requests++
 	if err := ctx.Err(); err != nil {
@@ -1086,9 +1119,78 @@ func TestServiceHandleTurnOptionsMaxIterationsOverridesDefault(t *testing.T) {
 	}
 }
 
-func TestDefaultChannelMaxIterationsMatchesAgentSafetyValve(t *testing.T) {
-	if DefaultChannelMaxIterations != agent.DefaultMaxIterations {
-		t.Fatalf("DefaultChannelMaxIterations = %d, want %d", DefaultChannelMaxIterations, agent.DefaultMaxIterations)
+func TestDefaultChannelMaxIterationsIsInteractiveBudget(t *testing.T) {
+	if DefaultChannelMaxIterations != 30 {
+		t.Fatalf("DefaultChannelMaxIterations = %d, want 30", DefaultChannelMaxIterations)
+	}
+	if DefaultChannelMaxIterations >= agent.DefaultMaxIterations {
+		t.Fatalf("channel default %d should be lower than agent safety valve %d", DefaultChannelMaxIterations, agent.DefaultMaxIterations)
+	}
+}
+
+func TestInteractiveChannelStageConfigUsesCheckpointBudget(t *testing.T) {
+	stage := InteractiveChannelStageConfig()
+	if stage.MaxIterations != ChannelStageMaxIterations() || stage.Timeout != ChannelStageTimeout() {
+		t.Fatalf("stage = %+v, want channel stage settings", stage)
+	}
+	if !stage.LoopProtection {
+		t.Fatal("interactive channel loop protection is disabled")
+	}
+}
+
+func TestChannelTurnRunnerProducesStageCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "missing_tool", Arguments: `{}`}}}},
+		{Content: "已发现\n- 已检查入口\n\n未完成\n- 深入分析\n\n建议下一步\n- 回复“继续”"},
+	}}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "missing_tool"}}},
+		DefaultMaxTurns: 30,
+	})
+	runner := NewChannelTurnRunner(service)
+	var state ChannelConversationState
+	var replies []string
+	var progress []string
+	_, err := runner.Process(context.Background(), ChannelTurnOptions{
+		PeerKey:   "peer-stage",
+		DedupeKey: "ctx-stage",
+		Message:   "分析架构",
+		Stage:     agent.StageConfig{MaxIterations: 1, LoopProtection: true, EmitProgress: true},
+		LoadState: func() (ChannelConversationState, error) { return state, nil },
+		SaveState: func(next ChannelConversationState) error {
+			state = next
+			return nil
+		},
+		SendReply: func(_ context.Context, reply string) error {
+			replies = append(replies, reply)
+			return nil
+		},
+		SendProgress: func(_ context.Context, message string) error {
+			progress = append(progress, message)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if client.requests != 2 {
+		t.Fatalf("requests = %d, want tool round plus checkpoint summary", client.requests)
+	}
+	if len(replies) != 1 || !strings.Contains(replies[0], "已发现") || !strings.Contains(replies[0], "继续") {
+		t.Fatalf("replies = %#v, want stage checkpoint", replies)
+	}
+	joinedProgress := strings.Join(progress, "\n")
+	for _, want := range []string{"iteration 1", "missing_tool", "Preparing stage summary"} {
+		if !strings.Contains(joinedProgress, want) {
+			t.Fatalf("progress = %q, missing %q", joinedProgress, want)
+		}
+	}
+	if state.SessionID == "" || state.LastCompletedKey != "ctx-stage" {
+		t.Fatalf("state = %+v, want persisted session/checkpoint turn", state)
 	}
 }
 

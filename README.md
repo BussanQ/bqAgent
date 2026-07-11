@@ -251,7 +251,7 @@ The command immediately prints the session ID, session directory, and log path.
 
 `/api/v1/chat` continues conversations by `session_id`.
 
-`GET /` serves a self-contained, single-page chat UI (HTML/CSS/JS embedded in the binary, no external assets) inspired by the llama.cpp web UI. Open `http://127.0.0.1:8080` in a browser and chat directly. Replies stream token-by-token over Server-Sent Events from `POST /api/v1/webui/chat`; the conversation `session_id` is kept in browser `localStorage` so a page refresh continues the same session, and a "新建对话" button starts a fresh one. The web UI is **enabled by default**; set `WEBUI_ENABLED=false` to disable it (then `GET /` returns 404).
+`GET /` serves a self-contained, single-page chat UI (HTML/CSS/JS embedded in the binary, no external assets) inspired by the llama.cpp web UI. Open `http://127.0.0.1:8080` in a browser and chat directly. Replies stream token-by-token over Server-Sent Events from `POST /api/v1/webui/chat`; `event: progress` reports iterations, tool activity, and stage checkpoints. Long WebUI work pauses with a persisted stage summary, so replying "继续" resumes the same `session_id` instead of restarting exploration. The web UI is **enabled by default**; set `WEBUI_ENABLED=false` to disable it (then `GET /` returns 404).
 
 `/api/v1/serverchan/chat` is the existing sendkey-based push adapter: it generates a reply and forwards it through ServerChan using the `text` / `desp` / `sendkey` shape from the Go demo.
 
@@ -269,8 +269,15 @@ tasks, or `CONTEXT_SUMMARIZATION_ENABLED=false` to fall back to plain pruning.
 
 Context behavior is configurable through environment variables:
 
+Sessions persist the channel/user mapping, status, full `messages.jsonl` audit trail, and resumable context checkpoints. Every channel resumes from the bounded `working_messages.jsonl` snapshot when available instead of reloading the complete transcript. Request construction additionally prioritizes the system prompt, summary, and latest user request, then hard-prunes oversized tool evidence. WeChat/iLink sends only the final reply because its context token must not be consumed by intermediate progress messages.
+
 - `AGENT_MAX_ITERATIONS` (loop runaway safety valve; defaults to `1000`)
-- `CHANNEL_AGENT_MAX_ITERATIONS` (optional override for async channels; defaults to the same `1000`)
+- `CHANNEL_AGENT_MAX_ITERATIONS` (optional channel/WebUI override; defaults to `30`)
+- `CHANNEL_TURN_TIMEOUT` (whole channel turn timeout; defaults to `10m`)
+- `CHANNEL_STAGE_MAX_ITERATIONS` (QQ/iLink iterations before a persisted checkpoint; defaults to `20`)
+- `CHANNEL_STAGE_TIMEOUT` (QQ/iLink time before a persisted checkpoint; defaults to `90s`)
+- `WEBUI_STAGE_MAX_ITERATIONS` (iterations before a WebUI checkpoint; defaults to `20`)
+- `WEBUI_STAGE_TIMEOUT` (time before a WebUI checkpoint; defaults to `90s`)
 - `CONTEXT_MANAGEMENT_ENABLED`
 - `CONTEXT_MAX_INPUT_TOKENS`
 - `CONTEXT_TARGET_INPUT_TOKENS`

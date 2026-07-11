@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"bqagent/internal/agent"
 	qqclient "bqagent/internal/qq"
 	"bqagent/internal/session"
+	"bqagent/internal/tools"
 )
 
 type qqSendCapture struct {
@@ -208,6 +211,49 @@ func TestQQChannelProcessesGroupConversation(t *testing.T) {
 	}
 	if send.Payload.Content != "group reply" || send.Payload.MsgSeq != 1 {
 		t.Fatalf("payload = %+v", send.Payload)
+	}
+}
+
+func TestQQChannelSuppressesToolProgressAndSendsStageCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "missing_tool", Arguments: `{}`}}}},
+		{Content: "已发现\n- 已检查入口\n\n未完成\n- 深入分析\n\n建议下一步\n- 回复“继续”"},
+	}}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "missing_tool"}}},
+	})
+
+	previousStageMax := ChannelStageMaxIterations()
+	SetChannelStageMaxIterations(1)
+	defer SetChannelStageMaxIterations(previousStageMax)
+
+	sentMessages := make(chan qqSendCapture, 16)
+	qqServer := newTestQQAPIServer(t, sentMessages, nil)
+	defer qqServer.Close()
+	channel := newTestQQChannel(root, service, qqServer.URL, &fakeQQGateway{configured: true})
+	if err := channel.processUpdate(context.Background(), c2cUpdate("event-stage", "message-stage", "分析架构")); err != nil {
+		t.Fatalf("processUpdate() error = %v", err)
+	}
+
+	var contents []string
+	for len(sentMessages) > 0 {
+		capture := <-sentMessages
+		contents = append(contents, capture.Payload.Content)
+	}
+	if len(contents) != 1 {
+		t.Fatalf("QQ messages = %#v, want only the final checkpoint", contents)
+	}
+	if !strings.Contains(contents[0], "已发现") || !strings.Contains(contents[0], "继续") {
+		t.Fatalf("QQ final message = %q, want stage checkpoint", contents[0])
+	}
+	for _, unwanted := range []string{"Analyzing tool requests", "Running tool", "Tool missing_tool", "Completed analysis iteration", "Preparing stage summary"} {
+		if strings.Contains(contents[0], unwanted) {
+			t.Fatalf("QQ final message unexpectedly contains internal progress %q: %q", unwanted, contents[0])
+		}
 	}
 }
 

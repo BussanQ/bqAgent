@@ -251,7 +251,7 @@ project/
 
 其中 `/api/v1/chat` 用于基于 `session_id` 的接口对话。
 
-`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖），界面参考 llama.cpp 的 Web UI。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；会话 `session_id` 存在浏览器 `localStorage`，刷新页面可续接同一会话，「新建对话」按钮可重新开始。该网页渠道**默认开启**；设置 `WEBUI_ENABLED=false` 可关闭（此时 `GET /` 返回 404）。
+`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖），界面参考 llama.cpp 的 Web UI。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；`event: progress` 会持续报告迭代轮次、工具活动和阶段 checkpoint。长任务达到阶段预算后会返回并持久化阶段总结，用户回复“继续”即可沿用同一 `session_id` 继续，而不会重新探索。该网页渠道**默认开启**；设置 `WEBUI_ENABLED=false` 可关闭（此时 `GET /` 返回 404）。
 
 `/api/v1/serverchan/chat` 保留为现有的 sendkey 推送型接口：它会生成回复，然后按 demo 中的 `text` / `desp` / `sendkey` 语义把结果推送出去。
 
@@ -261,9 +261,17 @@ project/
 
 默认情况下循环表现为"自动压缩续跑"：当对话接近输入 token 预算时，会把更早的对话摘要（压缩）后**继续**在压缩上下文上推进，而不是在固定轮数处停下。因此轮数上限只是失控保险（默认很高，为 `1000`）；磁盘上的原始 transcript 仍保持完整。摘要默认开启——长任务可设 `CONTEXT_SUMMARY_MODEL` 用更便宜的模型做摘要，或设 `CONTEXT_SUMMARIZATION_ENABLED=false` 退回纯裁剪。
 
+Session 用于保存会话 ID、渠道用户映射、完整消息记录、任务状态和可恢复的上下文 checkpoint。`messages.jsonl` 作为审计与排障记录可以长期保留；各通道实际恢复和推理优先读取受预算控制的 `working_messages.jsonl`，请求侧还会优先保留系统提示、摘要和最新用户请求，并对超大工具结果执行硬裁剪。因此原始 session 文件可以较大，但每轮不再重新加载或发送全部历史。微信 iLink 只发送最终回复，不发送中间 progress，以免同一个 `context_token` 被提前消耗。
+
 上下文管理可通过环境变量配置：
 
 - `AGENT_MAX_ITERATIONS`（循环失控保险上限，对所有模式生效，默认 `1000`）
+- `CHANNEL_AGENT_MAX_ITERATIONS`（渠道/WebUI 单轮迭代上限，默认 `30`）
+- `CHANNEL_TURN_TIMEOUT`（渠道整轮超时，默认 `10m`）
+- `CHANNEL_STAGE_MAX_ITERATIONS`（QQ/微信 iLink 阶段迭代预算，默认 `20`）
+- `CHANNEL_STAGE_TIMEOUT`（QQ/微信 iLink 阶段时间预算，默认 `90s`）
+- `WEBUI_STAGE_MAX_ITERATIONS`（WebUI 阶段迭代预算，默认 `20`）
+- `WEBUI_STAGE_TIMEOUT`（WebUI 阶段时间预算，默认 `90s`）
 - `CONTEXT_MANAGEMENT_ENABLED`
 - `CONTEXT_MAX_INPUT_TOKENS`
 - `CONTEXT_TARGET_INPUT_TOKENS`

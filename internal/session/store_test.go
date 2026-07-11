@@ -77,3 +77,34 @@ func TestSessionStorePersistsCheckpoint(t *testing.T) {
 		t.Fatalf("checkpoint tail content = %#v, want %q", checkpoint.TailMessages[0]["content"], "continue here")
 	}
 }
+
+func TestSessionStorePersistsWorkingMessagesSeparatelyFromTranscript(t *testing.T) {
+	store := NewStore(t.TempDir())
+	savedSession, err := store.Create(CreateOptions{Task: "inspect repo", Chat: true})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	transcript := []map[string]any{{"role": "user", "content": "full raw history"}}
+	working := []map[string]any{{"role": "assistant", "content": "compact working summary"}}
+	if err := savedSession.RecordMessages(transcript...); err != nil {
+		t.Fatalf("RecordMessages returned error: %v", err)
+	}
+	if err := savedSession.SaveWorkingMessages(working); err != nil {
+		t.Fatalf("SaveWorkingMessages returned error: %v", err)
+	}
+
+	loadedWorking, err := savedSession.LoadWorkingMessages()
+	if err != nil {
+		t.Fatalf("LoadWorkingMessages returned error: %v", err)
+	}
+	loadedTranscript, err := savedSession.LoadMessages()
+	if err != nil {
+		t.Fatalf("LoadMessages returned error: %v", err)
+	}
+	if len(loadedWorking) != 1 || loadedWorking[0]["content"] != "compact working summary" {
+		t.Fatalf("working messages = %#v", loadedWorking)
+	}
+	if len(loadedTranscript) != 1 || loadedTranscript[0]["content"] != "full raw history" {
+		t.Fatalf("transcript was changed: %#v", loadedTranscript)
+	}
+}
