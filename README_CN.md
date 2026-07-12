@@ -288,6 +288,49 @@ Session 用于保存会话 ID、渠道用户映射、完整消息记录、任务
 - MCP 仅做客户端、且只支持 Streamable HTTP 传输（不支持 stdio/SSE，也不做 MCP server 端）
 - 不做向量记忆
 
+## RunTrace、评估与反馈
+
+每次任务都会在 `.agent/runs/<run-id>/` 保存结构化追踪，包括模型和上下文版本、token、工具摘要、耗时、错误分类、artifact 和 verifier。HTTP 与 WebUI 回复会返回 `run_id`。
+
+```bash
+go run ./cmd/eval --suite smoke --mode replay
+go run ./cmd/eval --suite all --mode replay
+go run ./cmd/eval --suite all --mode live --repeats 3
+
+/feedback up 很有帮助
+/feedback <run-id> down 没有修改目标文件
+```
+
+## 子 Agent
+
+`/agent` 会在独立 Git worktree 中异步运行 Claude、Codex、Cursor 或 OpenCode；结果以回复、日志和 `diff.patch` 返回，不会自动修改主工作区。
+
+```text
+/agent spawn codex -- 修复指定测试并说明原因
+/agent list --status running
+/agent wait <id> --timeout 30s
+/agent result <id>
+/agent interrupt <id>
+/agent resume <id> -- 继续并补充测试
+/agent apply <id>
+/agent cleanup <id>
+```
+
+主工作区默认必须干净；只有显式传入 `--include-dirty` 才会把当前 tracked diff 和安全的未跟踪文件复制到子 worktree。
+
+## 结构化 Memory
+
+Memory 的事实源为 `.agent/memory/entries.jsonl`，支持 revision、来源 run、置信度、supersedes、敏感确认和中文 n-gram 检索。旧的 `MEMORY.md` 与最近两天 daily memory 会幂等迁移并保留原文件。
+
+```text
+/memory list
+/memory search Go 项目约定
+/memory confirm <mem-id>
+/memory compact
+```
+
+旧的 `mem_save`、`mem_get` 工具继续可用，并会转接到结构化存储。
+
 ## 示例
 
 ```bash

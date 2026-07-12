@@ -11,10 +11,13 @@ import (
 	"strings"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/extagent"
 	"bqagent/internal/logging"
 	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
 	"bqagent/internal/session"
+	"bqagent/internal/subagent"
+	apptrace "bqagent/internal/trace"
 	"bqagent/internal/workspace"
 )
 
@@ -32,6 +35,7 @@ type cliOptions struct {
 	sessionID   string
 	sessionRun  bool
 	serverRun   bool
+	subagentRun string
 }
 
 type runDeps struct {
@@ -87,6 +91,9 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if options.subagentRun != "" {
+		return runSubagentWorker(ctx, stderr, getenv, ws, options.subagentRun)
+	}
 
 	systemPrompt, err := ws.BuildSystemPrompt(agent.DefaultSystemPrompt)
 	if err != nil {
@@ -135,6 +142,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.StringVar(&options.sessionID, "session-id", "", "internal session identifier")
 	fs.BoolVar(&options.sessionRun, "session-run", false, "internal background session runner")
 	fs.BoolVar(&options.serverRun, "server-run", false, "internal background server runner")
+	fs.StringVar(&options.subagentRun, "subagent-run", "", "internal persisted subagent worker id")
 
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, nil, err
@@ -172,6 +180,9 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if options.ilinkLogin && len(fs.Args()) > 0 {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-login does not accept a task")
 	}
+	if options.subagentRun != "" && (options.plan || options.background || options.chat || options.server || options.stream || options.sessionRun || options.serverRun || effectiveSessionID(options) != "" || len(fs.Args()) > 0) {
+		return cliOptions{}, nil, fmt.Errorf("--subagent-run cannot be combined with other execution flags or a task")
+	}
 	if options.ilinkStatus && len(fs.Args()) > 0 {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-status does not accept a task")
 	}
@@ -179,6 +190,19 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 		return cliOptions{}, nil, fmt.Errorf("server mode does not accept a task")
 	}
 	return options, fs.Args(), nil
+}
+
+func runSubagentWorker(ctx context.Context, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, id string) int {
+	config := extagent.ConfigFromEnv(getenv, ws.Root)
+	detections := extagent.Detect(ctx, config, nil)
+	broker := extagent.NewBroker(extagent.NewStateStore(ws.Root), detections, nil)
+	defer broker.Close()
+	manager := subagent.NewWorkerManager(ws.Root, broker)
+	if err := manager.RunPersisted(id); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
 }
 
 func runInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace.Workspace, options cliOptions, taskArgs []string) int {
@@ -250,8 +274,12 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	)
 
 	sessionID := effectiveSessionID(options)
-	if sessionID != "" {
-		conversation, err = appruntime.PrepareConversation(session.NewStore(ws.Root), sessionID, nil, systemPrompt)
+	{
+		var createOptions *session.CreateOptions
+		if sessionID == "" {
+			createOptions = &session.CreateOptions{Task: task, Planned: options.plan, Background: options.sessionRun}
+		}
+		conversation, err = appruntime.PrepareConversation(session.NewStore(ws.Root), sessionID, createOptions, systemPrompt)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -273,12 +301,6 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 			outputWriter = io.MultiWriter(stdout, timestampedLogFile)
 			errorWriter = io.MultiWriter(stderr, timestampedLogFile)
 		}
-	} else {
-		conversation, err = appruntime.PrepareConversation(nil, "", nil, systemPrompt)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
 	}
 
 	runtime := appruntime.Factory{
@@ -289,7 +311,15 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		MCPConfigPath: ws.MCPConfigPath(),
 		LogWriter:     stderr,
 	}.Build(true)
-	app := runtime.NewAgentWithProgress(outputWriter, stdout, systemPrompt, conversation.Recorder(), false)
+	runRecorder, traceErr := apptrace.NewStore(ws.Root).Create(conversation.Session.ID(), apptrace.NewID("turn"), "", "agent", runtime.Model, systemPrompt)
+	if traceErr != nil {
+		fmt.Fprintf(errorWriter, "trace create failed: %v\n", traceErr)
+	}
+	if runRecorder != nil {
+		_ = conversation.Session.SetLastRunID(runRecorder.RunID())
+		ctx = apptrace.WithRunID(ctx, runRecorder.RunID())
+	}
+	app := agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{SystemPrompt: systemPrompt, LogWriter: outputWriter, ProgressWriter: stdout, ToolDefinitions: runtime.Catalog.Definitions(), Functions: runtime.Catalog.Registry(), Planner: runtime.Planner, Recorder: conversation.Recorder(), WorkspaceRoot: runtime.WorkspaceRoot, Context: runtime.Context, Trace: runRecorder})
 
 	if strings.TrimSpace(task) != "" && !options.plan {
 		if err := conversation.AddUserMessage(task); err != nil {
@@ -305,6 +335,9 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		result, err = app.RunConversation(ctx, conversation.Messages, runtime.MaxIterations)
 	}
 	if err != nil {
+		if runRecorder != nil {
+			_ = runRecorder.Finish("", err)
+		}
 		if markErr := conversation.MarkFailed(err); markErr != nil {
 			fmt.Fprintf(errorWriter, "mark session failed: %v\n", markErr)
 		}
@@ -316,10 +349,17 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		fmt.Fprintf(errorWriter, "mark session completed: %v\n", markErr)
 	}
 	if ws.MemoryEnabled() && strings.TrimSpace(task) != "" {
-		if memoryErr := ws.AppendMemory(task, result); memoryErr != nil {
-			fmt.Fprintln(errorWriter, memoryErr)
-			return 1
+		content := "Task: " + task + "\nResult: " + result
+		if len(content) > 2000 {
+			content = content[:2000]
 		}
+		if _, memoryErr := runtime.Memory.Add("lesson", content, apptrace.RunIDFromContext(ctx), .6, "normal", nil); memoryErr != nil {
+			// Automatic task journaling is best-effort: duplicate/capacity memory
+			// errors must not turn a successfully completed task into a failure.
+		}
+	}
+	if runRecorder != nil {
+		_ = runRecorder.Finish(result, nil)
 	}
 
 	fmt.Fprintln(outputWriter, result)

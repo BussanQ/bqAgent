@@ -1,4 +1,4 @@
-.PHONY: build build-amd build-windows test clean
+.PHONY: build build-amd build-windows test eval eval-all clean
 
 build:
 	go build -trimpath -ldflags '-s -w' -o bqagent ./cmd/agent
@@ -11,6 +11,12 @@ build-windows:
 
 test:
 	go test ./...
+
+eval:
+	go run ./cmd/eval --suite smoke --mode replay
+
+eval-all:
+	go run ./cmd/eval --suite all --mode replay
 
 clean:
 	rm -f bqagent bqagent.exe

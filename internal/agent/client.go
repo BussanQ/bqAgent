@@ -36,6 +36,14 @@ type AssistantMessage struct {
 	Role      string     `json:"role"`
 	Content   any        `json:"content"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	Usage     TokenUsage `json:"-"`
+}
+
+type TokenUsage struct {
+	PromptTokens     int  `json:"prompt_tokens,omitempty"`
+	CompletionTokens int  `json:"completion_tokens,omitempty"`
+	TotalTokens      int  `json:"total_tokens,omitempty"`
+	Estimated        bool `json:"estimated,omitempty"`
 }
 
 type ToolCall struct {
@@ -57,16 +65,18 @@ type chatCompletionRequest struct {
 }
 
 type chatCompletionStreamRequest struct {
-	Model    string             `json:"model"`
-	Messages []map[string]any   `json:"messages"`
-	Tools    []tools.Definition `json:"tools,omitempty"`
-	Stream   bool               `json:"stream"`
+	Model         string             `json:"model"`
+	Messages      []map[string]any   `json:"messages"`
+	Tools         []tools.Definition `json:"tools,omitempty"`
+	Stream        bool               `json:"stream"`
+	StreamOptions map[string]any     `json:"stream_options,omitempty"`
 }
 
 type chatCompletionResponse struct {
 	Choices []struct {
 		Message AssistantMessage `json:"message"`
 	} `json:"choices"`
+	Usage TokenUsage `json:"usage"`
 }
 
 type inlineToolCallPayload struct {
@@ -97,6 +107,7 @@ type streamChoice struct {
 
 type streamChunk struct {
 	Choices []streamChoice `json:"choices"`
+	Usage   TokenUsage     `json:"usage,omitempty"`
 }
 
 func NewClient(apiKey, baseURL string, httpClient *http.Client) *Client {
@@ -160,6 +171,7 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 	}
 
 	message := decoded.Choices[0].Message
+	message.Usage = decoded.Usage
 	if message.Role == "" {
 		message.Role = "assistant"
 	}
@@ -169,10 +181,11 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 
 func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error) {
 	body, err := json.Marshal(chatCompletionStreamRequest{
-		Model:    model,
-		Messages: messages,
-		Tools:    definitions,
-		Stream:   true,
+		Model:         model,
+		Messages:      messages,
+		Tools:         definitions,
+		Stream:        true,
+		StreamOptions: map[string]any{"include_usage": true},
 	})
 	if err != nil {
 		return AssistantMessage{}, err
@@ -213,6 +226,7 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 		contentBuilder strings.Builder
 		role           string
 		toolCallMap    = map[int]*partialToolCall{}
+		usage          TokenUsage
 	)
 
 	scanner := bufio.NewScanner(response.Body)
@@ -226,7 +240,13 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 			break
 		}
 		var chunk streamChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil || len(chunk.Choices) == 0 {
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if chunk.Usage.TotalTokens > 0 {
+			usage = chunk.Usage
+		}
+		if len(chunk.Choices) == 0 {
 			continue
 		}
 		delta := chunk.Choices[0].Delta
@@ -270,6 +290,7 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 	message := AssistantMessage{
 		Role:    role,
 		Content: contentBuilder.String(),
+		Usage:   usage,
 	}
 	for i := 0; i < len(toolCallMap); i++ {
 		ptc := toolCallMap[i]

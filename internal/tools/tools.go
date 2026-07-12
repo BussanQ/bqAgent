@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	appmemory "bqagent/internal/memory"
 )
 
 type JSONSchemaProperty struct {
@@ -65,6 +67,7 @@ type Options struct {
 	SearchAPIKey   string
 	SearchBaseURL  string
 	MemoryDir      string
+	MemoryStore    *appmemory.Store
 	// Todos backs the todo_write tool. When nil a fresh store is created so the
 	// tool still works (its list is just not shared with the caller).
 	Todos *TodoStore
@@ -110,6 +113,11 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"mem_save":      MemSaveInDir(options.MemoryDir),
 		"mem_get":       MemGetInDir(options.MemoryDir),
 	}
+	if options.MemoryStore != nil {
+		registry["memory"] = StructuredMemory(options.MemoryStore)
+		registry["mem_save"] = StructuredMemSave(options.MemoryStore)
+		registry["mem_get"] = StructuredMemGet(options.MemoryStore)
+	}
 	for name, function := range options.ExtraFunctions {
 		if _, exists := registry[name]; exists {
 			continue // builtin tools win on name conflict
@@ -130,6 +138,9 @@ func firstConfigured(values ...string) string {
 
 func NewCatalog(options Options) Catalog {
 	definitions := Definitions()
+	if options.MemoryStore != nil {
+		definitions = append(definitions, StructuredMemoryDefinition())
+	}
 	if options.IncludePlan {
 		definitions = append(definitions, PlanDefinition())
 	}

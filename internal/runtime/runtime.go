@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/mcp"
+	appmemory "bqagent/internal/memory"
 	"bqagent/internal/tools"
 )
 
@@ -56,6 +58,7 @@ type Runtime struct {
 	MaxIterations int
 	WorkspaceRoot string
 	Context       agent.ContextConfig
+	Memory        *appmemory.Store
 }
 
 func ConfigFromEnv(getenv func(string) string) Config {
@@ -134,6 +137,12 @@ func (factory Factory) Build(includePlan bool) Runtime {
 	}
 
 	mcpDefinitions, mcpFunctions := factory.discoverMCPTools()
+	memoryStore := appmemory.NewStore(factory.MemoryDir,
+		filepath.Join(factory.MemoryDir, "MEMORY.md"),
+		filepath.Join(factory.MemoryDir, time.Now().Format("2006-01-02")+".md"),
+		filepath.Join(factory.MemoryDir, time.Now().AddDate(0, 0, -1).Format("2006-01-02")+".md"),
+	)
+	_ = memoryStore.Migrate()
 
 	catalog := tools.NewCatalog(tools.Options{
 		WorkspaceRoot:    factory.WorkspaceRoot,
@@ -142,6 +151,7 @@ func (factory Factory) Build(includePlan bool) Runtime {
 		SearchAPIKey:     factory.Config.SearchAPIKey,
 		SearchBaseURL:    factory.Config.SearchBaseURL,
 		MemoryDir:        factory.MemoryDir,
+		MemoryStore:      memoryStore,
 		ExtraDefinitions: mcpDefinitions,
 		ExtraFunctions:   mcpFunctions,
 	})
@@ -163,6 +173,7 @@ func (factory Factory) Build(includePlan bool) Runtime {
 			SummaryTriggerTokens:  factory.Config.ContextSummaryTriggerTokens,
 			SummaryModel:          factory.Config.ContextSummaryModel,
 		},
+		Memory: memoryStore,
 	}
 }
 

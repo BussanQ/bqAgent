@@ -7,8 +7,10 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
+	appmemory "bqagent/internal/memory"
 	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
+	"bqagent/internal/subagent"
 	"bqagent/internal/workspace"
 )
 
@@ -31,9 +33,17 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	}
 
 	externalBroker := extagent.NewBroker(extagent.NewStateStore(ws.Root), detections, nil)
+	subagentManager := subagent.NewManager(ws.Root, externalBroker)
 	var memoryAppend func(task, result string) error
 	if ws.MemoryEnabled() {
-		memoryAppend = ws.AppendMemory
+		memoryAppend = func(task, result string) error {
+			content := "Task: " + task + "\nResult: " + result
+			if len(content) > appmemory.MaxContentSize {
+				content = content[:appmemory.MaxContentSize]
+			}
+			_, err := runtime.Memory.Add(appmemory.KindLesson, content, "", .6, "normal", nil)
+			return err
+		}
 	}
 
 	service := appserver.NewService(appserver.ServiceOptions{
@@ -51,6 +61,8 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		ExternalBroker:  externalBroker,
 		MemoryAppend:    memoryAppend,
 		Context:         runtime.Context,
+		Subagents:       subagentManager,
+		MemoryStore:     runtime.Memory,
 	})
 	return service, externalBroker
 }

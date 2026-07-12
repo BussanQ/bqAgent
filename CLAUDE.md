@@ -83,6 +83,18 @@ The `Broker` can route a turn to an external coding agent instead of the built-i
 
 `.agent/mcp.json` (`mcpServers` map) configures **Streamable HTTP** MCP servers. `runtime.Factory.Build` calls `mcp.Discover` (best-effort, bounded by a 15s timeout): for each enabled server it runs the MCP handshake (`initialize` + `notifications/initialized`), lists tools (`tools/list`), and adapts each into a `tools.Definition` (name `mcp__<server>__<tool>`, carrying the server's raw `inputSchema` via `FunctionDefinition.RawParameters`) plus a `tools.Function` that proxies to `tools/call`. These flow into the Catalog through `tools.Options.ExtraDefinitions/ExtraFunctions` (so `internal/tools` never imports `internal/mcp`). Header values support `${ENV}` expansion. A disabled/missing/unreachable server is logged and skipped. Only the Streamable HTTP transport is implemented — no stdio/SSE, no MCP server mode.
 
+### Run traces and evaluation — `internal/trace`, `internal/evalharness`
+
+Every CLI/server execution receives session, turn, and run IDs. A run persists `meta.json`, append-only `events.jsonl`, artifacts, feedback, and output under `.agent/runs/<run-id>/`. Model calls record context hashes and provider/estimated token usage; regular and special tools record redacted arguments, bounded result summaries, hashes, timings, and error categories. `/feedback` and `/api/v1/runs/<id>` expose the trace lifecycle. `cmd/eval` loads the versioned 28-task manifest in `eval/tasks.json`; replay mode is deterministic and live mode is explicit.
+
+### Subagents — `internal/subagent`
+
+`/agent` is distinct from sticky `/claude` and `/codex` routing. It creates asynchronous, persisted tasks under `.agent/subagents/<id>/`, uses a detached Git worktree per task, and launches the same binary with internal `--subagent-run <id>` worker mode. The worker calls the existing external-agent broker with the task ID as its external-session key and updates a persistent heartbeat. Default limits are three tasks per parent session, six globally, 30 minutes, and one transient retry. Completed work returns `result.md`, artifact metadata, and `diff.patch`; only `/agent apply` modifies the main worktree.
+
+### Structured memory — `internal/memory`
+
+`.agent/memory/entries.jsonl` is an append-only revision log. The derived `index.json` uses normalized English tokens and Chinese 2/3-grams. Runtime prompt assembly injects pinned preference/decision entries plus task-relevant search results within a fixed character budget. The `memory` tool supports add/replace/remove/search/list/confirm/compact; legacy `mem_save` and `mem_get` adapt to this store. Markdown memory migration is idempotent and leaves source files untouched.
+
 ## Built-in tools — `internal/tools`
 
 `execute_bash`, `read_file` (with optional `offset`/`limit`), `write_file`, `edit_file` (exact string replacement, like Claude Code's Edit), `grep` (pure-Go regexp content search; no external ripgrep), `glob` (filename match, supports `**`), `todo_write` (session task list; `todos` is a JSON-array string since the `JSONSchema` type only models flat string props), `web_search` (Tavily, with Firecrawl env vars as fallback), `web_fetch`, `install_skill`, `mem_save`/`mem_get`, plus `plan` and `run_skill` (added conditionally). Tools are assembled into a `Catalog` (definitions + a name→`Function` registry) so the CLI, chat, and server all expose the same set. To add a tool: add its `Definition` in `builtinDefinitions()` and its implementation to `RegistryWithOptions`.

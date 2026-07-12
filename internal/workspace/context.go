@@ -402,6 +402,9 @@ func summarizeSkill(fallbackName, content string) (string, string) {
 }
 
 func (w *Workspace) loadMemoryContext(maxLines int) (string, error) {
+	if fileExists(filepath.Join(w.WorkspaceMemoryDir(), "entries.jsonl")) {
+		return "", nil
+	}
 	blocks := make([]string, 0, 4)
 
 	workspaceMemory, workspaceMemoryPath, err := readPreferredTail(maxLines, w.WorkspaceMemoryPath(), w.LegacyWorkspaceMemoryPath())

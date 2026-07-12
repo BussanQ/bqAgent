@@ -630,6 +630,30 @@
     input.style.height = Math.min(input.scrollHeight, 180) + "px";
   }
 
+  function addFeedbackControls(bubble, runId) {
+    if (!runId) return;
+    var row = document.createElement("div");
+    row.style.marginTop = "8px";
+    row.style.display = "flex";
+    row.style.gap = "6px";
+    ["up", "down"].forEach(function(rating) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = rating === "up" ? "👍" : "👎";
+      btn.title = rating === "up" ? "Helpful" : "Not helpful";
+      btn.onclick = async function() {
+        await fetch("/api/v1/runs/" + encodeURIComponent(runId) + "/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rating: rating })
+        });
+        row.textContent = "Feedback recorded";
+      };
+      row.appendChild(btn);
+    });
+    bubble.appendChild(row);
+  }
+
   async function send() {
     if (busy) return;
     var text = input.value.trim();
@@ -681,6 +705,7 @@
             }
             bubble.classList.add("rendered");
             renderReply(bubble, done.reply || streamed);
+            addFeedbackControls(bubble, done.run_id);
           } else if (evt.event === "error") {
             finished = true;
             var errPayload = JSON.parse(evt.data);

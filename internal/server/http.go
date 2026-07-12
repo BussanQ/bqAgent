@@ -26,6 +26,7 @@ type handler struct {
 
 type chatResponse struct {
 	SessionID          string `json:"session_id,omitempty"`
+	RunID              string `json:"run_id,omitempty"`
 	Reply              string `json:"reply,omitempty"`
 	ServerChanResponse string `json:"serverchan_response,omitempty"`
 	Error              string `json:"error,omitempty"`
@@ -36,6 +37,7 @@ func NewHandler(options HandlerOptions) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handler.handleHealth)
 	mux.HandleFunc("/api/v1/chat", handler.handleChat)
+	mux.HandleFunc("/api/v1/runs/", handler.handleRun)
 	for _, channel := range options.Channels {
 		if channel == nil || !channel.Enabled() {
 			continue
@@ -112,7 +114,45 @@ func (handler *handler) handleChat(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
 		return
 	}
-	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, Reply: response.Reply})
+	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, RunID: response.RunID, Reply: response.Reply})
+}
+
+func (handler *handler) handleRun(writer http.ResponseWriter, request *http.Request) {
+	if handler.service == nil || handler.service.traceStore == nil {
+		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "trace store unavailable"})
+		return
+	}
+	path := strings.TrimPrefix(request.URL.Path, "/api/v1/runs/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: "run id is required"})
+		return
+	}
+	runID := parts[0]
+	if request.Method == http.MethodGet && len(parts) == 1 {
+		meta, err := handler.service.traceStore.Load(runID)
+		if err != nil {
+			writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(writer, http.StatusOK, meta)
+		return
+	}
+	if request.Method == http.MethodPost && len(parts) == 2 && parts[1] == "feedback" {
+		values, err := readValues(writer, request)
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
+			return
+		}
+		feedback, err := handler.service.traceStore.AddFeedback(runID, values["rating"], values["comment"], "http")
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(writer, http.StatusOK, feedback)
+		return
+	}
+	writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
 }
 
 func parseTurnRequest(values map[string]string) (TurnRequest, error) {

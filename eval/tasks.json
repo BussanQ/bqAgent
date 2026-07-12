@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "tasks": [
+    {"id":"file-create","category":"file","suite":"smoke","input":"Create hello.txt containing hello","replay_output":"created hello.txt","verifiers":[{"type":"contains","value":"hello.txt","required":true}]},
+    {"id":"file-edit","category":"file","suite":"all","input":"Edit an existing configuration value","replay_output":"git diff updated config","verifiers":[{"type":"git_diff","value":"git diff","required":true}]},
+    {"id":"file-idempotent","category":"file","suite":"all","input":"Apply an already-applied file change","replay_output":"no changes required","verifiers":[{"type":"contains","value":"no changes","required":true}]},
+    {"id":"file-boundary","category":"file","suite":"all","input":"Refuse a write outside the workspace","replay_output":"path outside workspace rejected","verifiers":[{"type":"contains","value":"rejected","required":true}]},
+
+    {"id":"info-local-search","category":"information","suite":"smoke","input":"Find the agent loop entrypoint","replay_output":"internal/agent/loop.go","verifiers":[{"type":"contains","value":"loop.go","required":true}]},
+    {"id":"info-web-search","category":"information","suite":"all","input":"Search a simulated web provider","replay_output":"search result with citation","verifiers":[{"type":"contains","value":"citation","required":true}]},
+    {"id":"info-citation","category":"information","suite":"all","input":"Return a source-backed answer","replay_output":"answer source=https://example.test","verifiers":[{"type":"regex","value":"source=https://","required":true}]},
+    {"id":"info-fallback","category":"information","suite":"all","input":"Recover when primary search fails","replay_output":"fallback provider completed","verifiers":[{"type":"contains","value":"fallback","required":true}]},
+
+    {"id":"resume-compaction","category":"resume","suite":"smoke","input":"Continue after context compaction","replay_output":"checkpoint resumed after compaction","verifiers":[{"type":"checkpoint_resume","value":"resumed","required":true}]},
+    {"id":"resume-checkpoint","category":"resume","suite":"all","input":"Persist a stage checkpoint","replay_output":"context_checkpoint.json saved","verifiers":[{"type":"contains","value":"context_checkpoint.json","required":true}]},
+    {"id":"resume-continue","category":"resume","suite":"all","input":"Continue the same session","replay_output":"same session continued","verifiers":[{"type":"session_state","value":"continued","required":true}]},
+    {"id":"resume-failure","category":"resume","suite":"all","input":"Resume after a failed tool call","replay_output":"failed tool recovered on resume","verifiers":[{"type":"contains","value":"recovered","required":true}]},
+
+    {"id":"memory-save","category":"memory","suite":"smoke","input":"Remember that the project uses Go","replay_output":"structured memory mem_demo saved","verifiers":[{"type":"memory_recall","value":"mem_demo","required":true}]},
+    {"id":"memory-recall","category":"memory","suite":"all","input":"Recall the project language","replay_output":"project_fact: project uses Go","verifiers":[{"type":"contains","value":"Go","required":true}]},
+    {"id":"memory-relevance","category":"memory","suite":"all","input":"Retrieve only task-relevant memory","replay_output":"relevant structured memory selected","verifiers":[{"type":"memory_recall","value":"relevant","required":true}]},
+    {"id":"memory-conflict","category":"memory","suite":"all","input":"Detect a conflicting preference","replay_output":"potential memory conflict detected","verifiers":[{"type":"contains","value":"conflict","required":true}]},
+
+    {"id":"skill-direct","category":"skill","suite":"smoke","input":"Run a named skill","replay_output":"skill output completed","verifiers":[{"type":"skill_output","value":"completed","required":true}]},
+    {"id":"skill-alias","category":"skill","suite":"all","input":"Run a skill by alias","replay_output":"alias resolved to skill","verifiers":[{"type":"contains","value":"resolved","required":true}]},
+    {"id":"skill-model-tool","category":"skill","suite":"all","input":"Allow the model to invoke run_skill","replay_output":"tool_sequence run_skill","verifiers":[{"type":"tool_sequence","value":"run_skill","required":true}]},
+    {"id":"skill-failure","category":"skill","suite":"all","input":"Report a missing skill","replay_output":"skill not found","verifiers":[{"type":"contains","value":"not found","required":true}]},
+
+    {"id":"tool-invalid-args","category":"tool_failure","suite":"smoke","input":"Recover from malformed tool arguments","replay_output":"tool_arguments classified","verifiers":[{"type":"trace_field","value":"tool_arguments","required":true}]},
+    {"id":"tool-unknown","category":"tool_failure","suite":"all","input":"Recover from an unknown tool","replay_output":"tool_unknown classified","verifiers":[{"type":"trace_field","value":"tool_unknown","required":true}]},
+    {"id":"tool-repeat","category":"tool_failure","suite":"all","input":"Stop repeated failing calls","replay_output":"repeated failure checkpoint","verifiers":[{"type":"contains","value":"checkpoint","required":true}]},
+    {"id":"tool-timeout","category":"tool_failure","suite":"all","input":"Classify a timed out tool","replay_output":"timeout classified","verifiers":[{"type":"trace_field","value":"timeout","required":true}]},
+
+    {"id":"channel-http","category":"channel","suite":"smoke","input":"Complete an HTTP chat turn","replay_output":"channel_response session_id run_id reply","verifiers":[{"type":"channel_response","value":"run_id","required":true}]},
+    {"id":"channel-webui","category":"channel","suite":"all","input":"Complete a WebUI SSE turn","replay_output":"done event contains run_id","verifiers":[{"type":"contains","value":"run_id","required":true}]},
+    {"id":"channel-qq","category":"channel","suite":"all","input":"Complete a QQ channel turn","replay_output":"QQ final reply persisted","verifiers":[{"type":"channel_response","value":"persisted","required":true}]},
+    {"id":"channel-weixin","category":"channel","suite":"all","input":"Complete a WeChat iLink turn","replay_output":"iLink final reply persisted","verifiers":[{"type":"channel_response","value":"persisted","required":true}]}
+  ]
+}

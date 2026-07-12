@@ -294,6 +294,25 @@ This is still intentionally a small implementation:
 - MCP support is client-side and Streamable-HTTP-only (no stdio/SSE transports, no MCP server mode)
 - no vector memory
 
+## Run traces, evaluation, and feedback
+
+Every task persists a structured trace under `.agent/runs/<run-id>/`, including model/context versions, token usage, tool summaries, timings, errors, artifacts, verifier results, and feedback.
+
+```bash
+go run ./cmd/eval --suite smoke --mode replay
+go run ./cmd/eval --suite all --mode live --repeats 3
+```
+
+Use `/feedback up|down [comment]` or `POST /api/v1/runs/<run-id>/feedback` to rate a run.
+
+## Subagents
+
+`/agent spawn <claude|codex|cursor|opencode> -- <task>` starts an asynchronous external agent in an isolated Git worktree. Use `/agent list`, `wait`, `result`, `interrupt`, `cancel`, `resume`, `apply`, and `cleanup` to manage it. Results and patches are persisted under `.agent/subagents/<id>/`; patches are never applied automatically.
+
+## Structured memory
+
+Structured, revisioned memory is stored in `.agent/memory/entries.jsonl` with source-run provenance, confidence, supersession, sensitive-entry confirmation, and Chinese/English full-text indexing. Existing Markdown memory is imported idempotently. `/memory list|search|confirm|compact` provides direct management, while `mem_save` and `mem_get` remain compatible.
+
 ## Examples
 
 ```bash

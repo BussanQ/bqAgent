@@ -42,6 +42,7 @@ func NewACPClient(spec CommandSpec, cwd string) (ACPClient, error) {
 	}
 	cmd := exec.Command(spec.Command, spec.Args...)
 	cmd.Dir = cwd
+	configureExternalProcess(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -167,7 +168,11 @@ func (c *stdioACPClient) Close() error {
 	}
 	_ = c.stdin.Close()
 	if c.cmd.ProcessState == nil {
-		_ = c.cmd.Process.Kill()
+		if c.cmd.Cancel != nil {
+			_ = c.cmd.Cancel()
+		} else {
+			_ = c.cmd.Process.Kill()
+		}
 	}
 	return c.cmd.Wait()
 }

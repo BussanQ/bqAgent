@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"bqagent/internal/tools"
+	apptrace "bqagent/internal/trace"
 	"bqagent/internal/workspace"
 )
 
@@ -78,6 +79,7 @@ type Options struct {
 	TokenSink       io.Writer
 	Context         ContextConfig
 	Stage           StageConfig
+	Trace           *apptrace.Recorder
 }
 
 type Agent struct {
@@ -96,6 +98,7 @@ type Agent struct {
 	tokenSink       io.Writer
 	contextConfig   ContextConfig
 	stageConfig     StageConfig
+	trace           *apptrace.Recorder
 }
 
 func New(client ChatCompletionClient, model string, logWriter io.Writer) *Agent {
@@ -155,6 +158,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		tokenSink:       tokenSink,
 		contextConfig:   contextConfig,
 		stageConfig:     normalizeStageConfig(options.Stage),
+		trace:           options.Trace,
 	}
 }
 
@@ -338,6 +342,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			message    AssistantMessage
 			requestErr error
 		)
+		modelStartedAt := time.Now()
 		if a.stream {
 			message, requestErr = a.client.CreateChatCompletionStream(explorationCtx, a.model, requestMessages, definitions, func(chunk string) {
 				sink := a.tokenSink
@@ -350,6 +355,19 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			})
 		} else {
 			message, requestErr = a.client.CreateChatCompletion(explorationCtx, a.model, requestMessages, definitions)
+		}
+		if a.trace != nil {
+			usage := message.Usage
+			if usage.TotalTokens == 0 {
+				usage.PromptTokens = estimateMessagesTokens(requestMessages)
+				usage.CompletionTokens = maxInt(1, len(message.DisplayContent())/4)
+				usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+				usage.Estimated = true
+			}
+			a.trace.ModelCall(apptrace.HashJSON(requestMessages), apptrace.TokenUsage{
+				PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
+				TotalTokens: usage.TotalTokens, Estimated: usage.Estimated,
+			}, time.Since(modelStartedAt), requestErr)
 		}
 		if requestErr != nil {
 			if errors.Is(requestErr, context.DeadlineExceeded) && ctx.Err() == nil && a.stageConfig.Timeout > 0 {
@@ -587,7 +605,13 @@ func failedPathSignature(call ToolCall) string {
 	return call.Function.Name + "\x00" + path
 }
 
-func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) (string, []map[string]any, error) {
+func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) (result string, updated []map[string]any, err error) {
+	startedAt := time.Now()
+	defer func() {
+		if a.trace != nil {
+			a.trace.ToolCall("plan", arguments, result, time.Since(startedAt), err)
+		}
+	}()
 	task, err := requireStringArgument("plan", arguments, "task")
 	if err != nil {
 		updatedMessages, recordErr := a.appendToolError(messages, toolCall.ID, "%v", err)
@@ -636,7 +660,17 @@ func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, 
 	return strings.Join(results, "\n"), messages, nil
 }
 
-func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) ([]map[string]any, error) {
+func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) (updated []map[string]any, err error) {
+	startedAt := time.Now()
+	defer func() {
+		if a.trace != nil {
+			result := ""
+			if len(updated) > 0 {
+				result, _ = updated[len(updated)-1]["content"].(string)
+			}
+			a.trace.ToolCall("run_skill", arguments, result, time.Since(startedAt), err)
+		}
+	}()
 	skillID, err := requireStringArgument("run_skill", arguments, "skill")
 	if err != nil {
 		return a.appendToolError(messages, toolCall.ID, "%v", err)
@@ -684,13 +718,14 @@ func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any,
 		stream:          false,
 		workspaceRoot:   a.workspaceRoot,
 		contextConfig:   a.contextConfig,
+		trace:           a.trace,
 	}
-	result, _, err := child.runConversation(ctx, []map[string]any{{"role": "system", "content": a.systemPrompt}, {"role": "user", "content": skillTask}}, maxIterations, false)
+	skillResult, _, err := child.runConversation(ctx, []map[string]any{{"role": "system", "content": a.systemPrompt}, {"role": "user", "content": skillTask}}, maxIterations, false)
 	if err != nil {
 		return messages, err
 	}
 
-	messages[len(messages)-1]["content"] = result
+	messages[len(messages)-1]["content"] = skillResult
 	return messages, nil
 }
 
@@ -1323,7 +1358,25 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 	if toolCall.Function.Name == "todo_write" && toolErr == nil {
 		a.writeProgress(toolResult)
 	}
+	if a.trace != nil {
+		a.trace.ToolCall(toolCall.Function.Name, arguments, toolResult, time.Since(toolStartedAt), toolErr)
+		if toolErr == nil && (toolCall.Function.Name == "write_file" || toolCall.Function.Name == "edit_file") {
+			if path, _ := arguments["path"].(string); strings.TrimSpace(path) != "" {
+				if !filepath.IsAbs(path) {
+					path = filepath.Join(a.workspaceRoot, path)
+				}
+				a.trace.AddArtifact(path, "file")
+			}
+		}
+	}
 	return toolCall.ID, toolResult
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 const maxToolErrorOutputChars = 12 * 1024

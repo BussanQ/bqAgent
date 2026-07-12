@@ -114,7 +114,7 @@ func restoreCheckpointMessages(messages []map[string]any, checkpoint session.Con
 	if strings.TrimSpace(checkpoint.Summary) == "" || len(checkpoint.TailMessages) == 0 {
 		return messages
 	}
-	if strings.TrimSpace(checkpoint.SystemPrompt) != "" && checkpoint.SystemPrompt != systemPrompt {
+	if strings.TrimSpace(checkpoint.SystemPrompt) != "" && stablePrompt(checkpoint.SystemPrompt) != stablePrompt(systemPrompt) {
 		return messages
 	}
 
@@ -136,6 +136,13 @@ func restoreCheckpointMessages(messages []map[string]any, checkpoint session.Con
 		restored = append(restored, copyMessage)
 	}
 	return restored
+}
+
+func stablePrompt(prompt string) string {
+	if index := strings.Index(prompt, "\n\n# Relevant structured memory\n"); index >= 0 {
+		return prompt[:index]
+	}
+	return prompt
 }
 
 func (conversation *Conversation) AddUserMessage(content string) error {

@@ -33,6 +33,7 @@ func (adapter CLIAdapter) runClaude(ctx context.Context, spec CommandSpec, state
 	args = append(args, prompt)
 	command := exec.CommandContext(ctx, spec.Command, args...)
 	command.Dir = cwd
+	configureExternalProcess(command)
 	output, err := command.Output()
 	if err != nil {
 		return TurnResponse{}, formatCLIError(err)
@@ -60,6 +61,7 @@ func (adapter CLIAdapter) runCodex(ctx context.Context, spec CommandSpec, state 
 
 	command := exec.CommandContext(ctx, spec.Command, args...)
 	command.Dir = cwd
+	configureExternalProcess(command)
 	output, err := command.Output()
 	if err != nil {
 		return TurnResponse{}, formatCLIError(err)

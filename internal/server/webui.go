@@ -166,6 +166,7 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 
 	writeSSEEvent(writer, flusher, "done", map[string]string{
 		"session_id": response.SessionID,
+		"run_id":     response.RunID,
 		"reply":      sanitizeChannelReply(response.Reply),
 	})
 }
