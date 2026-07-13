@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`bqagent` is a small Go agent that drives an **OpenAI-compatible chat completions API** in a tool-calling loop: send messages → model picks tools → run tools locally → feed results back → repeat until done. The same core loop is reused across four entry modes — single-shot CLI, interactive `--chat`, background process, and a long-lived HTTP `--server` that fronts chat channels (ServerChan, QQ, WeChat/iLink). It can also delegate a turn to an external coding agent (Claude Code, Codex, Cursor, OpenCode) instead of running the loop itself.
+`bqagent` is a small Go agent that drives **OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages** in a tool-calling loop: send messages → model picks tools → run tools locally → feed results back → repeat until done. The same core loop is reused across four entry modes — single-shot CLI, interactive `--chat`, background process, and a long-lived HTTP `--server` that fronts chat channels (ServerChan, QQ, WeChat/iLink). It can also delegate a turn to an external coding agent (Claude Code, Codex, Cursor, OpenCode) instead of running the loop itself.
 
 Module `bqagent`, Go 1.26. Only two non-stdlib deps: `nhooyr.io/websocket` (QQ gateway) and `mdp/qrterminal` (WeChat login QR).
 
@@ -34,7 +34,7 @@ go run ./cmd/agent --server           # HTTP on 127.0.0.1:8080
 go run ./cmd/agent --resume <id> "…"  # continue a persisted session
 ```
 
-Config is read from the environment and from a `.env` file at the workspace root (auto-loaded; real shell env wins over `.env`). `OPENAI_API_KEY` is required for server mode. `OPENAI_MODEL` defaults to `agent.DefaultModel` (`MiniMax-M2.5`) when unset. **`.env` here contains live secrets — never print or commit its contents.**
+Config is read from the environment and from a `.env` file at the workspace root (auto-loaded; real shell env wins over `.env`). `LLM_API_TYPE` selects `openai` (default), `openai-response`, or `anthropic`; generic `LLM_*` variables override the compatible `OPENAI_*` / `ANTHROPIC_*` variables. A matching API key is required for server mode. The model defaults to `agent.DefaultModel` (`MiniMax-M2.5`) when unset. **`.env` here contains live secrets — never print or commit its contents.**
 
 ## Architecture
 
@@ -73,7 +73,7 @@ Each session is a directory under `.agent/sessions/<id>/` with `meta.json` (stat
 
 ### Server & channels — `internal/server`
 
-`Service.HandleTurn` orchestrates one turn for any caller and is guarded by a **per-session keyed lock** so concurrent requests to the same session serialize. Channels implement the `Channel` interface (`Name/Enabled/RegisterRoutes/Start`) and are registered in [cmd/agent/server.go](cmd/agent/server.go); each is enabled by its own env vars. The **web UI channel** ([internal/server/webui.go](internal/server/webui.go)) is **on by default** (`WEBUI_ENABLED=false` to disable): it serves a self-contained `go:embed`-ed page at `/`, streams replies token-by-token, and emits detailed `progress` SSE events for iterations, tools, and checkpoints. QQ suppresses internal iteration/tool progress but retains short long-wait notices, loop protection, and final persisted checkpoints. WeChat/iLink also suppresses intermediate progress because its context token must be reserved for the single final reply. Reaching a stage budget produces an assistant checkpoint (`已发现 / 未完成 / 建议下一步`), after which “继续” resumes the same session. The whole turn is bounded by `CHANNEL_TURN_TIMEOUT` (default 10m); individual LLM HTTP calls have their own client timeout.
+`Service.HandleTurn` orchestrates one turn for any caller and is guarded by a **per-session keyed lock** so concurrent requests to the same session serialize. A caller may assign `TurnRequest.TurnID`; the shared service then registers the whole turn for cancellation through `Service.StopTurn` / `POST /api/v1/chat/stop`, independent of any channel. Channels implement the `Channel` interface (`Name/Enabled/RegisterRoutes/Start`) and are registered in [cmd/agent/server.go](cmd/agent/server.go); each is enabled by its own env vars. The **web UI channel** ([internal/server/webui.go](internal/server/webui.go)) is **on by default** (`WEBUI_ENABLED=false` to disable): it serves a self-contained `go:embed`-ed page at `/`, streams replies token-by-token, emits detailed `progress` SSE events for iterations, tools, and checkpoints, and currently supplies the stop UI. QQ suppresses internal iteration/tool progress but retains short long-wait notices, loop protection, and final persisted checkpoints. WeChat/iLink also suppresses intermediate progress because its context token must be reserved for the single final reply. Reaching a stage budget produces an assistant checkpoint (`已发现 / 未完成 / 建议下一步`), after which “继续” resumes the same session. The whole turn is bounded by `CHANNEL_TURN_TIMEOUT` (default 10m); individual LLM HTTP calls have their own client timeout.
 
 ### External agents — `internal/extagent`
 

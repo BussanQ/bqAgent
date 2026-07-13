@@ -17,6 +17,14 @@ import (
 
 const defaultBaseURL = "https://api.openai.com/v1"
 
+type APIType string
+
+const (
+	APITypeOpenAI         APIType = "openai"
+	APITypeOpenAIResponse APIType = "openai-response"
+	APITypeAnthropic      APIType = "anthropic"
+)
+
 type ChatCompletionClient interface {
 	CreateChatCompletion(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition) (AssistantMessage, error)
 	CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error)
@@ -30,6 +38,7 @@ type Client struct {
 	httpClient *http.Client
 	apiKey     string
 	baseURL    string
+	apiType    APIType
 }
 
 type AssistantMessage struct {
@@ -111,8 +120,13 @@ type streamChunk struct {
 }
 
 func NewClient(apiKey, baseURL string, httpClient *http.Client) *Client {
+	return NewClientWithAPIType(apiKey, baseURL, APITypeOpenAI, httpClient)
+}
+
+func NewClientWithAPIType(apiKey, baseURL string, apiType APIType, httpClient *http.Client) *Client {
+	apiType = NormalizeAPIType(string(apiType))
 	if strings.TrimSpace(baseURL) == "" {
-		baseURL = defaultBaseURL
+		baseURL = defaultBaseURLForAPIType(apiType)
 	}
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 2 * time.Minute}
@@ -121,7 +135,28 @@ func NewClient(apiKey, baseURL string, httpClient *http.Client) *Client {
 		httpClient: httpClient,
 		apiKey:     apiKey,
 		baseURL:    strings.TrimRight(baseURL, "/"),
+		apiType:    apiType,
 	}
+}
+
+func NormalizeAPIType(raw string) APIType {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	switch normalized {
+	case "openai-response", "openai-responses", "response", "responses":
+		return APITypeOpenAIResponse
+	case "anthropic", "claude":
+		return APITypeAnthropic
+	default:
+		return APITypeOpenAI
+	}
+}
+
+func defaultBaseURLForAPIType(apiType APIType) string {
+	if apiType == APITypeAnthropic {
+		return "https://api.anthropic.com/v1"
+	}
+	return defaultBaseURL
 }
 
 func (c *Client) CreateChatCompletion(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition) (AssistantMessage, error) {
@@ -129,6 +164,13 @@ func (c *Client) CreateChatCompletion(ctx context.Context, model string, message
 }
 
 func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
+	switch c.apiType {
+	case APITypeOpenAIResponse:
+		return c.createOpenAIResponse(ctx, model, messages, definitions, options)
+	case APITypeAnthropic:
+		return c.createAnthropicMessage(ctx, model, messages, definitions, options)
+	}
+
 	body, err := json.Marshal(chatCompletionRequest{
 		Model:          model,
 		Messages:       messages,
@@ -180,6 +222,13 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 }
 
 func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error) {
+	switch c.apiType {
+	case APITypeOpenAIResponse:
+		return c.createOpenAIResponseStream(ctx, model, messages, definitions, onChunk)
+	case APITypeAnthropic:
+		return c.createAnthropicMessageStream(ctx, model, messages, definitions, onChunk)
+	}
+
 	body, err := json.Marshal(chatCompletionStreamRequest{
 		Model:         model,
 		Messages:      messages,

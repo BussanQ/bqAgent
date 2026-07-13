@@ -11,6 +11,9 @@
     --bg-soft: #0d1220;
     --panel: rgba(13, 18, 32, .72);
     --panel-strong: rgba(18, 25, 43, .88);
+    --header-bg: rgba(8, 11, 18, .70);
+    --footer-bg: rgba(8, 11, 18, .94);
+    --footer-mid: rgba(8, 11, 18, .58);
     --line: rgba(135, 160, 210, .18);
     --line-strong: rgba(128, 175, 255, .35);
     --text: #edf4ff;
@@ -22,8 +25,11 @@
     --violet: #a989ff;
     --danger: #ff6b8a;
     --shadow: 0 22px 70px rgba(0, 0, 0, .38);
+    --code-bg: #070b14;
+    --quote-bg: rgba(84, 240, 255, .055);
+    --table-head: rgba(128, 175, 255, .10);
     --radius: 18px;
-    --maxw: 920px;
+    --maxw: 1080px;
   }
 
   @media (prefers-color-scheme: light) {
@@ -33,13 +39,40 @@
       --bg-soft: #f8fbff;
       --panel: rgba(255, 255, 255, .78);
       --panel-strong: rgba(255, 255, 255, .94);
+      --header-bg: rgba(248, 251, 255, .78);
+      --footer-bg: rgba(238, 244, 251, .96);
+      --footer-mid: rgba(238, 244, 251, .62);
       --line: rgba(70, 94, 130, .18);
       --line-strong: rgba(43, 113, 204, .32);
       --text: #111827;
       --text-soft: #4b5f79;
       --text-muted: #7890aa;
+      --code-bg: #f4f7fb;
+      --quote-bg: rgba(43, 113, 204, .055);
+      --table-head: rgba(43, 113, 204, .08);
       --shadow: 0 22px 70px rgba(50, 73, 104, .18);
     }
+  }
+
+  :root[data-theme="dark"] { color-scheme: dark; }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #eef4fb;
+    --bg-soft: #f8fbff;
+    --panel: rgba(255, 255, 255, .82);
+    --panel-strong: rgba(255, 255, 255, .96);
+    --header-bg: rgba(248, 251, 255, .82);
+    --footer-bg: rgba(238, 244, 251, .96);
+    --footer-mid: rgba(238, 244, 251, .62);
+    --line: rgba(70, 94, 130, .18);
+    --line-strong: rgba(43, 113, 204, .32);
+    --text: #111827;
+    --text-soft: #4b5f79;
+    --text-muted: #7890aa;
+    --code-bg: #f4f7fb;
+    --quote-bg: rgba(43, 113, 204, .055);
+    --table-head: rgba(43, 113, 204, .08);
+    --shadow: 0 22px 70px rgba(50, 73, 104, .18);
   }
 
   * { box-sizing: border-box; }
@@ -108,11 +141,11 @@
     gap: 14px;
     padding: 14px clamp(14px, 3vw, 28px);
     border-bottom: 1px solid var(--line);
-    background: rgba(8, 11, 18, .56);
+    background: var(--header-bg);
     backdrop-filter: blur(18px);
   }
 
-  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .brand { flex: 1 1 auto; display: flex; align-items: center; gap: 12px; min-width: 0; }
   .mark {
     width: 36px;
     height: 36px;
@@ -162,7 +195,7 @@
     text-overflow: ellipsis;
   }
 
-  .actions { display: flex; align-items: center; gap: 10px; }
+  .actions { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
   .status {
     display: inline-flex;
     align-items: center;
@@ -183,6 +216,12 @@
     background: var(--green);
     box-shadow: 0 0 14px var(--green);
   }
+  .status.busy::before {
+    background: var(--cyan);
+    animation: statusPulse 1.15s ease-in-out infinite;
+  }
+  .status.error::before { background: var(--danger); box-shadow: 0 0 14px var(--danger); }
+  @keyframes statusPulse { 50% { opacity: .35; transform: scale(.72); } }
   .ghost {
     height: 36px;
     padding: 0 13px;
@@ -193,6 +232,15 @@
     background: rgba(255, 255, 255, .06);
   }
   .ghost .plus { font-size: 18px; line-height: 1; color: var(--cyan); }
+  .icon-button {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: rgba(255, 255, 255, .055);
+  }
+  .icon-button svg { width: 17px; height: 17px; }
 
   main {
     position: relative;
@@ -270,6 +318,8 @@
     background: rgba(255, 255, 255, .045);
     border: 1px solid var(--line);
   }
+  .prompt strong { display: block; color: var(--text); margin-bottom: 2px; font-size: 13px; }
+  .prompt span { display: block; font-size: 12px; line-height: 1.45; }
   .prompt:hover { color: var(--text); }
 
   .msg {
@@ -279,6 +329,21 @@
   }
   .msg.user {
     flex-direction: row-reverse;
+  }
+  .message-stack {
+    min-width: 0;
+    max-width: min(88%, 860px);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .msg.user .message-stack { align-items: flex-end; max-width: min(78%, 760px); }
+  .message-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1;
+    margin: 0 5px 7px;
+    letter-spacing: .2px;
   }
   .avatar {
     width: 32px;
@@ -304,7 +369,8 @@
     box-shadow: 0 0 24px rgba(169, 137, 255, .22);
   }
   .bubble {
-    max-width: min(76%, 720px);
+    width: fit-content;
+    max-width: 100%;
     padding: 13px 15px;
     border-radius: var(--radius);
     white-space: pre-wrap;
@@ -339,15 +405,44 @@
     border-color: rgba(84, 240, 255, .36);
   }
   .bubble.rendered { white-space: normal; }
-  .bubble.rendered p:first-child { margin-top: 0; }
-  .bubble.rendered p:last-child { margin-bottom: 0; }
-  .bubble pre {
-    background: rgba(1, 6, 16, .72);
+  .bubble.rendered { width: 100%; padding: 18px 20px; }
+  .bubble.rendered > :first-child { margin-top: 0; }
+  .bubble.rendered > :last-child { margin-bottom: 0; }
+  .bubble p { margin: .72em 0; }
+  .bubble .code-block {
+    background: var(--code-bg);
     border: 1px solid rgba(128, 175, 255, .20);
     border-radius: 14px;
-    padding: 13px;
+    overflow: hidden;
+    margin: 14px 0;
+  }
+  .code-head {
+    min-height: 36px;
+    padding: 7px 9px 7px 13px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--line);
+    font: 11px/1.2 ui-monospace, "SFMono-Regular", Consolas, monospace;
+    text-transform: lowercase;
+  }
+  .copy-code, .mini-action {
+    color: var(--text-soft);
+    background: rgba(255, 255, 255, .045);
+    border-radius: 8px;
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+  .bubble pre {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 14px 16px 16px;
     overflow-x: auto;
-    margin: 10px 0;
+    margin: 0;
+    tab-size: 2;
   }
   .bubble code {
     font-family: "SF Mono", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
@@ -360,9 +455,61 @@
     border-radius: 7px;
   }
   .bubble pre code { display: block; }
-  .bubble h1, .bubble h2, .bubble h3, .bubble h4 { margin: 14px 0 7px; line-height: 1.28; }
-  .bubble ul, .bubble ol { padding-left: 22px; }
+  .bubble h1, .bubble h2, .bubble h3, .bubble h4, .bubble h5, .bubble h6 {
+    margin: 1.15em 0 .48em;
+    line-height: 1.3;
+    letter-spacing: -.012em;
+  }
+  .bubble h1 { font-size: 1.56em; padding-bottom: .38em; border-bottom: 1px solid var(--line); }
+  .bubble h2 { font-size: 1.32em; padding-bottom: .3em; border-bottom: 1px solid var(--line); }
+  .bubble h3 { font-size: 1.16em; }
+  .bubble h4, .bubble h5, .bubble h6 { font-size: 1em; }
+  .bubble ul, .bubble ol { padding-left: 1.55em; margin: .72em 0; }
+  .bubble li { margin: .3em 0; }
+  .bubble li > p { margin: .28em 0; }
+  .bubble .task-list { list-style: none; padding-left: .3em; }
+  .bubble .task-list input { margin: 0 .55em 0 0; accent-color: var(--cyan); }
   .bubble a { color: var(--cyan); text-decoration-color: rgba(84, 240, 255, .45); }
+  .bubble a:hover { text-decoration-thickness: 2px; }
+  .bubble .md-image {
+    display: block;
+    max-width: 100%;
+    max-height: 560px;
+    margin: 1em auto;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    object-fit: contain;
+    background: rgba(0, 0, 0, .08);
+  }
+  .bubble blockquote {
+    margin: 1em 0;
+    padding: .35em 1em;
+    color: var(--text-soft);
+    background: var(--quote-bg);
+    border-left: 3px solid var(--cyan);
+    border-radius: 0 10px 10px 0;
+  }
+  .bubble blockquote > :first-child { margin-top: .25em; }
+  .bubble blockquote > :last-child { margin-bottom: .25em; }
+  .bubble hr { height: 1px; border: 0; background: var(--line); margin: 1.4em 0; }
+  .table-wrap { width: 100%; overflow-x: auto; margin: 1em 0; border: 1px solid var(--line); border-radius: 12px; }
+  .bubble table { width: 100%; min-width: 440px; border-collapse: collapse; font-size: 13px; }
+  .bubble th, .bubble td { padding: 9px 12px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); text-align: left; vertical-align: top; }
+  .bubble th { color: var(--text); background: var(--table-head); font-weight: 700; }
+  .bubble tr:last-child td { border-bottom: 0; }
+  .bubble th:last-child, .bubble td:last-child { border-right: 0; }
+  .message-actions {
+    min-height: 28px;
+    margin: 7px 4px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    opacity: .2;
+    transition: opacity .16s ease;
+  }
+  .msg:hover .message-actions, .message-actions:focus-within { opacity: 1; }
+  .message-actions .mini-action { padding: 3px 7px; border-color: transparent; }
+  .feedback-note { color: var(--text-muted); font-size: 11px; }
   .caret {
     display: inline-block;
     width: 8px;
@@ -380,7 +527,7 @@
     z-index: 2;
     flex: 0 0 auto;
     padding: 12px clamp(12px, 3vw, 24px) calc(14px + env(safe-area-inset-bottom));
-    background: linear-gradient(to top, rgba(8, 11, 18, .92), rgba(8, 11, 18, .58), transparent);
+    background: linear-gradient(to top, var(--footer-bg), var(--footer-mid), transparent);
   }
   .composer {
     width: min(100%, var(--maxw));
@@ -394,6 +541,13 @@
     background: var(--panel);
     box-shadow: var(--shadow);
     backdrop-filter: blur(22px);
+  }
+  .composer-meta {
+    width: min(100%, var(--maxw));
+    margin: 7px auto 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-align: center;
   }
   .input-shell {
     flex: 1 1 auto;
@@ -428,18 +582,31 @@
     place-items: center;
   }
   .send svg { width: 20px; height: 20px; }
+  .send .stop-icon { display: none; }
+  .send.stop {
+    color: #fff;
+    border-color: rgba(255, 107, 138, .62);
+    background: linear-gradient(135deg, #ff718e, #e94368);
+    box-shadow: 0 0 28px rgba(255, 107, 138, .28);
+  }
+  .send.stop .send-icon { display: none; }
+  .send.stop .stop-icon { display: block; }
 
   @media (max-width: 720px) {
     header { padding: 12px; }
+    .brand span { display: none; }
     .status { display: none; }
     .ghost { width: 36px; padding: 0; justify-content: center; }
     .ghost span:not(.plus) { display: none; }
     .thread { padding-top: 24px; gap: 14px; }
     .prompts { grid-template-columns: 1fr; }
-    .bubble { max-width: calc(100% - 43px); }
+    .message-stack, .msg.user .message-stack { max-width: calc(100% - 43px); }
+    .bubble.rendered { padding: 15px 16px; }
+    .message-label { display: none; }
     .empty { margin-top: 46px; }
     .empty .big { font-size: 28px; }
     .composer { border-radius: 18px; padding: 8px; }
+    .composer-meta { display: none; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -458,11 +625,17 @@
       <div class="mark" aria-hidden="true"></div>
       <div class="brand-text">
         <h1>bqagent</h1>
-        <span>智能对话中枢</span>
+        <span>Workspace intelligence</span>
       </div>
     </div>
     <div class="actions">
-      <div class="status">在线</div>
+      <div class="status" id="status">在线</div>
+      <button class="icon-button" id="theme-toggle" type="button" title="切换主题" aria-label="切换明暗主题">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
+          <path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42M7.06 16.94l-1.42 1.42" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.8"/>
+        </svg>
+      </button>
       <button class="ghost" id="new-chat" type="button" title="新建对话" aria-label="新建对话">
         <span class="plus" aria-hidden="true">+</span>
         <span>新建</span>
@@ -476,9 +649,9 @@
         <div class="big">今天想探索什么？</div>
         <p>bqagent 已就绪，可以帮你拆解问题、写代码、查资料或整理复杂思路。</p>
         <div class="prompts" aria-label="快捷提示">
-          <button class="prompt" type="button">帮我梳理这个项目的结构</button>
-          <button class="prompt" type="button">把这个想法拆成执行步骤</button>
-          <button class="prompt" type="button">检查一段代码里的风险</button>
+          <button class="prompt" type="button"><strong>理解项目</strong><span>帮我梳理这个项目的结构</span></button>
+          <button class="prompt" type="button"><strong>制定计划</strong><span>把这个想法拆成执行步骤</span></button>
+          <button class="prompt" type="button"><strong>审查代码</strong><span>检查一段代码里的风险</span></button>
         </div>
       </div>
     </div>
@@ -489,24 +662,34 @@
         <textarea id="input" rows="1" placeholder="给 bqagent 发送消息" autofocus></textarea>
       </div>
       <button class="send" id="send" type="button" title="发送" aria-label="发送">
-        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
+        <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none">
           <path d="M5 12h13M13 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <svg class="stop-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none">
+          <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/>
         </svg>
       </button>
     </div>
+    <div class="composer-meta">Enter 发送 · Shift + Enter 换行 · 支持 Markdown</div>
   </footer>
 
 <script>
 (function () {
   "use strict";
   var SESSION_KEY = "bqagent.webui.session";
+  var THEME_KEY = "bqagent.webui.theme";
   var thread = document.getElementById("thread");
   var main = document.getElementById("main");
   var input = document.getElementById("input");
   var sendBtn = document.getElementById("send");
   var newChatBtn = document.getElementById("new-chat");
+  var themeToggle = document.getElementById("theme-toggle");
+  var statusEl = document.getElementById("status");
   var sessionId = localStorage.getItem(SESSION_KEY) || "";
   var busy = false;
+  var currentTurnId = "";
+  var currentController = null;
+  var stopRequested = false;
 
   function scrollToBottom() {
     main.scrollTop = main.scrollHeight;
@@ -525,10 +708,17 @@
     avatar.className = "avatar";
     avatar.setAttribute("aria-hidden", "true");
     avatar.textContent = role === "user" ? "你" : "AI";
+    var stack = document.createElement("div");
+    stack.className = "message-stack";
+    var label = document.createElement("div");
+    label.className = "message-label";
+    label.textContent = role === "user" ? "你" : "bqagent";
     var bubble = document.createElement("div");
     bubble.className = "bubble";
     msg.appendChild(avatar);
-    msg.appendChild(bubble);
+    stack.appendChild(label);
+    stack.appendChild(bubble);
+    msg.appendChild(stack);
     thread.appendChild(msg);
     scrollToBottom();
     return bubble;
@@ -541,48 +731,265 @@
       '<div class="big">今天想探索什么？</div>' +
       '<p>bqagent 已就绪，可以帮你拆解问题、写代码、查资料或整理复杂思路。</p>' +
       '<div class="prompts" aria-label="快捷提示">' +
-      '<button class="prompt" type="button">帮我梳理这个项目的结构</button>' +
-      '<button class="prompt" type="button">把这个想法拆成执行步骤</button>' +
-      '<button class="prompt" type="button">检查一段代码里的风险</button>' +
+      '<button class="prompt" type="button"><strong>理解项目</strong><span>帮我梳理这个项目的结构</span></button>' +
+      '<button class="prompt" type="button"><strong>制定计划</strong><span>把这个想法拆成执行步骤</span></button>' +
+      '<button class="prompt" type="button"><strong>审查代码</strong><span>检查一段代码里的风险</span></button>' +
       '</div></div>';
   }
 
   function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
-  function renderInline(s) {
-    s = s.replace(/`([^`]+)`/g, function (m, c) { return "<code>" + c + "</code>"; });
-    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    s = s.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
-    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-    return s;
+  function safeHref(url) {
+    var value = String(url || "").trim();
+    if (/^(https?:|mailto:)/i.test(value) || /^(#|\/(?!\/)|\.\/|\.\.\/)/.test(value)) {
+      return value;
+    }
+    return "";
   }
 
-  // Minimal, dependency-free Markdown rendering. Everything is HTML-escaped
-  // before any markup is added, so model output can never inject HTML.
-  function renderMarkdown(text) {
-    var blocks = text.split("```");
-    var out = "";
-    for (var i = 0; i < blocks.length; i++) {
-      if (i % 2 === 1) {
-        var body = blocks[i].replace(/^[a-zA-Z0-9_+\-.]*\n/, "");
-        out += "<pre><code>" + escapeHtml(body) + "</code></pre>";
+  function applyEmphasis(s) {
+    return s
+      .replace(/~~([^~]+)~~/g, "<del>$1</del>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/__([^_]+)__/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+      .replace(/(^|[^_])_([^_\n]+)_/g, "$1<em>$2</em>");
+  }
+
+  function renderInline(source) {
+    var tokens = [];
+    function stash(html) {
+      var token = "\u0000MD" + tokens.length + "\u0000";
+      tokens.push(html);
+      return token;
+    }
+
+    var text = String(source == null ? "" : source);
+    text = text.replace(/(`+)([\s\S]*?)\1/g, function (_, ticks, code) {
+      return stash("<code>" + escapeHtml(code.trim()) + "</code>");
+    });
+    text = text.replace(/!\[([^\]]*)\]\(([^\s)]+)(?:\s+["']([^"']*)["'])?\)/g,
+      function (_, alt, url, title) {
+        var src = safeHref(url);
+        if (!src || /^mailto:/i.test(src) || /^#/i.test(src)) return alt;
+        return stash('<img class="md-image" src="' + escapeHtml(src) + '" alt="' + escapeHtml(alt) + '"' +
+          (title ? ' title="' + escapeHtml(title) + '"' : "") + ' loading="lazy" referrerpolicy="no-referrer">');
+      });
+    text = text.replace(/\[([^\]]+)\]\(([^\s)]+)(?:\s+["']([^"']*)["'])?\)/g,
+      function (_, label, url, title) {
+        var href = safeHref(url);
+        if (!href) return label + " (" + url + ")";
+        var titleAttr = title ? ' title="' + escapeHtml(title) + '"' : "";
+        var external = /^https?:/i.test(href) ? ' target="_blank" rel="noopener noreferrer"' : "";
+        return stash('<a href="' + escapeHtml(href) + '"' + titleAttr + external + '>' +
+          applyEmphasis(escapeHtml(label)) + "</a>");
+      });
+    text = text.replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g, function (_, prefix, url) {
+      var clean = url.replace(/[.,;:!?]+$/, "");
+      var tail = url.slice(clean.length);
+      return prefix + stash('<a href="' + escapeHtml(clean) + '" target="_blank" rel="noopener noreferrer">' +
+        escapeHtml(clean) + "</a>") + tail;
+    });
+    text = applyEmphasis(escapeHtml(text));
+    return text.replace(/\u0000MD(\d+)\u0000/g, function (_, index) {
+      return tokens[Number(index)] || "";
+    });
+  }
+
+  function isFence(line) {
+    return line.match(/^\s*(`{3,}|~{3,})\s*([a-zA-Z0-9_+.-]*)\s*$/);
+  }
+
+  function isHorizontalRule(line) {
+    return /^\s{0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})\s*$/.test(line);
+  }
+
+  function isListLine(line) {
+    return line.match(/^\s{0,3}([-+*]|\d+[.)])\s+(.+)$/);
+  }
+
+  function splitTableRow(line) {
+    var value = line.trim();
+    if (value.charAt(0) === "|") value = value.slice(1);
+    if (value.charAt(value.length - 1) === "|") value = value.slice(0, -1);
+    var cells = [];
+    var current = "";
+    var escaped = false;
+    for (var i = 0; i < value.length; i++) {
+      var ch = value.charAt(i);
+      if (escaped) {
+        current += ch;
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "|") {
+        cells.push(current.trim());
+        current = "";
       } else {
-        var lines = escapeHtml(blocks[i]).split("\n");
-        var rendered = lines.map(function (line) {
-          var h = line.match(/^(#{1,6})\s+(.*)$/);
-          if (h) {
-            var lvl = h[1].length;
-            return "<h" + lvl + ">" + renderInline(h[2]) + "</h" + lvl + ">";
-          }
-          return renderInline(line);
-        }).join("\n");
-        out += rendered.replace(/\n/g, "<br>");
+        current += ch;
       }
     }
-    return out;
+    cells.push(current.trim());
+    return cells;
+  }
+
+  function tableDelimiter(line) {
+    var cells = splitTableRow(line);
+    if (!cells.length) return null;
+    var aligns = [];
+    for (var i = 0; i < cells.length; i++) {
+      var cell = cells[i].replace(/\s/g, "");
+      if (!/^:?-{3,}:?$/.test(cell)) return null;
+      aligns.push(cell.charAt(0) === ":" && cell.charAt(cell.length - 1) === ":" ? "center" :
+        (cell.charAt(cell.length - 1) === ":" ? "right" : "left"));
+    }
+    return aligns;
+  }
+
+  function codeBlock(language, body) {
+    var label = language || "code";
+    return '<div class="code-block"><div class="code-head"><span>' + escapeHtml(label) +
+      '</span><button class="copy-code" type="button">复制</button></div><pre><code' +
+      (language ? ' class="language-' + escapeHtml(language) + '"' : "") + ">" +
+      escapeHtml(body.replace(/\n$/, "")) + "</code></pre></div>";
+  }
+
+  function renderParagraph(lines) {
+    var parts = [];
+    for (var i = 0; i < lines.length; i++) {
+      var hardBreak = /\s{2}$/.test(lines[i]);
+      parts.push(renderInline(lines[i].replace(/\s+$/, "")) + (hardBreak ? "<br>" : " "));
+    }
+    return "<p>" + parts.join("").trim() + "</p>";
+  }
+
+  function beginsBlock(lines, index) {
+    var line = lines[index] || "";
+    if (!line.trim() || isFence(line) || /^(#{1,6})\s+/.test(line) || /^\s*>/.test(line) ||
+        isHorizontalRule(line) || isListLine(line)) return true;
+    return index + 1 < lines.length && line.indexOf("|") >= 0 && !!tableDelimiter(lines[index + 1]);
+  }
+
+  // Dependency-free safe Markdown renderer. Raw HTML is always escaped. It
+  // covers the constructs commonly found in README and generated .md files.
+  function renderMarkdown(source) {
+    var lines = String(source == null ? "" : source).replace(/\r\n?/g, "\n").split("\n");
+    var html = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (!line.trim()) { i++; continue; }
+
+      var fence = isFence(line);
+      if (fence) {
+        var marker = fence[1];
+        var language = fence[2] || "";
+        var code = [];
+        i++;
+        while (i < lines.length && !(new RegExp("^\\s*" + marker.charAt(0) + "{" + marker.length + ",}\\s*$")).test(lines[i])) {
+          code.push(lines[i++]);
+        }
+        if (i < lines.length) i++;
+        html.push(codeBlock(language, code.join("\n")));
+        continue;
+      }
+
+      if (i + 1 < lines.length && /^\s*(=+|-+)\s*$/.test(lines[i + 1]) && lines[i + 1].trim().length >= 3) {
+        var setextLevel = lines[i + 1].trim().charAt(0) === "=" ? 1 : 2;
+        html.push("<h" + setextLevel + ">" + renderInline(line.trim()) + "</h" + setextLevel + ">");
+        i += 2;
+        continue;
+      }
+
+      var heading = line.match(/^(#{1,6})\s+(.+?)\s*#*$/);
+      if (heading) {
+        var level = heading[1].length;
+        html.push("<h" + level + ">" + renderInline(heading[2]) + "</h" + level + ">");
+        i++;
+        continue;
+      }
+
+      if (isHorizontalRule(line)) {
+        html.push("<hr>");
+        i++;
+        continue;
+      }
+
+      if (/^\s*>/.test(line)) {
+        var quoted = [];
+        while (i < lines.length && (/^\s*>/.test(lines[i]) || !lines[i].trim())) {
+          quoted.push(lines[i].replace(/^\s*>\s?/, ""));
+          i++;
+        }
+        html.push("<blockquote>" + renderMarkdown(quoted.join("\n")) + "</blockquote>");
+        continue;
+      }
+
+      if (i + 1 < lines.length && line.indexOf("|") >= 0) {
+        var aligns = tableDelimiter(lines[i + 1]);
+        if (aligns) {
+          var headers = splitTableRow(line);
+          var rows = [];
+          i += 2;
+          while (i < lines.length && lines[i].trim() && lines[i].indexOf("|") >= 0) {
+            rows.push(splitTableRow(lines[i++]));
+          }
+          var table = '<div class="table-wrap"><table><thead><tr>';
+          headers.forEach(function (cell, column) {
+            table += '<th style="text-align:' + (aligns[column] || "left") + '">' + renderInline(cell) + "</th>";
+          });
+          table += "</tr></thead><tbody>";
+          rows.forEach(function (row) {
+            table += "<tr>";
+            headers.forEach(function (_, column) {
+              table += '<td style="text-align:' + (aligns[column] || "left") + '">' + renderInline(row[column] || "") + "</td>";
+            });
+            table += "</tr>";
+          });
+          html.push(table + "</tbody></table></div>");
+          continue;
+        }
+      }
+
+      var list = isListLine(line);
+      if (list) {
+        var ordered = /^\d/.test(list[1]);
+        var tag = ordered ? "ol" : "ul";
+        var items = [];
+        var hasTasks = false;
+        while (i < lines.length) {
+          var item = isListLine(lines[i]);
+          if (!item || /^\d/.test(item[1]) !== ordered) break;
+          var body = item[2];
+          var task = body.match(/^\[([ xX])\]\s+(.*)$/);
+          if (task) {
+            hasTasks = true;
+            body = '<input type="checkbox" disabled' + (task[1].toLowerCase() === "x" ? " checked" : "") + ">" + renderInline(task[2]);
+          } else {
+            body = renderInline(body);
+          }
+          items.push("<li>" + body + "</li>");
+          i++;
+        }
+        html.push("<" + tag + (hasTasks ? ' class="task-list"' : "") + ">" + items.join("") + "</" + tag + ">");
+        continue;
+      }
+
+      var paragraph = [line];
+      i++;
+      while (i < lines.length && !beginsBlock(lines, i)) {
+        paragraph.push(lines[i++]);
+      }
+      html.push(renderParagraph(paragraph));
+    }
+    return html.join("");
   }
 
   function complexTaskNotice(text) {
@@ -620,8 +1027,18 @@
 
   function setBusy(on) {
     busy = on;
-    sendBtn.disabled = on;
+    sendBtn.disabled = false;
+    sendBtn.classList.toggle("stop", on);
+    sendBtn.title = on ? "停止生成" : "发送";
+    sendBtn.setAttribute("aria-label", on ? "停止生成" : "发送");
     input.disabled = on;
+    if (on) {
+      statusEl.textContent = "处理中";
+      statusEl.classList.remove("error");
+    } else if (!statusEl.classList.contains("error")) {
+      statusEl.textContent = "在线";
+    }
+    statusEl.classList.toggle("busy", on);
     if (!on) input.focus();
   }
 
@@ -630,34 +1047,118 @@
     input.style.height = Math.min(input.scrollHeight, 180) + "px";
   }
 
-  function addFeedbackControls(bubble, runId) {
-    if (!runId) return;
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var helper = document.createElement("textarea");
+      helper.value = text;
+      helper.style.position = "fixed";
+      helper.style.opacity = "0";
+      document.body.appendChild(helper);
+      helper.select();
+      try {
+        document.execCommand("copy") ? resolve() : reject(new Error("copy failed"));
+      } catch (error) {
+        reject(error);
+      } finally {
+        helper.remove();
+      }
+    });
+  }
+
+  function addMessageControls(bubble, runId, reply) {
+    var stack = bubble.parentElement;
+    if (!stack) return;
+    var previous = stack.querySelector(".message-actions");
+    if (previous) previous.remove();
     var row = document.createElement("div");
-    row.style.marginTop = "8px";
-    row.style.display = "flex";
-    row.style.gap = "6px";
+    row.className = "message-actions";
+
+    var copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "mini-action";
+    copy.textContent = "复制";
+    copy.title = "复制回复";
+    copy.onclick = function () {
+      copyText(reply || bubble.textContent || "").then(function () {
+        copy.textContent = "已复制";
+        setTimeout(function () { copy.textContent = "复制"; }, 1200);
+      });
+    };
+    row.appendChild(copy);
+
+    if (!runId) {
+      stack.appendChild(row);
+      return;
+    }
     ["up", "down"].forEach(function(rating) {
       var btn = document.createElement("button");
       btn.type = "button";
+      btn.className = "mini-action";
       btn.textContent = rating === "up" ? "👍" : "👎";
-      btn.title = rating === "up" ? "Helpful" : "Not helpful";
+      btn.title = rating === "up" ? "有帮助" : "没有帮助";
       btn.onclick = async function() {
-        await fetch("/api/v1/runs/" + encodeURIComponent(runId) + "/feedback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rating: rating })
-        });
-        row.textContent = "Feedback recorded";
+        try {
+          await fetch("/api/v1/runs/" + encodeURIComponent(runId) + "/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rating: rating })
+          });
+          row.querySelectorAll("button:not(:first-child)").forEach(function (item) { item.remove(); });
+          var note = document.createElement("span");
+          note.className = "feedback-note";
+          note.textContent = "感谢反馈";
+          row.appendChild(note);
+        } catch (_) {}
       };
       row.appendChild(btn);
     });
-    bubble.appendChild(row);
+    stack.appendChild(row);
+  }
+
+  function setTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem(THEME_KEY, theme);
+    themeToggle.title = theme === "dark" ? "切换到浅色主题" : "切换到深色主题";
+  }
+
+  function createTurnId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    var random = Math.random().toString(36).slice(2);
+    return "turn-" + Date.now().toString(36) + "-" + random;
+  }
+
+  async function stopCurrentTurn() {
+    if (!busy || !currentTurnId || stopRequested) return;
+    stopRequested = true;
+    sendBtn.disabled = true;
+    statusEl.textContent = "正在停止";
+    try {
+      var response = await fetch("/api/v1/chat/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ turn_id: currentTurnId })
+      });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      var result = await response.json();
+      if (!result.stopped && currentController) currentController.abort();
+    } catch (_) {
+      if (currentController) currentController.abort();
+    }
   }
 
   async function send() {
     if (busy) return;
     var text = input.value.trim();
     if (!text) return;
+
+    currentTurnId = createTurnId();
+    currentController = new AbortController();
+    stopRequested = false;
 
     addMessage("user").textContent = text;
     input.value = "";
@@ -675,7 +1176,8 @@
       var res = await fetch("/api/v1/webui/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, session_id: sessionId })
+        body: JSON.stringify({ message: text, session_id: sessionId, turn_id: currentTurnId }),
+        signal: currentController.signal
       });
       if (!res.ok || !res.body) {
         throw new Error("HTTP " + res.status);
@@ -704,13 +1206,26 @@
               localStorage.setItem(SESSION_KEY, sessionId);
             }
             bubble.classList.add("rendered");
-            renderReply(bubble, done.reply || streamed);
-            addFeedbackControls(bubble, done.run_id);
+            var finalReply = done.reply || streamed;
+            renderReply(bubble, finalReply);
+            addMessageControls(bubble, done.run_id, finalReply);
+          } else if (evt.event === "stopped") {
+            finished = true;
+            caret.remove();
+            bubble.classList.add("rendered", "notice");
+            var stoppedReply = streamed ? streamed + "\n\n> 已停止生成。" : "已停止生成。";
+            renderReply(bubble, stoppedReply);
+            addMessageControls(bubble, "", streamed);
+            statusEl.textContent = "已停止";
+            statusEl.classList.remove("busy", "error");
           } else if (evt.event === "error") {
             finished = true;
             var errPayload = JSON.parse(evt.data);
             bubble.classList.add("error");
             bubble.textContent = "出错：" + (errPayload.error || "未知错误");
+            statusEl.textContent = "请求失败";
+            statusEl.classList.remove("busy");
+            statusEl.classList.add("error");
           } else if (evt.event === "progress") {
             var progressPayload = JSON.parse(evt.data);
             if (progressPayload.message && !streamed) {
@@ -739,16 +1254,30 @@
         bubble.classList.add("rendered");
         if (streamed) {
           renderReply(bubble, streamed);
+          addMessageControls(bubble, "", streamed);
         } else {
           bubble.innerHTML = "<em>（无回复）</em>";
         }
       }
     } catch (err) {
       caret.remove();
-      bubble.classList.add("error");
-      bubble.textContent = "出错：" + (err && err.message ? err.message : err);
+      if (stopRequested || (err && err.name === "AbortError")) {
+        bubble.classList.add("rendered", "notice");
+        var partialReply = streamed ? streamed + "\n\n> 已停止生成。" : "已停止生成。";
+        renderReply(bubble, partialReply);
+        addMessageControls(bubble, "", streamed);
+      } else {
+        bubble.classList.add("error");
+        bubble.textContent = "出错：" + (err && err.message ? err.message : err);
+        statusEl.textContent = "连接失败";
+        statusEl.classList.remove("busy");
+        statusEl.classList.add("error");
+      }
     } finally {
       setBusy(false);
+      currentTurnId = "";
+      currentController = null;
+      stopRequested = false;
       scrollToBottom();
     }
   }
@@ -758,15 +1287,34 @@
     sessionId = "";
     localStorage.removeItem(SESSION_KEY);
     thread.innerHTML = emptyMarkup();
+    statusEl.textContent = "在线";
+    statusEl.classList.remove("error", "busy");
     input.focus();
   }
 
-  sendBtn.addEventListener("click", send);
+  sendBtn.addEventListener("click", function () {
+    if (busy) stopCurrentTurn(); else send();
+  });
   newChatBtn.addEventListener("click", newChat);
+  themeToggle.addEventListener("click", function () {
+    var current = document.documentElement.getAttribute("data-theme") || "dark";
+    setTheme(current === "dark" ? "light" : "dark");
+  });
   thread.addEventListener("click", function (e) {
     var target = e.target;
-    if (target && target.classList && target.classList.contains("prompt")) {
-      input.value = target.textContent || "";
+    var copyButton = target && target.closest ? target.closest(".copy-code") : null;
+    if (copyButton) {
+      var code = copyButton.closest(".code-block").querySelector("code");
+      copyText(code ? code.textContent : "").then(function () {
+        copyButton.textContent = "已复制";
+        setTimeout(function () { copyButton.textContent = "复制"; }, 1200);
+      });
+      return;
+    }
+    var prompt = target && target.closest ? target.closest(".prompt") : null;
+    if (prompt) {
+      var detail = prompt.querySelector("span");
+      input.value = detail ? detail.textContent : (prompt.textContent || "");
       autoGrow();
       input.focus();
     }
@@ -778,6 +1326,8 @@
       send();
     }
   });
+  setTheme(localStorage.getItem(THEME_KEY) ||
+    (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
   autoGrow();
 })();
 </script>

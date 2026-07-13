@@ -37,6 +37,7 @@ func NewHandler(options HandlerOptions) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handler.handleHealth)
 	mux.HandleFunc("/api/v1/chat", handler.handleChat)
+	mux.HandleFunc("/api/v1/chat/stop", handler.handleStopTurn)
 	mux.HandleFunc("/api/v1/runs/", handler.handleRun)
 	for _, channel := range options.Channels {
 		if channel == nil || !channel.Enabled() {
@@ -117,6 +118,28 @@ func (handler *handler) handleChat(writer http.ResponseWriter, request *http.Req
 	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, RunID: response.RunID, Reply: response.Reply})
 }
 
+func (handler *handler) handleStopTurn(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
+		return
+	}
+	values, err := readValues(writer, request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
+		return
+	}
+	turnID := strings.TrimSpace(values["turn_id"])
+	if !validTurnID(turnID) {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: "valid turn_id is required"})
+		return
+	}
+	if handler.service == nil {
+		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "service is unavailable"})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"stopped": handler.service.StopTurn(turnID)})
+}
+
 func (handler *handler) handleRun(writer http.ResponseWriter, request *http.Request) {
 	if handler.service == nil || handler.service.traceStore == nil {
 		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "trace store unavailable"})
@@ -163,9 +186,14 @@ func parseTurnRequest(values map[string]string) (TurnRequest, error) {
 	if message == "" {
 		return TurnRequest{}, fmt.Errorf("message is required")
 	}
+	turnID := strings.TrimSpace(values["turn_id"])
+	if turnID != "" && !validTurnID(turnID) {
+		return TurnRequest{}, fmt.Errorf("invalid turn_id")
+	}
 	return TurnRequest{
 		SessionID: strings.TrimSpace(firstNonEmpty(values["session_id"], values["session"])),
 		Message:   message,
+		TurnID:    turnID,
 	}, nil
 }
 

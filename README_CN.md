@@ -10,7 +10,7 @@
 
 bqagent 的核心仍然很简单：
 
-1. 调用 OpenAI 兼容 chat completions 接口
+1. 通过 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 接口发送消息
 2. 让模型选择工具
 3. 在本地执行工具
 4. 把工具结果回传给模型
@@ -42,11 +42,15 @@ go build -o bqagent ./cmd/agent
 
 设置环境变量：
 
+`LLM_API_TYPE` 用于选择接口协议，支持 `openai`（默认）、`openai-response`
+和 `anthropic`。原有 `OPENAI_*` 环境变量继续兼容；通用的 `LLM_*` 变量优先级更高。
+
 **macOS/Linux:**
 ```bash
 export OPENAI_API_KEY='your-key-here'
 export OPENAI_BASE_URL='https://api.openai.com/v1'  # 可选
 export OPENAI_MODEL='gpt-4o-mini'  # 可选
+export LLM_API_TYPE='openai'  # 可选
 ```
 
 **Windows (PowerShell):**
@@ -54,6 +58,7 @@ export OPENAI_MODEL='gpt-4o-mini'  # 可选
 $env:OPENAI_API_KEY='your-key-here'
 $env:OPENAI_BASE_URL='https://api.openai.com/v1'  # 可选
 $env:OPENAI_MODEL='gpt-4o-mini'  # 可选
+$env:LLM_API_TYPE='openai'  # 可选
 ```
 
 **Windows (CMD):**
@@ -61,6 +66,7 @@ $env:OPENAI_MODEL='gpt-4o-mini'  # 可选
 set OPENAI_API_KEY=your-key-here
 set OPENAI_BASE_URL=https://api.openai.com/v1
 set OPENAI_MODEL=gpt-4o-mini
+set LLM_API_TYPE=openai
 ```
 
 也可以把同样的变量写在工作区根目录下的 `.env` 文件中，bqagent 会在启动时自动加载。
@@ -69,11 +75,33 @@ set OPENAI_MODEL=gpt-4o-mini
 OPENAI_API_KEY=your-key-here
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
+LLM_API_TYPE=openai
 ```
+
+OpenAI Responses API 示例：
+
+```dotenv
+LLM_API_TYPE=openai-response
+OPENAI_API_KEY=your-key-here
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-5
+```
+
+Anthropic Messages API 示例：
+
+```dotenv
+LLM_API_TYPE=anthropic
+ANTHROPIC_API_KEY=your-key-here
+ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
+ANTHROPIC_MODEL=claude-sonnet-4-5
+```
+
+也可以使用 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL` 替代供应商专用变量。
+`OPENAI_API_TYPE` 可作为 `LLM_API_TYPE` 的兼容别名。
 
 如果 shell 里已经设置了同名环境变量，则以 shell 中的值为准，不会被 `.env` 覆盖。
 
-如果没有设置 `OPENAI_MODEL`，bqagent 默认使用 `MiniMax-M2.5`。
+如果没有设置任何模型变量，bqagent 默认使用 `MiniMax-M2.5`。
 
 如果要启用 ServerChan Bot webhook 对话，还需要设置：
 
@@ -246,12 +274,13 @@ project/
 - `GET /healthz`
 - `POST /api/v1/chat`
 - `POST /api/v1/webui/chat`
+- `POST /api/v1/chat/stop`
 - `POST /api/v1/serverchan/chat`
 - `POST /api/v1/serverchan/bot/webhook`
 
 其中 `/api/v1/chat` 用于基于 `session_id` 的接口对话。
 
-`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖），界面参考 llama.cpp 的 Web UI。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；`event: progress` 会持续报告迭代轮次、工具活动和阶段 checkpoint。长任务达到阶段预算后会返回并持久化阶段总结，用户回复“继续”即可沿用同一 `session_id` 继续，而不会重新探索。该网页渠道**默认开启**；设置 `WEBUI_ENABLED=false` 可关闭（此时 `GET /` 返回 404）。
+`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖）。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。界面支持明暗主题，并会安全渲染 Markdown 标题、列表、任务列表、表格、引用、链接、图片与带复制按钮的代码块，适合直接阅读 README 等 `.md` 内容。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；发送后按钮会切换为停止按钮，通过与渠道无关的 `POST /api/v1/chat/stop` 接口按 `turn_id` 取消当前模型请求和工具执行。取消注册表位于共享对话服务中，其他通道后续接入时无需依赖 WebUI。`event: progress` 会持续报告迭代轮次、工具活动和阶段 checkpoint。长任务达到阶段预算后会返回并持久化阶段总结，用户回复“继续”即可沿用同一 `session_id` 继续，而不会重新探索。该网页渠道**默认开启**；设置 `WEBUI_ENABLED=false` 可关闭（此时 `GET /` 返回 404）。
 
 `/api/v1/serverchan/chat` 保留为现有的 sendkey 推送型接口：它会生成回复，然后按 demo 中的 `text` / `desp` / `sendkey` 语义把结果推送出去。
 

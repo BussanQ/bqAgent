@@ -20,6 +20,7 @@ import (
 const mcpDiscoveryTimeout = 15 * time.Second
 
 type Config struct {
+	APIType                      agent.APIType
 	APIKey                       string
 	BaseURL                      string
 	Model                        string
@@ -63,13 +64,23 @@ type Runtime struct {
 
 func ConfigFromEnv(getenv func(string) string) Config {
 	defaults := agent.DefaultContextConfig()
+	apiType := agent.NormalizeAPIType(firstNonEmpty(getenv("LLM_API_TYPE"), getenv("OPENAI_API_TYPE")))
+	apiKey := firstNonEmpty(getenv("LLM_API_KEY"), getenv("OPENAI_API_KEY"))
+	baseURL := firstNonEmpty(getenv("LLM_BASE_URL"), getenv("OPENAI_BASE_URL"))
+	model := firstNonEmpty(getenv("LLM_MODEL"), getenv("OPENAI_MODEL"))
+	if apiType == agent.APITypeAnthropic {
+		apiKey = firstNonEmpty(getenv("LLM_API_KEY"), getenv("ANTHROPIC_API_KEY"), getenv("OPENAI_API_KEY"))
+		baseURL = firstNonEmpty(getenv("LLM_BASE_URL"), getenv("ANTHROPIC_BASE_URL"), getenv("OPENAI_BASE_URL"))
+		model = firstNonEmpty(getenv("LLM_MODEL"), getenv("ANTHROPIC_MODEL"), getenv("OPENAI_MODEL"))
+	}
 	searchProvider := searchProviderFromEnv(getenv)
 	searchAPIKey := firstNonEmpty(getenv("SEARCH_API_KEY"), getenv("FIRECRAWL_API_KEY"))
 	searchBaseURL := firstNonEmpty(getenv("SEARCH_BASE_URL"), getenv("FIRECRAWL_BASE_URL"))
 	return Config{
-		APIKey:                       getenv("OPENAI_API_KEY"),
-		BaseURL:                      getenv("OPENAI_BASE_URL"),
-		Model:                        getenv("OPENAI_MODEL"),
+		APIType:                      apiType,
+		APIKey:                       apiKey,
+		BaseURL:                      baseURL,
+		Model:                        model,
 		MaxIterations:                envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
 		SearchProvider:               searchProvider,
 		SearchAPIKey:                 searchAPIKey,
@@ -129,7 +140,7 @@ func envInt(raw string, fallback int) int {
 }
 
 func (factory Factory) Build(includePlan bool) Runtime {
-	client := agent.NewClient(factory.Config.APIKey, factory.Config.BaseURL, nil)
+	client := agent.NewClientWithAPIType(factory.Config.APIKey, factory.Config.BaseURL, factory.Config.APIType, nil)
 
 	var planner *agent.Planner
 	if includePlan {

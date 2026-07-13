@@ -10,7 +10,7 @@ A small Go agent for local work, now with workspace-aware context, Markdown skil
 
 bqagent still keeps the same core loop:
 
-1. send messages to an OpenAI-compatible chat completions API
+1. send messages through OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages
 2. let the model choose tools
 3. run the tools locally
 4. return tool results to the model
@@ -42,11 +42,16 @@ go build -o bqagent ./cmd/agent
 
 Set your environment variables:
 
+`LLM_API_TYPE` selects the wire protocol. Supported values are `openai` (default),
+`openai-response`, and `anthropic`. The existing `OPENAI_*` variables remain
+compatible; generic `LLM_*` variables take precedence.
+
 **macOS/Linux:**
 ```bash
 export OPENAI_API_KEY='your-key-here'
 export OPENAI_BASE_URL='https://api.openai.com/v1'  # optional
 export OPENAI_MODEL='gpt-4o-mini'  # optional
+export LLM_API_TYPE='openai'  # optional
 ```
 
 **Windows (PowerShell):**
@@ -54,6 +59,7 @@ export OPENAI_MODEL='gpt-4o-mini'  # optional
 $env:OPENAI_API_KEY='your-key-here'
 $env:OPENAI_BASE_URL='https://api.openai.com/v1'  # optional
 $env:OPENAI_MODEL='gpt-4o-mini'  # optional
+$env:LLM_API_TYPE='openai'  # optional
 ```
 
 **Windows (CMD):**
@@ -61,6 +67,7 @@ $env:OPENAI_MODEL='gpt-4o-mini'  # optional
 set OPENAI_API_KEY=your-key-here
 set OPENAI_BASE_URL=https://api.openai.com/v1
 set OPENAI_MODEL=gpt-4o-mini
+set LLM_API_TYPE=openai
 ```
 
 You can also put the same variables in a `.env` file at the workspace root. bqagent will load that file automatically on startup.
@@ -69,11 +76,34 @@ You can also put the same variables in a `.env` file at the workspace root. bqag
 OPENAI_API_KEY=your-key-here
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
+LLM_API_TYPE=openai
 ```
+
+OpenAI Responses API example:
+
+```dotenv
+LLM_API_TYPE=openai-response
+OPENAI_API_KEY=your-key-here
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-5
+```
+
+Anthropic Messages API example:
+
+```dotenv
+LLM_API_TYPE=anthropic
+ANTHROPIC_API_KEY=your-key-here
+ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
+ANTHROPIC_MODEL=claude-sonnet-4-5
+```
+
+You may use `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL` instead of the
+provider-specific variables. `OPENAI_API_TYPE` is accepted as a compatibility
+alias for `LLM_API_TYPE`.
 
 Environment variables that are already set in the shell take precedence over values from `.env`.
 
-If `OPENAI_MODEL` is not set, bqagent defaults to `MiniMax-M2.5`.
+If no model variable is set, bqagent defaults to `MiniMax-M2.5`.
 
 For ServerChan Bot webhook conversations, the server mode also supports:
 
@@ -246,12 +276,13 @@ The command immediately prints the session ID, session directory, and log path.
 - `GET /healthz`
 - `POST /api/v1/chat`
 - `POST /api/v1/webui/chat`
+- `POST /api/v1/chat/stop`
 - `POST /api/v1/serverchan/chat`
 - `POST /api/v1/serverchan/bot/webhook`
 
 `/api/v1/chat` continues conversations by `session_id`.
 
-`GET /` serves a self-contained, single-page chat UI (HTML/CSS/JS embedded in the binary, no external assets) inspired by the llama.cpp web UI. Open `http://127.0.0.1:8080` in a browser and chat directly. Replies stream token-by-token over Server-Sent Events from `POST /api/v1/webui/chat`; `event: progress` reports iterations, tool activity, and stage checkpoints. Long WebUI work pauses with a persisted stage summary, so replying "继续" resumes the same `session_id` instead of restarting exploration. The web UI is **enabled by default**; set `WEBUI_ENABLED=false` to disable it (then `GET /` returns 404).
+`GET /` serves a self-contained, single-page chat UI (HTML/CSS/JS embedded in the binary, no external assets). Open `http://127.0.0.1:8080` in a browser and chat directly. The UI supports light/dark themes and safely renders Markdown headings, lists, task lists, tables, blockquotes, links, images, and copyable fenced code blocks, making README-style `.md` content easy to read. Replies stream token-by-token over Server-Sent Events from `POST /api/v1/webui/chat`; while a turn is running, the send button becomes a stop button backed by the channel-independent `POST /api/v1/chat/stop` endpoint, which cancels the active model request and tool execution identified by `turn_id`. The cancellation registry lives in the shared conversation service, so other channels can opt in later without WebUI-specific stop logic. `event: progress` reports iterations, tool activity, and stage checkpoints. Long WebUI work pauses with a persisted stage summary, so replying "继续" resumes the same `session_id` instead of restarting exploration. The web UI is **enabled by default**; set `WEBUI_ENABLED=false` to disable it (then `GET /` returns 404).
 
 `/api/v1/serverchan/chat` is the existing sendkey-based push adapter: it generates a reply and forwards it through ServerChan using the `text` / `desp` / `sendkey` shape from the Go demo.
 

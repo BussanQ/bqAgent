@@ -48,8 +48,9 @@ func main() {
 }
 
 func runLive(manifest evalharness.Manifest, suite string, repeats int) evalharness.Report {
-	if os.Getenv("OPENAI_API_KEY") == "" {
-		fatal(fmt.Errorf("OPENAI_API_KEY is required for live eval"))
+	llmConfig := appruntime.ConfigFromEnv(os.Getenv)
+	if llmConfig.APIKey == "" {
+		fatal(fmt.Errorf("LLM API key is required for live eval"))
 	}
 	if repeats < 1 {
 		repeats = 1
@@ -65,7 +66,7 @@ func runLive(manifest evalharness.Manifest, suite string, repeats int) evalharne
 			if err != nil {
 				fatal(err)
 			}
-			runtime := appruntime.Factory{Config: appruntime.ConfigFromEnv(os.Getenv), WorkspaceRoot: temp, MemoryDir: filepath.Join(temp, ".agent", "memory"), Getenv: os.Getenv}.Build(false)
+			runtime := appruntime.Factory{Config: llmConfig, WorkspaceRoot: temp, MemoryDir: filepath.Join(temp, ".agent", "memory"), Getenv: os.Getenv}.Build(false)
 			app := agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{SystemPrompt: agent.DefaultSystemPrompt, ToolDefinitions: runtime.Catalog.Definitions(), Functions: runtime.Catalog.Registry(), WorkspaceRoot: temp, Context: runtime.Context})
 			start := time.Now()
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

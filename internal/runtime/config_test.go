@@ -2,6 +2,42 @@ package runtime
 
 import "testing"
 
+func TestConfigFromEnvUsesSelectedLLMAPIType(t *testing.T) {
+	values := map[string]string{
+		"LLM_API_TYPE":       "Anthropic",
+		"ANTHROPIC_API_KEY":  "anthropic-key",
+		"ANTHROPIC_BASE_URL": "https://anthropic.example/v1",
+		"ANTHROPIC_MODEL":    "claude-test",
+		"OPENAI_API_KEY":     "openai-key",
+	}
+
+	config := ConfigFromEnv(func(key string) string { return values[key] })
+	if config.APIType != "anthropic" {
+		t.Fatalf("APIType = %q, want anthropic", config.APIType)
+	}
+	if config.APIKey != "anthropic-key" || config.BaseURL != "https://anthropic.example/v1" || config.Model != "claude-test" {
+		t.Fatalf("LLM config = %#v", config)
+	}
+}
+
+func TestConfigFromEnvSupportsGenericLLMOverrides(t *testing.T) {
+	values := map[string]string{
+		"OPENAI_API_TYPE": "OpenAI-Response",
+		"LLM_API_KEY":     "generic-key",
+		"LLM_BASE_URL":    "https://responses.example/v1",
+		"LLM_MODEL":       "gpt-test",
+		"OPENAI_API_KEY":  "openai-key",
+	}
+
+	config := ConfigFromEnv(func(key string) string { return values[key] })
+	if config.APIType != "openai-response" {
+		t.Fatalf("APIType = %q, want openai-response", config.APIType)
+	}
+	if config.APIKey != "generic-key" || config.BaseURL != "https://responses.example/v1" || config.Model != "gpt-test" {
+		t.Fatalf("LLM config = %#v", config)
+	}
+}
+
 func TestConfigFromEnvPrefersTavilySearchConfig(t *testing.T) {
 	values := map[string]string{
 		"SEARCH_API_KEY":     "tavily-key",

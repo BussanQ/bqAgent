@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"bqagent/internal/agent"
+	"bqagent/internal/tools"
 )
 
 func TestWebUIServesIndex(t *testing.T) {
@@ -34,6 +39,23 @@ func TestWebUIServesIndex(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "/api/v1/webui/chat") {
 		t.Fatal("served page does not reference the chat endpoint")
+	}
+	page := string(body)
+	for _, expected := range []string{
+		`id="theme-toggle"`,
+		`function renderMarkdown(source)`,
+		`class="table-wrap"`,
+		`class="copy-code"`,
+		`row.className = "message-actions"`,
+		`/api/v1/chat/stop`,
+		`class="stop-icon"`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("served page missing WebUI feature %q", expected)
+		}
+	}
+	if strings.Contains(page, "<script src=") {
+		t.Fatal("served page should remain self-contained without external scripts")
 	}
 }
 
@@ -96,6 +118,104 @@ func TestWebUIStreamChat(t *testing.T) {
 	if second.done.SessionID != first.done.SessionID {
 		t.Fatalf("second session_id = %q, want %q", second.done.SessionID, first.done.SessionID)
 	}
+}
+
+func TestWebUIStopCancelsActiveTurn(t *testing.T) {
+	root := t.TempDir()
+	client := &cancelAwareTurnClient{started: make(chan struct{}), canceled: make(chan struct{})}
+	service := newTestService(root, "http://example.invalid")
+	service.client = client
+	channel := NewWebUIChannel(service, true)
+	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{channel}})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	type streamResult struct {
+		body string
+		err  error
+	}
+	streamDone := make(chan streamResult, 1)
+	go func() {
+		response, err := http.Post(apiServer.URL+"/api/v1/webui/chat", "application/json", strings.NewReader(`{"message":"wait","turn_id":"turn-stop-1"}`))
+		if err != nil {
+			streamDone <- streamResult{err: err}
+			return
+		}
+		defer response.Body.Close()
+		payload, readErr := io.ReadAll(response.Body)
+		streamDone <- streamResult{body: string(payload), err: readErr}
+	}()
+
+	select {
+	case <-client.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for LLM request to start")
+	}
+
+	stopResponse, err := http.Post(apiServer.URL+"/api/v1/chat/stop", "application/json", strings.NewReader(`{"turn_id":"turn-stop-1"}`))
+	if err != nil {
+		t.Fatalf("POST stop failed: %v", err)
+	}
+	defer stopResponse.Body.Close()
+	var stopPayload struct {
+		Stopped bool `json:"stopped"`
+	}
+	if err := json.NewDecoder(stopResponse.Body).Decode(&stopPayload); err != nil {
+		t.Fatalf("decode stop response: %v", err)
+	}
+	if !stopPayload.Stopped {
+		t.Fatal("stop response reported no active turn")
+	}
+
+	select {
+	case <-client.canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for LLM request cancellation")
+	}
+	select {
+	case result := <-streamDone:
+		if result.err != nil {
+			t.Fatalf("read stopped stream: %v", result.err)
+		}
+		if !strings.Contains(result.body, "event: stopped") {
+			t.Fatalf("stream missing stopped event:\n%s", result.body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stopped stream to finish")
+	}
+
+	idleResponse, err := http.Post(apiServer.URL+"/api/v1/chat/stop", "application/json", strings.NewReader(`{"turn_id":"turn-stop-1"}`))
+	if err != nil {
+		t.Fatalf("POST idle stop failed: %v", err)
+	}
+	defer idleResponse.Body.Close()
+	stopPayload.Stopped = true
+	if err := json.NewDecoder(idleResponse.Body).Decode(&stopPayload); err != nil {
+		t.Fatalf("decode idle stop response: %v", err)
+	}
+	if stopPayload.Stopped {
+		t.Fatal("completed turn still reported as active")
+	}
+}
+
+type cancelAwareTurnClient struct {
+	started  chan struct{}
+	canceled chan struct{}
+}
+
+func (client *cancelAwareTurnClient) CreateChatCompletion(ctx context.Context, _ string, _ []map[string]any, _ []tools.Definition) (agent.AssistantMessage, error) {
+	return client.wait(ctx)
+}
+
+func (client *cancelAwareTurnClient) CreateChatCompletionStream(ctx context.Context, _ string, _ []map[string]any, _ []tools.Definition, _ func(string)) (agent.AssistantMessage, error) {
+	return client.wait(ctx)
+}
+
+func (client *cancelAwareTurnClient) wait(ctx context.Context) (agent.AssistantMessage, error) {
+	close(client.started)
+	<-ctx.Done()
+	close(client.canceled)
+	return agent.AssistantMessage{}, ctx.Err()
 }
 
 type webUIResult struct {

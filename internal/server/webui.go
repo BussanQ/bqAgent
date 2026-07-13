@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -128,6 +129,8 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
 		return
 	}
+	ctx, cancel := context.WithTimeout(request.Context(), ChannelTurnTimeout())
+	defer cancel()
 
 	writer.Header().Set("Content-Type", "text/event-stream")
 	writer.Header().Set("Cache-Control", "no-cache")
@@ -137,15 +140,11 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	writer.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	// A web turn streams tokens and may run several tool iterations, so bound it
-	// by the channel turn timeout rather than the short JSON request timeout.
-	ctx, cancel := context.WithTimeout(request.Context(), ChannelTurnTimeout())
-	defer cancel()
-
 	stream := &sseStream{writer: writer, flusher: flusher}
 	response, err := channel.service.HandleTurnWithOptions(ctx, TurnRequest{
 		SessionID: turnRequest.SessionID,
 		Message:   turnRequest.Message,
+		TurnID:    turnRequest.TurnID,
 	}, TurnOptions{
 		Stream:         true,
 		TokenSink:      sseEventWriter{stream: stream, event: "message"},
@@ -160,6 +159,10 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		},
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			writeSSEEvent(writer, flusher, "stopped", map[string]string{"message": "已停止生成。"})
+			return
+		}
 		writeSSEEvent(writer, flusher, "error", map[string]string{"error": err.Error()})
 		return
 	}

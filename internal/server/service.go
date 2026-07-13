@@ -60,11 +60,15 @@ type Service struct {
 	traceStore          *apptrace.Store
 	subagents           *subagent.Manager
 	memoryStore         *appmemory.Store
+	activeTurns         *activeTurnRegistry
 }
 
 type TurnRequest struct {
 	SessionID string `json:"session_id"`
 	Message   string `json:"message"`
+	// TurnID identifies one in-flight conversation turn. Any caller/channel can
+	// provide it and later cancel the whole turn through Service.StopTurn.
+	TurnID string `json:"turn_id,omitempty"`
 	// PeerKey identifies the async channel peer that owns this turn. It is used
 	// for control commands such as /stop and is not accepted from HTTP JSON.
 	PeerKey string `json:"-"`
@@ -119,11 +123,21 @@ func NewService(options ServiceOptions) *Service {
 		traceStore:          apptrace.NewStore(options.WorkspaceRoot),
 		subagents:           options.Subagents,
 		memoryStore:         options.MemoryStore,
+		activeTurns:         newActiveTurnRegistry(),
 	}
 }
 
 func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (TurnResponse, error) {
 	return service.HandleTurnWithOptions(ctx, request, TurnOptions{})
+}
+
+// StopTurn cancels the model request and every context-aware tool running for
+// the identified turn. Channels can opt in by assigning TurnRequest.TurnID.
+func (service *Service) StopTurn(turnID string) bool {
+	if service == nil || service.activeTurns == nil {
+		return false
+	}
+	return service.activeTurns.Stop(turnID)
 }
 
 func (service *Service) stopProcessGroupReply(peerKey string, sessionID string) string {
@@ -191,6 +205,23 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 	if message == "" && len(request.Images) == 0 {
 		return TurnResponse{}, fmt.Errorf("message is required")
+	}
+	turnID := strings.TrimSpace(request.TurnID)
+	if turnID != "" {
+		if !validTurnID(turnID) {
+			return TurnResponse{}, fmt.Errorf("invalid turn_id")
+		}
+		turnCtx, cancel := context.WithCancel(ctx)
+		unregister, registered := service.activeTurns.Register(turnID, cancel)
+		if !registered {
+			cancel()
+			return TurnResponse{}, fmt.Errorf("turn %q is already active", turnID)
+		}
+		defer func() {
+			unregister()
+			cancel()
+		}()
+		ctx = turnCtx
 	}
 	// effectiveText is what session bookkeeping and memory record; for image-only
 	// turns it falls back to a placeholder so those stay readable.
