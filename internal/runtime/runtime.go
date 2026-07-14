@@ -55,6 +55,7 @@ type Runtime struct {
 	Client        agent.ChatCompletionClient
 	Planner       *agent.Planner
 	Catalog       tools.Catalog
+	APIType       agent.APIType
 	Model         string
 	MaxIterations int
 	WorkspaceRoot string
@@ -73,6 +74,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		baseURL = firstNonEmpty(getenv("LLM_BASE_URL"), getenv("ANTHROPIC_BASE_URL"), getenv("OPENAI_BASE_URL"))
 		model = firstNonEmpty(getenv("LLM_MODEL"), getenv("ANTHROPIC_MODEL"), getenv("OPENAI_MODEL"))
 	}
+	model = agent.EffectiveModel(model)
 	searchProvider := searchProviderFromEnv(getenv)
 	searchAPIKey := firstNonEmpty(getenv("SEARCH_API_KEY"), getenv("FIRECRAWL_API_KEY"))
 	searchBaseURL := firstNonEmpty(getenv("SEARCH_BASE_URL"), getenv("FIRECRAWL_BASE_URL"))
@@ -140,11 +142,14 @@ func envInt(raw string, fallback int) int {
 }
 
 func (factory Factory) Build(includePlan bool) Runtime {
-	client := agent.NewClientWithAPIType(factory.Config.APIKey, factory.Config.BaseURL, factory.Config.APIType, nil)
+	apiType := agent.NormalizeAPIType(string(factory.Config.APIType))
+	model := agent.EffectiveModel(factory.Config.Model)
+	client := agent.NewClientWithAPIType(factory.Config.APIKey, factory.Config.BaseURL, apiType, nil)
+	factory.logf("[Runtime] api_type=%s model=%s\n", apiType, model)
 
 	var planner *agent.Planner
 	if includePlan {
-		planner = agent.NewPlanner(client, factory.Config.Model)
+		planner = agent.NewPlanner(client, model)
 	}
 
 	mcpDefinitions, mcpFunctions := factory.discoverMCPTools()
@@ -171,7 +176,8 @@ func (factory Factory) Build(includePlan bool) Runtime {
 		Client:        client,
 		Planner:       planner,
 		Catalog:       catalog,
-		Model:         factory.Config.Model,
+		APIType:       apiType,
+		Model:         model,
 		MaxIterations: factory.Config.MaxIterations,
 		WorkspaceRoot: factory.WorkspaceRoot,
 		Context: agent.ContextConfig{
@@ -219,6 +225,7 @@ func (runtime Runtime) NewAgent(logWriter io.Writer, systemPrompt string, record
 func (runtime Runtime) NewAgentWithProgress(logWriter io.Writer, progressWriter io.Writer, systemPrompt string, recorder agent.MessageRecorder, stream bool) *agent.Agent {
 	return agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{
 		SystemPrompt:    systemPrompt,
+		APIType:         runtime.APIType,
 		LogWriter:       logWriter,
 		ProgressWriter:  progressWriter,
 		ToolDefinitions: runtime.Catalog.Definitions(),

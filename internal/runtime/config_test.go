@@ -1,6 +1,20 @@
 package runtime
 
-import "testing"
+import (
+	"testing"
+
+	"bqagent/internal/agent"
+)
+
+func TestConfigFromEnvUsesEffectiveDefaultModel(t *testing.T) {
+	config := ConfigFromEnv(func(string) string { return "" })
+	if config.Model != agent.DefaultModel {
+		t.Fatalf("Model = %q, want %q", config.Model, agent.DefaultModel)
+	}
+	if config.APIType != agent.APITypeOpenAI {
+		t.Fatalf("APIType = %q, want %q", config.APIType, agent.APITypeOpenAI)
+	}
+}
 
 func TestConfigFromEnvUsesSelectedLLMAPIType(t *testing.T) {
 	values := map[string]string{

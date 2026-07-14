@@ -68,6 +68,7 @@ type StageConfig struct {
 
 type Options struct {
 	SystemPrompt    string
+	APIType         APIType
 	LogWriter       io.Writer
 	ToolDefinitions []tools.Definition
 	Functions       map[string]tools.Function
@@ -106,19 +107,14 @@ func New(client ChatCompletionClient, model string, logWriter io.Writer) *Agent 
 }
 
 func NewWithOptions(client ChatCompletionClient, model string, options Options) *Agent {
-	if model == "" {
-		model = DefaultModel
-	}
+	model = EffectiveModel(model)
 
 	logWriter := synchronizeLogWriter(options.LogWriter)
 	progressWriter := synchronizeLogWriter(options.ProgressWriter)
 	tokenSink := synchronizeLogWriter(options.TokenSink)
 	client = instrumentChatCompletionClient(client, logWriter, progressWriter)
 
-	systemPrompt := strings.TrimSpace(options.SystemPrompt)
-	if systemPrompt == "" {
-		systemPrompt = DefaultSystemPrompt
-	}
+	systemPrompt := AppendModelIdentitySystemPrompt(options.SystemPrompt, model, options.APIType)
 
 	definitions := options.ToolDefinitions
 	if definitions == nil {
@@ -306,6 +302,7 @@ func (a *Agent) runPlannedConversation(ctx context.Context, messages []map[strin
 }
 
 func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, maxIterations int, allowPlan bool) (result string, updatedMessages []map[string]any, err error) {
+	messages = ensureSystemPromptMessage(messages, a.systemPrompt)
 	startedAt := time.Now()
 	updatedMessages = messages
 	if maxIterations <= 0 {
@@ -501,6 +498,19 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		return a.finishStageCheckpoint(ctx, updatedMessages, fmt.Sprintf("maximum turn iterations reached (%d)", maxIterations), actualIterations)
 	}
 	return fmt.Sprintf("Agent stopped: reached maximum of %d iterations without completing.", maxIterations), updatedMessages, nil
+}
+
+func ensureSystemPromptMessage(messages []map[string]any, systemPrompt string) []map[string]any {
+	systemMessage := map[string]any{"role": "system", "content": systemPrompt}
+	if len(messages) == 0 {
+		return []map[string]any{systemMessage}
+	}
+	role, _ := messages[0]["role"].(string)
+	if role == "system" {
+		messages[0] = systemMessage
+		return messages
+	}
+	return append([]map[string]any{systemMessage}, messages...)
 }
 
 func (a *Agent) stageBoundaryReason(iteration int, explorationCtx context.Context) string {

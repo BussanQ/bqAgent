@@ -625,7 +625,7 @@
       <div class="mark" aria-hidden="true"></div>
       <div class="brand-text">
         <h1>bqagent</h1>
-        <span>Workspace intelligence</span>
+        <span id="runtime-model">Workspace intelligence</span>
       </div>
     </div>
     <div class="actions">
@@ -685,11 +685,26 @@
   var newChatBtn = document.getElementById("new-chat");
   var themeToggle = document.getElementById("theme-toggle");
   var statusEl = document.getElementById("status");
+  var runtimeModelEl = document.getElementById("runtime-model");
   var sessionId = localStorage.getItem(SESSION_KEY) || "";
   var busy = false;
   var currentTurnId = "";
   var currentController = null;
   var stopRequested = false;
+
+  async function loadRuntimeModel() {
+    try {
+      var response = await fetch("/api/v1/status", { headers: { "Accept": "application/json" } });
+      if (!response.ok) return;
+      var payload = await response.json();
+      if (!payload || !payload.llm || !payload.llm.model) return;
+      var apiType = payload.llm.api_type || "llm";
+      runtimeModelEl.textContent = apiType + " · " + payload.llm.model;
+      runtimeModelEl.title = "Current runtime model";
+    } catch (_) {
+      // Status display is best-effort and must never block chat startup.
+    }
+  }
 
   function scrollToBottom() {
     main.scrollTop = main.scrollHeight;
@@ -1328,6 +1343,7 @@
   });
   setTheme(localStorage.getItem(THEME_KEY) ||
     (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+  loadRuntimeModel();
   autoGrow();
 })();
 </script>

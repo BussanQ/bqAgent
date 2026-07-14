@@ -103,6 +103,8 @@ ANTHROPIC_MODEL=claude-sonnet-4-5
 
 如果没有设置任何模型变量，bqagent 默认使用 `MiniMax-M2.5`。
 
+每次调用内置 LLM 时，bqagent 都会把有效模型和 API 类型注入系统提示词，因此助手回答“当前使用什么模型”时会依据运行时配置，而不是自行猜测。服务重启后恢复旧会话时会刷新这条身份信息，运行 Trace 也会记录同一个有效模型。
+
 如果要启用 ServerChan Bot webhook 对话，还需要设置：
 
 ```bash
@@ -272,6 +274,7 @@ project/
 
 - `GET /`（内嵌网页对话界面）
 - `GET /healthz`
+- `GET /api/v1/status`（内置 LLM 的有效 API 类型和模型）
 - `POST /api/v1/chat`
 - `POST /api/v1/webui/chat`
 - `POST /api/v1/chat/stop`
@@ -279,6 +282,8 @@ project/
 - `POST /api/v1/serverchan/bot/webhook`
 
 其中 `/api/v1/chat` 用于基于 `session_id` 的接口对话。
+
+`GET /api/v1/status` 返回内置 LLM 的有效运行时身份，例如 `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`。该接口不会暴露 API Key 或供应商端点 URL；WebUI 会在 bqagent 标题下展示这项信息。
 
 `GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖）。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。界面支持明暗主题，并会安全渲染 Markdown 标题、列表、任务列表、表格、引用、链接、图片与带复制按钮的代码块，适合直接阅读 README 等 `.md` 内容。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；发送后按钮会切换为停止按钮，通过与渠道无关的 `POST /api/v1/chat/stop` 接口按 `turn_id` 取消当前模型请求和工具执行。取消注册表位于共享对话服务中，其他通道后续接入时无需依赖 WebUI。`event: progress` 会持续报告迭代轮次、工具活动和阶段 checkpoint。长任务达到阶段预算后会返回并持久化阶段总结，用户回复“继续”即可沿用同一 `session_id` 继续，而不会重新探索。该网页渠道**默认开启**；设置 `WEBUI_ENABLED=false` 可关闭（此时 `GET /` 返回 404）。
 

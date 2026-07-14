@@ -56,8 +56,8 @@ func TestSummarizationAdoptedIntoWorkingSet(t *testing.T) {
 		},
 		Context: ContextConfig{
 			Enabled:              true,
-			MaxInputTokens:       200,
-			TargetInputTokens:    40,
+			MaxInputTokens:       240,
+			TargetInputTokens:    120,
 			KeepLastTurns:        1,
 			SummarizationEnabled: true,
 			SummaryTriggerTokens: 30,

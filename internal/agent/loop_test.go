@@ -674,8 +674,8 @@ func TestRunContextPrunesOldMessages(t *testing.T) {
 		LogWriter: &logs,
 		Context: ContextConfig{
 			Enabled:               true,
-			MaxInputTokens:        80,
-			TargetInputTokens:     40,
+			MaxInputTokens:        160,
+			TargetInputTokens:     80,
 			ResponseReserveTokens: 10,
 			KeepLastTurns:         1,
 		},
@@ -768,8 +768,8 @@ func TestRunContextSummarizesOldMessages(t *testing.T) {
 		LogWriter: &logs,
 		Context: ContextConfig{
 			Enabled:               true,
-			MaxInputTokens:        80,
-			TargetInputTokens:     50,
+			MaxInputTokens:        180,
+			TargetInputTokens:     110,
 			ResponseReserveTokens: 10,
 			KeepLastTurns:         1,
 			SummarizationEnabled:  true,
@@ -823,8 +823,8 @@ func TestRunContextFallsBackWhenSummarizationFails(t *testing.T) {
 		LogWriter: &logs,
 		Context: ContextConfig{
 			Enabled:               true,
-			MaxInputTokens:        80,
-			TargetInputTokens:     40,
+			MaxInputTokens:        160,
+			TargetInputTokens:     80,
 			ResponseReserveTokens: 10,
 			KeepLastTurns:         1,
 			SummarizationEnabled:  true,

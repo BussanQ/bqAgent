@@ -32,10 +32,16 @@ type chatResponse struct {
 	Error              string `json:"error,omitempty"`
 }
 
+type statusResponse struct {
+	Status string         `json:"status"`
+	LLM    RuntimeLLMInfo `json:"llm"`
+}
+
 func NewHandler(options HandlerOptions) http.Handler {
 	handler := &handler{service: options.Service}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handler.handleHealth)
+	mux.HandleFunc("/api/v1/status", handler.handleStatus)
 	mux.HandleFunc("/api/v1/chat", handler.handleChat)
 	mux.HandleFunc("/api/v1/chat/stop", handler.handleStopTurn)
 	mux.HandleFunc("/api/v1/runs/", handler.handleRun)
@@ -88,6 +94,18 @@ func (handler *handler) handleHealth(writer http.ResponseWriter, request *http.R
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (handler *handler) handleStatus(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
+		return
+	}
+	if handler.service == nil {
+		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "service is unavailable"})
+		return
+	}
+	writeJSON(writer, http.StatusOK, statusResponse{Status: "ok", LLM: handler.service.RuntimeLLMInfo()})
 }
 
 func (handler *handler) handleChat(writer http.ResponseWriter, request *http.Request) {

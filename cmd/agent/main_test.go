@@ -31,6 +31,8 @@ func TestRunUsesDefaultHelloTask(t *testing.T) {
 		switch key {
 		case "OPENAI_BASE_URL":
 			return server.URL
+		case "LLM_MODEL":
+			return "test-model"
 		default:
 			return ""
 		}
@@ -42,14 +44,17 @@ func TestRunUsesDefaultHelloTask(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run returned code %d, want 0", code)
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
+	if !strings.Contains(stderr.String(), "[Runtime] api_type=openai model=test-model") {
+		t.Fatalf("stderr = %q, want effective runtime model", stderr.String())
 	}
 	if len(seenRequest.Messages) != 2 {
 		t.Fatalf("messages length = %d, want 2", len(seenRequest.Messages))
 	}
 	if seenRequest.Messages[1]["content"] != "Hello" {
 		t.Fatalf("user message = %#v, want Hello", seenRequest.Messages[1]["content"])
+	}
+	if systemPrompt, _ := seenRequest.Messages[0]["content"].(string); !strings.Contains(systemPrompt, "Current runtime model: test-model (API type: openai).") {
+		t.Fatalf("system prompt = %q, want current model identity", systemPrompt)
 	}
 	if !strings.Contains(stdout.String(), "[Model] request=chat") {
 		t.Fatalf("stdout = %q, want model timing log", stdout.String())

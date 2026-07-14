@@ -105,6 +105,11 @@ Environment variables that are already set in the shell take precedence over val
 
 If no model variable is set, bqagent defaults to `MiniMax-M2.5`.
 
+The effective model and API type are injected into the system prompt for every
+built-in LLM turn, so the assistant can answer model-identity questions from
+runtime configuration instead of guessing. Resumed sessions refresh this line
+after a restart, and run traces record the same effective model.
+
 For ServerChan Bot webhook conversations, the server mode also supports:
 
 ```bash
@@ -274,6 +279,7 @@ The command immediately prints the session ID, session directory, and log path.
 
 - `GET /` (embedded web chat UI)
 - `GET /healthz`
+- `GET /api/v1/status` (effective built-in LLM API type and model)
 - `POST /api/v1/chat`
 - `POST /api/v1/webui/chat`
 - `POST /api/v1/chat/stop`
@@ -281,6 +287,11 @@ The command immediately prints the session ID, session directory, and log path.
 - `POST /api/v1/serverchan/bot/webhook`
 
 `/api/v1/chat` continues conversations by `session_id`.
+
+`GET /api/v1/status` returns the effective built-in LLM runtime identity, for
+example `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`.
+It never exposes API keys or provider endpoint URLs. The WebUI displays this
+identity under the bqagent title when the endpoint is available.
 
 `GET /` serves a self-contained, single-page chat UI (HTML/CSS/JS embedded in the binary, no external assets). Open `http://127.0.0.1:8080` in a browser and chat directly. The UI supports light/dark themes and safely renders Markdown headings, lists, task lists, tables, blockquotes, links, images, and copyable fenced code blocks, making README-style `.md` content easy to read. Replies stream token-by-token over Server-Sent Events from `POST /api/v1/webui/chat`; while a turn is running, the send button becomes a stop button backed by the channel-independent `POST /api/v1/chat/stop` endpoint, which cancels the active model request and tool execution identified by `turn_id`. The cancellation registry lives in the shared conversation service, so other channels can opt in later without WebUI-specific stop logic. `event: progress` reports iterations, tool activity, and stage checkpoints. Long WebUI work pauses with a persisted stage summary, so replying "继续" resumes the same `session_id` instead of restarting exploration. The web UI is **enabled by default**; set `WEBUI_ENABLED=false` to disable it (then `GET /` returns 404).
 

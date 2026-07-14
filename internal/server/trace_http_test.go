@@ -49,3 +49,41 @@ func TestRunTraceHTTPAndFeedback(t *testing.T) {
 		t.Fatalf("get status=%d", get.StatusCode)
 	}
 }
+
+func TestRunTraceUsesEffectiveDefaultModel(t *testing.T) {
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer llm.Close()
+
+	root := t.TempDir()
+	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: agent.NewClient("", llm.URL, nil), SystemPrompt: "test"})
+	api := httptest.NewServer(NewHandler(HandlerOptions{Service: service}))
+	defer api.Close()
+
+	response, err := http.Post(api.URL+"/api/v1/chat", "application/json", strings.NewReader(`{"message":"hello"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chat chatResponse
+	if err := json.NewDecoder(response.Body).Decode(&chat); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+
+	get, err := http.Get(api.URL + "/api/v1/runs/" + chat.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	var meta struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(get.Body).Decode(&meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.Model != agent.DefaultModel {
+		t.Fatalf("trace model = %q, want %q", meta.Model, agent.DefaultModel)
+	}
+}

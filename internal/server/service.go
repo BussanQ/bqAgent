@@ -26,6 +26,7 @@ import (
 type ServiceOptions struct {
 	WorkspaceRoot       string
 	Client              agent.ChatCompletionClient
+	APIType             agent.APIType
 	Model               string
 	SystemPrompt        string
 	SystemPromptBuilder func() (string, error)
@@ -44,6 +45,7 @@ type Service struct {
 	store               *session.Store
 	workspaceRoot       string
 	client              agent.ChatCompletionClient
+	apiType             agent.APIType
 	model               string
 	systemPrompt        string
 	systemPromptBuilder func() (string, error)
@@ -107,7 +109,8 @@ func NewService(options ServiceOptions) *Service {
 		store:               session.NewStore(options.WorkspaceRoot),
 		workspaceRoot:       options.WorkspaceRoot,
 		client:              options.Client,
-		model:               options.Model,
+		apiType:             agent.NormalizeAPIType(string(options.APIType)),
+		model:               agent.EffectiveModel(options.Model),
 		systemPrompt:        options.SystemPrompt,
 		systemPromptBuilder: options.SystemPromptBuilder,
 		planner:             options.Planner,
@@ -427,6 +430,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	functions := service.functionsForTurn(request.PeerKey, conversation.Session.ID())
 	app := agent.NewWithOptions(service.client, service.model, agent.Options{
 		SystemPrompt:    systemPrompt,
+		APIType:         service.apiType,
 		LogWriter:       logWriter,
 		ToolDefinitions: service.toolDefinitions,
 		Functions:       functions,
@@ -776,6 +780,7 @@ func (service *Service) handleSkillCommand(ctx context.Context, message string, 
 
 	app := agent.NewWithOptions(service.client, service.model, agent.Options{
 		SystemPrompt:    systemPrompt,
+		APIType:         service.apiType,
 		LogWriter:       logWriter,
 		ToolDefinitions: service.toolDefinitions,
 		Functions:       service.functions,
@@ -855,7 +860,19 @@ func (service *Service) currentSystemPrompt(query string) (string, error) {
 			prompt += memory.String()
 		}
 	}
-	return prompt, nil
+	return agent.AppendModelIdentitySystemPrompt(prompt, service.model, service.apiType), nil
+}
+
+type RuntimeLLMInfo struct {
+	APIType agent.APIType `json:"api_type"`
+	Model   string        `json:"model"`
+}
+
+func (service *Service) RuntimeLLMInfo() RuntimeLLMInfo {
+	if service == nil {
+		return RuntimeLLMInfo{}
+	}
+	return RuntimeLLMInfo{APIType: service.apiType, Model: service.model}
 }
 
 func cloneFunctions(functions map[string]tools.Function) map[string]tools.Function {

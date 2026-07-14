@@ -96,6 +96,111 @@ func TestChatEndpointCreatesAndResumesSession(t *testing.T) {
 	}
 }
 
+func TestStatusEndpointReturnsEffectiveRuntimeModelWithoutSecrets(t *testing.T) {
+	service := NewService(ServiceOptions{
+		WorkspaceRoot: t.TempDir(),
+		APIType:       agent.APITypeAnthropic,
+		Model:         "claude-test",
+	})
+	apiServer := httptest.NewServer(NewHandler(HandlerOptions{Service: service}))
+	defer apiServer.Close()
+
+	response, err := http.Get(apiServer.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatalf("GET status failed: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.StatusCode)
+	}
+	var payload statusResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode status failed: %v", err)
+	}
+	if payload.Status != "ok" || payload.LLM.APIType != agent.APITypeAnthropic || payload.LLM.Model != "claude-test" {
+		t.Fatalf("status payload = %#v", payload)
+	}
+	encoded, _ := json.Marshal(payload)
+	for _, forbidden := range []string{"api_key", "base_url", "secret"} {
+		if strings.Contains(strings.ToLower(string(encoded)), forbidden) {
+			t.Fatalf("status payload exposes forbidden field %q: %s", forbidden, encoded)
+		}
+	}
+
+	request, err := http.NewRequest(http.MethodPost, apiServer.URL+"/api/v1/status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	methodResponse, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("POST status failed: %v", err)
+	}
+	defer methodResponse.Body.Close()
+	if methodResponse.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want 405", methodResponse.StatusCode)
+	}
+
+	healthResponse, err := http.Get(apiServer.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET health failed: %v", err)
+	}
+	defer healthResponse.Body.Close()
+	var health map[string]string
+	if err := json.NewDecoder(healthResponse.Body).Decode(&health); err != nil {
+		t.Fatalf("decode health failed: %v", err)
+	}
+	if len(health) != 1 || health["status"] != "ok" {
+		t.Fatalf("health payload = %#v, want unchanged status response", health)
+	}
+}
+
+func TestChatEndpointInjectsCurrentModelIdentityForNewAndResumedSessions(t *testing.T) {
+	var systemPrompts []string
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Errorf("decode LLM request: %v", err)
+		} else if len(payload.Messages) > 0 {
+			content, _ := payload.Messages[0]["content"].(string)
+			systemPrompts = append(systemPrompts, content)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer llmServer.Close()
+
+	root := t.TempDir()
+	service := NewService(ServiceOptions{
+		WorkspaceRoot: root,
+		Client:        agent.NewClient("", llmServer.URL, nil),
+		APIType:       agent.APITypeOpenAIResponse,
+		Model:         "gpt-test",
+		SystemPrompt:  "Base prompt",
+	})
+	apiServer := httptest.NewServer(NewHandler(HandlerOptions{Service: service}))
+	defer apiServer.Close()
+
+	first := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"hello"}`)
+	var firstPayload chatResponse
+	if err := json.NewDecoder(first.Body).Decode(&firstPayload); err != nil {
+		t.Fatal(err)
+	}
+	_ = first.Body.Close()
+	second := postJSON(t, apiServer.URL+"/api/v1/chat", fmt.Sprintf(`{"session_id":%q,"message":"again"}`, firstPayload.SessionID))
+	_ = second.Body.Close()
+
+	if len(systemPrompts) != 2 {
+		t.Fatalf("system prompts = %#v, want 2", systemPrompts)
+	}
+	for _, prompt := range systemPrompts {
+		if !strings.Contains(prompt, "Current runtime model: gpt-test (API type: openai-response).") {
+			t.Fatalf("system prompt = %q, want current model identity", prompt)
+		}
+	}
+}
+
 func TestServerChanChatEndpointSendsReply(t *testing.T) {
 	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

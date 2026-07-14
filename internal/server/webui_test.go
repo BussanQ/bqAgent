@@ -48,6 +48,9 @@ func TestWebUIServesIndex(t *testing.T) {
 		`class="copy-code"`,
 		`row.className = "message-actions"`,
 		`/api/v1/chat/stop`,
+		`/api/v1/status`,
+		`id="runtime-model"`,
+		`loadRuntimeModel()`,
 		`class="stop-icon"`,
 	} {
 		if !strings.Contains(page, expected) {

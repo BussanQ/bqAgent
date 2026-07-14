@@ -49,6 +49,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	service := appserver.NewService(appserver.ServiceOptions{
 		WorkspaceRoot:   ws.Root,
 		Client:          runtime.Client,
+		APIType:         runtime.APIType,
 		Model:           runtime.Model,
 		DefaultMaxTurns: runtime.MaxIterations,
 		SystemPrompt:    systemPrompt,
