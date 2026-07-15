@@ -332,7 +332,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		actualIterations = iteration + 1
 		if a.stageConfig.ImmediateProgress {
-			a.writeStageProgress(fmt.Sprintf("Starting analysis iteration %d", actualIterations))
+			a.writeStageProgress(selectModelProgressMessage(modelProgressMessages))
 		}
 		requestMessages, compacted := a.buildRequestMessages(explorationCtx, messages)
 		if compacted != nil {
