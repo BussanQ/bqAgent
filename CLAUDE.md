@@ -85,7 +85,7 @@ The `Broker` can route a turn to an external coding agent instead of the built-i
 
 ### Run traces and evaluation — `internal/trace`, `internal/evalharness`
 
-Every CLI/server execution receives session, turn, and run IDs. A run persists `meta.json`, append-only `events.jsonl`, artifacts, feedback, and output under `.agent/runs/<run-id>/`. Model calls record context hashes and provider/estimated token usage; regular and special tools record redacted arguments, bounded result summaries, hashes, timings, and error categories. `/feedback` and `/api/v1/runs/<id>` expose the trace lifecycle. `cmd/eval` loads the versioned 28-task manifest in `eval/tasks.json`; replay mode is deterministic and live mode is explicit.
+Run tracing is controlled by `RUN_TRACE_ENABLED` and defaults to off. When enabled, every CLI/server execution receives session, turn, and run IDs. A run persists `meta.json`, append-only `events.jsonl`, artifacts, feedback, and output under `.agent/runs/<run-id>/`. Model calls record context hashes and provider/estimated token usage; regular and special tools record redacted arguments, bounded result summaries, hashes, timings, and error categories. `/feedback` and `/api/v1/runs/<id>` expose the trace lifecycle. `cmd/eval` loads the versioned 28-task manifest in `eval/tasks.json`; replay mode is deterministic and live mode is explicit.
 
 ### Subagents — `internal/subagent`
 

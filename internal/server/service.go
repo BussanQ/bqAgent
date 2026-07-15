@@ -37,6 +37,7 @@ type ServiceOptions struct {
 	ExternalBroker      *extagent.Broker
 	MemoryAppend        func(task, result string) error
 	Context             agent.ContextConfig
+	RunTraceEnabled     bool
 	Subagents           *subagent.Manager
 	MemoryStore         *appmemory.Store
 }
@@ -105,7 +106,7 @@ func NewService(options ServiceOptions) *Service {
 	if maxTurns <= 0 {
 		maxTurns = agent.DefaultMaxIterations
 	}
-	return &Service{
+	service := &Service{
 		store:               session.NewStore(options.WorkspaceRoot),
 		workspaceRoot:       options.WorkspaceRoot,
 		client:              options.Client,
@@ -123,11 +124,14 @@ func NewService(options ServiceOptions) *Service {
 		context:             options.Context,
 		processGroupStops:   newProcessGroupStopRegistry(),
 		environmentCommands: newEnvironmentCommandGuard(0),
-		traceStore:          apptrace.NewStore(options.WorkspaceRoot),
 		subagents:           options.Subagents,
 		memoryStore:         options.MemoryStore,
 		activeTurns:         newActiveTurnRegistry(),
 	}
+	if options.RunTraceEnabled {
+		service.traceStore = apptrace.NewStore(options.WorkspaceRoot)
+	}
+	return service
 }
 
 func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (TurnResponse, error) {
@@ -281,9 +285,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{SessionID: conversation.Session.ID(), Reply: feedbackReply}, nil
 	}
 
-	runRecorder, traceErr := service.traceStore.Create(conversation.Session.ID(), apptrace.NewID("turn"), "", "agent", service.model, systemPrompt)
-	if traceErr != nil {
-		fmt.Fprintf(turnErrorWriter, "trace create failed: %v\n", traceErr)
+	var runRecorder *apptrace.Recorder
+	if service.traceStore != nil {
+		var traceErr error
+		runRecorder, traceErr = service.traceStore.Create(conversation.Session.ID(), apptrace.NewID("turn"), "", "agent", service.model, systemPrompt)
+		if traceErr != nil {
+			fmt.Fprintf(turnErrorWriter, "trace create failed: %v\n", traceErr)
+		}
 	}
 	runID := ""
 	if runRecorder != nil {
@@ -482,6 +490,9 @@ func (service *Service) handleFeedbackCommand(message string, savedSession *sess
 	fields := strings.Fields(strings.TrimSpace(message))
 	if len(fields) == 0 || strings.ToLower(fields[0]) != "/feedback" {
 		return "", false, nil
+	}
+	if service.traceStore == nil {
+		return "", true, fmt.Errorf("run trace is disabled; set RUN_TRACE_ENABLED=true to enable feedback")
 	}
 	if savedSession == nil {
 		return "", true, fmt.Errorf("feedback requires a session or explicit run id")

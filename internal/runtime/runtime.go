@@ -25,6 +25,7 @@ type Config struct {
 	BaseURL                      string
 	Model                        string
 	MaxIterations                int
+	RunTraceEnabled              bool
 	SearchProvider               string
 	SearchAPIKey                 string
 	SearchBaseURL                string
@@ -52,15 +53,16 @@ type Factory struct {
 }
 
 type Runtime struct {
-	Client        agent.ChatCompletionClient
-	Planner       *agent.Planner
-	Catalog       tools.Catalog
-	APIType       agent.APIType
-	Model         string
-	MaxIterations int
-	WorkspaceRoot string
-	Context       agent.ContextConfig
-	Memory        *appmemory.Store
+	Client          agent.ChatCompletionClient
+	Planner         *agent.Planner
+	Catalog         tools.Catalog
+	APIType         agent.APIType
+	Model           string
+	MaxIterations   int
+	RunTraceEnabled bool
+	WorkspaceRoot   string
+	Context         agent.ContextConfig
+	Memory          *appmemory.Store
 }
 
 func ConfigFromEnv(getenv func(string) string) Config {
@@ -84,6 +86,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		BaseURL:                      baseURL,
 		Model:                        model,
 		MaxIterations:                envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
+		RunTraceEnabled:              envBool(getenv("RUN_TRACE_ENABLED"), false),
 		SearchProvider:               searchProvider,
 		SearchAPIKey:                 searchAPIKey,
 		SearchBaseURL:                searchBaseURL,
@@ -173,13 +176,14 @@ func (factory Factory) Build(includePlan bool) Runtime {
 	})
 
 	return Runtime{
-		Client:        client,
-		Planner:       planner,
-		Catalog:       catalog,
-		APIType:       apiType,
-		Model:         model,
-		MaxIterations: factory.Config.MaxIterations,
-		WorkspaceRoot: factory.WorkspaceRoot,
+		Client:          client,
+		Planner:         planner,
+		Catalog:         catalog,
+		APIType:         apiType,
+		Model:           model,
+		MaxIterations:   factory.Config.MaxIterations,
+		RunTraceEnabled: factory.Config.RunTraceEnabled,
+		WorkspaceRoot:   factory.WorkspaceRoot,
 		Context: agent.ContextConfig{
 			Enabled:               factory.Config.ContextManagementEnabled,
 			MaxInputTokens:        factory.Config.ContextMaxInputTokens,

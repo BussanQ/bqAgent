@@ -328,6 +328,7 @@ Sessions persist the channel/user mapping, status, full `messages.jsonl` audit t
 - `CONTEXT_SUMMARIZATION_ENABLED`
 - `CONTEXT_SUMMARY_TRIGGER_TOKENS`
 - `CONTEXT_SUMMARY_MODEL`
+- `RUN_TRACE_ENABLED` (persist structured run traces; defaults to `false`)
 
 This is still intentionally a small implementation:
 
@@ -338,7 +339,7 @@ This is still intentionally a small implementation:
 
 ## Run traces, evaluation, and feedback
 
-Every task persists a structured trace under `.agent/runs/<run-id>/`, including model/context versions, token usage, tool summaries, timings, errors, artifacts, verifier results, and feedback.
+Run tracing is disabled by default. Set `RUN_TRACE_ENABLED=true` in the environment or workspace `.env` to persist a structured trace under `.agent/runs/<run-id>/` for each task, including model/context versions, token usage, tool summaries, timings, errors, artifacts, verifier results, and feedback. When disabled, responses omit `run_id` and the run trace/feedback endpoints are unavailable.
 
 ```bash
 go run ./cmd/eval --suite smoke --mode replay

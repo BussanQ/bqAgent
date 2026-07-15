@@ -314,6 +314,7 @@ Session 用于保存会话 ID、渠道用户映射、完整消息记录、任务
 - `CONTEXT_SUMMARIZATION_ENABLED`
 - `CONTEXT_SUMMARY_TRIGGER_TOKENS`
 - `CONTEXT_SUMMARY_MODEL`
+- `RUN_TRACE_ENABLED`（保存结构化运行追踪，默认 `false`）
 
 这里仍然刻意保持简单：
 
@@ -324,7 +325,7 @@ Session 用于保存会话 ID、渠道用户映射、完整消息记录、任务
 
 ## RunTrace、评估与反馈
 
-每次任务都会在 `.agent/runs/<run-id>/` 保存结构化追踪，包括模型和上下文版本、token、工具摘要、耗时、错误分类、artifact 和 verifier。HTTP 与 WebUI 回复会返回 `run_id`。
+RunTrace 默认关闭。在环境变量或工作区 `.env` 中设置 `RUN_TRACE_ENABLED=true` 后，每次任务才会在 `.agent/runs/<run-id>/` 保存结构化追踪，包括模型和上下文版本、token、工具摘要、耗时、错误分类、artifact 和 verifier。关闭时，响应不返回 `run_id`，运行追踪与反馈接口不可用。
 
 ```bash
 go run ./cmd/eval --suite smoke --mode replay

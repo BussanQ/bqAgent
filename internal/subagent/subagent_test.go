@@ -33,7 +33,7 @@ func TestManagerSpawnsPersistedWorktreeTask(t *testing.T) {
 	spec := extagent.CommandSpec{Command: "fake"}
 	broker := extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{extagent.AgentClaude: {Agent: extagent.AgentClaude, Preferred: &extagent.AgentTransport{Agent: extagent.AgentClaude, Kind: extagent.TransportACP, Command: spec}}}, func(extagent.CommandSpec, string) (extagent.ACPClient, error) { return fakeACP{}, nil })
 	defer broker.Close()
-	manager := NewManager(root, broker)
+	manager := NewManager(root, broker, false)
 	task, err := manager.Spawn(SpawnOptions{ParentSessionID: "session-1", Agent: extagent.AgentClaude, Prompt: "inspect", Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)

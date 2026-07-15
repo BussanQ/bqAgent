@@ -77,7 +77,7 @@ func Load(path string) (Manifest, error) {
 	return manifest, nil
 }
 
-func RunReplay(manifest Manifest, suite, root string) Report {
+func RunReplay(manifest Manifest, suite, root string, runTraceEnabled bool) Report {
 	report := Report{ID: "eval_" + time.Now().UTC().Format("20060102T150405Z"), Mode: "replay", Suite: suite, StartedAt: time.Now().UTC()}
 	for _, task := range manifest.Tasks {
 		if suite != "all" && task.Suite != suite {
@@ -92,7 +92,7 @@ func RunReplay(manifest Manifest, suite, root string) Report {
 			}
 		}
 		item := TaskResult{ID: task.ID, Category: task.Category, Passed: passed, DurationMS: time.Since(start).Milliseconds(), Output: task.ReplayOutput, Verifiers: results}
-		item.RunID = RecordTaskTrace(root, report.ID, task, item)
+		item.RunID = RecordTaskTrace(root, report.ID, task, item, runTraceEnabled)
 		report.Results = append(report.Results, item)
 		if passed {
 			report.Passed++
@@ -104,7 +104,10 @@ func RunReplay(manifest Manifest, suite, root string) Report {
 	return report
 }
 
-func RecordTaskTrace(root, evalID string, task Task, result TaskResult) string {
+func RecordTaskTrace(root, evalID string, task Task, result TaskResult, runTraceEnabled bool) string {
+	if !runTraceEnabled {
+		return ""
+	}
 	recorder, err := apptrace.NewStore(root).Create("eval_"+evalID, apptrace.NewID("turn"), "", "eval", "", task.Input)
 	if err != nil {
 		return ""

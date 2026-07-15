@@ -9,6 +9,9 @@ import (
 func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	config := ConfigFromEnv(func(string) string { return "" })
 	defaults := agent.DefaultContextConfig()
+	if config.RunTraceEnabled {
+		t.Fatal("RunTraceEnabled = true, want false by default")
+	}
 
 	if config.ContextManagementEnabled != defaults.Enabled {
 		t.Fatalf("ContextManagementEnabled = %t, want %t", config.ContextManagementEnabled, defaults.Enabled)
@@ -36,6 +39,18 @@ func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	}
 	if config.ContextSummaryModel != defaults.SummaryModel {
 		t.Fatalf("ContextSummaryModel = %q, want %q", config.ContextSummaryModel, defaults.SummaryModel)
+	}
+}
+
+func TestConfigFromEnvEnablesRunTrace(t *testing.T) {
+	config := ConfigFromEnv(func(key string) string {
+		if key == "RUN_TRACE_ENABLED" {
+			return "true"
+		}
+		return ""
+	})
+	if !config.RunTraceEnabled {
+		t.Fatal("RunTraceEnabled = false, want true")
 	}
 }
 

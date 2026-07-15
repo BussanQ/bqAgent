@@ -193,11 +193,12 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 }
 
 func runSubagentWorker(ctx context.Context, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, id string) int {
-	config := extagent.ConfigFromEnv(getenv, ws.Root)
-	detections := extagent.Detect(ctx, config, nil)
+	runtimeConfig := appruntime.ConfigFromEnv(getenv)
+	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
+	detections := extagent.Detect(ctx, externalConfig, nil)
 	broker := extagent.NewBroker(extagent.NewStateStore(ws.Root), detections, nil)
 	defer broker.Close()
-	manager := subagent.NewWorkerManager(ws.Root, broker)
+	manager := subagent.NewWorkerManager(ws.Root, broker, runtimeConfig.RunTraceEnabled)
 	if err := manager.RunPersisted(id); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -314,9 +315,13 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		MCPConfigPath: ws.MCPConfigPath(),
 		LogWriter:     stderr,
 	}.Build(true)
-	runRecorder, traceErr := apptrace.NewStore(ws.Root).Create(conversation.Session.ID(), apptrace.NewID("turn"), "", "agent", runtime.Model, systemPrompt)
-	if traceErr != nil {
-		fmt.Fprintf(errorWriter, "trace create failed: %v\n", traceErr)
+	var runRecorder *apptrace.Recorder
+	if runtime.RunTraceEnabled {
+		var traceErr error
+		runRecorder, traceErr = apptrace.NewStore(ws.Root).Create(conversation.Session.ID(), apptrace.NewID("turn"), "", "agent", runtime.Model, systemPrompt)
+		if traceErr != nil {
+			fmt.Fprintf(errorWriter, "trace create failed: %v\n", traceErr)
+		}
 	}
 	if runRecorder != nil {
 		_ = conversation.Session.SetLastRunID(runRecorder.RunID())

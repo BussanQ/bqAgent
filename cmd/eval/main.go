@@ -29,11 +29,12 @@ func main() {
 	if cwdErr != nil {
 		fatal(cwdErr)
 	}
+	runtimeConfig := appruntime.ConfigFromEnv(os.Getenv)
 	var report evalharness.Report
 	if mode == "replay" {
-		report = evalharness.RunReplay(manifest, suite, root)
+		report = evalharness.RunReplay(manifest, suite, root, runtimeConfig.RunTraceEnabled)
 	} else if mode == "live" {
-		report = runLive(manifest, suite, repeats)
+		report = runLive(manifest, suite, repeats, runtimeConfig)
 	} else {
 		fatal(fmt.Errorf("mode must be replay or live"))
 	}
@@ -47,8 +48,7 @@ func main() {
 	}
 }
 
-func runLive(manifest evalharness.Manifest, suite string, repeats int) evalharness.Report {
-	llmConfig := appruntime.ConfigFromEnv(os.Getenv)
+func runLive(manifest evalharness.Manifest, suite string, repeats int, llmConfig appruntime.Config) evalharness.Report {
 	if llmConfig.APIKey == "" {
 		fatal(fmt.Errorf("LLM API key is required for live eval"))
 	}
@@ -83,7 +83,7 @@ func runLive(manifest evalharness.Manifest, suite string, repeats int) evalharne
 			if runErr != nil {
 				item.Output = runErr.Error()
 			}
-			item.RunID = evalharness.RecordTaskTrace(reportRoot, report.ID, task, item)
+			item.RunID = evalharness.RecordTaskTrace(reportRoot, report.ID, task, item, llmConfig.RunTraceEnabled)
 			report.Results = append(report.Results, item)
 			if passed {
 				report.Passed++

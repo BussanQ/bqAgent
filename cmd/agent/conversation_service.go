@@ -33,7 +33,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	}
 
 	externalBroker := extagent.NewBroker(extagent.NewStateStore(ws.Root), detections, nil)
-	subagentManager := subagent.NewManager(ws.Root, externalBroker)
+	subagentManager := subagent.NewManager(ws.Root, externalBroker, runtime.RunTraceEnabled)
 	var memoryAppend func(task, result string) error
 	if ws.MemoryEnabled() {
 		memoryAppend = func(task, result string) error {
@@ -62,6 +62,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		ExternalBroker:  externalBroker,
 		MemoryAppend:    memoryAppend,
 		Context:         runtime.Context,
+		RunTraceEnabled: runtime.RunTraceEnabled,
 		Subagents:       subagentManager,
 		MemoryStore:     runtime.Memory,
 	})

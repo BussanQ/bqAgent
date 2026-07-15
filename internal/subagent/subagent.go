@@ -185,20 +185,23 @@ type Manager struct {
 	runningParent map[string]int
 }
 
-func NewManager(workspaceRoot string, broker *extagent.Broker) *Manager {
-	return newManager(workspaceRoot, broker, true)
+func NewManager(workspaceRoot string, broker *extagent.Broker, runTraceEnabled bool) *Manager {
+	return newManager(workspaceRoot, broker, runTraceEnabled, true)
 }
 
-func NewWorkerManager(workspaceRoot string, broker *extagent.Broker) *Manager {
-	return newManager(workspaceRoot, broker, false)
+func NewWorkerManager(workspaceRoot string, broker *extagent.Broker, runTraceEnabled bool) *Manager {
+	return newManager(workspaceRoot, broker, runTraceEnabled, false)
 }
 
-func newManager(workspaceRoot string, broker *extagent.Broker, reconcile bool) *Manager {
+func newManager(workspaceRoot string, broker *extagent.Broker, runTraceEnabled, reconcile bool) *Manager {
 	manager := &Manager{
 		workspaceRoot: workspaceRoot,
 		store:         NewStore(workspaceRoot), broker: broker,
-		traceStore: apptrace.NewStore(workspaceRoot), global: make(chan struct{}, 6),
+		global:  make(chan struct{}, 6),
 		cancels: map[string]context.CancelFunc{}, runningParent: map[string]int{},
+	}
+	if runTraceEnabled {
+		manager.traceStore = apptrace.NewStore(workspaceRoot)
 	}
 	if reconcile {
 		manager.reconcile()
@@ -329,10 +332,14 @@ func (m *Manager) run(id string) {
 			return
 		}
 	}
-	recorder, traceErr := m.traceStore.Create(task.ParentSessionID, task.ParentTurnID, task.ParentRunID, "subagent", string(task.Agent), task.Prompt)
-	if traceErr == nil {
-		task.RunID = recorder.RunID()
-		_ = m.store.Save(task)
+	var recorder *apptrace.Recorder
+	if m.traceStore != nil {
+		var traceErr error
+		recorder, traceErr = m.traceStore.Create(task.ParentSessionID, task.ParentTurnID, task.ParentRunID, "subagent", string(task.Agent), task.Prompt)
+		if traceErr == nil {
+			task.RunID = recorder.RunID()
+			_ = m.store.Save(task)
+		}
 	}
 
 	var response extagent.TurnResponse
