@@ -40,77 +40,133 @@ bqagent 的核心仍然很简单：
 go build -o bqagent ./cmd/agent
 ```
 
-设置环境变量：
+## 环境变量配置
 
-`LLM_API_TYPE` 用于选择接口协议，支持 `openai`（默认）、`openai-response`
-和 `anthropic`。原有 `OPENAI_*` 环境变量继续兼容；通用的 `LLM_*` 变量优先级更高。
+bqagent 会读取进程环境变量和工作区根目录的 `.env` 文件；进程中已经存在的同名变量优先于 `.env`。
+
+推荐使用工作区 `.env`：
+
+```dotenv
+LLM_API_TYPE=openai
+LLM_API_KEY=your-key-here
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
+```
+
+也可以直接在 shell 中设置：
 
 **macOS/Linux:**
 ```bash
-export OPENAI_API_KEY='your-key-here'
-export OPENAI_BASE_URL='https://api.openai.com/v1'  # 可选
-export OPENAI_MODEL='gpt-4o-mini'  # 可选
-export LLM_API_TYPE='openai'  # 可选
+export LLM_API_KEY='your-key-here'
 ```
 
 **Windows (PowerShell):**
 ```powershell
-$env:OPENAI_API_KEY='your-key-here'
-$env:OPENAI_BASE_URL='https://api.openai.com/v1'  # 可选
-$env:OPENAI_MODEL='gpt-4o-mini'  # 可选
-$env:LLM_API_TYPE='openai'  # 可选
+$env:LLM_API_KEY='your-key-here'
 ```
 
 **Windows (CMD):**
 ```cmd
-set OPENAI_API_KEY=your-key-here
-set OPENAI_BASE_URL=https://api.openai.com/v1
-set OPENAI_MODEL=gpt-4o-mini
-set LLM_API_TYPE=openai
+set LLM_API_KEY=your-key-here
 ```
 
-也可以把同样的变量写在工作区根目录下的 `.env` 文件中，bqagent 会在启动时自动加载。
+### LLM 供应商
 
-```dotenv
-OPENAI_API_KEY=your-key-here
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
-LLM_API_TYPE=openai
-```
+通用 `LLM_*` 配置优先于供应商兼容变量。
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `LLM_API_TYPE` | `openai` | 接口协议：`openai`、`openai-response` 或 `anthropic`。 |
+| `LLM_API_KEY` | — | 通用 API Key；Server 模式必填。 |
+| `LLM_BASE_URL` | 供应商默认值 | 通用供应商端点覆盖。 |
+| `LLM_MODEL` | `MiniMax-M2.5` | 内置 LLM 的有效模型。 |
+| `OPENAI_API_TYPE` | — | `LLM_API_TYPE` 的兼容别名。 |
+| `OPENAI_API_KEY` | — | OpenAI 兼容 API Key 回退值。 |
+| `OPENAI_BASE_URL` | 供应商默认值 | OpenAI 兼容端点回退值。 |
+| `OPENAI_MODEL` | — | OpenAI 兼容模型回退值。 |
+| `ANTHROPIC_API_KEY` | — | `anthropic` 协议使用的 Key 回退值。 |
+| `ANTHROPIC_BASE_URL` | 供应商默认值 | Anthropic 端点回退值。 |
+| `ANTHROPIC_MODEL` | — | Anthropic 模型回退值。 |
 
 OpenAI Responses API 示例：
 
 ```dotenv
 LLM_API_TYPE=openai-response
-OPENAI_API_KEY=your-key-here
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-5
+LLM_API_KEY=your-key-here
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-5
 ```
 
 Anthropic Messages API 示例：
 
 ```dotenv
 LLM_API_TYPE=anthropic
-ANTHROPIC_API_KEY=your-key-here
-ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
-ANTHROPIC_MODEL=claude-sonnet-4-5
+LLM_API_KEY=your-key-here
+LLM_BASE_URL=https://api.anthropic.com/v1
+LLM_MODEL=claude-sonnet-4-5
 ```
 
-也可以使用 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL` 替代供应商专用变量。
-`OPENAI_API_TYPE` 可作为 `LLM_API_TYPE` 的兼容别名。
+有效模型和 API 类型会注入每次内置 LLM 调用的 system prompt，并通过不包含密钥的 `GET /api/v1/status` 返回。
 
-如果 shell 里已经设置了同名环境变量，则以 shell 中的值为准，不会被 `.env` 覆盖。
+### 搜索
 
-如果没有设置任何模型变量，bqagent 默认使用 `MiniMax-M2.5`。
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `SEARCH_API_KEY` | — | Tavily 兼容搜索 Key，优先于 Firecrawl 配置。 |
+| `SEARCH_BASE_URL` | 供应商默认值 | Tavily 兼容端点覆盖。 |
+| `FIRECRAWL_API_KEY` | — | 未配置 `SEARCH_*` 时使用的 Firecrawl Key。 |
+| `FIRECRAWL_BASE_URL` | 供应商默认值 | Firecrawl 端点覆盖。 |
 
-每次调用内置 LLM 时，bqagent 都会把有效模型和 API 类型注入系统提示词，因此助手回答“当前使用什么模型”时会依据运行时配置，而不是自行猜测。服务重启后恢复旧会话时会刷新这条身份信息，运行 Trace 也会记录同一个有效模型。
+`.agent/mcp.json` 中的 MCP header 值可以使用 `${NAME}` 引用任意环境变量，例如 `Bearer ${DASHSCOPE_API_KEY}`。
 
-如果要启用 ServerChan Bot webhook 对话，还需要设置：
+### Server 与渠道
 
-```bash
-export SERVERCHAN_BOT_TOKEN='your-bot-token'
-export SERVERCHAN_BOT_WEBHOOK_SECRET='your-webhook-secret'  # 可选但推荐
-```
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `WEBUI_ENABLED` | `true` | 设为 `false`、`0`、`no` 或 `off` 时关闭 `GET /`。 |
+| `SERVERCHAN_BOT_TOKEN` | — | ServerChan Bot webhook 回复使用的 Token。 |
+| `SERVERCHAN_BOT_WEBHOOK_SECRET` | — | 可选；设置后请求必须携带 `X-Sc3Bot-Webhook-Secret`。 |
+| `QQ_BOT_ENABLED` | 自动 | 凭据存在时自动启用；false-like 值可强制关闭。 |
+| `QQ_BOT_APP_ID` | — | QQ Bot 应用 ID。 |
+| `QQ_BOT_CLIENT_SECRET` | — | QQ Bot Client Secret。 |
+| `QQ_BOT_TOKEN_BASE_URL` | `https://bots.qq.com` | QQ Token 端点覆盖。 |
+| `QQ_BOT_API_BASE_URL` | `https://api.sgroup.qq.com` | QQ API 与 Gateway 端点覆盖。 |
+| `WEIXIN_ILINK_ENABLED` | `true` | 设为 false-like 值时关闭微信 iLink 渠道。 |
+| `WEIXIN_ILINK_BASE_URL` | `https://ilinkai.weixin.qq.com` | iLink API 端点覆盖。 |
+| `WEIXIN_ILINK_CHANNEL_VERSION` | `1.0.2` | iLink 渠道协议版本。 |
+| `WEIXIN_ILINK_CDN_BASE_URL` | `https://novac2c.cdn.weixin.qq.com/c2c` | 入站媒体 CDN 覆盖。 |
+
+### 运行时、上下文、Session 与 Trace
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `AGENT_MAX_ITERATIONS` | `1000` | 全局循环失控保险上限。 |
+| `CHANNEL_AGENT_MAX_ITERATIONS` | `30` | 渠道/WebUI 单轮最大迭代数。 |
+| `CHANNEL_TURN_TIMEOUT` | `10m` | 渠道整轮超时。 |
+| `CHANNEL_STAGE_MAX_ITERATIONS` | `20` | QQ/iLink 生成阶段 checkpoint 前的迭代预算。 |
+| `CHANNEL_STAGE_TIMEOUT` | `90s` | QQ/iLink 阶段时间预算。 |
+| `WEBUI_STAGE_MAX_ITERATIONS` | `20` | WebUI 生成阶段 checkpoint 前的迭代预算。 |
+| `WEBUI_STAGE_TIMEOUT` | `90s` | WebUI 阶段时间预算。 |
+| `CONTEXT_MANAGEMENT_ENABLED` | `true` | 启用请求时上下文预算管理。 |
+| `CONTEXT_MAX_INPUT_TOKENS` | `24000` | 模型输入 token 估算上限。 |
+| `CONTEXT_TARGET_INPUT_TOKENS` | `20000` | 裁剪或摘要后的目标大小。 |
+| `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | 为模型回复预留的 token。 |
+| `CONTEXT_KEEP_LAST_TURNS` | `6` | 压缩时保留的最近轮次。 |
+| `CONTEXT_SUMMARIZATION_ENABLED` | `true` | 启用旧对话摘要。 |
+| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `20000` | 触发摘要的输入大小。 |
+| `CONTEXT_SUMMARY_MODEL` | 主模型 | 可选的低成本摘要模型。 |
+| `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` 限制 `messages.jsonl`；`full` 保留 append-only 审计历史。 |
+| `SESSION_OUTPUT_MAX_BYTES` | `1048576` | 每个 `output.log` 保留的尾部大小；`0` 禁用裁剪。 |
+| `RUN_TRACE_ENABLED` | `false` | 保存 `.agent/runs/<run-id>/` Trace 并启用运行反馈接口。 |
+
+### 外部编码 Agent
+
+对 `CLAUDE`、`CODEX`、`CURSOR`、`OPENCODE` 中的每个名称，可使用以下变量覆盖传输命令：
+
+- `AGENT_<NAME>_ACP_CMD` 和 `AGENT_<NAME>_ACP_ARGS`
+- `AGENT_<NAME>_CLI_CMD` 和 `AGENT_<NAME>_CLI_ARGS`
+
+Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex exec --json --skip-git-repo-check`。Cursor 和 OpenCode 需要配置或检测到可用传输。
 
 ## 快速开始
 
@@ -214,16 +270,17 @@ project/
 - `.agent/skills/*/SKILL.md`
   - Markdown 技能定义，当前会以摘要形式注入 prompt
 - `.agent/sessions/<session-id>/messages.jsonl`
-  - 可恢复会话的追加式原始 transcript
+  - 当前执行轮的 journal；compact 模式会在每轮结束后将其收敛为 bounded snapshot
+- `.agent/sessions/<session-id>/working_messages.jsonl`
+  - 正常恢复使用的稳定 bounded snapshot
 - `.agent/sessions/<session-id>/context_checkpoint.json`
   - 保存“摘要 + 最近 tail”的紧凑 checkpoint，用于恢复时重建工作上下文
-  - 不会替换或重写原始 `messages.jsonl`
 - `.agent/sessions/<session-id>/output.log`
   - 人类可读的执行日志
 - `.agent/mcp.json`
   - MCP 服务器配置（`mcpServers` 映射）。这里配置的 **Streamable HTTP** 服务器会在启动时连接，
-    通过 `tools/list` 发现其工具，并以 `mcp__<server>__<tool>` 的形式暴露给大模型。header 值支持
-    `${ENV}` 展开（例如 `Bearer ${DASHSCOPE_API_KEY}`）。
+    通过 `tools/list` 发现其工具，并以 `mcp__<server>__<tool>` 的形式暴露给大模型。header 环境变量展开
+    统一说明在[环境变量配置](#环境变量配置)章节。
   - 发现过程是 best-effort：标记 `"disabled": true`、文件缺失或服务器不可达都会被跳过（仅记录一条
     警告），不会阻塞启动。当前仅支持 Streamable HTTP 传输。
 
@@ -257,7 +314,7 @@ project/
 - 已完成的历史 tool call 脚手架不会继续带入请求 payload
 - 旧对话会按目标输入预算裁剪
 - 可选地把更早的普通对话压缩成一条 synthetic summary message
-- 即使请求 payload 被缩短，磁盘上的原始会话历史仍然保留
+- 持久化受预算约束的 working snapshot，确保会话可以恢复
 
 `--background` 会启动一个”最小后台会话”：通过同一二进制拉起子进程，并把输出写入：
 
@@ -285,38 +342,17 @@ project/
 
 `GET /api/v1/status` 返回内置 LLM 的有效运行时身份，例如 `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`。该接口不会暴露 API Key 或供应商端点 URL；WebUI 会在 bqagent 标题下展示这项信息。
 
-`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖）。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。界面支持明暗主题，并会安全渲染 Markdown 标题、列表、任务列表、表格、引用、链接、图片与带复制按钮的代码块，适合直接阅读 README 等 `.md` 内容。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；发送后按钮会切换为停止按钮，通过与渠道无关的 `POST /api/v1/chat/stop` 接口按 `turn_id` 取消当前模型请求和工具执行。取消注册表位于共享对话服务中，其他通道后续接入时无需依赖 WebUI。`event: progress` 会持续报告迭代轮次、工具活动和阶段 checkpoint。长任务达到阶段预算后会返回并持久化阶段总结，用户回复“继续”即可沿用同一 `session_id` 继续，而不会重新探索。该网页渠道**默认开启**；设置 `WEBUI_ENABLED=false` 可关闭（此时 `GET /` 返回 404）。
+`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖）。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。界面支持明暗主题，并会安全渲染 Markdown 标题、列表、任务列表、表格、引用、链接、图片与带复制按钮的代码块，适合直接阅读 README 等 `.md` 内容。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；发送后按钮会切换为停止按钮，通过与渠道无关的 `POST /api/v1/chat/stop` 接口按 `turn_id` 取消当前模型请求和工具执行。取消注册表位于共享对话服务中，其他通道后续接入时无需依赖 WebUI。`event: progress` 会持续报告迭代轮次、工具活动和阶段 checkpoint。长任务达到阶段预算后会返回并持久化阶段总结，用户回复“继续”即可沿用同一 `session_id` 继续，而不会重新探索。该网页渠道默认开启，可在[环境变量配置](#环境变量配置)中关闭。
 
 `/api/v1/serverchan/chat` 保留为现有的 sendkey 推送型接口：它会生成回复，然后按 demo 中的 `text` / `desp` / `sendkey` 语义把结果推送出去。
 
-`/api/v1/serverchan/bot/webhook` 则用于 ServerChan Bot / 微信回复回流：它接收 Bot webhook 的 JSON update，用入站 `chat_id` 绑定到持久化的 bqagent session，并通过 `SERVERCHAN_BOT_TOKEN` 调用 Bot `sendMessage` API 把回复发回去。如果设置了 `SERVERCHAN_BOT_WEBHOOK_SECRET`，请求还必须带上 `X-Sc3Bot-Webhook-Secret`。
+`/api/v1/serverchan/bot/webhook` 则用于 ServerChan Bot / 微信回复回流：它接收 Bot webhook 的 JSON update，用入站 `chat_id` 绑定到持久化的 bqagent session，并通过已配置的 Bot 凭据发送回复。可选的 webhook 鉴权配置集中在[环境变量配置](#环境变量配置)章节。
 
 `--server --background` 会把该服务放到后台运行，并把服务日志写入 `.agent/server/server.log`。如果要真正接 webhook，需要把 `/api/v1/serverchan/bot/webhook` 通过公网 HTTPS 地址或反向代理暴露出去。
 
-默认情况下循环表现为"自动压缩续跑"：当对话接近输入 token 预算时，会把更早的对话摘要（压缩）后**继续**在压缩上下文上推进，而不是在固定轮数处停下。因此轮数上限只是失控保险（默认很高，为 `1000`）。摘要默认开启——长任务可设 `CONTEXT_SUMMARY_MODEL` 用更便宜的模型做摘要，或设 `CONTEXT_SUMMARIZATION_ENABLED=false` 退回纯裁剪。
+默认情况下循环表现为"自动压缩续跑"：当对话接近输入 token 预算时，会把更早的对话摘要（压缩）后**继续**在压缩上下文上推进，而不是在固定轮数处停下。因此轮数上限只是失控保险（默认很高，为 `1000`）。所有上下文预算和摘要模型覆盖均集中在[环境变量配置](#环境变量配置)章节。
 
-Session 用于保存会话 ID、渠道用户映射、消息、任务状态和可恢复的上下文 checkpoint。默认 `SESSION_TRANSCRIPT_MODE=compact`：每轮结束后用受预算控制的 `working_messages.jsonl` 收敛 `messages.jsonl`，避免原始工具结果无限累计；设置 `SESSION_TRANSCRIPT_MODE=full` 可恢复原有 append-only 完整审计记录。若任务中断后 transcript 比 working snapshot 更新，恢复时会优先使用较新的 transcript。`output.log` 默认只保留最新 1 MiB。微信 iLink 只发送最终回复，不发送中间 progress，以免同一个 `context_token` 被提前消耗。
-
-上下文管理可通过环境变量配置：
-
-- `AGENT_MAX_ITERATIONS`（循环失控保险上限，对所有模式生效，默认 `1000`）
-- `CHANNEL_AGENT_MAX_ITERATIONS`（渠道/WebUI 单轮迭代上限，默认 `30`）
-- `CHANNEL_TURN_TIMEOUT`（渠道整轮超时，默认 `10m`）
-- `CHANNEL_STAGE_MAX_ITERATIONS`（QQ/微信 iLink 阶段迭代预算，默认 `20`）
-- `CHANNEL_STAGE_TIMEOUT`（QQ/微信 iLink 阶段时间预算，默认 `90s`）
-- `WEBUI_STAGE_MAX_ITERATIONS`（WebUI 阶段迭代预算，默认 `20`）
-- `WEBUI_STAGE_TIMEOUT`（WebUI 阶段时间预算，默认 `90s`）
-- `CONTEXT_MANAGEMENT_ENABLED`
-- `CONTEXT_MAX_INPUT_TOKENS`
-- `CONTEXT_TARGET_INPUT_TOKENS`
-- `CONTEXT_RESPONSE_RESERVE_TOKENS`
-- `CONTEXT_KEEP_LAST_TURNS`
-- `CONTEXT_SUMMARIZATION_ENABLED`
-- `CONTEXT_SUMMARY_TRIGGER_TOKENS`
-- `CONTEXT_SUMMARY_MODEL`
-- `SESSION_TRANSCRIPT_MODE`（默认 `compact`；设为 `full` 保留 append-only 完整审计历史）
-- `SESSION_OUTPUT_MAX_BYTES`（默认 `1048576`；设为 `0` 禁用裁剪）
-- `RUN_TRACE_ENABLED`（保存结构化运行追踪，默认 `false`）
+Session 用于保存会话 ID、渠道用户映射、消息、任务状态和可恢复的上下文 checkpoint。默认 compact 模式会在每轮结束后用受预算控制的 `working_messages.jsonl` 收敛 `messages.jsonl`，避免原始工具结果无限累计；也可选择 append-only 完整审计模式。若任务中断后 transcript 比 working snapshot 更新，恢复时会优先使用较新的 transcript。Session 日志上限和存储模式集中在[环境变量配置](#环境变量配置)章节。微信 iLink 只发送最终回复，不发送中间 progress，以免同一个 `context_token` 被提前消耗。
 
 这里仍然刻意保持简单：
 
@@ -327,7 +363,7 @@ Session 用于保存会话 ID、渠道用户映射、消息、任务状态和可
 
 ## RunTrace、评估与反馈
 
-RunTrace 默认关闭。在环境变量或工作区 `.env` 中设置 `RUN_TRACE_ENABLED=true` 后，每次任务才会在 `.agent/runs/<run-id>/` 保存结构化追踪，包括模型和上下文版本、token、工具摘要、耗时、错误分类、artifact 和 verifier。关闭时，响应不返回 `run_id`，运行追踪与反馈接口不可用。
+RunTrace 默认关闭，可在[环境变量配置](#环境变量配置)中开启。开启后，每次任务会在 `.agent/runs/<run-id>/` 保存结构化追踪，包括模型和上下文版本、token、工具摘要、耗时、错误分类、artifact 和 verifier。关闭时，响应不返回 `run_id`，运行追踪与反馈接口不可用。
 
 ```bash
 go run ./cmd/eval --suite smoke --mode replay
