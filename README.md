@@ -305,13 +305,13 @@ By default the loop behaves like an auto-compacting agent: when the conversation
 approaches the input-token budget it summarizes (compacts) the older turns and
 **continues** on the compacted context, rather than stopping at a fixed turn
 count. The iteration cap is therefore just a runaway safety valve (defaults to a
-high `1000`); the raw on-disk transcript stays complete. Summarization is enabled
+high `1000`). Summarization is enabled
 by default — set `CONTEXT_SUMMARY_MODEL` to summarize with a cheaper model on long
 tasks, or `CONTEXT_SUMMARIZATION_ENABLED=false` to fall back to plain pruning.
 
 Context behavior is configurable through environment variables:
 
-Sessions persist the channel/user mapping, status, full `messages.jsonl` audit trail, and resumable context checkpoints. Every channel resumes from the bounded `working_messages.jsonl` snapshot when available instead of reloading the complete transcript. Request construction additionally prioritizes the system prompt, summary, and latest user request, then hard-prunes oversized tool evidence. WeChat/iLink sends only the final reply because its context token must not be consumed by intermediate progress messages.
+Sessions persist the channel/user mapping, status, messages, and resumable context checkpoints. By default, `SESSION_TRANSCRIPT_MODE=compact` rewrites `messages.jsonl` to the bounded `working_messages.jsonl` snapshot after each turn, preventing raw tool results from accumulating indefinitely. Set `SESSION_TRANSCRIPT_MODE=full` to retain the previous append-only audit transcript. If a transcript is newer than its working snapshot after an interrupted turn, recovery uses the newer transcript. `output.log` keeps its latest 1 MiB by default. WeChat/iLink sends only the final reply because its context token must not be consumed by intermediate progress messages.
 
 - `AGENT_MAX_ITERATIONS` (loop runaway safety valve; defaults to `1000`)
 - `CHANNEL_AGENT_MAX_ITERATIONS` (optional channel/WebUI override; defaults to `30`)
@@ -328,6 +328,8 @@ Sessions persist the channel/user mapping, status, full `messages.jsonl` audit t
 - `CONTEXT_SUMMARIZATION_ENABLED`
 - `CONTEXT_SUMMARY_TRIGGER_TOKENS`
 - `CONTEXT_SUMMARY_MODEL`
+- `SESSION_TRANSCRIPT_MODE` (`compact` by default; set `full` for append-only audit history)
+- `SESSION_OUTPUT_MAX_BYTES` (defaults to `1048576`; `0` disables trimming)
 - `RUN_TRACE_ENABLED` (persist structured run traces; defaults to `false`)
 
 This is still intentionally a small implementation:

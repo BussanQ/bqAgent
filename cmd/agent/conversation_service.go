@@ -63,6 +63,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		MemoryAppend:    memoryAppend,
 		Context:         runtime.Context,
 		RunTraceEnabled: runtime.RunTraceEnabled,
+		SessionOptions:  &runtime.SessionOptions,
 		Subagents:       subagentManager,
 		MemoryStore:     runtime.Memory,
 	})

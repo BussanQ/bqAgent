@@ -55,6 +55,24 @@ func TestRunPlannedConversationExecutesPlannerSteps(t *testing.T) {
 	}
 }
 
+func TestRunPlannedConversationTurnReturnsUpdatedMessages(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{Content: `{"steps":["inspect"]}`},
+		{Content: "done"},
+	}}
+	app := NewWithOptions(client, "", Options{Planner: NewPlanner(client, "")})
+	result, updated, err := app.RunPlannedConversationTurn(context.Background(), []map[string]any{{"role": "system", "content": "system"}}, "finish task", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q", result)
+	}
+	if len(updated) != 3 || updated[1]["content"] != "inspect" || updated[2]["content"] != "done" {
+		t.Fatalf("updated messages = %#v", updated)
+	}
+}
+
 func TestRunConversationHandlesPlanTool(t *testing.T) {
 	client := &stubClient{
 		responses: []AssistantMessage{

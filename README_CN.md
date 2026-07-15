@@ -293,9 +293,9 @@ project/
 
 `--server --background` 会把该服务放到后台运行，并把服务日志写入 `.agent/server/server.log`。如果要真正接 webhook，需要把 `/api/v1/serverchan/bot/webhook` 通过公网 HTTPS 地址或反向代理暴露出去。
 
-默认情况下循环表现为"自动压缩续跑"：当对话接近输入 token 预算时，会把更早的对话摘要（压缩）后**继续**在压缩上下文上推进，而不是在固定轮数处停下。因此轮数上限只是失控保险（默认很高，为 `1000`）；磁盘上的原始 transcript 仍保持完整。摘要默认开启——长任务可设 `CONTEXT_SUMMARY_MODEL` 用更便宜的模型做摘要，或设 `CONTEXT_SUMMARIZATION_ENABLED=false` 退回纯裁剪。
+默认情况下循环表现为"自动压缩续跑"：当对话接近输入 token 预算时，会把更早的对话摘要（压缩）后**继续**在压缩上下文上推进，而不是在固定轮数处停下。因此轮数上限只是失控保险（默认很高，为 `1000`）。摘要默认开启——长任务可设 `CONTEXT_SUMMARY_MODEL` 用更便宜的模型做摘要，或设 `CONTEXT_SUMMARIZATION_ENABLED=false` 退回纯裁剪。
 
-Session 用于保存会话 ID、渠道用户映射、完整消息记录、任务状态和可恢复的上下文 checkpoint。`messages.jsonl` 作为审计与排障记录可以长期保留；各通道实际恢复和推理优先读取受预算控制的 `working_messages.jsonl`，请求侧还会优先保留系统提示、摘要和最新用户请求，并对超大工具结果执行硬裁剪。因此原始 session 文件可以较大，但每轮不再重新加载或发送全部历史。微信 iLink 只发送最终回复，不发送中间 progress，以免同一个 `context_token` 被提前消耗。
+Session 用于保存会话 ID、渠道用户映射、消息、任务状态和可恢复的上下文 checkpoint。默认 `SESSION_TRANSCRIPT_MODE=compact`：每轮结束后用受预算控制的 `working_messages.jsonl` 收敛 `messages.jsonl`，避免原始工具结果无限累计；设置 `SESSION_TRANSCRIPT_MODE=full` 可恢复原有 append-only 完整审计记录。若任务中断后 transcript 比 working snapshot 更新，恢复时会优先使用较新的 transcript。`output.log` 默认只保留最新 1 MiB。微信 iLink 只发送最终回复，不发送中间 progress，以免同一个 `context_token` 被提前消耗。
 
 上下文管理可通过环境变量配置：
 
@@ -314,6 +314,8 @@ Session 用于保存会话 ID、渠道用户映射、完整消息记录、任务
 - `CONTEXT_SUMMARIZATION_ENABLED`
 - `CONTEXT_SUMMARY_TRIGGER_TOKENS`
 - `CONTEXT_SUMMARY_MODEL`
+- `SESSION_TRANSCRIPT_MODE`（默认 `compact`；设为 `full` 保留 append-only 完整审计历史）
+- `SESSION_OUTPUT_MAX_BYTES`（默认 `1048576`；设为 `0` 禁用裁剪）
 - `RUN_TRACE_ENABLED`（保存结构化运行追踪，默认 `false`）
 
 这里仍然刻意保持简单：

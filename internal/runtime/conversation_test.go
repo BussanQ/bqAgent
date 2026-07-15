@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/session"
@@ -204,6 +206,66 @@ func TestPrepareConversationPrefersWorkingContextSnapshot(t *testing.T) {
 	}
 	if len(raw) != 3 {
 		t.Fatalf("raw transcript messages = %d, want 3", len(raw))
+	}
+}
+
+func TestPrepareConversationUsesNewerTranscriptAfterInterruptedTurn(t *testing.T) {
+	store := session.NewStore(t.TempDir(), session.Options{TranscriptMode: session.TranscriptModeCompact, OutputMaxBytes: session.DefaultOutputMaxBytes})
+	conversation, err := PrepareConversation(store, "", &session.CreateOptions{Task: "hello", Chat: true}, "system prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	working := []map[string]any{{"role": "system", "content": "system prompt"}, {"role": "assistant", "content": "previous summary"}}
+	if err := conversation.Session.SaveWorkingMessages(working); err != nil {
+		t.Fatal(err)
+	}
+	if err := conversation.Session.RecordMessage(map[string]any{"role": "user", "content": "interrupted request"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(conversation.Session.WorkingMessagesPath(), now.Add(-time.Second), now.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(conversation.Session.MessagesPath(), now, now); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := PrepareConversation(store, conversation.Session.ID(), nil, "system prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.UsingWorkingContext {
+		t.Fatal("restored stale working context instead of newer transcript")
+	}
+	if restored.Messages[len(restored.Messages)-1]["content"] != "interrupted request" {
+		t.Fatalf("restored messages = %#v", restored.Messages)
+	}
+}
+
+func TestPrepareConversationFallsBackWhenWorkingSnapshotIsInvalid(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	conversation, err := PrepareConversation(store, "", &session.CreateOptions{Task: "hello", Chat: true}, "system prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conversation.AddUserMessage("recover from transcript"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conversation.Session.WorkingMessagesPath(), []byte("not-json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(conversation.Session.WorkingMessagesPath(), now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(conversation.Session.MessagesPath(), now.Add(-time.Second), now.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := PrepareConversation(store, conversation.Session.ID(), nil, "system prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.UsingWorkingContext || restored.Messages[len(restored.Messages)-1]["content"] != "recover from transcript" {
+		t.Fatalf("restored messages = %#v", restored.Messages)
 	}
 }
 

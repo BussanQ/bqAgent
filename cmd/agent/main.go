@@ -283,7 +283,8 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		if sessionID == "" {
 			createOptions = &session.CreateOptions{Task: task, Planned: options.plan, Background: options.sessionRun}
 		}
-		conversation, err = appruntime.PrepareConversation(session.NewStore(ws.Root), sessionID, createOptions, systemPrompt)
+		sessionOptions := session.Options{TranscriptMode: llmConfig.SessionTranscriptMode, OutputMaxBytes: llmConfig.SessionOutputMaxBytes}
+		conversation, err = appruntime.PrepareConversation(session.NewStore(ws.Root, sessionOptions), sessionID, createOptions, systemPrompt)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -292,6 +293,9 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 			if logFile != nil {
 				// Best-effort close of the session log file on exit.
 				_ = logFile.Close()
+			}
+			if trimErr := conversation.Session.TrimOutputLog(); trimErr != nil {
+				fmt.Fprintf(stderr, "trim session output: %v\n", trimErr)
 			}
 		}()
 
@@ -336,11 +340,24 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		}
 	}
 
-	var result string
+	var (
+		result          string
+		updatedMessages []map[string]any
+	)
 	if options.plan {
-		result, err = app.RunPlannedConversation(ctx, conversation.Messages, task, runtime.MaxIterations)
+		result, updatedMessages, err = app.RunPlannedConversationTurn(ctx, conversation.Messages, task, runtime.MaxIterations)
 	} else {
-		result, err = app.RunConversation(ctx, conversation.Messages, runtime.MaxIterations)
+		result, updatedMessages, err = app.RunConversationTurn(ctx, conversation.Messages, runtime.MaxIterations)
+	}
+	if len(updatedMessages) > 0 {
+		conversation.Messages = agent.BoundWorkingMessages(updatedMessages, runtime.Context)
+		if saveErr := conversation.SaveWorkingContext(); saveErr != nil {
+			if err == nil {
+				err = saveErr
+			} else {
+				fmt.Fprintf(errorWriter, "save working context: %v\n", saveErr)
+			}
+		}
 	}
 	if err != nil {
 		if runRecorder != nil {

@@ -68,7 +68,7 @@ The dependency direction is `cmd/agent → internal/{server,runtime} → interna
 
 ### Sessions — `internal/session`
 
-Each session is a directory under `.agent/sessions/<id>/` with `meta.json` (status: created/running/completed/failed), append-only `messages.jsonl` (the complete audit transcript), bounded `working_messages.jsonl` (the context all server channels resume from), `context_checkpoint.json`, and `output.log`. `runtime.PrepareConversation` prefers the working snapshot, falls back to the raw transcript/checkpoint for legacy sessions, and ensures the system message is current. Successful turns persist a fresh working snapshot; the raw transcript remains append-only.
+Each session is a directory under `.agent/sessions/<id>/` with `meta.json` (status: created/running/completed/failed), `messages.jsonl`, bounded `working_messages.jsonl`, `context_checkpoint.json`, and `output.log`. `SESSION_TRANSCRIPT_MODE` defaults to `compact`: completed turns atomically rewrite the transcript to the bounded working snapshot, while `full` preserves append-only audit history. Recovery uses a newer transcript after an interrupted turn, otherwise it prefers the working snapshot. Server startup compacts eligible legacy sessions in compact mode, and `SESSION_OUTPUT_MAX_BYTES` caps retained session output at 1 MiB by default.
 
 ### Server & channels — `internal/server`
 

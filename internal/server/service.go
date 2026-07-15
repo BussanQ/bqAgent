@@ -38,6 +38,7 @@ type ServiceOptions struct {
 	MemoryAppend        func(task, result string) error
 	Context             agent.ContextConfig
 	RunTraceEnabled     bool
+	SessionOptions      *session.Options
 	Subagents           *subagent.Manager
 	MemoryStore         *appmemory.Store
 }
@@ -106,8 +107,15 @@ func NewService(options ServiceOptions) *Service {
 	if maxTurns <= 0 {
 		maxTurns = agent.DefaultMaxIterations
 	}
+	store := session.NewStore(options.WorkspaceRoot)
+	if options.SessionOptions != nil {
+		store = session.NewStore(options.WorkspaceRoot, *options.SessionOptions)
+	}
+	for _, maintenanceErr := range store.MaintainExistingSessions() {
+		log.Printf("session maintenance: %v", maintenanceErr)
+	}
 	service := &Service{
-		store:               session.NewStore(options.WorkspaceRoot),
+		store:               store,
 		workspaceRoot:       options.WorkspaceRoot,
 		client:              options.Client,
 		apiType:             agent.NormalizeAPIType(string(options.APIType)),
@@ -257,7 +265,12 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		markConversationFailed(conversation, err)
 		return TurnResponse{}, err
 	}
-	defer logFile.Close()
+	defer func() {
+		_ = logFile.Close()
+		if trimErr := conversation.Session.TrimOutputLog(); trimErr != nil {
+			log.Printf("trim session output: %v", trimErr)
+		}
+	}()
 
 	sessionLogWriter := logging.NewTimestampWriter(logFile)
 	progressWriter := options.ProgressWriter
