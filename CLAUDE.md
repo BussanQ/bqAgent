@@ -16,12 +16,11 @@ make build-amd      # CGO_ENABLED=0 GOOS=linux  GOARCH=amd64  (Linux artifact)
 make build-windows  # CGO_ENABLED=0 GOOS=windows GOARCH=amd64
 make clean
 
-# Targeted package / single test
-go test ./internal/agent
+# Functional unit test matching the changed behavior
 go test ./internal/agent -run TestRunConversation -v
 ```
 
-Do not run broad `go test ./...` for this project; use targeted package or single-test commands that match the files changed. There is no linter config beyond the Go toolchain; use `gofmt` and targeted Go checks. `make build-amd` and a `publish` (upload to server) flow also exist as `.claude/skills`.
+Only run concrete functional unit tests that directly match the behavior being changed. Do not run broad `go test ./...`, unfiltered package tests, integration/end-to-end/live-network tests, or compile-only checks unless the user explicitly requests them. If no matching unit test exists, add or adjust one instead of widening the test scope. There is no linter config beyond the Go toolchain; use `gofmt` when needed. `make build-amd` and a `publish` (upload to server) flow also exist as `.claude/skills`.
 
 ## Running
 
