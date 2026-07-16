@@ -10,10 +10,7 @@ func ConfigFromEnv(getenv func(string) string, workspaceRoot string) Config {
 	for _, agent := range SupportedAgents() {
 		prefix := "AGENT_" + strings.ToUpper(string(agent)) + "_"
 		config.Agents[agent] = AgentConfig{
-			ACP: CommandSpec{
-				Command: strings.TrimSpace(getenv(prefix + "ACP_CMD")),
-				Args:    splitArgs(getenv(prefix + "ACP_ARGS")),
-			},
+			ACP: defaultACPConfig(agent, getenv(prefix+"ACP_CMD"), getenv(prefix+"ACP_ARGS")),
 			CLI: defaultCLIConfig(agent, getenv(prefix+"CLI_CMD"), getenv(prefix+"CLI_ARGS")),
 		}
 	}
@@ -22,6 +19,20 @@ func ConfigFromEnv(getenv func(string) string, workspaceRoot string) Config {
 
 func SupportedAgents() []AgentName {
 	return []AgentName{AgentClaude, AgentCodex, AgentCursor, AgentOpenCode}
+}
+
+func defaultACPConfig(agent AgentName, command, args string) CommandSpec {
+	command = strings.TrimSpace(command)
+	if command == "" && agent == AgentOpenCode {
+		command = "opencode"
+	}
+	if strings.TrimSpace(args) != "" {
+		return CommandSpec{Command: command, Args: splitArgs(args)}
+	}
+	if agent == AgentOpenCode {
+		return CommandSpec{Command: command, Args: []string{"acp"}}
+	}
+	return CommandSpec{Command: command}
 }
 
 func defaultCLIConfig(agent AgentName, command, args string) CommandSpec {

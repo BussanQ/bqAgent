@@ -17,7 +17,7 @@ func Detect(ctx context.Context, config Config, factory ACPClientFactory) map[Ag
 		cfg := config.Agents[agent]
 		result := DetectionResult{Agent: agent}
 
-		if looksExecutable(cfg.CLI.Command) {
+		if cliTransportSupported(agent) && looksExecutable(cfg.CLI.Command) {
 			result.CLI = &AgentTransport{Agent: agent, Kind: TransportCLI, Command: cfg.CLI}
 		}
 
@@ -46,6 +46,10 @@ func Detect(ctx context.Context, config Config, factory ACPClientFactory) map[Ag
 		results[agent] = result
 	}
 	return results
+}
+
+func cliTransportSupported(agent AgentName) bool {
+	return agent == AgentClaude || agent == AgentCodex
 }
 
 func looksExecutable(command string) bool {

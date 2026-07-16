@@ -161,12 +161,11 @@ LLM_MODEL=claude-sonnet-4-5
 
 ### 外部编码 Agent
 
-对 `CLAUDE`、`CODEX`、`CURSOR`、`OPENCODE` 中的每个名称，可使用以下变量覆盖传输命令：
+对 `CLAUDE`、`CODEX`、`CURSOR`、`OPENCODE` 中的每个名称，可使用 `AGENT_<NAME>_ACP_CMD` 和 `AGENT_<NAME>_ACP_ARGS` 覆盖 ACP 启动命令。CLI 传输目前只为 Claude 和 Codex 实现，可通过 `AGENT_<NAME>_CLI_CMD` 和 `AGENT_<NAME>_CLI_ARGS` 覆盖。
 
-- `AGENT_<NAME>_ACP_CMD` 和 `AGENT_<NAME>_ACP_ARGS`
-- `AGENT_<NAME>_CLI_CMD` 和 `AGENT_<NAME>_CLI_ARGS`
+Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex exec --json --skip-git-repo-check`。OpenCode 默认通过 `opencode acp` 使用 ACP，Cursor 仍需显式配置 ACP 传输。启动 bqAgent 的进程必须能从 PATH 找到 `opencode`；安装 OpenCode 或修改传输环境变量后，需要重启常驻 chat/server 进程以重新探测。
 
-Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex exec --json --skip-git-repo-check`。Cursor 和 OpenCode 需要配置或检测到可用传输。
+在 `--chat` 或 `--server` 会话中，使用 `/opencode <任务>` 将当前轮次路由到 OpenCode；后续普通消息会保持绑定，直到通过 `/default` 返回内置 Agent。OpenCode 仅支持 ACP；配置 `AGENT_OPENCODE_CLI_CMD/ARGS` 不会启用 CLI 传输。
 
 ## 快速开始
 

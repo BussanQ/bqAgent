@@ -161,12 +161,11 @@ MCP header values in `.agent/mcp.json` may reference any environment variable wi
 
 ### External coding agents
 
-For each name in `CLAUDE`, `CODEX`, `CURSOR`, and `OPENCODE`, these variables override transport commands:
+For each name in `CLAUDE`, `CODEX`, `CURSOR`, and `OPENCODE`, `AGENT_<NAME>_ACP_CMD` and `AGENT_<NAME>_ACP_ARGS` override the ACP launch command. CLI transport is currently implemented only for Claude and Codex and can be overridden with `AGENT_<NAME>_CLI_CMD` and `AGENT_<NAME>_CLI_ARGS`.
 
-- `AGENT_<NAME>_ACP_CMD` and `AGENT_<NAME>_ACP_ARGS`
-- `AGENT_<NAME>_CLI_CMD` and `AGENT_<NAME>_CLI_ARGS`
+Claude defaults to `claude -p --output-format json`; Codex defaults to `codex exec --json --skip-git-repo-check`. OpenCode defaults to ACP via `opencode acp`, while Cursor requires an explicitly configured ACP transport. The `opencode` executable must be visible in the PATH of the process that starts bqAgent; restart a long-lived chat/server process after installing OpenCode or changing its transport environment.
 
-Claude defaults to `claude -p --output-format json`; Codex defaults to `codex exec --json --skip-git-repo-check`. Cursor and OpenCode require an available configured transport.
+In `--chat` or `--server` sessions, use `/opencode <task>` to route the turn to OpenCode. Later messages remain bound to it until `/default` switches back to the built-in agent. OpenCode is ACP-only; configuring `AGENT_OPENCODE_CLI_CMD/ARGS` does not enable a CLI transport.
 
 ## Quick start
 

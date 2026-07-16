@@ -76,7 +76,7 @@ Each session is a directory under `.agent/sessions/<id>/` with `meta.json` (stat
 
 ### External agents — `internal/extagent`
 
-The `Broker` can route a turn to an external coding agent instead of the built-in loop. A message starting with `/claude`, `/codex`, `/cursor`, or `/opencode` routes explicitly (and sticks to that agent for the session); `/default` switches back. Transports are **ACP** (JSON-RPC over the agent's stdio) or **CLI** (one-shot exec), auto-detected from `AGENT_<NAME>_ACP_CMD/ARGS` and `AGENT_<NAME>_CLI_CMD/ARGS`.
+The `Broker` can route a turn to an external coding agent instead of the built-in loop. A message starting with `/claude`, `/codex`, `/cursor`, or `/opencode` routes explicitly (and sticks to that agent for the session); `/default` switches back. Transports are **ACP** (JSON-RPC over the agent's stdio) or **CLI** (one-shot exec), auto-detected from `AGENT_<NAME>_ACP_CMD/ARGS` and `AGENT_<NAME>_CLI_CMD/ARGS`. OpenCode defaults to ACP via `opencode acp`; CLI adapters exist only for Claude and Codex, so Cursor and OpenCode are ACP-only.
 
 ### MCP client — `internal/mcp`
 

@@ -11,6 +11,57 @@ import (
 	"time"
 )
 
+func TestConfigFromEnvDefaultsOpenCodeACP(t *testing.T) {
+	config := ConfigFromEnv(func(string) string { return "" }, t.TempDir())
+	openCode := config.Agents[AgentOpenCode]
+	if openCode.ACP.Command != "opencode" {
+		t.Fatalf("ACP command = %q, want %q", openCode.ACP.Command, "opencode")
+	}
+	if len(openCode.ACP.Args) != 1 || openCode.ACP.Args[0] != "acp" {
+		t.Fatalf("ACP args = %#v, want [acp]", openCode.ACP.Args)
+	}
+	if openCode.CLI.Command != "" || len(openCode.CLI.Args) != 0 {
+		t.Fatalf("CLI config = %#v, want empty", openCode.CLI)
+	}
+}
+
+func TestConfigFromEnvOverridesOpenCodeACP(t *testing.T) {
+	env := map[string]string{
+		"AGENT_OPENCODE_ACP_CMD":  "custom-opencode",
+		"AGENT_OPENCODE_ACP_ARGS": "serve acp --verbose",
+	}
+	config := ConfigFromEnv(func(key string) string { return env[key] }, t.TempDir())
+	openCode := config.Agents[AgentOpenCode]
+	if openCode.ACP.Command != "custom-opencode" {
+		t.Fatalf("ACP command = %q, want %q", openCode.ACP.Command, "custom-opencode")
+	}
+	wantArgs := []string{"serve", "acp", "--verbose"}
+	if len(openCode.ACP.Args) != len(wantArgs) {
+		t.Fatalf("ACP args = %#v, want %#v", openCode.ACP.Args, wantArgs)
+	}
+	for i := range wantArgs {
+		if openCode.ACP.Args[i] != wantArgs[i] {
+			t.Fatalf("ACP args = %#v, want %#v", openCode.ACP.Args, wantArgs)
+		}
+	}
+}
+
+func TestDetectIgnoresUnsupportedCLITransports(t *testing.T) {
+	config := Config{
+		WorkspaceRoot: t.TempDir(),
+		Agents: map[AgentName]AgentConfig{
+			AgentCursor:   {CLI: helperSpec(t, "cli-claude")},
+			AgentOpenCode: {CLI: helperSpec(t, "cli-claude")},
+		},
+	}
+	results := Detect(context.Background(), config, NewACPClient)
+	for _, agent := range []AgentName{AgentCursor, AgentOpenCode} {
+		if results[agent].CLI != nil || results[agent].Preferred != nil {
+			t.Fatalf("%s detection = %#v, want unavailable", agent, results[agent])
+		}
+	}
+}
+
 func TestDetectPrefersACPOverCLI(t *testing.T) {
 	config := Config{
 		WorkspaceRoot: t.TempDir(),
@@ -133,6 +184,113 @@ func TestBrokerReusesACPClientAcrossTurns(t *testing.T) {
 	}
 }
 
+func TestBrokerUsesDistinctACPClientsAcrossAgents(t *testing.T) {
+	root := t.TempDir()
+	claudeStartLog := filepath.Join(root, "claude-starts.log")
+	openCodeStartLog := filepath.Join(root, "opencode-starts.log")
+	claudeSpec := helperSpec(t, "acp-good")
+	claudeSpec.Args = append(claudeSpec.Args, claudeStartLog)
+	openCodeSpec := helperSpec(t, "acp-good")
+	openCodeSpec.Args = append(openCodeSpec.Args, openCodeStartLog)
+	store := NewStateStore(root)
+	broker := NewBroker(store, map[AgentName]DetectionResult{
+		AgentClaude: {
+			Agent:     AgentClaude,
+			Preferred: &AgentTransport{Agent: AgentClaude, Kind: TransportACP, Command: claudeSpec},
+		},
+		AgentOpenCode: {
+			Agent:     AgentOpenCode,
+			Preferred: &AgentTransport{Agent: AgentOpenCode, Kind: TransportACP, Command: openCodeSpec},
+		},
+	}, NewACPClient)
+	defer broker.Close()
+
+	if _, err := broker.SendTurn(context.Background(), TurnRequest{
+		BQSessionID: "session-1",
+		Agent:       AgentClaude,
+		Prompt:      "one",
+		CWD:         root,
+	}); err != nil {
+		t.Fatalf("Claude turn error: %v", err)
+	}
+	response, err := broker.SendTurn(context.Background(), TurnRequest{
+		BQSessionID: "session-1",
+		Agent:       AgentOpenCode,
+		Prompt:      "two",
+		CWD:         root,
+	})
+	if err != nil {
+		t.Fatalf("OpenCode turn error: %v", err)
+	}
+	if response.State.Agent != AgentOpenCode || response.State.Transport != TransportACP {
+		t.Fatalf("state = %#v, want OpenCode ACP", response.State)
+	}
+	for name, path := range map[string]string{
+		"Claude":   claudeStartLog,
+		"OpenCode": openCodeStartLog,
+	} {
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("failed to read %s start log: %v", name, readErr)
+		}
+		if count := strings.Count(string(content), "start\n"); count != 1 {
+			t.Fatalf("%s ACP process start count = %d, want 1", name, count)
+		}
+	}
+	stored, err := store.Load("session-1")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if stored.Agent != AgentOpenCode || stored.Transport != TransportACP {
+		t.Fatalf("stored state = %#v, want OpenCode ACP", stored)
+	}
+}
+
+func TestBrokerClearClosesAllSessionACPClients(t *testing.T) {
+	root := t.TempDir()
+	var clients []*trackingACPClient
+	factory := func(CommandSpec, string) (ACPClient, error) {
+		client := &trackingACPClient{}
+		clients = append(clients, client)
+		return client, nil
+	}
+	broker := NewBroker(NewStateStore(root), map[AgentName]DetectionResult{
+		AgentClaude: {
+			Agent:     AgentClaude,
+			Preferred: &AgentTransport{Agent: AgentClaude, Kind: TransportACP, Command: CommandSpec{Command: "claude-acp"}},
+		},
+		AgentOpenCode: {
+			Agent:     AgentOpenCode,
+			Preferred: &AgentTransport{Agent: AgentOpenCode, Kind: TransportACP, Command: CommandSpec{Command: "opencode-acp"}},
+		},
+	}, factory)
+
+	for _, agent := range []AgentName{AgentClaude, AgentOpenCode} {
+		if _, err := broker.SendTurn(context.Background(), TurnRequest{
+			BQSessionID: "session-1",
+			Agent:       agent,
+			Prompt:      "hello",
+			CWD:         root,
+		}); err != nil {
+			t.Fatalf("%s turn error: %v", agent, err)
+		}
+	}
+	if err := broker.Clear("session-1"); err != nil {
+		t.Fatalf("Clear returned error: %v", err)
+	}
+	if len(clients) != 2 {
+		t.Fatalf("created clients = %d, want 2", len(clients))
+	}
+	for i, client := range clients {
+		if client.closeCount != 1 {
+			t.Fatalf("client %d close count = %d, want 1", i, client.closeCount)
+		}
+	}
+	if len(broker.acpClients) != 0 {
+		t.Fatalf("cached clients = %d, want 0", len(broker.acpClients))
+	}
+}
+
 func TestBrokerDoesNotFallbackToCLIOnRequestTimeACPFailure(t *testing.T) {
 	root := t.TempDir()
 	cliLog := filepath.Join(root, "cli.log")
@@ -165,6 +323,16 @@ func TestParseRoute(t *testing.T) {
 	}
 	if !explicit || agent != AgentClaude || prompt != "hello world" {
 		t.Fatalf("route = (%v, %q, %v), want (claude, hello world, true)", agent, prompt, explicit)
+	}
+}
+
+func TestParseRouteSupportsOpenCode(t *testing.T) {
+	agent, prompt, explicit, err := ParseRoute("/opencode explain this repository")
+	if err != nil {
+		t.Fatalf("ParseRoute returned error: %v", err)
+	}
+	if !explicit || agent != AgentOpenCode || prompt != "explain this repository" {
+		t.Fatalf("route = (%v, %q, %v), want (opencode, explain this repository, true)", agent, prompt, explicit)
 	}
 }
 
@@ -221,6 +389,35 @@ func TestBrokerClearRemovesSessionBinding(t *testing.T) {
 	if explicit || agent != "" || prompt != "hello" {
 		t.Fatalf("resolve = (%q, %q, %v), want (\"\", \"hello\", false)", agent, prompt, explicit)
 	}
+}
+
+type trackingACPClient struct {
+	closeCount int
+}
+
+func (client *trackingACPClient) Initialize(context.Context) error {
+	return nil
+}
+
+func (client *trackingACPClient) LoadSessionSupported() bool {
+	return true
+}
+
+func (client *trackingACPClient) NewSession(context.Context, string) (string, error) {
+	return "tracking-session", nil
+}
+
+func (client *trackingACPClient) LoadSession(_ context.Context, sessionID, _ string) (string, error) {
+	return sessionID, nil
+}
+
+func (client *trackingACPClient) Prompt(_ context.Context, _, prompt string) (string, error) {
+	return "reply:" + prompt, nil
+}
+
+func (client *trackingACPClient) Close() error {
+	client.closeCount++
+	return nil
 }
 
 func helperSpec(t *testing.T, mode string) CommandSpec {
