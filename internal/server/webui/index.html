@@ -5,93 +5,102 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>bqagent</title>
 <style>
-  :root {
+  :root,
+  :root[data-theme="dark"] {
     color-scheme: dark;
-    --bg: #06080c;
-    --bg-soft: #0a0f14;
-    --panel: rgba(10, 15, 20, .78);
-    --panel-strong: rgba(13, 20, 26, .94);
-    --header-bg: rgba(6, 8, 12, .86);
-    --footer-bg: rgba(6, 8, 12, .96);
-    --footer-mid: rgba(6, 8, 12, .60);
-    --line: rgba(112, 135, 95, .18);
-    --line-strong: rgba(134, 255, 112, .42);
-    --text: #e8f3e8;
-    --text-soft: #9db39d;
-    --text-muted: #6b826b;
-    --signal: #86ff70;
-    --stream: #5ee7ff;
+    --bg: #030711;
+    --bg-soft: #071426;
+    --panel: rgba(7, 20, 38, .78);
+    --panel-strong: rgba(10, 27, 50, .94);
+    --header-bg: rgba(3, 7, 17, .86);
+    --footer-bg: rgba(3, 7, 17, .96);
+    --footer-mid: rgba(3, 7, 17, .60);
+    --line: rgba(123, 231, 255, .16);
+    --line-strong: rgba(53, 184, 255, .44);
+    --text: #eaf7ff;
+    --text-soft: #a9c7d9;
+    --text-muted: #6f96ae;
+    --signal: #35b8ff;
+    --stream: #7be7ff;
+    --signal-rgb: 53, 184, 255;
+    --stream-rgb: 123, 231, 255;
     --progress: #ffc857;
+    --progress-rgb: 255, 200, 87;
     --danger: #ff5c75;
-    --cyan: var(--stream);
-    --green: var(--signal);
-    --blue: var(--stream);
-    --violet: #a9a2ff;
-    --shadow: 0 22px 70px rgba(0, 0, 0, .48);
-    --code-bg: #030507;
-    --quote-bg: rgba(134, 255, 112, .055);
-    --table-head: rgba(134, 255, 112, .09);
+    --danger-rgb: 255, 92, 117;
+    --shadow: 0 22px 70px rgba(0, 0, 0, .52);
+    --code-bg: #020914;
+    --quote-bg: rgba(53, 184, 255, .06);
+    --table-head: rgba(53, 184, 255, .10);
+    --particle-dot: #dff7ff;
+    --particle-link: 91, 199, 255;
+    --particle-static: rgba(53, 184, 255, .20);
     --radius: 14px;
     --maxw: 1080px;
   }
 
   @media (prefers-color-scheme: light) {
-    :root {
+    :root:not([data-theme]) {
       color-scheme: light;
-      --bg: #eef5ee;
-      --bg-soft: #f6faf6;
-      --panel: rgba(255, 255, 255, .82);
-      --panel-strong: rgba(255, 255, 255, .96);
-      --header-bg: rgba(238, 245, 238, .86);
-      --footer-bg: rgba(238, 245, 238, .96);
-      --footer-mid: rgba(238, 245, 238, .60);
-      --line: rgba(78, 115, 78, .20);
-      --line-strong: rgba(34, 128, 34, .38);
-      --text: #0d1a0d;
-      --text-soft: #3a5a3a;
-      --text-muted: #789678;
-      --signal: #1a8c1a;
-      --stream: #0b6e8c;
-      --progress: #b36b00;
-      --danger: #c41e3a;
-      --cyan: var(--stream);
-      --green: var(--signal);
-      --blue: var(--stream);
-      --violet: #5a4fcf;
-      --shadow: 0 22px 70px rgba(40, 70, 40, .14);
-      --code-bg: #f0f5f0;
-      --quote-bg: rgba(26, 140, 26, .055);
-      --table-head: rgba(26, 140, 26, .08);
+      --bg: #f3f9ff;
+      --bg-soft: #e8f3fc;
+      --panel: rgba(255, 255, 255, .84);
+      --panel-strong: rgba(255, 255, 255, .97);
+      --header-bg: rgba(243, 249, 255, .88);
+      --footer-bg: rgba(232, 243, 252, .97);
+      --footer-mid: rgba(232, 243, 252, .62);
+      --line: rgba(8, 125, 187, .18);
+      --line-strong: rgba(8, 125, 187, .40);
+      --text: #0a2336;
+      --text-soft: #315a72;
+      --text-muted: #63859b;
+      --signal: #087dbb;
+      --stream: #0b789d;
+      --signal-rgb: 8, 125, 187;
+      --stream-rgb: 11, 120, 157;
+      --progress: #a96300;
+      --progress-rgb: 169, 99, 0;
+      --danger: #c51f43;
+      --danger-rgb: 197, 31, 67;
+      --shadow: 0 22px 70px rgba(31, 78, 110, .16);
+      --code-bg: #edf6fc;
+      --quote-bg: rgba(8, 125, 187, .06);
+      --table-head: rgba(8, 125, 187, .08);
+      --particle-dot: #176f9e;
+      --particle-link: 8, 125, 187;
+      --particle-static: rgba(8, 125, 187, .14);
     }
   }
 
-  :root[data-theme="dark"] { color-scheme: dark; }
   :root[data-theme="light"] {
     color-scheme: light;
-    --bg: #eef5ee;
-    --bg-soft: #f6faf6;
-    --panel: rgba(255, 255, 255, .86);
-    --panel-strong: rgba(255, 255, 255, .98);
-    --header-bg: rgba(238, 245, 238, .88);
-    --footer-bg: rgba(238, 245, 238, .98);
-    --footer-mid: rgba(238, 245, 238, .62);
-    --line: rgba(78, 115, 78, .20);
-    --line-strong: rgba(34, 128, 34, .38);
-    --text: #0d1a0d;
-    --text-soft: #3a5a3a;
-    --text-muted: #789678;
-    --signal: #1a8c1a;
-    --stream: #0b6e8c;
-    --progress: #b36b00;
-    --danger: #c41e3a;
-    --cyan: var(--stream);
-    --green: var(--signal);
-    --blue: var(--stream);
-    --violet: #5a4fcf;
-    --shadow: 0 22px 70px rgba(40, 70, 40, .14);
-    --code-bg: #f0f5f0;
-    --quote-bg: rgba(26, 140, 26, .055);
-    --table-head: rgba(26, 140, 26, .08);
+    --bg: #f3f9ff;
+    --bg-soft: #e8f3fc;
+    --panel: rgba(255, 255, 255, .84);
+    --panel-strong: rgba(255, 255, 255, .97);
+    --header-bg: rgba(243, 249, 255, .88);
+    --footer-bg: rgba(232, 243, 252, .97);
+    --footer-mid: rgba(232, 243, 252, .62);
+    --line: rgba(8, 125, 187, .18);
+    --line-strong: rgba(8, 125, 187, .40);
+    --text: #0a2336;
+    --text-soft: #315a72;
+    --text-muted: #63859b;
+    --signal: #087dbb;
+    --stream: #0b789d;
+    --signal-rgb: 8, 125, 187;
+    --stream-rgb: 11, 120, 157;
+    --progress: #a96300;
+    --progress-rgb: 169, 99, 0;
+    --danger: #c51f43;
+    --danger-rgb: 197, 31, 67;
+    --shadow: 0 22px 70px rgba(31, 78, 110, .16);
+    --code-bg: #edf6fc;
+    --quote-bg: rgba(8, 125, 187, .06);
+    --table-head: rgba(8, 125, 187, .08);
+    --particle-dot: #176f9e;
+    --particle-link: 8, 125, 187;
+    --particle-static: rgba(8, 125, 187, .14);
   }
 
   * { box-sizing: border-box; }
@@ -99,9 +108,9 @@
   body {
     min-width: 320px;
     background:
-      radial-gradient(circle at 12% -8%, rgba(134, 255, 112, .12), transparent 30%),
-      radial-gradient(circle at 88% 10%, rgba(94, 231, 255, .08), transparent 26%),
-      radial-gradient(ellipse at 50% 0%, rgba(134, 255, 112, .04), transparent 55%),
+      radial-gradient(circle at 12% -8%, rgba(var(--signal-rgb),.12), transparent 30%),
+      radial-gradient(circle at 88% 10%, rgba(var(--stream-rgb),.08), transparent 26%),
+      radial-gradient(ellipse at 50% 0%, rgba(var(--signal-rgb),.04), transparent 55%),
       radial-gradient(circle at 50% 50%, transparent 60%, rgba(0, 0, 0, .55) 100%),
       linear-gradient(135deg, var(--bg), var(--bg-soft) 52%, var(--bg));
     color: var(--text);
@@ -118,8 +127,8 @@
     inset: 0;
     pointer-events: none;
     background-image:
-      linear-gradient(rgba(134, 255, 112, .06) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(134, 255, 112, .06) 1px, transparent 1px);
+      linear-gradient(rgba(var(--signal-rgb),.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(var(--signal-rgb),.06) 1px, transparent 1px);
     background-size: 32px 32px;
     mask-image: linear-gradient(to bottom, rgba(0, 0, 0, .55), transparent 72%);
   }
@@ -130,9 +139,19 @@
     inset: 0;
     pointer-events: none;
     background:
-      linear-gradient(rgba(134, 255, 112, .02) 50%, transparent 50%);
+      linear-gradient(rgba(var(--signal-rgb),.02) 50%, transparent 50%);
     background-size: 100% 4px;
     opacity: .55;
+  }
+
+  #particle-field {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    pointer-events: none;
   }
 
   .scanline {
@@ -140,7 +159,7 @@
     inset: 0;
     pointer-events: none;
     z-index: 9999;
-    background: linear-gradient(to bottom, transparent, rgba(134, 255, 112, .03), transparent);
+    background: linear-gradient(to bottom, transparent, rgba(var(--signal-rgb),.03), transparent);
     background-size: 100% 6px;
     opacity: .35;
     animation: scanline 8s linear infinite;
@@ -161,7 +180,7 @@
   button:hover {
     transform: translateY(-1px);
     border-color: var(--line-strong);
-    box-shadow: 0 12px 32px rgba(134, 255, 112, .12);
+    box-shadow: 0 12px 32px rgba(var(--signal-rgb),.12);
   }
   button:focus-visible {
     outline: 2px solid var(--signal);
@@ -191,9 +210,9 @@
     border: 1px solid var(--line-strong);
     border-radius: 10px;
     background:
-      radial-gradient(circle at 50% 50%, rgba(134, 255, 112, .10), transparent 60%),
+      radial-gradient(circle at 50% 50%, rgba(var(--signal-rgb),.10), transparent 60%),
       var(--panel-strong);
-    box-shadow: inset 0 0 18px rgba(134, 255, 112, .10), 0 0 26px rgba(134, 255, 112, .12);
+    box-shadow: inset 0 0 18px rgba(var(--signal-rgb),.10), 0 0 26px rgba(var(--signal-rgb),.12);
     position: relative;
   }
   .mark::before,
@@ -204,7 +223,7 @@
   .mark::before {
     inset: 8px;
     border-radius: 50%;
-    border: 2px solid rgba(134, 255, 112, .55);
+    border: 2px solid rgba(var(--signal-rgb),.55);
     border-right-color: transparent;
     animation: markSpin 4s linear infinite;
   }
@@ -253,7 +272,7 @@
     color: var(--text-soft);
     border: 1px solid var(--line);
     border-radius: 999px;
-    background: rgba(134, 255, 112, .04);
+    background: rgba(var(--signal-rgb),.04);
     font-size: 12px;
     white-space: nowrap;
     font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -323,9 +342,9 @@
     border-radius: 18px;
     border: 1px solid var(--line-strong);
     background:
-      radial-gradient(circle at 50% 50%, rgba(134, 255, 112, .14), transparent 55%),
+      radial-gradient(circle at 50% 50%, rgba(var(--signal-rgb),.14), transparent 55%),
       var(--panel-strong);
-    box-shadow: inset 0 0 30px rgba(134, 255, 112, .08), 0 0 50px rgba(134, 255, 112, .12);
+    box-shadow: inset 0 0 30px rgba(var(--signal-rgb),.08), 0 0 50px rgba(var(--signal-rgb),.12);
     position: relative;
   }
   .empty-mark::before,
@@ -336,7 +355,7 @@
   .empty-mark::before {
     inset: 14px;
     border-radius: 50%;
-    border: 1px solid rgba(134, 255, 112, .45);
+    border: 1px solid rgba(var(--signal-rgb),.45);
   }
   .empty-mark::after {
     width: 9px;
@@ -387,7 +406,24 @@
   .prompt:hover {
     color: var(--text);
     border-color: var(--line-strong);
-    box-shadow: 0 10px 26px rgba(134, 255, 112, .08);
+    box-shadow: 0 10px 26px rgba(var(--signal-rgb),.08);
+  }
+
+  .empty { animation: emptyEnter .44s cubic-bezier(.22, .8, .28, 1) both; }
+  .empty-mark { animation: emptyEnter .40s cubic-bezier(.22, .8, .28, 1) .04s both; }
+  .empty .big { animation: emptyEnter .38s cubic-bezier(.22, .8, .28, 1) .09s both; }
+  .empty > p { animation: emptyEnter .38s cubic-bezier(.22, .8, .28, 1) .14s both; }
+  .prompt { animation: promptEnter .36s cubic-bezier(.22, .8, .28, 1) both; }
+  .prompt:nth-child(1) { animation-delay: .18s; }
+  .prompt:nth-child(2) { animation-delay: .24s; }
+  .prompt:nth-child(3) { animation-delay: .30s; }
+  @keyframes emptyEnter {
+    from { opacity: 0; transform: translate3d(0, 8px, 0); }
+    to { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  @keyframes promptEnter {
+    from { opacity: 0; transform: translate3d(0, 6px, 0); }
+    to { opacity: 1; transform: translate3d(0, 0, 0); }
   }
 
   .msg {
@@ -397,6 +433,16 @@
   }
   .msg.user {
     flex-direction: row-reverse;
+  }
+  .msg-enter { animation: messageEnter .22s cubic-bezier(.22, .8, .28, 1) both; }
+  .msg.user.msg-enter { animation-name: userMessageEnter; }
+  @keyframes messageEnter {
+    from { opacity: 0; transform: translate3d(-6px, 5px, 0); }
+    to { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  @keyframes userMessageEnter {
+    from { opacity: 0; transform: translate3d(6px, 5px, 0); }
+    to { opacity: 1; transform: translate3d(0, 0, 0); }
   }
   .message-stack {
     min-width: 0;
@@ -433,12 +479,12 @@
     font-size: 11px;
     font-weight: 760;
     background: var(--panel);
-    box-shadow: inset 0 0 14px rgba(134, 255, 112, .04);
+    box-shadow: inset 0 0 14px rgba(var(--signal-rgb),.04);
   }
   .msg.assistant .avatar {
     color: var(--bg);
     background: var(--signal);
-    box-shadow: 0 0 24px rgba(134, 255, 112, .22);
+    box-shadow: 0 0 24px rgba(var(--signal-rgb),.22);
   }
   .msg.user .avatar {
     color: var(--bg);
@@ -486,6 +532,15 @@
     background: var(--signal);
     opacity: .8;
   }
+  .msg.assistant .bubble.is-streaming::after {
+    background: var(--stream);
+    transform-origin: center;
+    animation: streamSignal 1.8s ease-in-out infinite;
+  }
+  @keyframes streamSignal {
+    0%, 100% { opacity: .34; transform: scaleY(.28); }
+    50% { opacity: 1; transform: scaleY(.92); }
+  }
   .bubble.error {
     color: var(--danger);
     background: rgba(255, 92, 117, .07);
@@ -519,7 +574,7 @@
     gap: 12px;
     color: var(--signal);
     border-bottom: 1px solid var(--line);
-    background: rgba(134, 255, 112, .06);
+    background: rgba(var(--signal-rgb),.06);
     font: 11px/1.2 ui-monospace, "SFMono-Regular", Consolas, monospace;
     text-transform: lowercase;
   }
@@ -533,7 +588,7 @@
   .copy-code:hover, .mini-action:hover {
     color: var(--text);
     border-color: var(--line-strong);
-    background: rgba(134, 255, 112, .10);
+    background: rgba(var(--signal-rgb),.10);
   }
   .bubble pre {
     background: transparent;
@@ -549,8 +604,8 @@
     font-size: 13px;
   }
   .bubble :not(pre) > code {
-    background: rgba(134, 255, 112, .10);
-    border: 1px solid rgba(134, 255, 112, .14);
+    background: rgba(var(--signal-rgb),.10);
+    border: 1px solid rgba(var(--signal-rgb),.14);
     padding: 1px 6px;
     border-radius: 6px;
     color: var(--signal);
@@ -571,7 +626,7 @@
   .bubble li > p { margin: .28em 0; }
   .bubble .task-list { list-style: none; padding-left: .3em; }
   .bubble .task-list input { margin: 0 .55em 0 0; accent-color: var(--signal); }
-  .bubble a { color: var(--stream); text-decoration-color: rgba(94, 231, 255, .45); }
+  .bubble a { color: var(--stream); text-decoration-color: rgba(var(--stream-rgb),.45); }
   .bubble a:hover { text-decoration-thickness: 2px; color: var(--signal); }
   .bubble .md-image {
     display: block;
@@ -617,7 +672,7 @@
     background: var(--stream);
     margin-left: 3px;
     vertical-align: text-bottom;
-    box-shadow: 0 0 14px rgba(94, 231, 255, .75);
+    box-shadow: 0 0 14px rgba(var(--stream-rgb),.75);
     animation: blink 1s steps(2) infinite;
   }
   @keyframes blink { 50% { opacity: 0; } }
@@ -642,6 +697,12 @@
     box-shadow: var(--shadow);
     backdrop-filter: blur(22px);
     position: relative;
+    transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
+  }
+  .composer:focus-within {
+    border-color: var(--signal);
+    background: var(--panel-strong);
+    box-shadow: var(--shadow), 0 0 0 1px rgba(var(--signal-rgb),.08), 0 0 30px rgba(var(--signal-rgb),.10);
   }
   .composer::before {
     content: ">";
@@ -690,17 +751,17 @@
     height: 46px;
     flex: 0 0 46px;
     border-radius: 14px;
-    border-color: rgba(134, 255, 112, .45);
+    border-color: rgba(var(--signal-rgb),.45);
     color: var(--bg);
     font-weight: 800;
     background: var(--signal);
-    box-shadow: 0 0 26px rgba(134, 255, 112, .22);
+    box-shadow: 0 0 26px rgba(var(--signal-rgb),.22);
     display: grid;
     place-items: center;
   }
   .send:hover {
     border-color: var(--signal);
-    box-shadow: 0 0 36px rgba(134, 255, 112, .32);
+    box-shadow: 0 0 36px rgba(var(--signal-rgb),.32);
   }
   .send svg { width: 20px; height: 20px; }
   .send .stop-icon { display: none; }
@@ -731,6 +792,11 @@
     .composer::before { left: 16px; font-size: 14px; }
     .input-shell { padding-left: 18px; }
     .composer-meta { display: none; }
+    #particle-field { display: none; }
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    #particle-field { display: none; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -740,10 +806,15 @@
       scroll-behavior: auto !important;
       transition-duration: .01ms !important;
     }
+    .empty, .empty-mark, .empty .big, .empty > p, .prompt,
+    .msg-enter, .msg.user.msg-enter, .bubble.is-streaming::after {
+      animation: none !important;
+    }
   }
 </style>
 </head>
 <body>
+  <canvas id="particle-field" aria-hidden="true"></canvas>
   <div class="scanline" aria-hidden="true"></div>
   <header>
     <div class="brand">
@@ -754,7 +825,7 @@
       </div>
     </div>
     <div class="actions">
-      <div class="status" id="status">在线</div>
+      <div class="status" id="status" role="status" aria-live="polite" aria-atomic="true">在线</div>
       <button class="icon-button" id="theme-toggle" type="button" title="切换主题" aria-label="切换明暗主题">
         <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
           <path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42M7.06 16.94l-1.42 1.42" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -805,6 +876,7 @@
   var THEME_KEY = "bqagent.webui.theme";
   var thread = document.getElementById("thread");
   var main = document.getElementById("main");
+  var particleCanvas = document.getElementById("particle-field");
   var input = document.getElementById("input");
   var sendBtn = document.getElementById("send");
   var newChatBtn = document.getElementById("new-chat");
@@ -816,6 +888,252 @@
   var currentTurnId = "";
   var currentController = null;
   var stopRequested = false;
+
+  var PARTICLE_MAX_COUNT = 80;
+  var PARTICLE_TARGET_FPS = 30;
+  var PARTICLE_FRAME_INTERVAL = 1000 / PARTICLE_TARGET_FPS;
+  var PARTICLE_LINK_DISTANCE = 100;
+  var PARTICLE_MOUSE_RADIUS = 140;
+  var particleContext = null;
+  var particles = [];
+  var particleBuckets = Object.create(null);
+  var particleWidth = 0;
+  var particleHeight = 0;
+  var particleDpr = 1;
+  var particleFrame = 0;
+  var particleResizeFrame = 0;
+  var particleLastFrameTime = 0;
+  var particleRunning = false;
+  var particlePalette = { dot: "#dff7ff", link: "91, 199, 255", staticDot: "rgba(53, 184, 255, .20)" };
+  var particleMouse = { x: 0, y: 0, active: false };
+  var finePointerQuery = window.matchMedia ? window.matchMedia("(hover: hover) and (pointer: fine)") : null;
+  var reducedMotionQuery = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+
+  function listenMediaQuery(query, handler) {
+    if (!query) return;
+    if (typeof query.addEventListener === "function") query.addEventListener("change", handler);
+    else if (typeof query.addListener === "function") query.addListener(handler);
+  }
+
+  function randomBetween(min, max) {
+    return min + Math.random() * (max - min);
+  }
+
+  function refreshParticlePalette() {
+    if (!particleCanvas) return;
+    var styles = getComputedStyle(document.documentElement);
+    particlePalette.dot = styles.getPropertyValue("--particle-dot").trim() || "#dff7ff";
+    particlePalette.link = styles.getPropertyValue("--particle-link").trim() || "91, 199, 255";
+    particlePalette.staticDot = styles.getPropertyValue("--particle-static").trim() || "rgba(53, 184, 255, .20)";
+  }
+
+  function targetParticleCount() {
+    return Math.min(PARTICLE_MAX_COUNT, Math.max(36, Math.min(72,
+      Math.round((particleWidth * particleHeight) / 12000))));
+  }
+
+  function createParticle() {
+    var angle = Math.random() * Math.PI * 2;
+    var speed = randomBetween(7, 18);
+    var vx = Math.cos(angle) * speed;
+    var vy = Math.sin(angle) * speed;
+    return {
+      x: Math.random() * particleWidth,
+      y: Math.random() * particleHeight,
+      vx: vx,
+      vy: vy,
+      baseVx: vx,
+      baseVy: vy,
+      radius: randomBetween(1, 1.8)
+    };
+  }
+
+  function syncParticleCount() {
+    var target = targetParticleCount();
+    while (particles.length < target) particles.push(createParticle());
+    if (particles.length > target) particles.length = target;
+  }
+
+  function resizeParticleField() {
+    if (!particleCanvas || !particleContext) return;
+    var previousWidth = particleWidth || window.innerWidth;
+    var previousHeight = particleHeight || window.innerHeight;
+    particleWidth = Math.max(1, window.innerWidth);
+    particleHeight = Math.max(1, window.innerHeight);
+    particleDpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    particleCanvas.width = Math.max(1, Math.floor(particleWidth * particleDpr));
+    particleCanvas.height = Math.max(1, Math.floor(particleHeight * particleDpr));
+    particleContext.setTransform(particleDpr, 0, 0, particleDpr, 0, 0);
+    particles.forEach(function (particle) {
+      particle.x = particle.x / previousWidth * particleWidth;
+      particle.y = particle.y / previousHeight * particleHeight;
+    });
+    syncParticleCount();
+    drawParticleField(0, false);
+  }
+
+  function buildParticleBuckets() {
+    particleBuckets = Object.create(null);
+    particles.forEach(function (particle, index) {
+      var cellX = Math.floor(particle.x / PARTICLE_LINK_DISTANCE);
+      var cellY = Math.floor(particle.y / PARTICLE_LINK_DISTANCE);
+      var key = cellX + ":" + cellY;
+      if (!particleBuckets[key]) particleBuckets[key] = [];
+      particleBuckets[key].push(index);
+    });
+  }
+
+  function updateParticle(particle, dt) {
+    particle.vx += (particle.baseVx - particle.vx) * Math.min(1, dt * .7);
+    particle.vy += (particle.baseVy - particle.vy) * Math.min(1, dt * .7);
+    if (particleMouse.active) {
+      var dx = particleMouse.x - particle.x;
+      var dy = particleMouse.y - particle.y;
+      var distanceSquared = dx * dx + dy * dy;
+      if (distanceSquared > 1 && distanceSquared < PARTICLE_MOUSE_RADIUS * PARTICLE_MOUSE_RADIUS) {
+        var distance = Math.sqrt(distanceSquared);
+        var force = (1 - distance / PARTICLE_MOUSE_RADIUS) * 18;
+        particle.vx += dx / distance * force * dt;
+        particle.vy += dy / distance * force * dt;
+      }
+    }
+    var speed = Math.sqrt(particle.vx * particle.vx + particle.vy * particle.vy);
+    if (speed > 28) {
+      particle.vx = particle.vx / speed * 28;
+      particle.vy = particle.vy / speed * 28;
+    }
+    particle.x += particle.vx * dt;
+    particle.y += particle.vy * dt;
+    if (particle.x < -2) particle.x = particleWidth + 2;
+    else if (particle.x > particleWidth + 2) particle.x = -2;
+    if (particle.y < -2) particle.y = particleHeight + 2;
+    else if (particle.y > particleHeight + 2) particle.y = -2;
+  }
+
+  function drawParticleLinks() {
+    var maxDistanceSquared = PARTICLE_LINK_DISTANCE * PARTICLE_LINK_DISTANCE;
+    particles.forEach(function (particle, index) {
+      var cellX = Math.floor(particle.x / PARTICLE_LINK_DISTANCE);
+      var cellY = Math.floor(particle.y / PARTICLE_LINK_DISTANCE);
+      for (var offsetY = -1; offsetY <= 1; offsetY++) {
+        for (var offsetX = -1; offsetX <= 1; offsetX++) {
+          var bucket = particleBuckets[(cellX + offsetX) + ":" + (cellY + offsetY)] || [];
+          bucket.forEach(function (otherIndex) {
+            if (otherIndex <= index) return;
+            var other = particles[otherIndex];
+            var dx = other.x - particle.x;
+            var dy = other.y - particle.y;
+            var distanceSquared = dx * dx + dy * dy;
+            if (distanceSquared >= maxDistanceSquared) return;
+            var alpha = (1 - distanceSquared / maxDistanceSquared) * .20;
+            particleContext.beginPath();
+            particleContext.moveTo(particle.x, particle.y);
+            particleContext.lineTo(other.x, other.y);
+            particleContext.strokeStyle = "rgba(" + particlePalette.link + "," + alpha + ")";
+            particleContext.lineWidth = .65;
+            particleContext.stroke();
+          });
+        }
+      }
+    });
+  }
+
+  function drawParticleField(dt, animate) {
+    if (!particleContext || !particleWidth || !particleHeight) return;
+    particleContext.clearRect(0, 0, particleWidth, particleHeight);
+    if (animate) particles.forEach(function (particle) { updateParticle(particle, dt); });
+    if (animate) {
+      buildParticleBuckets();
+      drawParticleLinks();
+      particleContext.fillStyle = particlePalette.dot;
+    } else {
+      particleContext.fillStyle = particlePalette.staticDot;
+    }
+    particles.forEach(function (particle) {
+      particleContext.beginPath();
+      particleContext.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
+      particleContext.fill();
+    });
+  }
+
+  function particleAnimationLoop(timestamp) {
+    if (!particleRunning) return;
+    particleFrame = requestAnimationFrame(particleAnimationLoop);
+    if (particleLastFrameTime && timestamp - particleLastFrameTime < PARTICLE_FRAME_INTERVAL) return;
+    var dt = particleLastFrameTime ? Math.min((timestamp - particleLastFrameTime) / 1000, .05) : 1 / PARTICLE_TARGET_FPS;
+    particleLastFrameTime = timestamp;
+    drawParticleField(dt, true);
+  }
+
+  function startParticleField() {
+    if (particleRunning || !particleContext) return;
+    particleRunning = true;
+    particleLastFrameTime = 0;
+    particleFrame = requestAnimationFrame(particleAnimationLoop);
+  }
+
+  function stopParticleField(clear) {
+    particleRunning = false;
+    particleLastFrameTime = 0;
+    if (particleFrame) cancelAnimationFrame(particleFrame);
+    particleFrame = 0;
+    particleMouse.active = false;
+    if (clear && particleContext) particleContext.clearRect(0, 0, particleWidth, particleHeight);
+  }
+
+  function canAnimateParticleField() {
+    return !!particleContext && !!finePointerQuery && finePointerQuery.matches &&
+      !(reducedMotionQuery && reducedMotionQuery.matches) && window.innerWidth > 720 && !document.hidden;
+  }
+
+  function refreshParticleCapability() {
+    if (!particleContext) return;
+    if (canAnimateParticleField()) {
+      startParticleField();
+      return;
+    }
+    stopParticleField(true);
+    if (!document.hidden && window.innerWidth > 720 &&
+        reducedMotionQuery && reducedMotionQuery.matches) drawParticleField(0, false);
+  }
+
+  function scheduleParticleResize() {
+    if (particleResizeFrame) cancelAnimationFrame(particleResizeFrame);
+    particleResizeFrame = requestAnimationFrame(function () {
+      particleResizeFrame = 0;
+      resizeParticleField();
+      refreshParticleCapability();
+    });
+  }
+
+  function handleParticlePointerMove(event) {
+    if (!particleRunning || event.pointerType !== "mouse") return;
+    particleMouse.x = event.clientX;
+    particleMouse.y = event.clientY;
+    particleMouse.active = true;
+  }
+
+  function clearParticlePointer() {
+    particleMouse.active = false;
+  }
+
+  function initParticleField() {
+    if (!particleCanvas || typeof particleCanvas.getContext !== "function") return;
+    particleContext = particleCanvas.getContext("2d");
+    if (!particleContext) return;
+    refreshParticlePalette();
+    resizeParticleField();
+    window.addEventListener("pointermove", handleParticlePointerMove, { passive: true });
+    window.addEventListener("pointerout", function (event) {
+      if (!event.relatedTarget) clearParticlePointer();
+    });
+    window.addEventListener("blur", clearParticlePointer);
+    window.addEventListener("resize", scheduleParticleResize, { passive: true });
+    document.addEventListener("visibilitychange", refreshParticleCapability);
+    listenMediaQuery(finePointerQuery, refreshParticleCapability);
+    listenMediaQuery(reducedMotionQuery, refreshParticleCapability);
+    refreshParticleCapability();
+  }
 
   async function loadRuntimeModel() {
     try {
@@ -843,7 +1161,7 @@
   function addMessage(role) {
     removeEmpty();
     var msg = document.createElement("div");
-    msg.className = "msg " + role;
+    msg.className = "msg " + role + " msg-enter";
     var avatar = document.createElement("div");
     avatar.className = "avatar";
     avatar.setAttribute("aria-hidden", "true");
@@ -862,6 +1180,10 @@
     thread.appendChild(msg);
     scrollToBottom();
     return bubble;
+  }
+
+  function clearStreamingState(bubble) {
+    if (bubble) bubble.classList.remove("is-streaming");
   }
 
   function emptyMarkup() {
@@ -1262,6 +1584,8 @@
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem(THEME_KEY, theme);
     themeToggle.title = theme === "dark" ? "切换到浅色主题" : "切换到深色主题";
+    refreshParticlePalette();
+    if (particleContext) drawParticleField(0, particleRunning);
   }
 
   function createTurnId() {
@@ -1305,6 +1629,7 @@
     autoGrow();
 
     var bubble = addMessage("assistant");
+    bubble.classList.add("is-streaming");
     var caret = document.createElement("span");
     caret.className = "caret";
     bubble.appendChild(caret);
@@ -1340,6 +1665,7 @@
           var evt = parseSSE(rawEvent);
           if (evt.event === "done") {
             finished = true;
+            clearStreamingState(bubble);
             var done = JSON.parse(evt.data);
             if (done.session_id) {
               sessionId = done.session_id;
@@ -1351,6 +1677,7 @@
             addMessageControls(bubble, done.run_id, finalReply);
           } else if (evt.event === "stopped") {
             finished = true;
+            clearStreamingState(bubble);
             caret.remove();
             bubble.classList.add("rendered", "notice");
             var stoppedReply = streamed ? streamed + "\n\n> 已停止生成。" : "已停止生成。";
@@ -1360,6 +1687,7 @@
             statusEl.classList.remove("busy", "error");
           } else if (evt.event === "error") {
             finished = true;
+            clearStreamingState(bubble);
             var errPayload = JSON.parse(evt.data);
             bubble.classList.add("error");
             bubble.textContent = "出错：" + (errPayload.error || "未知错误");
@@ -1390,6 +1718,7 @@
       }
 
       if (!finished) {
+        clearStreamingState(bubble);
         caret.remove();
         bubble.classList.add("rendered");
         if (streamed) {
@@ -1400,6 +1729,7 @@
         }
       }
     } catch (err) {
+      clearStreamingState(bubble);
       caret.remove();
       if (stopRequested || (err && err.name === "AbortError")) {
         bubble.classList.add("rendered", "notice");
@@ -1414,6 +1744,7 @@
         statusEl.classList.add("error");
       }
     } finally {
+      clearStreamingState(bubble);
       setBusy(false);
       currentTurnId = "";
       currentController = null;
@@ -1468,6 +1799,7 @@
   });
   setTheme(localStorage.getItem(THEME_KEY) ||
     (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+  initParticleField();
   loadRuntimeModel();
   autoGrow();
 })();
