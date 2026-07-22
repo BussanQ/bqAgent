@@ -193,11 +193,12 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 }
 
 func runSubagentWorker(ctx context.Context, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, id string) int {
-	config := extagent.ConfigFromEnv(getenv, ws.Root)
-	detections := extagent.Detect(ctx, config, nil)
+	runtimeConfig := appruntime.ConfigFromEnv(getenv)
+	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
+	detections := extagent.Detect(ctx, externalConfig, nil)
 	broker := extagent.NewBroker(extagent.NewStateStore(ws.Root), detections, nil)
 	defer broker.Close()
-	manager := subagent.NewWorkerManager(ws.Root, broker)
+	manager := subagent.NewWorkerManager(ws.Root, broker, runtimeConfig.RunTraceEnabled)
 	if err := manager.RunPersisted(id); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -282,7 +283,8 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		if sessionID == "" {
 			createOptions = &session.CreateOptions{Task: task, Planned: options.plan, Background: options.sessionRun}
 		}
-		conversation, err = appruntime.PrepareConversation(session.NewStore(ws.Root), sessionID, createOptions, systemPrompt)
+		sessionOptions := session.Options{TranscriptMode: llmConfig.SessionTranscriptMode, OutputMaxBytes: llmConfig.SessionOutputMaxBytes}
+		conversation, err = appruntime.PrepareConversation(session.NewStore(ws.Root, sessionOptions), sessionID, createOptions, systemPrompt)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -291,6 +293,9 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 			if logFile != nil {
 				// Best-effort close of the session log file on exit.
 				_ = logFile.Close()
+			}
+			if trimErr := conversation.Session.TrimOutputLog(); trimErr != nil {
+				fmt.Fprintf(stderr, "trim session output: %v\n", trimErr)
 			}
 		}()
 
@@ -314,9 +319,13 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		MCPConfigPath: ws.MCPConfigPath(),
 		LogWriter:     stderr,
 	}.Build(true)
-	runRecorder, traceErr := apptrace.NewStore(ws.Root).Create(conversation.Session.ID(), apptrace.NewID("turn"), "", "agent", runtime.Model, systemPrompt)
-	if traceErr != nil {
-		fmt.Fprintf(errorWriter, "trace create failed: %v\n", traceErr)
+	var runRecorder *apptrace.Recorder
+	if runtime.RunTraceEnabled {
+		var traceErr error
+		runRecorder, traceErr = apptrace.NewStore(ws.Root).Create(conversation.Session.ID(), apptrace.NewID("turn"), "", "agent", runtime.Model, systemPrompt)
+		if traceErr != nil {
+			fmt.Fprintf(errorWriter, "trace create failed: %v\n", traceErr)
+		}
 	}
 	if runRecorder != nil {
 		_ = conversation.Session.SetLastRunID(runRecorder.RunID())
@@ -331,11 +340,24 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		}
 	}
 
-	var result string
+	var (
+		result          string
+		updatedMessages []map[string]any
+	)
 	if options.plan {
-		result, err = app.RunPlannedConversation(ctx, conversation.Messages, task, runtime.MaxIterations)
+		result, updatedMessages, err = app.RunPlannedConversationTurn(ctx, conversation.Messages, task, runtime.MaxIterations)
 	} else {
-		result, err = app.RunConversation(ctx, conversation.Messages, runtime.MaxIterations)
+		result, updatedMessages, err = app.RunConversationTurn(ctx, conversation.Messages, runtime.MaxIterations)
+	}
+	if len(updatedMessages) > 0 {
+		conversation.Messages = agent.BoundWorkingMessages(updatedMessages, runtime.Context)
+		if saveErr := conversation.SaveWorkingContext(); saveErr != nil {
+			if err == nil {
+				err = saveErr
+			} else {
+				fmt.Fprintf(errorWriter, "save working context: %v\n", saveErr)
+			}
+		}
 	}
 	if err != nil {
 		if runRecorder != nil {

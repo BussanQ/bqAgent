@@ -44,15 +44,10 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 			return nil, err
 		}
 		usingWorkingContext := false
-		messages, err = savedSession.LoadWorkingMessages()
-		if err == nil {
-			usingWorkingContext = true
-		} else if errors.Is(err, os.ErrNotExist) {
-			messages, err = savedSession.LoadMessages()
-			if err == nil {
-				if checkpoint, checkpointErr := savedSession.LoadCheckpoint(); checkpointErr == nil {
-					messages = restoreCheckpointMessages(messages, checkpoint, systemPrompt)
-				}
+		messages, usingWorkingContext, err = savedSession.LoadResumableMessages()
+		if err == nil && !usingWorkingContext {
+			if checkpoint, checkpointErr := savedSession.LoadCheckpoint(); checkpointErr == nil {
+				messages = restoreCheckpointMessages(messages, checkpoint, systemPrompt)
 			}
 		}
 		if err != nil {
@@ -214,7 +209,7 @@ func (conversation *Conversation) SaveWorkingContext() error {
 	if conversation == nil || conversation.Session == nil {
 		return nil
 	}
-	if err := conversation.Session.SaveWorkingMessages(conversation.Messages); err != nil {
+	if err := conversation.Session.SaveWorkingContext(conversation.Messages); err != nil {
 		return err
 	}
 	conversation.UsingWorkingContext = true

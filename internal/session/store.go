@@ -1,10 +1,13 @@
 package session
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +39,41 @@ type Meta struct {
 
 type Store struct {
 	workspaceRoot string
+	options       Options
+}
+
+type TranscriptMode string
+
+const (
+	TranscriptModeCompact TranscriptMode = "compact"
+	TranscriptModeFull    TranscriptMode = "full"
+	DefaultOutputMaxBytes int64          = 1 << 20
+)
+
+type Options struct {
+	TranscriptMode TranscriptMode
+	OutputMaxBytes int64
+}
+
+func DefaultOptions() Options {
+	return Options{TranscriptMode: TranscriptModeCompact, OutputMaxBytes: DefaultOutputMaxBytes}
+}
+
+func NormalizeTranscriptMode(value string) TranscriptMode {
+	switch TranscriptMode(strings.ToLower(strings.TrimSpace(value))) {
+	case TranscriptModeFull:
+		return TranscriptModeFull
+	default:
+		return TranscriptModeCompact
+	}
+}
+
+func NormalizeOptions(options Options) Options {
+	options.TranscriptMode = NormalizeTranscriptMode(string(options.TranscriptMode))
+	if options.OutputMaxBytes < 0 {
+		options.OutputMaxBytes = DefaultOutputMaxBytes
+	}
+	return options
 }
 
 type ContextCheckpoint struct {
@@ -50,8 +88,12 @@ type Session struct {
 	meta  Meta
 }
 
-func NewStore(workspaceRoot string) *Store {
-	return &Store{workspaceRoot: workspaceRoot}
+func NewStore(workspaceRoot string, configured ...Options) *Store {
+	options := DefaultOptions()
+	if len(configured) > 0 {
+		options = NormalizeOptions(configured[0])
+	}
+	return &Store{workspaceRoot: workspaceRoot, options: options}
 }
 
 type CreateOptions struct {
@@ -147,11 +189,64 @@ func (session *Session) LoadWorkingMessages() ([]map[string]any, error) {
 	return readMessagesJSONL(session.WorkingMessagesPath())
 }
 
+func (session *Session) LoadResumableMessages() ([]map[string]any, bool, error) {
+	workingInfo, workingErr := os.Stat(session.WorkingMessagesPath())
+	messageInfo, messageErr := os.Stat(session.MessagesPath())
+	if workingErr == nil && (messageErr != nil || !messageInfo.ModTime().After(workingInfo.ModTime())) {
+		messages, err := session.LoadWorkingMessages()
+		if err == nil {
+			return messages, true, nil
+		}
+		if messageErr == nil {
+			fallback, fallbackErr := session.LoadMessages()
+			if fallbackErr == nil {
+				return fallback, false, nil
+			}
+			return nil, false, errors.Join(err, fallbackErr)
+		}
+		return nil, true, err
+	}
+	if messageErr == nil {
+		messages, err := session.LoadMessages()
+		if err == nil {
+			return messages, false, nil
+		}
+		if workingErr == nil {
+			fallback, fallbackErr := session.LoadWorkingMessages()
+			if fallbackErr == nil {
+				return fallback, true, nil
+			}
+			return nil, false, errors.Join(err, fallbackErr)
+		}
+		return nil, false, err
+	}
+	if workingErr == nil {
+		messages, err := session.LoadWorkingMessages()
+		return messages, true, err
+	}
+	if !os.IsNotExist(messageErr) {
+		return nil, false, messageErr
+	}
+	if !os.IsNotExist(workingErr) {
+		return nil, false, workingErr
+	}
+	return nil, false, nil
+}
+
 func (session *Session) SaveWorkingMessages(messages []map[string]any) error {
 	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
 		return err
 	}
 	return writeMessagesJSONL(session.WorkingMessagesPath(), messages)
+}
+
+func (session *Session) SaveWorkingContext(messages []map[string]any) error {
+	if session.store.options.TranscriptMode == TranscriptModeCompact {
+		if err := writeMessagesJSONL(session.MessagesPath(), messages); err != nil {
+			return err
+		}
+	}
+	return session.SaveWorkingMessages(messages)
 }
 
 func (session *Session) RecordMessage(message map[string]any) error {
@@ -224,6 +319,84 @@ func (session *Session) OpenOutputFile() (*os.File, error) {
 		return nil, err
 	}
 	return os.OpenFile(session.OutputPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+}
+
+func (session *Session) TrimOutputLog() error {
+	limit := session.store.options.OutputMaxBytes
+	if limit <= 0 {
+		return nil
+	}
+	file, err := os.Open(session.OutputPath())
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return err
+	}
+	if info.Size() <= limit {
+		return file.Close()
+	}
+	if _, err := file.Seek(info.Size()-limit, io.SeekStart); err != nil {
+		_ = file.Close()
+		return err
+	}
+	tail, err := io.ReadAll(file)
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if index := bytes.IndexByte(tail, '\n'); index >= 0 && index+1 < len(tail) {
+		tail = tail[index+1:]
+	}
+	return writeFileAtomic(session.OutputPath(), tail, 0o644)
+}
+
+func (s *Store) MaintainExistingSessions() []error {
+	if s == nil || s.options.TranscriptMode != TranscriptModeCompact {
+		return nil
+	}
+	root := filepath.Join(s.workspaceRoot, ".agent", "sessions")
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return []error{err}
+	}
+	errorsFound := make([]error, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		saved, openErr := s.Open(entry.Name())
+		if openErr != nil {
+			errorsFound = append(errorsFound, fmt.Errorf("session %s: %w", entry.Name(), openErr))
+			continue
+		}
+		if saved.Meta().Status == StatusRunning {
+			continue
+		}
+		working, loadErr := saved.LoadWorkingMessages()
+		if loadErr == nil && len(working) > 0 {
+			if rewriteErr := saved.RewriteMessages(working); rewriteErr != nil {
+				errorsFound = append(errorsFound, fmt.Errorf("session %s compact transcript: %w", entry.Name(), rewriteErr))
+			}
+		} else if loadErr != nil && !os.IsNotExist(loadErr) {
+			errorsFound = append(errorsFound, fmt.Errorf("session %s load working messages: %w", entry.Name(), loadErr))
+		}
+		if trimErr := saved.TrimOutputLog(); trimErr != nil {
+			errorsFound = append(errorsFound, fmt.Errorf("session %s trim output: %w", entry.Name(), trimErr))
+		}
+	}
+	return errorsFound
 }
 
 func (session *Session) MarkRunning() error {

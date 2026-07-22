@@ -262,8 +262,12 @@ func (a *Agent) RunPlanned(ctx context.Context, task string, maxIterations int) 
 }
 
 func (a *Agent) RunPlannedConversation(ctx context.Context, messages []map[string]any, task string, maxIterations int) (string, error) {
-	result, _, err := a.runPlannedConversation(ctx, duplicateMessages(messages), task, maxIterations)
+	result, _, err := a.RunPlannedConversationTurn(ctx, messages, task, maxIterations)
 	return result, err
+}
+
+func (a *Agent) RunPlannedConversationTurn(ctx context.Context, messages []map[string]any, task string, maxIterations int) (string, []map[string]any, error) {
+	return a.runPlannedConversation(ctx, duplicateMessages(messages), task, maxIterations)
 }
 
 func (a *Agent) runPlannedConversation(ctx context.Context, messages []map[string]any, task string, maxIterations int) (string, []map[string]any, error) {
@@ -328,7 +332,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		actualIterations = iteration + 1
 		if a.stageConfig.ImmediateProgress {
-			a.writeStageProgress(fmt.Sprintf("Starting analysis iteration %d", actualIterations))
+			a.writeStageProgress(selectModelProgressMessage(modelProgressMessages))
 		}
 		requestMessages, compacted := a.buildRequestMessages(explorationCtx, messages)
 		if compacted != nil {

@@ -52,6 +52,20 @@ func TestWebUIServesIndex(t *testing.T) {
 		`id="runtime-model"`,
 		`loadRuntimeModel()`,
 		`class="stop-icon"`,
+		`classList.add("is-streaming")`,
+		`role="status"`,
+		`id="particle-field"`,
+		`getContext("2d")`,
+		`PARTICLE_MAX_COUNT = 80`,
+		`PARTICLE_TARGET_FPS = 30`,
+		`Math.min(window.devicePixelRatio || 1, 1.5)`,
+		`refreshParticlePalette`,
+		`particleBuckets`,
+		`requestAnimationFrame`,
+		`cancelAnimationFrame`,
+		`visibilitychange`,
+		`(hover: hover) and (pointer: fine)`,
+		`event.pointerType !== "mouse"`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("served page missing WebUI feature %q", expected)
@@ -59,6 +73,11 @@ func TestWebUIServesIndex(t *testing.T) {
 	}
 	if strings.Contains(page, "<script src=") {
 		t.Fatal("served page should remain self-contained without external scripts")
+	}
+	for _, obsolete := range []string{"ambient-particles", "ambient-particle", "cursor-stars", "ambientDrift"} {
+		if strings.Contains(page, obsolete) {
+			t.Fatalf("served page still contains obsolete particle implementation %q", obsolete)
+		}
 	}
 }
 
@@ -106,7 +125,7 @@ func TestWebUIStreamChat(t *testing.T) {
 	if !strings.Contains(first.raw, `"delta":"Hello"`) {
 		t.Fatalf("stream missing delta events:\n%s", first.raw)
 	}
-	if !strings.Contains(first.raw, "event: progress") || !strings.Contains(first.raw, "Starting analysis iteration 1") {
+	if !strings.Contains(first.raw, "event: progress") || !strings.Contains(first.raw, `"message":`) {
 		t.Fatalf("stream missing progress event:\n%s", first.raw)
 	}
 	if first.done.Reply != "Hello, world" {

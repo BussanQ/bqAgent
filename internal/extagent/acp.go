@@ -40,7 +40,7 @@ func NewACPClient(spec CommandSpec, cwd string) (ACPClient, error) {
 	if strings.TrimSpace(spec.Command) == "" {
 		return nil, fmt.Errorf("acp command is required")
 	}
-	cmd := exec.Command(spec.Command, spec.Args...)
+	cmd := exec.CommandContext(context.Background(), spec.Command, spec.Args...)
 	cmd.Dir = cwd
 	configureExternalProcess(cmd)
 	stdout, err := cmd.StdoutPipe()

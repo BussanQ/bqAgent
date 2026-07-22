@@ -16,12 +16,11 @@ make build-amd      # CGO_ENABLED=0 GOOS=linux  GOARCH=amd64  (Linux artifact)
 make build-windows  # CGO_ENABLED=0 GOOS=windows GOARCH=amd64
 make clean
 
-# Targeted package / single test
-go test ./internal/agent
+# Functional unit test matching the changed behavior
 go test ./internal/agent -run TestRunConversation -v
 ```
 
-Do not run broad `go test ./...` for this project; use targeted package or single-test commands that match the files changed. There is no linter config beyond the Go toolchain; use `gofmt` and targeted Go checks. `make build-amd` and a `publish` (upload to server) flow also exist as `.claude/skills`.
+Only run concrete functional unit tests that directly match the behavior being changed. Do not run broad `go test ./...`, unfiltered package tests, integration/end-to-end/live-network tests, or compile-only checks unless the user explicitly requests them. If no matching unit test exists, add or adjust one instead of widening the test scope. There is no linter config beyond the Go toolchain; use `gofmt` when needed. `make build-amd` and a `publish` (upload to server) flow also exist as `.claude/skills`.
 
 ## Running
 
@@ -69,7 +68,7 @@ The dependency direction is `cmd/agent → internal/{server,runtime} → interna
 
 ### Sessions — `internal/session`
 
-Each session is a directory under `.agent/sessions/<id>/` with `meta.json` (status: created/running/completed/failed), append-only `messages.jsonl` (the complete audit transcript), bounded `working_messages.jsonl` (the context all server channels resume from), `context_checkpoint.json`, and `output.log`. `runtime.PrepareConversation` prefers the working snapshot, falls back to the raw transcript/checkpoint for legacy sessions, and ensures the system message is current. Successful turns persist a fresh working snapshot; the raw transcript remains append-only.
+Each session is a directory under `.agent/sessions/<id>/` with `meta.json` (status: created/running/completed/failed), `messages.jsonl`, bounded `working_messages.jsonl`, `context_checkpoint.json`, and `output.log`. `SESSION_TRANSCRIPT_MODE` defaults to `compact`: completed turns atomically rewrite the transcript to the bounded working snapshot, while `full` preserves append-only audit history. Recovery uses a newer transcript after an interrupted turn, otherwise it prefers the working snapshot. Server startup compacts eligible legacy sessions in compact mode, and `SESSION_OUTPUT_MAX_BYTES` caps retained session output at 1 MiB by default.
 
 ### Server & channels — `internal/server`
 
@@ -77,7 +76,7 @@ Each session is a directory under `.agent/sessions/<id>/` with `meta.json` (stat
 
 ### External agents — `internal/extagent`
 
-The `Broker` can route a turn to an external coding agent instead of the built-in loop. A message starting with `/claude`, `/codex`, `/cursor`, or `/opencode` routes explicitly (and sticks to that agent for the session); `/default` switches back. Transports are **ACP** (JSON-RPC over the agent's stdio) or **CLI** (one-shot exec), auto-detected from `AGENT_<NAME>_ACP_CMD/ARGS` and `AGENT_<NAME>_CLI_CMD/ARGS`.
+The `Broker` can route a turn to an external coding agent instead of the built-in loop. A message starting with `/claude`, `/codex`, `/cursor`, or `/opencode` routes explicitly (and sticks to that agent for the session); `/default` switches back. Transports are **ACP** (JSON-RPC over the agent's stdio) or **CLI** (one-shot exec), auto-detected from `AGENT_<NAME>_ACP_CMD/ARGS` and `AGENT_<NAME>_CLI_CMD/ARGS`. OpenCode defaults to ACP via `opencode acp`; CLI adapters exist only for Claude and Codex, so Cursor and OpenCode are ACP-only.
 
 ### MCP client — `internal/mcp`
 
@@ -85,7 +84,7 @@ The `Broker` can route a turn to an external coding agent instead of the built-i
 
 ### Run traces and evaluation — `internal/trace`, `internal/evalharness`
 
-Every CLI/server execution receives session, turn, and run IDs. A run persists `meta.json`, append-only `events.jsonl`, artifacts, feedback, and output under `.agent/runs/<run-id>/`. Model calls record context hashes and provider/estimated token usage; regular and special tools record redacted arguments, bounded result summaries, hashes, timings, and error categories. `/feedback` and `/api/v1/runs/<id>` expose the trace lifecycle. `cmd/eval` loads the versioned 28-task manifest in `eval/tasks.json`; replay mode is deterministic and live mode is explicit.
+Run tracing is controlled by `RUN_TRACE_ENABLED` and defaults to off. When enabled, every CLI/server execution receives session, turn, and run IDs. A run persists `meta.json`, append-only `events.jsonl`, artifacts, feedback, and output under `.agent/runs/<run-id>/`. Model calls record context hashes and provider/estimated token usage; regular and special tools record redacted arguments, bounded result summaries, hashes, timings, and error categories. `/feedback` and `/api/v1/runs/<id>` expose the trace lifecycle. `cmd/eval` loads the versioned 28-task manifest in `eval/tasks.json`; replay mode is deterministic and live mode is explicit.
 
 ### Subagents — `internal/subagent`
 

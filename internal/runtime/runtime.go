@@ -12,6 +12,7 @@ import (
 	"bqagent/internal/agent"
 	"bqagent/internal/mcp"
 	appmemory "bqagent/internal/memory"
+	"bqagent/internal/session"
 	"bqagent/internal/tools"
 )
 
@@ -25,6 +26,9 @@ type Config struct {
 	BaseURL                      string
 	Model                        string
 	MaxIterations                int
+	RunTraceEnabled              bool
+	SessionTranscriptMode        session.TranscriptMode
+	SessionOutputMaxBytes        int64
 	SearchProvider               string
 	SearchAPIKey                 string
 	SearchBaseURL                string
@@ -52,15 +56,17 @@ type Factory struct {
 }
 
 type Runtime struct {
-	Client        agent.ChatCompletionClient
-	Planner       *agent.Planner
-	Catalog       tools.Catalog
-	APIType       agent.APIType
-	Model         string
-	MaxIterations int
-	WorkspaceRoot string
-	Context       agent.ContextConfig
-	Memory        *appmemory.Store
+	Client          agent.ChatCompletionClient
+	Planner         *agent.Planner
+	Catalog         tools.Catalog
+	APIType         agent.APIType
+	Model           string
+	MaxIterations   int
+	RunTraceEnabled bool
+	SessionOptions  session.Options
+	WorkspaceRoot   string
+	Context         agent.ContextConfig
+	Memory          *appmemory.Store
 }
 
 func ConfigFromEnv(getenv func(string) string) Config {
@@ -84,6 +90,9 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		BaseURL:                      baseURL,
 		Model:                        model,
 		MaxIterations:                envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
+		RunTraceEnabled:              envBool(getenv("RUN_TRACE_ENABLED"), false),
+		SessionTranscriptMode:        session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
+		SessionOutputMaxBytes:        envInt64(getenv("SESSION_OUTPUT_MAX_BYTES"), session.DefaultOutputMaxBytes),
 		SearchProvider:               searchProvider,
 		SearchAPIKey:                 searchAPIKey,
 		SearchBaseURL:                searchBaseURL,
@@ -141,6 +150,18 @@ func envInt(raw string, fallback int) int {
 	return parsed
 }
 
+func envInt64(raw string, fallback int64) int64 {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(text, 10, 64)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
+
 func (factory Factory) Build(includePlan bool) Runtime {
 	apiType := agent.NormalizeAPIType(string(factory.Config.APIType))
 	model := agent.EffectiveModel(factory.Config.Model)
@@ -173,12 +194,17 @@ func (factory Factory) Build(includePlan bool) Runtime {
 	})
 
 	return Runtime{
-		Client:        client,
-		Planner:       planner,
-		Catalog:       catalog,
-		APIType:       apiType,
-		Model:         model,
-		MaxIterations: factory.Config.MaxIterations,
+		Client:          client,
+		Planner:         planner,
+		Catalog:         catalog,
+		APIType:         apiType,
+		Model:           model,
+		MaxIterations:   factory.Config.MaxIterations,
+		RunTraceEnabled: factory.Config.RunTraceEnabled,
+		SessionOptions: session.Options{
+			TranscriptMode: factory.Config.SessionTranscriptMode,
+			OutputMaxBytes: factory.Config.SessionOutputMaxBytes,
+		},
 		WorkspaceRoot: factory.WorkspaceRoot,
 		Context: agent.ContextConfig{
 			Enabled:               factory.Config.ContextManagementEnabled,

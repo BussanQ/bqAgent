@@ -77,6 +77,10 @@ func extractToolMessages(messages []map[string]any) []map[string]any {
 }
 
 func TestRunConversationStageCheckpointPersistsSummary(t *testing.T) {
+	originalSelector := selectModelProgressMessage
+	selectModelProgressMessage = func([]string) string { return "Calculating…" }
+	t.Cleanup(func() { selectModelProgressMessage = originalSelector })
+
 	client := &stubClient{responses: []AssistantMessage{
 		{ToolCalls: []ToolCall{{ID: "read-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"main.go"}`}}}},
 		{Content: "已发现\n- 找到入口\n\n未完成\n- 依赖分析\n\n建议下一步\n- 回复“继续”"},
@@ -110,7 +114,7 @@ func TestRunConversationStageCheckpointPersistsSummary(t *testing.T) {
 	if updated[len(updated)-1]["role"] != "assistant" || lastContent != result {
 		t.Fatalf("checkpoint was not appended to updated messages: %#v", updated[len(updated)-1])
 	}
-	for _, want := range []string{"Starting analysis iteration 1", "Running read_file on main.go", "Preparing stage summary", "Stage summary completed"} {
+	for _, want := range []string{"Calculating…", "Running read_file on main.go", "Preparing stage summary", "Stage summary completed"} {
 		if !strings.Contains(progress.String(), want) {
 			t.Fatalf("progress %q missing %q", progress.String(), want)
 		}

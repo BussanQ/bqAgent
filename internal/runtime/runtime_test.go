@@ -4,11 +4,15 @@ import (
 	"testing"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/session"
 )
 
 func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	config := ConfigFromEnv(func(string) string { return "" })
 	defaults := agent.DefaultContextConfig()
+	if config.RunTraceEnabled {
+		t.Fatal("RunTraceEnabled = true, want false by default")
+	}
 
 	if config.ContextManagementEnabled != defaults.Enabled {
 		t.Fatalf("ContextManagementEnabled = %t, want %t", config.ContextManagementEnabled, defaults.Enabled)
@@ -36,6 +40,51 @@ func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	}
 	if config.ContextSummaryModel != defaults.SummaryModel {
 		t.Fatalf("ContextSummaryModel = %q, want %q", config.ContextSummaryModel, defaults.SummaryModel)
+	}
+}
+
+func TestConfigFromEnvUsesSessionStorageDefaultsAndOverrides(t *testing.T) {
+	defaults := ConfigFromEnv(func(string) string { return "" })
+	if defaults.SessionTranscriptMode != session.TranscriptModeCompact || defaults.SessionOutputMaxBytes != session.DefaultOutputMaxBytes {
+		t.Fatalf("session defaults = mode %q bytes %d", defaults.SessionTranscriptMode, defaults.SessionOutputMaxBytes)
+	}
+	overrides := ConfigFromEnv(func(key string) string {
+		switch key {
+		case "SESSION_TRANSCRIPT_MODE":
+			return "full"
+		case "SESSION_OUTPUT_MAX_BYTES":
+			return "0"
+		default:
+			return ""
+		}
+	})
+	if overrides.SessionTranscriptMode != session.TranscriptModeFull || overrides.SessionOutputMaxBytes != 0 {
+		t.Fatalf("session overrides = mode %q bytes %d", overrides.SessionTranscriptMode, overrides.SessionOutputMaxBytes)
+	}
+	invalid := ConfigFromEnv(func(key string) string {
+		switch key {
+		case "SESSION_TRANSCRIPT_MODE":
+			return "invalid"
+		case "SESSION_OUTPUT_MAX_BYTES":
+			return "-1"
+		default:
+			return ""
+		}
+	})
+	if invalid.SessionTranscriptMode != session.TranscriptModeCompact || invalid.SessionOutputMaxBytes != session.DefaultOutputMaxBytes {
+		t.Fatalf("invalid session config = mode %q bytes %d", invalid.SessionTranscriptMode, invalid.SessionOutputMaxBytes)
+	}
+}
+
+func TestConfigFromEnvEnablesRunTrace(t *testing.T) {
+	config := ConfigFromEnv(func(key string) string {
+		if key == "RUN_TRACE_ENABLED" {
+			return "true"
+		}
+		return ""
+	})
+	if !config.RunTraceEnabled {
+		t.Fatal("RunTraceEnabled = false, want true")
 	}
 }
 

@@ -7,6 +7,11 @@ import (
 	"sync"
 )
 
+type acpClientKey struct {
+	sessionID string
+	agent     AgentName
+}
+
 type Broker struct {
 	store      *StateStore
 	detections map[AgentName]DetectionResult
@@ -14,7 +19,7 @@ type Broker struct {
 	cli        CLIAdapter
 
 	mu         sync.Mutex
-	acpClients map[string]ACPClient
+	acpClients map[acpClientKey]ACPClient
 }
 
 func NewBroker(store *StateStore, detections map[AgentName]DetectionResult, factory ACPClientFactory) *Broker {
@@ -25,7 +30,7 @@ func NewBroker(store *StateStore, detections map[AgentName]DetectionResult, fact
 		store:      store,
 		detections: detections,
 		acpFactory: factory,
-		acpClients: map[string]ACPClient{},
+		acpClients: map[acpClientKey]ACPClient{},
 	}
 }
 
@@ -64,9 +69,12 @@ func (broker *Broker) Clear(sessionID string) error {
 	}
 
 	broker.mu.Lock()
-	if client := broker.acpClients[sessionID]; client != nil {
+	for key, client := range broker.acpClients {
+		if key.sessionID != sessionID {
+			continue
+		}
 		_ = client.Close()
-		delete(broker.acpClients, sessionID)
+		delete(broker.acpClients, key)
 	}
 	broker.mu.Unlock()
 
@@ -112,7 +120,7 @@ func (broker *Broker) SendTurn(ctx context.Context, request TurnRequest) (TurnRe
 }
 
 func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state SessionState, cwd, prompt string) (TurnResponse, error) {
-	client, err := broker.acpClient(state.BQSessionID, spec, cwd)
+	client, err := broker.acpClient(state.BQSessionID, state.Agent, spec, cwd)
 	if err != nil {
 		return TurnResponse{}, err
 	}
@@ -136,10 +144,11 @@ func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state Sessi
 	return TurnResponse{Reply: reply, State: state}, nil
 }
 
-func (broker *Broker) acpClient(sessionID string, spec CommandSpec, cwd string) (ACPClient, error) {
+func (broker *Broker) acpClient(sessionID string, agent AgentName, spec CommandSpec, cwd string) (ACPClient, error) {
 	broker.mu.Lock()
 	defer broker.mu.Unlock()
-	if client := broker.acpClients[sessionID]; client != nil {
+	key := acpClientKey{sessionID: sessionID, agent: agent}
+	if client := broker.acpClients[key]; client != nil {
 		return client, nil
 	}
 	client, err := broker.acpFactory(spec, cwd)
@@ -150,7 +159,7 @@ func (broker *Broker) acpClient(sessionID string, spec CommandSpec, cwd string) 
 		_ = client.Close()
 		return nil, err
 	}
-	broker.acpClients[sessionID] = client
+	broker.acpClients[key] = client
 	return client, nil
 }
 

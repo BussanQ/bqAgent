@@ -40,82 +40,132 @@ Install Go 1.22+ and build the CLI:
 go build -o bqagent ./cmd/agent
 ```
 
-Set your environment variables:
+## Environment variables
 
-`LLM_API_TYPE` selects the wire protocol. Supported values are `openai` (default),
-`openai-response`, and `anthropic`. The existing `OPENAI_*` variables remain
-compatible; generic `LLM_*` variables take precedence.
+bqagent reads configuration from the process environment and from a `.env` file in the workspace root. Values already present in the process environment take precedence over `.env`.
+
+The workspace `.env` format is recommended:
+
+```dotenv
+LLM_API_TYPE=openai
+LLM_API_KEY=your-key-here
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
+```
+
+The same variables can be set directly in a shell:
 
 **macOS/Linux:**
 ```bash
-export OPENAI_API_KEY='your-key-here'
-export OPENAI_BASE_URL='https://api.openai.com/v1'  # optional
-export OPENAI_MODEL='gpt-4o-mini'  # optional
-export LLM_API_TYPE='openai'  # optional
+export LLM_API_KEY='your-key-here'
 ```
 
 **Windows (PowerShell):**
 ```powershell
-$env:OPENAI_API_KEY='your-key-here'
-$env:OPENAI_BASE_URL='https://api.openai.com/v1'  # optional
-$env:OPENAI_MODEL='gpt-4o-mini'  # optional
-$env:LLM_API_TYPE='openai'  # optional
+$env:LLM_API_KEY='your-key-here'
 ```
 
 **Windows (CMD):**
 ```cmd
-set OPENAI_API_KEY=your-key-here
-set OPENAI_BASE_URL=https://api.openai.com/v1
-set OPENAI_MODEL=gpt-4o-mini
-set LLM_API_TYPE=openai
+set LLM_API_KEY=your-key-here
 ```
 
-You can also put the same variables in a `.env` file at the workspace root. bqagent will load that file automatically on startup.
+### LLM provider
 
-```dotenv
-OPENAI_API_KEY=your-key-here
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
-LLM_API_TYPE=openai
-```
+Generic `LLM_*` values take precedence over provider-specific compatibility variables.
+
+| Variable | Default | Description |
+|---|---|---|
+| `LLM_API_TYPE` | `openai` | Wire protocol: `openai`, `openai-response`, or `anthropic`. |
+| `LLM_API_KEY` | — | Generic API key. Required in server mode. |
+| `LLM_BASE_URL` | provider default | Generic provider endpoint override. |
+| `LLM_MODEL` | `MiniMax-M2.5` | Effective built-in model. |
+| `OPENAI_API_TYPE` | — | Compatibility alias for `LLM_API_TYPE`. |
+| `OPENAI_API_KEY` | — | OpenAI-compatible API key fallback. |
+| `OPENAI_BASE_URL` | provider default | OpenAI-compatible endpoint fallback. |
+| `OPENAI_MODEL` | — | OpenAI-compatible model fallback. |
+| `ANTHROPIC_API_KEY` | — | Anthropic key fallback when the API type is `anthropic`. |
+| `ANTHROPIC_BASE_URL` | provider default | Anthropic endpoint fallback. |
+| `ANTHROPIC_MODEL` | — | Anthropic model fallback. |
 
 OpenAI Responses API example:
 
 ```dotenv
 LLM_API_TYPE=openai-response
-OPENAI_API_KEY=your-key-here
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-5
+LLM_API_KEY=your-key-here
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-5
 ```
 
 Anthropic Messages API example:
 
 ```dotenv
 LLM_API_TYPE=anthropic
-ANTHROPIC_API_KEY=your-key-here
-ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
-ANTHROPIC_MODEL=claude-sonnet-4-5
+LLM_API_KEY=your-key-here
+LLM_BASE_URL=https://api.anthropic.com/v1
+LLM_MODEL=claude-sonnet-4-5
 ```
 
-You may use `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL` instead of the
-provider-specific variables. `OPENAI_API_TYPE` is accepted as a compatibility
-alias for `LLM_API_TYPE`.
+The effective model and API type are injected into every built-in LLM system prompt and exposed without secrets by `GET /api/v1/status`.
 
-Environment variables that are already set in the shell take precedence over values from `.env`.
+### Search
 
-If no model variable is set, bqagent defaults to `MiniMax-M2.5`.
+| Variable | Default | Description |
+|---|---|---|
+| `SEARCH_API_KEY` | — | Tavily-compatible search key; takes precedence over Firecrawl settings. |
+| `SEARCH_BASE_URL` | provider default | Tavily-compatible endpoint override. |
+| `FIRECRAWL_API_KEY` | — | Firecrawl key used when `SEARCH_*` is not configured. |
+| `FIRECRAWL_BASE_URL` | provider default | Firecrawl endpoint override. |
 
-The effective model and API type are injected into the system prompt for every
-built-in LLM turn, so the assistant can answer model-identity questions from
-runtime configuration instead of guessing. Resumed sessions refresh this line
-after a restart, and run traces record the same effective model.
+MCP header values in `.agent/mcp.json` may reference any environment variable with `${NAME}` syntax, for example `Bearer ${DASHSCOPE_API_KEY}`.
 
-For ServerChan Bot webhook conversations, the server mode also supports:
+### Server and channels
 
-```bash
-export SERVERCHAN_BOT_TOKEN='your-bot-token'
-export SERVERCHAN_BOT_WEBHOOK_SECRET='your-webhook-secret'  # optional but recommended
-```
+| Variable | Default | Description |
+|---|---|---|
+| `WEBUI_ENABLED` | `true` | Set to `false`, `0`, `no`, or `off` to disable `GET /`. |
+| `SERVERCHAN_BOT_TOKEN` | — | Token used by the ServerChan Bot webhook reply path. |
+| `SERVERCHAN_BOT_WEBHOOK_SECRET` | — | Optional required value for `X-Sc3Bot-Webhook-Secret`. |
+| `QQ_BOT_ENABLED` | automatic | QQ is enabled when credentials exist; false-like values force-disable it. |
+| `QQ_BOT_APP_ID` | — | QQ Bot application ID. |
+| `QQ_BOT_CLIENT_SECRET` | — | QQ Bot client secret. |
+| `QQ_BOT_TOKEN_BASE_URL` | `https://bots.qq.com` | QQ token endpoint override. |
+| `QQ_BOT_API_BASE_URL` | `https://api.sgroup.qq.com` | QQ API and gateway endpoint override. |
+| `WEIXIN_ILINK_ENABLED` | `true` | Set to a false-like value to disable the WeChat iLink channel. |
+| `WEIXIN_ILINK_BASE_URL` | `https://ilinkai.weixin.qq.com` | iLink API endpoint override. |
+| `WEIXIN_ILINK_CHANNEL_VERSION` | `1.0.2` | iLink channel protocol version. |
+| `WEIXIN_ILINK_CDN_BASE_URL` | `https://novac2c.cdn.weixin.qq.com/c2c` | Inbound media CDN override. |
+
+### Runtime, context, sessions, and tracing
+
+| Variable | Default | Description |
+|---|---|---|
+| `AGENT_MAX_ITERATIONS` | `1000` | Global loop runaway safety limit. |
+| `CHANNEL_AGENT_MAX_ITERATIONS` | `30` | Channel/WebUI maximum iterations per turn. |
+| `CHANNEL_TURN_TIMEOUT` | `10m` | Whole channel turn timeout. |
+| `CHANNEL_STAGE_MAX_ITERATIONS` | `20` | QQ/iLink iterations before a persisted stage checkpoint. |
+| `CHANNEL_STAGE_TIMEOUT` | `90s` | QQ/iLink stage time budget. |
+| `WEBUI_STAGE_MAX_ITERATIONS` | `20` | WebUI iterations before a stage checkpoint. |
+| `WEBUI_STAGE_TIMEOUT` | `90s` | WebUI stage time budget. |
+| `CONTEXT_MANAGEMENT_ENABLED` | `true` | Enables request-time context budgeting. |
+| `CONTEXT_MAX_INPUT_TOKENS` | `24000` | Maximum estimated model input tokens. |
+| `CONTEXT_TARGET_INPUT_TOKENS` | `20000` | Target size after pruning or summarization. |
+| `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | Tokens reserved for the model response. |
+| `CONTEXT_KEEP_LAST_TURNS` | `6` | Recent turns retained during compaction. |
+| `CONTEXT_SUMMARIZATION_ENABLED` | `true` | Enables summarization of older dialogue. |
+| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `20000` | Estimated input size that triggers summarization. |
+| `CONTEXT_SUMMARY_MODEL` | main model | Optional cheaper model used for summaries. |
+| `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` bounds `messages.jsonl`; `full` keeps append-only audit history. |
+| `SESSION_OUTPUT_MAX_BYTES` | `1048576` | Retained tail of each `output.log`; `0` disables trimming. |
+| `RUN_TRACE_ENABLED` | `false` | Persists `.agent/runs/<run-id>/` traces and enables run feedback APIs. |
+
+### External coding agents
+
+For each name in `CLAUDE`, `CODEX`, `CURSOR`, and `OPENCODE`, `AGENT_<NAME>_ACP_CMD` and `AGENT_<NAME>_ACP_ARGS` override the ACP launch command. CLI transport is currently implemented only for Claude and Codex and can be overridden with `AGENT_<NAME>_CLI_CMD` and `AGENT_<NAME>_CLI_ARGS`.
+
+Claude defaults to `claude -p --output-format json`; Codex defaults to `codex exec --json --skip-git-repo-check`. OpenCode defaults to ACP via `opencode acp`, while Cursor requires an explicitly configured ACP transport. The `opencode` executable must be visible in the PATH of the process that starts bqAgent; restart a long-lived chat/server process after installing OpenCode or changing its transport environment.
+
+In `--chat` or `--server` sessions, use `/opencode <task>` to route the turn to OpenCode. Later messages remain bound to it until `/default` switches back to the built-in agent. OpenCode is ACP-only; configuring `AGENT_OPENCODE_CLI_CMD/ARGS` does not enable a CLI transport.
 
 ## Quick start
 
@@ -219,16 +269,18 @@ project/
 - `.agent/skills/*/SKILL.md`
   - Markdown skill definitions summarized into the prompt
 - `.agent/sessions/<session-id>/messages.jsonl`
-  - append-only raw transcript for resumable conversations
+  - current-turn journal; compact mode converges it to the bounded snapshot after each turn
+- `.agent/sessions/<session-id>/working_messages.jsonl`
+  - stable bounded snapshot used for normal resume
 - `.agent/sessions/<session-id>/context_checkpoint.json`
   - compact checkpoint with summary plus recent tail for faster resume context reconstruction
-  - does not replace or rewrite the raw `messages.jsonl` history
 - `.agent/sessions/<session-id>/output.log`
   - human-readable execution log
 - `.agent/mcp.json`
   - MCP server config (`mcpServers` map). **Streamable HTTP** servers listed here are connected at
     startup; their tools are discovered via `tools/list` and exposed to the model as
-    `mcp__<server>__<tool>`. Header values support `${ENV}` expansion (e.g. `Bearer ${DASHSCOPE_API_KEY}`).
+    `mcp__<server>__<tool>`. Header environment expansion is described under
+    [environment variables](#environment-variables).
   - Discovery is best-effort: a server marked `"disabled": true`, missing, or unreachable is skipped
     (a warning is logged) and never blocks startup. Only the Streamable HTTP transport is supported.
 
@@ -262,7 +314,7 @@ Long conversations now use request-time context management before each model cal
 - completed historical tool-call scaffolding is stripped from the request payload
 - older turns can be pruned to stay within a target input budget
 - optional summarization can replace older dialogue with a synthetic summary message
-- the raw on-disk transcript remains intact even when the request payload is shortened
+- bounded working snapshots are persisted for reliable resume
 
 `--background` starts a minimal background session by launching the same binary as a child process and writing output to:
 
@@ -293,11 +345,11 @@ example `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`.
 It never exposes API keys or provider endpoint URLs. The WebUI displays this
 identity under the bqagent title when the endpoint is available.
 
-`GET /` serves a self-contained, single-page chat UI (HTML/CSS/JS embedded in the binary, no external assets). Open `http://127.0.0.1:8080` in a browser and chat directly. The UI supports light/dark themes and safely renders Markdown headings, lists, task lists, tables, blockquotes, links, images, and copyable fenced code blocks, making README-style `.md` content easy to read. Replies stream token-by-token over Server-Sent Events from `POST /api/v1/webui/chat`; while a turn is running, the send button becomes a stop button backed by the channel-independent `POST /api/v1/chat/stop` endpoint, which cancels the active model request and tool execution identified by `turn_id`. The cancellation registry lives in the shared conversation service, so other channels can opt in later without WebUI-specific stop logic. `event: progress` reports iterations, tool activity, and stage checkpoints. Long WebUI work pauses with a persisted stage summary, so replying "继续" resumes the same `session_id` instead of restarting exploration. The web UI is **enabled by default**; set `WEBUI_ENABLED=false` to disable it (then `GET /` returns 404).
+`GET /` serves a self-contained, single-page chat UI (HTML/CSS/JS embedded in the binary, no external assets). Open `http://127.0.0.1:8080` in a browser and chat directly. The UI supports light/dark themes and safely renders Markdown headings, lists, task lists, tables, blockquotes, links, images, and copyable fenced code blocks, making README-style `.md` content easy to read. Replies stream token-by-token over Server-Sent Events from `POST /api/v1/webui/chat`; while a turn is running, the send button becomes a stop button backed by the channel-independent `POST /api/v1/chat/stop` endpoint, which cancels the active model request and tool execution identified by `turn_id`. The cancellation registry lives in the shared conversation service, so other channels can opt in later without WebUI-specific stop logic. `event: progress` reports iterations, tool activity, and stage checkpoints. Long WebUI work pauses with a persisted stage summary, so replying "继续" resumes the same `session_id` instead of restarting exploration. The web UI is enabled by default and can be disabled through the [environment variables](#environment-variables) configuration.
 
 `/api/v1/serverchan/chat` is the existing sendkey-based push adapter: it generates a reply and forwards it through ServerChan using the `text` / `desp` / `sendkey` shape from the Go demo.
 
-`/api/v1/serverchan/bot/webhook` is the conversational webhook endpoint for ServerChan Bot / WeChat replies. It accepts the Bot webhook JSON update format, maps each inbound `chat_id` onto a persisted bqagent session, and sends the assistant reply back through the Bot `sendMessage` API using `SERVERCHAN_BOT_TOKEN`. If `SERVERCHAN_BOT_WEBHOOK_SECRET` is set, requests must include `X-Sc3Bot-Webhook-Secret`.
+`/api/v1/serverchan/bot/webhook` is the conversational webhook endpoint for ServerChan Bot / WeChat replies. It accepts the Bot webhook JSON update format, maps each inbound `chat_id` onto a persisted bqagent session, and sends the assistant reply through the configured Bot credentials. Optional webhook authentication is documented under [environment variables](#environment-variables).
 
 `--server --background` runs this server in the background and writes service logs to `.agent/server/server.log`. For real webhook use, expose `/api/v1/serverchan/bot/webhook` through a public HTTPS endpoint or reverse proxy.
 
@@ -305,29 +357,10 @@ By default the loop behaves like an auto-compacting agent: when the conversation
 approaches the input-token budget it summarizes (compacts) the older turns and
 **continues** on the compacted context, rather than stopping at a fixed turn
 count. The iteration cap is therefore just a runaway safety valve (defaults to a
-high `1000`); the raw on-disk transcript stays complete. Summarization is enabled
-by default — set `CONTEXT_SUMMARY_MODEL` to summarize with a cheaper model on long
-tasks, or `CONTEXT_SUMMARIZATION_ENABLED=false` to fall back to plain pruning.
+high `1000`). Summarization is enabled
+by default. All context budgets and summary-model overrides are listed in the [environment variables](#environment-variables) chapter.
 
-Context behavior is configurable through environment variables:
-
-Sessions persist the channel/user mapping, status, full `messages.jsonl` audit trail, and resumable context checkpoints. Every channel resumes from the bounded `working_messages.jsonl` snapshot when available instead of reloading the complete transcript. Request construction additionally prioritizes the system prompt, summary, and latest user request, then hard-prunes oversized tool evidence. WeChat/iLink sends only the final reply because its context token must not be consumed by intermediate progress messages.
-
-- `AGENT_MAX_ITERATIONS` (loop runaway safety valve; defaults to `1000`)
-- `CHANNEL_AGENT_MAX_ITERATIONS` (optional channel/WebUI override; defaults to `30`)
-- `CHANNEL_TURN_TIMEOUT` (whole channel turn timeout; defaults to `10m`)
-- `CHANNEL_STAGE_MAX_ITERATIONS` (QQ/iLink iterations before a persisted checkpoint; defaults to `20`)
-- `CHANNEL_STAGE_TIMEOUT` (QQ/iLink time before a persisted checkpoint; defaults to `90s`)
-- `WEBUI_STAGE_MAX_ITERATIONS` (iterations before a WebUI checkpoint; defaults to `20`)
-- `WEBUI_STAGE_TIMEOUT` (time before a WebUI checkpoint; defaults to `90s`)
-- `CONTEXT_MANAGEMENT_ENABLED`
-- `CONTEXT_MAX_INPUT_TOKENS`
-- `CONTEXT_TARGET_INPUT_TOKENS`
-- `CONTEXT_RESPONSE_RESERVE_TOKENS`
-- `CONTEXT_KEEP_LAST_TURNS`
-- `CONTEXT_SUMMARIZATION_ENABLED`
-- `CONTEXT_SUMMARY_TRIGGER_TOKENS`
-- `CONTEXT_SUMMARY_MODEL`
+Sessions persist the channel/user mapping, status, messages, and resumable context checkpoints. The default compact mode rewrites `messages.jsonl` to the bounded `working_messages.jsonl` snapshot after each turn, preventing raw tool results from accumulating indefinitely; full append-only audit history remains available as an opt-in. If a transcript is newer than its working snapshot after an interrupted turn, recovery uses the newer transcript. Session log limits and storage modes are documented under [environment variables](#environment-variables). WeChat/iLink sends only the final reply because its context token must not be consumed by intermediate progress messages.
 
 This is still intentionally a small implementation:
 
@@ -338,7 +371,7 @@ This is still intentionally a small implementation:
 
 ## Run traces, evaluation, and feedback
 
-Every task persists a structured trace under `.agent/runs/<run-id>/`, including model/context versions, token usage, tool summaries, timings, errors, artifacts, verifier results, and feedback.
+Run tracing is disabled by default and can be enabled through the [environment variables](#environment-variables) configuration. Enabled runs persist a structured trace under `.agent/runs/<run-id>/`, including model/context versions, token usage, tool summaries, timings, errors, artifacts, verifier results, and feedback. When disabled, responses omit `run_id` and the run trace/feedback endpoints are unavailable.
 
 ```bash
 go run ./cmd/eval --suite smoke --mode replay
