@@ -40,7 +40,7 @@ func TestBuildSystemPromptIncludesRulesSkillsAndMemory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".agent", "rules", "safety.md"), []byte("Always be careful."), 0o644); err != nil {
 		t.Fatalf("failed to write rule file: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nHelps summarize repository changes."), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("---\ndescription: Helps summarize repository changes.\nalias: hidden-alias\n---\n\n# Demo Skill\n\nFull instructions stay out of the system prompt."), 0o644); err != nil {
 		t.Fatalf("failed to write skill file: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "agent_memory.md"), []byte("old\nrecent memory"), 0o644); err != nil {
@@ -58,8 +58,10 @@ func TestBuildSystemPromptIncludesRulesSkillsAndMemory(t *testing.T) {
 		"# Rules",
 		"Always be careful.",
 		"# Skills",
-		"Available executable skills can be run with the run_skill tool when one is clearly relevant.",
-		"demo (Demo Skill): Helps summarize repository changes.",
+		"The following entries are discovery metadata only.",
+		"- name: demo",
+		"description: Helps summarize repository changes.",
+		"path: .agent/skills/demo/SKILL.md",
 		"# Memory",
 		"## agent_memory.md",
 		"recent memory",
@@ -67,6 +69,11 @@ func TestBuildSystemPromptIncludesRulesSkillsAndMemory(t *testing.T) {
 	for _, check := range checks {
 		if !strings.Contains(prompt, check) {
 			t.Fatalf("prompt = %q, want substring %q", prompt, check)
+		}
+	}
+	for _, forbidden := range []string{"hidden-alias", "Full instructions stay out of the system prompt.", filepath.Join(root, ".agent", "skills")} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt = %q, must not contain %q", prompt, forbidden)
 		}
 	}
 }
@@ -77,7 +84,7 @@ func TestLoadSkillReturnsStructuredSkill(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
 		t.Fatalf("failed to create skills directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nHelps summarize repository changes."), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("---\ndescription: Helps summarize repository changes.\n---\n\n# Demo Skill\n\nPrivate workflow body."), 0o644); err != nil {
 		t.Fatalf("failed to write skill file: %v", err)
 	}
 
@@ -88,11 +95,11 @@ func TestLoadSkillReturnsStructuredSkill(t *testing.T) {
 	if skill.ID != "demo" {
 		t.Fatalf("skill.ID = %q, want %q", skill.ID, "demo")
 	}
-	if skill.Title != "Demo Skill" {
-		t.Fatalf("skill.Title = %q, want %q", skill.Title, "Demo Skill")
+	if skill.Description != "Helps summarize repository changes." {
+		t.Fatalf("skill.Description = %q, want description", skill.Description)
 	}
-	if skill.Summary != "Helps summarize repository changes." {
-		t.Fatalf("skill.Summary = %q, want summary", skill.Summary)
+	if skill.Path != ".agent/skills/demo/SKILL.md" {
+		t.Fatalf("skill.Path = %q, want workspace-relative path", skill.Path)
 	}
 }
 
@@ -102,7 +109,7 @@ func TestLoadSkillParsesAliasesFromFrontMatter(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
 		t.Fatalf("failed to create skills directory: %v", err)
 	}
-	content := "---\naliases:\n  - aihot\n  - ai日报\nalias: hot\n---\n\n# Demo Skill\n\nHelps summarize repository changes."
+	content := "---\ndescription: Helps summarize repository changes.\naliases:\n  - aihot\n  - ai日报\nalias: hot\n---\n\n# Demo Skill\n\nPrivate workflow body."
 	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte(content), 0o644); err != nil {
 		t.Fatalf("failed to write skill file: %v", err)
 	}
@@ -111,11 +118,8 @@ func TestLoadSkillParsesAliasesFromFrontMatter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSkill returned error: %v", err)
 	}
-	if skill.Title != "Demo Skill" {
-		t.Fatalf("skill.Title = %q, want %q", skill.Title, "Demo Skill")
-	}
-	if skill.Summary != "Helps summarize repository changes." {
-		t.Fatalf("skill.Summary = %q, want summary", skill.Summary)
+	if skill.Description != "Helps summarize repository changes." {
+		t.Fatalf("skill.Description = %q, want description", skill.Description)
 	}
 	wantAliases := []string{"aihot", "ai日报", "hot"}
 	if len(skill.Aliases) != len(wantAliases) {
@@ -125,6 +129,29 @@ func TestLoadSkillParsesAliasesFromFrontMatter(t *testing.T) {
 		if skill.Aliases[index] != want {
 			t.Fatalf("skill.Aliases[%d] = %q, want %q", index, skill.Aliases[index], want)
 		}
+	}
+}
+
+func TestLoadSkillWithoutFrontMatterUsesDefaultDescription(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root}
+	dir := filepath.Join(root, ".agent", "skills", "plain")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("failed to create skills directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("# Secret workflow\n\nDo not expose this body during discovery."), 0o644); err != nil {
+		t.Fatalf("failed to write skill file: %v", err)
+	}
+
+	skill, err := ws.LoadSkill("plain")
+	if err != nil {
+		t.Fatalf("LoadSkill returned error: %v", err)
+	}
+	if skill.Description != defaultSkillDescription {
+		t.Fatalf("skill.Description = %q, want %q", skill.Description, defaultSkillDescription)
+	}
+	if len(skill.Aliases) != 0 {
+		t.Fatalf("skill.Aliases = %v, want none", skill.Aliases)
 	}
 }
 

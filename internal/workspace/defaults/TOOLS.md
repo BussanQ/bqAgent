@@ -20,6 +20,8 @@ It is guidance only — it does not change what tools are available.
 
 ## Skills
 - **install_skill**: Install a skill from a URL into `.agent/skills/<name>/SKILL.md`. Provide `url`, optionally `name`, and `overwrite` as `true` when replacing an existing skill.
+- The system prompt lists only each skill's name, frontmatter description, and workspace-relative `SKILL.md` path. When a listed skill is relevant, first use **read_file** to read the complete file, then follow its instructions in the current conversation.
+- `/skill <name-or-alias> [args]` explicitly selects a skill but still uses the normal **read_file** workflow. There is no separate `run_skill` tool.
 
 ## Memory (implemented)
 - **mem_save**: Save knowledge to memory. Parameters: `target` ("daily" or "longterm"), `content` (text to save). Daily saves go to `.agent/memory/YYYY-MM-DD.md`, longterm saves go to `.agent/memory/MEMORY.md`. Use longterm for durable facts, preferences, and patterns. Use daily for session notes.

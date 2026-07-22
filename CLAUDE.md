@@ -56,7 +56,7 @@ The dependency direction is `cmd/agent → internal/{server,runtime} → interna
 - if there are no tool calls → returns final content,
 - otherwise executes each tool call and appends a `tool` result message, then loops.
 
-`plan` and `run_skill` are handled specially inside the loop (they recurse into a child `runConversation`); all other tools dispatch through the `functions` map. Unknown tools and malformed JSON args become tool error messages rather than aborting the run.
+`plan` is handled specially inside the loop because it recurses into a child `runConversation`; all other tools dispatch through the `functions` map. Skills use Pi-style progressive disclosure: the system prompt lists only name/description/path metadata, and the main conversation calls `read_file` to load the complete `SKILL.md` when needed. Unknown tools and malformed JSON args become tool error messages rather than aborting the run.
 
 **Messages are untyped `[]map[string]any`** in OpenAI chat shape (`role`, `content`, `tool_calls`, `tool_call_id`). This convention runs end to end — session persistence, context pruning, and channel state all operate on these maps.
 
@@ -64,7 +64,7 @@ The dependency direction is `cmd/agent → internal/{server,runtime} → interna
 
 ### System prompt assembly — `internal/workspace`
 
-`BuildSystemPrompt` concatenates, in order: base prompt → workspace section → `.agent/{AGENT,SOUL,TOOLS,USER}.md` → `.agent/rules/*.md` → a summary of `.agent/skills/*/SKILL.md` → memory tail. **Two memory layouts coexist:** the primary `.agent/memory/{MEMORY.md, YYYY-MM-DD.md}` and a legacy fallback (`workspace/...` and `agent_memory.md`) read only when the primary file is absent. Task/result pairs auto-append to today's daily memory file. Skills can be invoked by id or by alias (parsed from SKILL.md frontmatter).
+`BuildSystemPrompt` concatenates, in order: base prompt → workspace section → `.agent/{AGENT,SOUL,TOOLS,USER}.md` → `.agent/rules/*.md` → a metadata-only index of `.agent/skills/*/SKILL.md` → memory tail. Skill discovery reads only bounded frontmatter (`description` plus aliases); the prompt exposes canonical name, description, and a workspace-relative path. When relevant, the main agent uses `read_file` to load the complete `SKILL.md`. **Two memory layouts coexist:** the primary `.agent/memory/{MEMORY.md, YYYY-MM-DD.md}` and a legacy fallback (`workspace/...` and `agent_memory.md`) read only when the primary file is absent. Task/result pairs auto-append to today's daily memory file. `/skill <id-or-alias> [args]` and leading IDs/aliases rewrite the user turn into a mandatory first `read_file` instruction without creating a child agent.
 
 ### Sessions — `internal/session`
 
@@ -96,9 +96,9 @@ Run tracing is controlled by `RUN_TRACE_ENABLED` and defaults to off. When enabl
 
 ## Built-in tools — `internal/tools`
 
-`execute_bash`, `read_file` (with optional `offset`/`limit`), `write_file`, `edit_file` (exact string replacement, like Claude Code's Edit), `grep` (pure-Go regexp content search; no external ripgrep), `glob` (filename match, supports `**`), `todo_write` (session task list; `todos` is a JSON-array string since the `JSONSchema` type only models flat string props), `web_search` (Tavily, with Firecrawl env vars as fallback), `web_fetch`, `install_skill`, `mem_save`/`mem_get`, plus `plan` and `run_skill` (added conditionally). Tools are assembled into a `Catalog` (definitions + a name→`Function` registry) so the CLI, chat, and server all expose the same set. To add a tool: add its `Definition` in `builtinDefinitions()` and its implementation to `RegistryWithOptions`.
+`execute_bash`, `read_file` (with optional `offset`/`limit`), `write_file`, `edit_file` (exact string replacement, like Claude Code's Edit), `grep` (pure-Go regexp content search; no external ripgrep), `glob` (filename match, supports `**`), `todo_write` (session task list; `todos` is a JSON-array string since the `JSONSchema` type only models flat string props), `web_search` (Tavily, with Firecrawl env vars as fallback), `web_fetch`, `install_skill`, `mem_save`/`mem_get`, plus conditional `plan`. Skills are read on demand through the ordinary `read_file` tool; there is no `run_skill` definition. Tools are assembled into a `Catalog` (definitions + a name→`Function` registry) so the CLI, chat, and server all expose the same set. To add a tool: add its `Definition` in `builtinDefinitions()` and its implementation to `RegistryWithOptions`.
 
-Within one assistant turn, independent tool calls run **concurrently** (capped at `maxParallelTools`), with results appended in the original order; a turn containing `plan` or `run_skill` falls back to sequential execution since those recurse and mutate the working history in place. `todo_write` results are mirrored to the agent's `ProgressWriter`.
+Within one assistant turn, independent tool calls run **concurrently** (capped at `maxParallelTools`), with results appended in the original order; a turn containing recursive `plan` or state-mutating file writes falls back to sequential execution. Skill loading uses ordinary `read_file` dispatch and does not create a child loop. `todo_write` results are mirrored to the agent's `ProgressWriter`.
 
 ## Conventions & gotchas
 

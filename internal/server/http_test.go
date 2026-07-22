@@ -484,107 +484,41 @@ func TestServerChanBotWebhookRequiresConfiguredToken(t *testing.T) {
 	}
 }
 
-func TestChatEndpointRoutesSkillSlashToRunSkill(t *testing.T) {
+func assertPiStyleSkillRoute(t *testing.T, input, skillID, skillContent, expectedArgs, expectedReply string) {
+	t.Helper()
 	var requestCount atomic.Int32
+	requestBodies := make([]string, 0, 2)
+	expectedPath := ".agent/skills/" + skillID + "/SKILL.md"
 	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestCount.Add(1)
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"demo skill result"}}]}`))
-	}))
-	defer llmServer.Close()
-
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
-		t.Fatalf("failed to create skill directory: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nReply with the prepared demo result."), 0o644); err != nil {
-		t.Fatalf("failed to write skill file: %v", err)
-	}
-
-	service := newTestService(root, llmServer.URL)
-	handler := NewHandler(HandlerOptions{Service: service})
-	apiServer := httptest.NewServer(handler)
-	defer apiServer.Close()
-
-	response := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"/skill demo concise"}`)
-	defer response.Body.Close()
-
-	var payload chatResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200, error=%q", response.StatusCode, payload.Error)
-	}
-	if payload.Reply != "demo skill result" {
-		t.Fatalf("reply = %q, want %q", payload.Reply, "demo skill result")
-	}
-	if requestCount.Load() != 1 {
-		t.Fatalf("LLM request count = %d, want 1", requestCount.Load())
-	}
-}
-
-func TestChatEndpointRoutesSkillIDFirstTokenToRunSkill(t *testing.T) {
-	var requestCount atomic.Int32
-	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestCount.Add(1)
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"demo skill result"}}]}`))
-	}))
-	defer llmServer.Close()
-
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
-		t.Fatalf("failed to create skill directory: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nReply with the prepared demo result."), 0o644); err != nil {
-		t.Fatalf("failed to write skill file: %v", err)
-	}
-
-	service := newTestService(root, llmServer.URL)
-	handler := NewHandler(HandlerOptions{Service: service})
-	apiServer := httptest.NewServer(handler)
-	defer apiServer.Close()
-
-	response := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"demo concise"}`)
-	defer response.Body.Close()
-
-	var payload chatResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200, error=%q", response.StatusCode, payload.Error)
-	}
-	if payload.Reply != "demo skill result" {
-		t.Fatalf("reply = %q, want %q", payload.Reply, "demo skill result")
-	}
-	if requestCount.Load() != 1 {
-		t.Fatalf("LLM request count = %d, want 1", requestCount.Load())
-	}
-}
-
-func TestChatEndpointRoutesSkillAliasFirstTokenToRunSkill(t *testing.T) {
-	var requestCount atomic.Int32
-	var requestBody []byte
-	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestCount.Add(1)
-		var err error
-		requestBody, err = io.ReadAll(request.Body)
+		body, err := io.ReadAll(request.Body)
 		if err != nil {
 			t.Fatalf("failed to read request body: %v", err)
 		}
+		requestBodies = append(requestBodies, string(body))
+		count := requestCount.Add(1)
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"aihot skill result"}}]}`))
+		if count == 1 {
+			arguments, _ := json.Marshal(map[string]any{"path": expectedPath})
+			_ = json.NewEncoder(writer).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{
+				"role": "assistant",
+				"tool_calls": []any{map[string]any{
+					"id":       "skill-read-1",
+					"type":     "function",
+					"function": map[string]any{"name": "read_file", "arguments": string(arguments)},
+				}},
+			}}}})
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": expectedReply}}}})
 	}))
 	defer llmServer.Close()
 
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "aihot-skill"), 0o755); err != nil {
+	skillDir := filepath.Join(root, ".agent", "skills", skillID)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatalf("failed to create skill directory: %v", err)
 	}
-	skillContent := "---\nalias: aihot\n---\n\n# AIHot Skill\n\nReply with the prepared aihot result."
-	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "aihot-skill", "SKILL.md"), []byte(skillContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0o644); err != nil {
 		t.Fatalf("failed to write skill file: %v", err)
 	}
 
@@ -593,9 +527,9 @@ func TestChatEndpointRoutesSkillAliasFirstTokenToRunSkill(t *testing.T) {
 	apiServer := httptest.NewServer(handler)
 	defer apiServer.Close()
 
-	response := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"aihot 获取AI日报"}`)
+	requestPayload, _ := json.Marshal(map[string]string{"message": input})
+	response := postJSON(t, apiServer.URL+"/api/v1/chat", string(requestPayload))
 	defer response.Body.Close()
-
 	var payload chatResponse
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -603,54 +537,87 @@ func TestChatEndpointRoutesSkillAliasFirstTokenToRunSkill(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200, error=%q", response.StatusCode, payload.Error)
 	}
-	if payload.Reply != "aihot skill result" {
-		t.Fatalf("reply = %q, want %q", payload.Reply, "aihot skill result")
+	if payload.Reply != expectedReply {
+		t.Fatalf("reply = %q, want %q", payload.Reply, expectedReply)
 	}
-	if requestCount.Load() != 1 {
-		t.Fatalf("LLM request count = %d, want 1", requestCount.Load())
+	if requestCount.Load() != 2 {
+		t.Fatalf("LLM request count = %d, want 2", requestCount.Load())
 	}
-	if !strings.Contains(string(requestBody), "获取AI日报") {
-		t.Fatalf("request body = %s, want skill args", requestBody)
+	if len(requestBodies) != 2 {
+		t.Fatalf("request bodies = %d, want 2", len(requestBodies))
+	}
+	for _, expected := range []string{"skill_invocation", skillID, expectedPath, expectedArgs, "read_file"} {
+		if !strings.Contains(requestBodies[0], expected) {
+			t.Fatalf("first request = %s, want %q", requestBodies[0], expected)
+		}
+	}
+	if strings.Contains(requestBodies[0], "run_skill") {
+		t.Fatalf("first request still exposes run_skill: %s", requestBodies[0])
+	}
+	encodedSkill, _ := json.Marshal(skillContent)
+	if !strings.Contains(requestBodies[1], string(encodedSkill)) {
+		t.Fatalf("second request = %s, want complete skill body %s", requestBodies[1], encodedSkill)
 	}
 }
 
-func TestChatEndpointRoutesSkillSlashAliasToRunSkill(t *testing.T) {
-	var requestCount atomic.Int32
-	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestCount.Add(1)
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"alias skill result"}}]}`))
-	}))
-	defer llmServer.Close()
+func TestChatEndpointRoutesSkillSlashThroughReadFile(t *testing.T) {
+	assertPiStyleSkillRoute(t,
+		"/skill demo concise",
+		"demo",
+		"---\ndescription: Demo workflow.\n---\n\n# Demo Skill\n\nReply with the prepared demo result.",
+		"concise",
+		"demo skill result",
+	)
+}
 
+func TestChatEndpointRoutesSkillIDFirstTokenThroughReadFile(t *testing.T) {
+	assertPiStyleSkillRoute(t,
+		"demo concise",
+		"demo",
+		"---\ndescription: Demo workflow.\n---\n\n# Demo Skill\n\nReply with the prepared demo result.",
+		"concise",
+		"demo skill result",
+	)
+}
+
+func TestChatEndpointRoutesSkillAliasFirstTokenThroughReadFile(t *testing.T) {
+	assertPiStyleSkillRoute(t,
+		"aihot 获取AI日报",
+		"aihot-skill",
+		"---\ndescription: AI news workflow.\nalias: aihot\n---\n\n# AIHot Skill\n\nReply with the prepared aihot result.",
+		"获取AI日报",
+		"aihot skill result",
+	)
+}
+
+func TestChatEndpointRoutesSkillSlashAliasThroughReadFile(t *testing.T) {
+	assertPiStyleSkillRoute(t,
+		"/skill aihot 获取AI日报",
+		"aihot-skill",
+		"---\ndescription: AI news workflow.\nalias: aihot\n---\n\n# AIHot Skill\n\nReply with the prepared result.",
+		"获取AI日报",
+		"alias skill result",
+	)
+}
+
+func TestChatEndpointRejectsUnknownExplicitSkill(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "aihot-skill"), 0o755); err != nil {
-		t.Fatalf("failed to create skill directory: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "aihot-skill", "SKILL.md"), []byte("---\nalias: aihot\n---\n\n# AIHot Skill\n\nReply with the prepared result."), 0o644); err != nil {
-		t.Fatalf("failed to write skill file: %v", err)
-	}
-
-	service := newTestService(root, llmServer.URL)
+	service := newTestService(root, "http://example.invalid")
 	handler := NewHandler(HandlerOptions{Service: service})
 	apiServer := httptest.NewServer(handler)
 	defer apiServer.Close()
 
-	response := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"/skill aihot 获取AI日报"}`)
+	response := postJSON(t, apiServer.URL+"/api/v1/chat", `{"message":"/skill missing task"}`)
 	defer response.Body.Close()
-
 	var payload chatResponse
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200, error=%q", response.StatusCode, payload.Error)
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", response.StatusCode)
 	}
-	if payload.Reply != "alias skill result" {
-		t.Fatalf("reply = %q, want %q", payload.Reply, "alias skill result")
-	}
-	if requestCount.Load() != 1 {
-		t.Fatalf("LLM request count = %d, want 1", requestCount.Load())
+	if !strings.Contains(payload.Error, `skill "missing" not found`) {
+		t.Fatalf("error = %q, want unknown skill", payload.Error)
 	}
 }
 
@@ -855,7 +822,7 @@ func TestServiceHandleTurnHotReloadsSkillSectionForExistingSession(t *testing.T)
 	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
 		t.Fatalf("failed to create skill directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nHelps with demo tasks."), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("---\ndescription: Helps with demo tasks.\n---\n\n# Demo Skill\n\nPrivate workflow."), 0o644); err != nil {
 		t.Fatalf("failed to write skill file: %v", err)
 	}
 
@@ -866,8 +833,13 @@ func TestServiceHandleTurnHotReloadsSkillSectionForExistingSession(t *testing.T)
 	if len(requestBodies) != 2 {
 		t.Fatalf("request body count = %d, want 2", len(requestBodies))
 	}
-	if !strings.Contains(requestBodies[1], "# Skills") || !strings.Contains(requestBodies[1], "demo (Demo Skill): Helps with demo tasks.") {
-		t.Fatalf("second request body = %s, want refreshed skills section", requestBodies[1])
+	for _, expected := range []string{"# Skills", "name: demo", "description: Helps with demo tasks.", "path: .agent/skills/demo/SKILL.md"} {
+		if !strings.Contains(requestBodies[1], expected) {
+			t.Fatalf("second request body = %s, want refreshed skill metadata %q", requestBodies[1], expected)
+		}
+	}
+	if strings.Contains(requestBodies[1], "Private workflow.") {
+		t.Fatalf("second request body leaked full skill body: %s", requestBodies[1])
 	}
 }
 

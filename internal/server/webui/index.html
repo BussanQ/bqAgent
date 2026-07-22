@@ -653,6 +653,51 @@
   .bubble th { color: var(--text); background: var(--table-head); font-weight: 700; }
   .bubble tr:last-child td { border-bottom: 0; }
   .bubble th:last-child, .bubble td:last-child { border-right: 0; }
+  .tool-timeline {
+    width: 100%;
+    margin: 0 0 8px;
+    display: grid;
+    gap: 7px;
+  }
+  .tool-card {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(var(--signal-rgb),.035);
+    font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+  .tool-card.failed { border-color: rgba(var(--danger-rgb),.42); }
+  .tool-card.succeeded { border-color: rgba(var(--signal-rgb),.28); }
+  .tool-toggle {
+    width: 100%;
+    min-height: 36px;
+    padding: 7px 10px;
+    border: 0;
+    border-radius: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-align: left;
+    background: transparent;
+    box-shadow: none;
+  }
+  .tool-toggle:hover { transform: none; box-shadow: none; background: rgba(var(--signal-rgb),.055); }
+  .tool-chevron { color: var(--signal); transition: transform .16s ease; }
+  .tool-toggle[aria-expanded="true"] .tool-chevron { transform: rotate(90deg); }
+  .tool-state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--stream); box-shadow: 0 0 10px rgba(var(--stream-rgb),.55); }
+  .tool-card.succeeded .tool-state-dot { background: var(--signal); }
+  .tool-card.failed .tool-state-dot { background: var(--danger); box-shadow: 0 0 10px rgba(var(--danger-rgb),.45); }
+  .tool-name { color: var(--text); font-size: 12px; font-weight: 700; }
+  .tool-status { margin-left: auto; color: var(--text-muted); font-size: 10px; }
+  .tool-details { display: none; border-top: 1px solid var(--line); padding: 9px 11px 11px; }
+  .tool-details.open { display: block; }
+  .tool-section + .tool-section { margin-top: 8px; }
+  .tool-section-label { color: var(--text-muted); font-size: 10px; margin-bottom: 4px; text-transform: uppercase; }
+  .tool-json, .tool-preview { margin: 0; color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font-size: 11px; line-height: 1.5; }
+  .user-message-text + .user-images { margin-top: 10px; }
+  .user-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 180px)); gap: 8px; }
+  .user-image { display: block; width: 100%; max-height: 220px; object-fit: cover; border-radius: 9px; border: 1px solid rgba(255,255,255,.2); background: rgba(0,0,0,.12); }
+
   .message-actions {
     min-height: 28px;
     margin: 7px 4px 0;
@@ -704,12 +749,21 @@
     background: var(--panel-strong);
     box-shadow: var(--shadow), 0 0 0 1px rgba(var(--signal-rgb),.08), 0 0 30px rgba(var(--signal-rgb),.10);
   }
+  .composer-content { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  .attachment-tray[hidden] { display: none; }
+  .attachment-tray { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 8px 0 30px; }
+  .attachment-item { position: relative; width: 68px; height: 58px; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--panel-strong); }
+  .attachment-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .attachment-item.loading img { opacity: .45; }
+  .attachment-remove { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0; border-radius: 50%; display: grid; place-items: center; color: #fff; background: rgba(var(--danger-rgb),.86); border-color: transparent; font-size: 13px; line-height: 1; }
+  .attachment-remove:hover { transform: none; box-shadow: 0 0 14px rgba(var(--danger-rgb),.35); }
+  .attachment-badge { position: absolute; left: 3px; bottom: 3px; padding: 1px 4px; border-radius: 4px; color: #fff; background: rgba(3,7,17,.72); font: 9px/1.4 ui-monospace, monospace; }
+  .attachment-error { color: var(--danger); font-size: 11px; padding: 0 10px 0 30px; }
   .composer::before {
     content: ">";
     position: absolute;
     left: 20px;
-    top: 50%;
-    transform: translateY(-50%);
+    bottom: 24px;
     color: var(--signal);
     font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     font-size: 15px;
@@ -854,8 +908,12 @@
   </main>
   <footer>
     <div class="composer">
-      <div class="input-shell">
-        <textarea id="input" rows="1" placeholder="给 bqagent 发送消息" autofocus></textarea>
+      <div class="composer-content">
+        <div class="attachment-tray" id="attachment-tray" aria-label="待发送图片" hidden></div>
+        <div class="attachment-error" id="attachment-error" role="status" aria-live="polite"></div>
+        <div class="input-shell">
+          <textarea id="input" rows="1" placeholder="给 bqagent 发送消息，可直接粘贴图片" autofocus></textarea>
+        </div>
       </div>
       <button class="send" id="send" type="button" title="发送" aria-label="发送">
         <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none">
@@ -866,7 +924,7 @@
         </svg>
       </button>
     </div>
-    <div class="composer-meta">Enter 发送 · Shift + Enter 换行 · 支持 Markdown</div>
+    <div class="composer-meta">Enter 发送 · Shift + Enter 换行 · 支持 Markdown · 可粘贴图片</div>
   </footer>
 
 <script>
@@ -878,6 +936,8 @@
   var main = document.getElementById("main");
   var particleCanvas = document.getElementById("particle-field");
   var input = document.getElementById("input");
+  var attachmentTray = document.getElementById("attachment-tray");
+  var attachmentError = document.getElementById("attachment-error");
   var sendBtn = document.getElementById("send");
   var newChatBtn = document.getElementById("new-chat");
   var themeToggle = document.getElementById("theme-toggle");
@@ -888,6 +948,14 @@
   var currentTurnId = "";
   var currentController = null;
   var stopRequested = false;
+  var preparingSend = false;
+  var pendingImages = [];
+  var pendingImageReads = [];
+  var nextAttachmentID = 1;
+  var MAX_PENDING_IMAGES = 4;
+  var MAX_PENDING_IMAGE_BYTES = 3 * 1024 * 1024;
+  var MAX_PENDING_TOTAL_BYTES = 8 * 1024 * 1024;
+  var ALLOWED_IMAGE_TYPES = { "image/png": true, "image/jpeg": true, "image/gif": true };
 
   var PARTICLE_MAX_COUNT = 80;
   var PARTICLE_TARGET_FPS = 30;
@@ -1180,6 +1248,207 @@
     thread.appendChild(msg);
     scrollToBottom();
     return bubble;
+  }
+
+  function renderUserMessage(bubble, text, images) {
+    bubble.textContent = "";
+    if (text) {
+      var textNode = document.createElement("div");
+      textNode.className = "user-message-text";
+      textNode.textContent = text;
+      bubble.appendChild(textNode);
+    }
+    if (images && images.length) {
+      var gallery = document.createElement("div");
+      gallery.className = "user-images";
+      images.forEach(function (image, index) {
+        var preview = document.createElement("img");
+        preview.className = "user-image";
+        preview.src = "data:" + image.mime_type + ";base64," + image.data_base64;
+        preview.alt = "已发送图片 " + (index + 1);
+        gallery.appendChild(preview);
+      });
+      bubble.appendChild(gallery);
+    }
+  }
+
+  function ensureToolTimeline(bubble) {
+    var stack = bubble && bubble.parentElement;
+    if (!stack) return null;
+    var timeline = stack.querySelector(".tool-timeline");
+    if (!timeline) {
+      timeline = document.createElement("div");
+      timeline.className = "tool-timeline";
+      timeline.setAttribute("aria-label", "工具执行记录");
+      stack.insertBefore(timeline, bubble);
+    }
+    return timeline;
+  }
+
+  function updateToolTimeline(bubble, cards, eventName, payload) {
+    var timeline = ensureToolTimeline(bubble);
+    if (!timeline || !payload) return;
+    var cardID = payload.id || ("tool-" + (payload.seq || Object.keys(cards).length + 1));
+    var card = cards[cardID];
+    if (!card) {
+      var root = document.createElement("div");
+      root.className = "tool-card";
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "tool-toggle";
+      var detailsID = "tool-details-" + String(payload.seq || Object.keys(cards).length + 1);
+      button.setAttribute("aria-expanded", "false");
+      button.setAttribute("aria-controls", detailsID);
+      var chevron = document.createElement("span");
+      chevron.className = "tool-chevron";
+      chevron.textContent = ">";
+      var dot = document.createElement("span");
+      dot.className = "tool-state-dot";
+      var name = document.createElement("span");
+      name.className = "tool-name";
+      name.textContent = payload.name || "tool";
+      var status = document.createElement("span");
+      status.className = "tool-status";
+      status.textContent = "运行中";
+      button.appendChild(chevron);
+      button.appendChild(dot);
+      button.appendChild(name);
+      button.appendChild(status);
+      var details = document.createElement("div");
+      details.className = "tool-details";
+      details.id = detailsID;
+      var argumentsSection = document.createElement("div");
+      argumentsSection.className = "tool-section";
+      var argumentsLabel = document.createElement("div");
+      argumentsLabel.className = "tool-section-label";
+      argumentsLabel.textContent = "arguments";
+      var argumentsPre = document.createElement("pre");
+      argumentsPre.className = "tool-json";
+      argumentsPre.textContent = payload.arguments ? JSON.stringify(payload.arguments, null, 2) : "{}";
+      argumentsSection.appendChild(argumentsLabel);
+      argumentsSection.appendChild(argumentsPre);
+      var resultSection = document.createElement("div");
+      resultSection.className = "tool-section";
+      var resultLabel = document.createElement("div");
+      resultLabel.className = "tool-section-label";
+      resultLabel.textContent = "result";
+      var resultPre = document.createElement("pre");
+      resultPre.className = "tool-preview";
+      resultPre.textContent = "等待执行结果…";
+      resultSection.appendChild(resultLabel);
+      resultSection.appendChild(resultPre);
+      details.appendChild(argumentsSection);
+      details.appendChild(resultSection);
+      button.addEventListener("click", function () {
+        var expanded = button.getAttribute("aria-expanded") === "true";
+        button.setAttribute("aria-expanded", expanded ? "false" : "true");
+        details.classList.toggle("open", !expanded);
+      });
+      root.appendChild(button);
+      root.appendChild(details);
+      timeline.appendChild(root);
+      card = cards[cardID] = { root: root, status: status, arguments: argumentsPre, result: resultPre };
+    }
+    if (payload.arguments) card.arguments.textContent = JSON.stringify(payload.arguments, null, 2);
+    if (eventName === "tool_result") {
+      var failed = payload.status === "failed";
+      card.root.classList.remove("succeeded", "failed");
+      card.root.classList.add(failed ? "failed" : "succeeded");
+      var duration = payload.duration_ms ? " · " + payload.duration_ms + "ms" : "";
+      var truncated = payload.truncated ? " · 已截断" : "";
+      card.status.textContent = (failed ? "失败" : "完成") + duration + truncated;
+      card.result.textContent = payload.preview || (failed ? "工具执行失败" : "（无输出）");
+    }
+  }
+
+  function clearAttachmentError() {
+    attachmentError.textContent = "";
+  }
+
+  function setAttachmentError(message) {
+    attachmentError.textContent = message || "";
+  }
+
+  function renderPendingImages() {
+    attachmentTray.textContent = "";
+    attachmentTray.hidden = pendingImages.length === 0;
+    pendingImages.forEach(function (image, index) {
+      var item = document.createElement("div");
+      item.className = "attachment-item" + (image.loading ? " loading" : "");
+      var preview = document.createElement("img");
+      preview.src = image.objectURL;
+      preview.alt = "待发送图片 " + (index + 1);
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "attachment-remove";
+      remove.textContent = "×";
+      remove.disabled = busy;
+      remove.setAttribute("aria-label", "删除图片 " + (index + 1));
+      remove.addEventListener("click", function () { removePendingImage(image.id); });
+      var badge = document.createElement("span");
+      badge.className = "attachment-badge";
+      badge.textContent = image.loading ? "读取中" : image.mimeType.replace("image/", "");
+      item.appendChild(preview);
+      item.appendChild(remove);
+      item.appendChild(badge);
+      attachmentTray.appendChild(item);
+    });
+  }
+
+  function removePendingImage(id) {
+    if (busy) return;
+    pendingImages = pendingImages.filter(function (image) {
+      if (image.id !== id) return true;
+      URL.revokeObjectURL(image.objectURL);
+      return false;
+    });
+    renderPendingImages();
+  }
+
+  function clearPendingImages() {
+    pendingImages.forEach(function (image) { URL.revokeObjectURL(image.objectURL); });
+    pendingImages = [];
+    pendingImageReads = [];
+    renderPendingImages();
+    clearAttachmentError();
+  }
+
+  function readImageAsBase64(file, attachment) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var dataURL = String(reader.result || "");
+        var comma = dataURL.indexOf(",");
+        if (comma < 0) return reject(new Error("无法读取图片数据"));
+        attachment.dataBase64 = dataURL.slice(comma + 1);
+        attachment.loading = false;
+        renderPendingImages();
+        resolve();
+      };
+      reader.onerror = function () { reject(new Error("读取图片失败")); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function addClipboardImages(files) {
+    clearAttachmentError();
+    var totalBytes = pendingImages.reduce(function (sum, image) { return sum + image.size; }, 0);
+    files.forEach(function (file) {
+      if (pendingImages.length >= MAX_PENDING_IMAGES) return setAttachmentError("每次最多发送 " + MAX_PENDING_IMAGES + " 张图片");
+      if (!ALLOWED_IMAGE_TYPES[file.type]) return setAttachmentError("仅支持 PNG、JPEG 和 GIF 图片");
+      if (file.size > MAX_PENDING_IMAGE_BYTES) return setAttachmentError("单张图片不能超过 3 MiB");
+      if (totalBytes + file.size > MAX_PENDING_TOTAL_BYTES) return setAttachmentError("图片总大小不能超过 8 MiB");
+      totalBytes += file.size;
+      var attachment = { id: nextAttachmentID++, mimeType: file.type, size: file.size, dataBase64: "", objectURL: URL.createObjectURL(file), loading: true };
+      pendingImages.push(attachment);
+      var read = readImageAsBase64(file, attachment).catch(function (error) {
+        setAttachmentError(error.message || String(error));
+        removePendingImage(attachment.id);
+        throw error;
+      });
+      pendingImageReads.push(read);
+    });
+    renderPendingImages();
   }
 
   function clearStreamingState(bubble) {
@@ -1501,6 +1770,7 @@
       statusEl.textContent = "在线";
     }
     statusEl.classList.toggle("busy", on);
+    renderPendingImages();
     if (!on) input.focus();
   }
 
@@ -1616,19 +1886,36 @@
   }
 
   async function send() {
-    if (busy) return;
+    if (busy || preparingSend) return;
+    preparingSend = true;
+    try {
+      await Promise.all(pendingImageReads);
+      pendingImageReads = [];
+    } catch (_) {
+      pendingImageReads = [];
+      preparingSend = false;
+      return;
+    }
     var text = input.value.trim();
-    if (!text) return;
+    var sentImages = pendingImages.filter(function (image) { return !image.loading && image.dataBase64; }).map(function (image) {
+      return { mime_type: image.mimeType, data_base64: image.dataBase64 };
+    });
+    if (!text && !sentImages.length) {
+      preparingSend = false;
+      return;
+    }
 
     currentTurnId = createTurnId();
     currentController = new AbortController();
     stopRequested = false;
 
-    addMessage("user").textContent = text;
+    renderUserMessage(addMessage("user"), text, sentImages);
     input.value = "";
     autoGrow();
 
     var bubble = addMessage("assistant");
+    var toolCards = {};
+    preparingSend = false;
     bubble.classList.add("is-streaming");
     var caret = document.createElement("span");
     caret.className = "caret";
@@ -1641,12 +1928,15 @@
       var res = await fetch("/api/v1/webui/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, session_id: sessionId, turn_id: currentTurnId }),
+        body: JSON.stringify({ message: text, images: sentImages, session_id: sessionId, turn_id: currentTurnId }),
         signal: currentController.signal
       });
       if (!res.ok || !res.body) {
-        throw new Error("HTTP " + res.status);
+        var errorText = "";
+        try { errorText = await res.text(); } catch (_) {}
+        throw new Error("HTTP " + res.status + (errorText ? ": " + errorText : ""));
       }
+      clearPendingImages();
 
       var reader = res.body.getReader();
       var decoder = new TextDecoder();
@@ -1663,7 +1953,9 @@
           buffer = buffer.slice(idx + 2);
           if (!rawEvent.trim()) continue;
           var evt = parseSSE(rawEvent);
-          if (evt.event === "done") {
+          if (evt.event === "tool_start" || evt.event === "tool_result") {
+            updateToolTimeline(bubble, toolCards, evt.event, JSON.parse(evt.data));
+          } else if (evt.event === "done") {
             finished = true;
             clearStreamingState(bubble);
             var done = JSON.parse(evt.data);
@@ -1757,6 +2049,7 @@
     if (busy) return;
     sessionId = "";
     localStorage.removeItem(SESSION_KEY);
+    clearPendingImages();
     thread.innerHTML = emptyMarkup();
     statusEl.textContent = "在线";
     statusEl.classList.remove("error", "busy");
@@ -1791,11 +2084,32 @@
     }
   });
   input.addEventListener("input", autoGrow);
+  input.addEventListener("paste", function (event) {
+    if (busy || !event.clipboardData || !event.clipboardData.items) return;
+    var files = [];
+    Array.prototype.forEach.call(event.clipboardData.items, function (item) {
+      if (item.kind === "file" && item.type.indexOf("image/") === 0) {
+        var file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    });
+    if (!files.length) return;
+    event.preventDefault();
+    var pastedText = event.clipboardData.getData("text/plain");
+    if (pastedText) {
+      input.setRangeText(pastedText, input.selectionStart, input.selectionEnd, "end");
+      autoGrow();
+    }
+    addClipboardImages(files);
+  });
   input.addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       send();
     }
+  });
+  window.addEventListener("beforeunload", function () {
+    pendingImages.forEach(function (image) { URL.revokeObjectURL(image.objectURL); });
   });
   setTheme(localStorage.getItem(THEME_KEY) ||
     (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));

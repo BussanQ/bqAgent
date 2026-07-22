@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,16 +10,18 @@ import (
 	"time"
 )
 
-const defaultSkillSummary = "Markdown skill definition available."
+const (
+	defaultSkillDescription  = "No description provided."
+	maxSkillMetadataBytes    = 16 * 1024
+	maxSkillDescriptionBytes = 1024
+)
 
-// Skill describes a workspace skill loaded from .agent/skills/*/SKILL.md.
+// Skill describes discovery metadata for .agent/skills/*/SKILL.md.
 type Skill struct {
-	ID      string
-	Title   string
-	Summary string
-	Body    string
-	Path    string
-	Aliases []string
+	ID          string
+	Description string
+	Path        string
+	Aliases     []string
 }
 
 const memoryTailLines = 50
@@ -193,23 +196,22 @@ func (w *Workspace) LoadSkills() ([]Skill, error) {
 		}
 
 		skillPath := filepath.Join(w.SkillsDir(), entry.Name(), "SKILL.md")
-		content, err := os.ReadFile(skillPath)
-		if os.IsNotExist(err) {
-			continue
-		}
+		description, aliases, exists, err := readSkillMetadata(skillPath)
 		if err != nil {
 			return nil, err
 		}
-
-		skillContent := string(content)
-		title, summary := summarizeSkill(entry.Name(), skillContent)
+		if !exists {
+			continue
+		}
+		promptPath, err := w.skillPromptPath(skillPath)
+		if err != nil {
+			return nil, err
+		}
 		skills = append(skills, Skill{
-			ID:      entry.Name(),
-			Title:   title,
-			Summary: summary,
-			Body:    strings.TrimSpace(skillContent),
-			Path:    skillPath,
-			Aliases: parseSkillAliases(skillContent),
+			ID:          entry.Name(),
+			Description: description,
+			Path:        promptPath,
+			Aliases:     aliases,
 		})
 	}
 	return skills, nil
@@ -280,34 +282,63 @@ func (w *Workspace) loadSkillsSection() (string, error) {
 
 	lines := []string{
 		"# Skills",
-		"Available executable skills can be run with the run_skill tool when one is clearly relevant.",
+		"The following entries are discovery metadata only. When a user request clearly matches a listed skill, first use read_file to read the complete SKILL.md at the listed path. Then follow that file's instructions. Do not infer the workflow from this metadata alone.",
 	}
 	for _, skill := range skills {
-		line := fmt.Sprintf("- %s (%s): %s", skill.ID, skill.Title, skill.Summary)
-		if len(skill.Aliases) > 0 {
-			line += " Aliases: " + strings.Join(skill.Aliases, ", ")
-		}
-		lines = append(lines, line)
+		lines = append(lines,
+			"- name: "+skill.ID,
+			"  description: "+skill.Description,
+			"  path: "+skill.Path,
+		)
 	}
 	return strings.Join(lines, "\n"), nil
 }
 
-func loadSkillsSummary(w *Workspace) (string, error) {
-	return w.loadSkillsSection()
+func (w *Workspace) skillPromptPath(skillPath string) (string, error) {
+	relative, err := filepath.Rel(w.Root, skillPath)
+	if err != nil {
+		return "", err
+	}
+	relative = filepath.Clean(relative)
+	if relative == "." || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("skill path %q escapes workspace root", skillPath)
+	}
+	return filepath.ToSlash(relative), nil
 }
 
-func parseSkillAliases(content string) []string {
+func readSkillMetadata(path string) (description string, aliases []string, exists bool, err error) {
+	file, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return "", nil, false, nil
+	}
+	if err != nil {
+		return "", nil, false, err
+	}
+	defer file.Close()
+
+	content, err := io.ReadAll(io.LimitReader(file, maxSkillMetadataBytes))
+	if err != nil {
+		return "", nil, false, err
+	}
+	description, aliases = parseSkillMetadata(string(content))
+	return description, aliases, true, nil
+}
+
+func parseSkillMetadata(content string) (string, []string) {
 	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return nil
+		return defaultSkillDescription, nil
 	}
 
+	description := ""
 	aliases := make([]string, 0)
 	seen := make(map[string]bool)
 	inAliasesList := false
+	closed := false
 	for index := 1; index < len(lines); index++ {
 		line := strings.TrimSpace(lines[index])
 		if line == "---" {
+			closed = true
 			break
 		}
 		if line == "" {
@@ -329,6 +360,8 @@ func parseSkillAliases(content string) []string {
 		key = strings.ToLower(strings.TrimSpace(key))
 		value = strings.TrimSpace(value)
 		switch key {
+		case "description":
+			description = cleanSkillDescription(value)
 		case "alias":
 			aliases = appendUniqueAlias(aliases, seen, value)
 		case "aliases":
@@ -341,7 +374,28 @@ func parseSkillAliases(content string) []string {
 			}
 		}
 	}
-	return aliases
+	if !closed {
+		return defaultSkillDescription, nil
+	}
+	if description == "" {
+		description = defaultSkillDescription
+	}
+	return description, aliases
+}
+
+func cleanSkillDescription(raw string) string {
+	description := strings.TrimSpace(strings.Trim(strings.TrimSpace(raw), `"'`))
+	if len(description) <= maxSkillDescriptionBytes {
+		return description
+	}
+	var builder strings.Builder
+	for _, character := range description {
+		if builder.Len()+len(string(character)) > maxSkillDescriptionBytes {
+			break
+		}
+		builder.WriteRune(character)
+	}
+	return strings.TrimSpace(builder.String())
 }
 
 func appendUniqueAlias(aliases []string, seen map[string]bool, raw string) []string {
@@ -361,44 +415,6 @@ func cleanSkillAlias(raw string) string {
 	alias := strings.TrimSpace(raw)
 	alias = strings.Trim(alias, `"'`)
 	return strings.TrimSpace(alias)
-}
-
-func summarizeSkill(fallbackName, content string) (string, string) {
-	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
-	start := 0
-	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
-		for index := 1; index < len(lines); index++ {
-			if strings.TrimSpace(lines[index]) == "---" {
-				start = index + 1
-				break
-			}
-		}
-	}
-
-	title := fallbackName
-	paragraph := make([]string, 0)
-	for _, rawLine := range lines[start:] {
-		line := strings.TrimSpace(rawLine)
-		if line == "" {
-			if len(paragraph) > 0 {
-				break
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "#") {
-			if title == fallbackName {
-				title = strings.TrimSpace(strings.TrimLeft(line, "#"))
-			}
-			continue
-		}
-		paragraph = append(paragraph, line)
-	}
-
-	summary := defaultSkillSummary
-	if len(paragraph) > 0 {
-		summary = strings.Join(paragraph, " ")
-	}
-	return title, summary
 }
 
 func (w *Workspace) loadMemoryContext(maxLines int) (string, error) {

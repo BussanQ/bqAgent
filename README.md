@@ -267,7 +267,9 @@ project/
 - `.agent/rules/*.md`
   - full rule documents injected into the prompt
 - `.agent/skills/*/SKILL.md`
-  - Markdown skill definitions summarized into the prompt
+  - only the canonical name, frontmatter `description`, and workspace-relative path are indexed in the system prompt
+  - when a skill is relevant, the model reads the complete `SKILL.md` on demand with `read_file`
+  - explicit `/skill <name-or-alias> [args]` and leading skill IDs/aliases route through the same main conversation loop
 - `.agent/sessions/<session-id>/messages.jsonl`
   - current-turn journal; compact mode converges it to the bounded snapshot after each turn
 - `.agent/sessions/<session-id>/working_messages.jsonl`
@@ -304,6 +306,18 @@ Behavior notes:
 - relative `read_file` / `write_file` paths are resolved from the workspace root
 - `execute_bash` also runs from the workspace root
 - `--server` and `--chat` now share the same built-in local tool set, including shell, file, web search, and memory tools
+
+Workspace skills use progressive disclosure. A recommended skill starts with metadata such as:
+
+```yaml
+---
+description: Summarize repository changes and prepare a concise release note.
+aliases:
+  - release-notes
+---
+```
+
+The discovery prompt does not include the skill body or aliases. The model first calls `read_file` for the listed `.agent/skills/<name>/SKILL.md` path, then follows the complete instructions in the same conversation. `/skill <name-or-alias> [args]` is an explicit selection shortcut, not a separate skill runner.
 
 ## Sessions and background mode
 

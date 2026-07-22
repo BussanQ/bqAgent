@@ -97,6 +97,7 @@ type TurnOptions struct {
 	OutputWriter   io.Writer
 	ProgressWriter io.Writer
 	TokenSink      io.Writer
+	ToolEventSink  agent.ToolEventSink
 	Stream         bool
 	MaxIterations  int
 	Stage          agent.StageConfig
@@ -328,7 +329,20 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		ctx = apptrace.WithRunID(ctx, runID)
 	}
 
-	if err := conversation.AddUserMessageWithImages(message, request.Images); err != nil {
+	modelMessage, skillInvocation, skillErr := service.rewriteSkillInvocation(message)
+	if skillErr != nil {
+		writeTurnError(turnErrorWriter, skillErr)
+		markConversationFailed(conversation, skillErr)
+		return TurnResponse{}, skillErr
+	}
+	if skillInvocation != nil && runRecorder != nil {
+		_ = runRecorder.Event("skill_invocation", map[string]any{
+			"skill": skillInvocation.Skill.ID,
+			"path":  skillInvocation.Skill.Path,
+			"args":  skillInvocation.Args,
+		})
+	}
+	if err := conversation.AddUserMessageWithImages(modelMessage, request.Images); err != nil {
 		writeTurnError(turnErrorWriter, err)
 		markConversationFailed(conversation, err)
 		return TurnResponse{}, err
@@ -366,29 +380,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply, RunID: runID}, nil
 	}
 
-	if reply, handled, skillErr := service.handleSkillCommand(ctx, message, conversation.Recorder(), logWriter, progressWriter, systemPrompt, runRecorder); handled {
-		if skillErr != nil {
-			writeTurnError(turnErrorWriter, skillErr)
-			markConversationFailed(conversation, skillErr)
-			return TurnResponse{}, skillErr
-		}
-		assistantMessage := map[string]any{"role": "assistant", "content": reply}
-		if err := conversation.Session.RecordMessage(assistantMessage); err != nil {
-			writeTurnError(turnErrorWriter, err)
-			markConversationFailed(conversation, err)
-			return TurnResponse{}, err
-		}
-		conversation.Messages = append(conversation.Messages, assistantMessage)
-		if err := service.completeConversation(conversation); err != nil {
-			writeTurnError(turnErrorWriter, err)
-			return TurnResponse{}, err
-		}
-		service.appendMemory(message, reply)
-		writeTurnReply(logWriter, reply, false)
-		return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply, RunID: runID}, nil
-	}
-
-	if service.externalBroker != nil {
+	if service.externalBroker != nil && skillInvocation == nil {
 		routedAgent, routedPrompt, _, routeErr := service.externalBroker.Resolve(message, conversation.Session.ID())
 		if routeErr != nil {
 			writeTurnError(turnErrorWriter, routeErr)
@@ -461,6 +453,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		WorkspaceRoot:   service.workspaceRoot,
 		ProgressWriter:  progressWriter,
 		TokenSink:       options.TokenSink,
+		ToolEventSink:   options.ToolEventSink,
 		Context:         service.context,
 		Stage:           options.Stage,
 		Trace:           runRecorder,
@@ -770,62 +763,67 @@ func (service *Service) handleMemoryCommand(message, runID string) (string, bool
 	}
 }
 
-func (service *Service) handleSkillCommand(ctx context.Context, message string, recorder agent.MessageRecorder, logWriter io.Writer, progressWriter io.Writer, systemPrompt string, runRecorder *apptrace.Recorder) (string, bool, error) {
+type skillInvocation struct {
+	Skill workspace.Skill
+	Args  string
+}
+
+func (service *Service) rewriteSkillInvocation(message string) (string, *skillInvocation, error) {
 	message = strings.TrimSpace(message)
 	token, rest := splitFirstToken(message)
 	if token == "" {
-		return "", false, nil
+		return message, nil, nil
 	}
 
-	var skillID string
+	ws := &workspace.Workspace{Root: service.workspaceRoot}
+	var skill workspace.Skill
 	var args string
 	if token == "/skill" {
 		skillToken, skillArgs := splitFirstToken(rest)
 		if skillToken == "" {
-			return "", true, fmt.Errorf("skill name is required after /skill")
+			return "", nil, fmt.Errorf("skill name is required after /skill")
 		}
-		resolved, _, err := service.resolveSkillToken(skillToken)
+		resolved, handled, err := ws.ResolveSkill(skillToken)
 		if err != nil {
-			return "", true, err
+			return "", nil, err
 		}
-		skillID = resolved
+		if !handled {
+			return "", nil, fmt.Errorf("skill %q not found", skillToken)
+		}
+		skill = resolved
 		args = skillArgs
 	} else {
 		if strings.HasPrefix(token, "/") {
-			return "", false, nil
+			return message, nil, nil
 		}
-		resolved, handled, err := service.resolveSkillToken(token)
-		if err != nil || !handled {
-			return "", handled, err
+		resolved, handled, err := ws.ResolveSkill(token)
+		if err != nil {
+			return "", nil, err
 		}
-		skillID = resolved
+		if !handled {
+			return message, nil, nil
+		}
+		skill = resolved
 		args = rest
 	}
 
-	app := agent.NewWithOptions(service.client, service.model, agent.Options{
-		SystemPrompt:    systemPrompt,
-		APIType:         service.apiType,
-		LogWriter:       logWriter,
-		ToolDefinitions: service.toolDefinitions,
-		Functions:       service.functions,
-		Planner:         service.planner,
-		Recorder:        recorder,
-		WorkspaceRoot:   service.workspaceRoot,
-		ProgressWriter:  progressWriter,
-		Context:         service.context,
-		Trace:           runRecorder,
-	})
-	result, err := app.RunSkill(ctx, skillID, args, service.maxTurns)
-	return result, true, err
-}
+	skillID, _ := json.Marshal(skill.ID)
+	skillPath, _ := json.Marshal(skill.Path)
+	original, _ := json.Marshal(message)
+	arguments, _ := json.Marshal(strings.TrimSpace(args))
+	rewritten := fmt.Sprintf(`<skill_invocation>
+The user explicitly selected workspace skill %s.
 
-func (service *Service) resolveSkillToken(token string) (string, bool, error) {
-	ws := &workspace.Workspace{Root: service.workspaceRoot}
-	skill, handled, err := ws.ResolveSkill(token)
-	if err != nil || !handled {
-		return "", handled, err
-	}
-	return skill.ID, true, nil
+Required first action: call read_file with exactly:
+{"path": %s}
+
+Do not answer, call another tool, or act on the task before that read_file call succeeds.
+After reading the complete file, follow its instructions for the user's task.
+
+Original user entry: %s
+User task arguments: %s
+</skill_invocation>`, skillID, skillPath, original, arguments)
+	return rewritten, &skillInvocation{Skill: skill, Args: strings.TrimSpace(args)}, nil
 }
 
 func splitFirstToken(message string) (string, string) {

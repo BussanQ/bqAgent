@@ -50,9 +50,10 @@ type anthropicContentBlock struct {
 }
 
 type anthropicResponse struct {
-	Role    string                  `json:"role"`
-	Content []anthropicContentBlock `json:"content"`
-	Usage   anthropicUsage          `json:"usage"`
+	Role       string                  `json:"role"`
+	Content    []anthropicContentBlock `json:"content"`
+	StopReason string                  `json:"stop_reason"`
+	Usage      anthropicUsage          `json:"usage"`
 }
 
 func (c *Client) createAnthropicMessage(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
@@ -92,6 +93,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 	content := strings.Builder{}
 	calls := map[int]*partialCall{}
 	usage := TokenUsage{}
+	stopReason := ""
 
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -115,6 +117,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 				Type        string `json:"type"`
 				Text        string `json:"text"`
 				PartialJSON string `json:"partial_json"`
+				StopReason  string `json:"stop_reason"`
 			} `json:"delta"`
 			Usage anthropicUsage `json:"usage"`
 		}
@@ -148,6 +151,9 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 			if event.Usage.OutputTokens > 0 {
 				usage.CompletionTokens = event.Usage.OutputTokens
 			}
+			if event.Delta.StopReason != "" {
+				stopReason = event.Delta.StopReason
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -155,7 +161,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 	}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
-	message := AssistantMessage{Role: "assistant", Content: content.String(), Usage: usage}
+	message := AssistantMessage{Role: "assistant", Content: content.String(), Completion: completionFromStopReason(stopReason), Usage: usage}
 	indexes := make([]int, 0, len(calls))
 	for index := range calls {
 		indexes = append(indexes, index)
@@ -164,9 +170,6 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 	for _, index := range indexes {
 		call := calls[index]
 		arguments := call.arguments.String()
-		if strings.TrimSpace(arguments) == "" {
-			arguments = "{}"
-		}
 		message.ToolCalls = append(message.ToolCalls, ToolCall{
 			ID: call.id, Type: "function",
 			Function: FunctionCall{Name: call.name, Arguments: arguments},
@@ -281,7 +284,7 @@ func anthropicContent(content any) []any {
 }
 
 func assistantFromAnthropic(response anthropicResponse) AssistantMessage {
-	message := AssistantMessage{Role: firstNonBlank(response.Role, "assistant")}
+	message := AssistantMessage{Role: firstNonBlank(response.Role, "assistant"), Completion: completionFromStopReason(response.StopReason)}
 	var content strings.Builder
 	for _, block := range response.Content {
 		switch block.Type {

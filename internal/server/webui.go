@@ -1,11 +1,17 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"strings"
@@ -19,7 +25,36 @@ import (
 const (
 	defaultWebUIStageTimeout       = 90 * time.Second
 	defaultWebUIStageMaxIterations = 20
+	maxWebUIRequestBodyBytes       = 12 << 20
+	maxWebUIImages                 = 4
+	maxWebUIImageBytes             = 3 << 20
+	maxWebUITotalImageBytes        = 8 << 20
+	maxWebUIImagePixels            = 20_000_000
 )
+
+type webUIChatRequest struct {
+	SessionID string              `json:"session_id"`
+	TurnID    string              `json:"turn_id"`
+	Message   string              `json:"message"`
+	Images    []webUIImagePayload `json:"images,omitempty"`
+}
+
+type webUIImagePayload struct {
+	MIMEType   string `json:"mime_type"`
+	DataBase64 string `json:"data_base64"`
+}
+
+type webUIRequestError struct {
+	Status int
+	Err    error
+}
+
+func (err *webUIRequestError) Error() string {
+	if err == nil || err.Err == nil {
+		return "invalid webui request"
+	}
+	return err.Err.Error()
+}
 
 var webUIStageTimeoutNanos atomic.Int64
 var webUIStageMaxIterations atomic.Int64
@@ -108,6 +143,89 @@ func (channel *WebUIChannel) handleIndex(writer http.ResponseWriter, request *ht
 	_, _ = writer.Write(webUIIndex)
 }
 
+func decodeWebUIChatRequest(writer http.ResponseWriter, request *http.Request) (TurnRequest, error) {
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(request.Header.Get("Content-Type"), ";")[0]))
+	if contentType != "application/json" {
+		return TurnRequest{}, &webUIRequestError{Status: http.StatusUnsupportedMediaType, Err: fmt.Errorf("content-type must be application/json")}
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, maxWebUIRequestBodyBytes)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	var payload webUIChatRequest
+	if err := decoder.Decode(&payload); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return TurnRequest{}, &webUIRequestError{Status: http.StatusRequestEntityTooLarge, Err: fmt.Errorf("webui request body exceeds %d bytes", maxWebUIRequestBodyBytes)}
+		}
+		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("invalid JSON request: %w", err)}
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("request must contain exactly one JSON object")}
+		}
+		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("invalid trailing JSON data: %w", err)}
+	}
+	if len(payload.Images) > maxWebUIImages {
+		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("at most %d images are allowed", maxWebUIImages)}
+	}
+	images := make([]agent.ImageAttachment, 0, len(payload.Images))
+	totalBytes := 0
+	for index, imagePayload := range payload.Images {
+		imageAttachment, err := decodeWebUIImage(imagePayload)
+		if err != nil {
+			return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("image %d: %w", index+1, err)}
+		}
+		totalBytes += len(imageAttachment.Data)
+		if totalBytes > maxWebUITotalImageBytes {
+			return TurnRequest{}, &webUIRequestError{Status: http.StatusRequestEntityTooLarge, Err: fmt.Errorf("decoded image data exceeds %d bytes", maxWebUITotalImageBytes)}
+		}
+		images = append(images, imageAttachment)
+	}
+	if strings.TrimSpace(payload.Message) == "" && len(images) == 0 {
+		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("message or images are required")}
+	}
+	return TurnRequest{SessionID: strings.TrimSpace(payload.SessionID), TurnID: strings.TrimSpace(payload.TurnID), Message: payload.Message, Images: images}, nil
+}
+
+func decodeWebUIImage(payload webUIImagePayload) (agent.ImageAttachment, error) {
+	mimeType := strings.ToLower(strings.TrimSpace(payload.MIMEType))
+	allowed := map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true}
+	if !allowed[mimeType] {
+		return agent.ImageAttachment{}, fmt.Errorf("unsupported MIME type %q", mimeType)
+	}
+	encoded := strings.TrimSpace(payload.DataBase64)
+	if encoded == "" {
+		return agent.ImageAttachment{}, fmt.Errorf("image data is empty")
+	}
+	if strings.HasPrefix(strings.ToLower(encoded), "data:") {
+		return agent.ImageAttachment{}, fmt.Errorf("data URI wrappers are not accepted")
+	}
+	maxEncodedLength := base64.StdEncoding.EncodedLen(maxWebUIImageBytes)
+	if len(encoded) > maxEncodedLength {
+		return agent.ImageAttachment{}, fmt.Errorf("image exceeds %d decoded bytes", maxWebUIImageBytes)
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return agent.ImageAttachment{}, fmt.Errorf("invalid base64 data: %w", err)
+	}
+	if len(data) == 0 || len(data) > maxWebUIImageBytes {
+		return agent.ImageAttachment{}, fmt.Errorf("image size must be between 1 and %d bytes", maxWebUIImageBytes)
+	}
+	detectedMIME := http.DetectContentType(data)
+	if detectedMIME != mimeType {
+		return agent.ImageAttachment{}, fmt.Errorf("declared MIME %q does not match detected MIME %q", mimeType, detectedMIME)
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return agent.ImageAttachment{}, fmt.Errorf("invalid image data: %w", err)
+	}
+	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > maxWebUIImagePixels {
+		return agent.ImageAttachment{}, fmt.Errorf("image dimensions exceed %d pixels", maxWebUIImagePixels)
+	}
+	return agent.ImageAttachment{MIMEType: mimeType, Data: data}, nil
+}
+
 func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodPost {
 		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
@@ -119,14 +237,14 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		return
 	}
 
-	values, err := readValues(writer, request)
+	turnRequest, err := decodeWebUIChatRequest(writer, request)
 	if err != nil {
-		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
-		return
-	}
-	turnRequest, err := parseTurnRequest(values)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
+		status := http.StatusBadRequest
+		var requestErr *webUIRequestError
+		if errors.As(err, &requestErr) && requestErr.Status > 0 {
+			status = requestErr.Status
+		}
+		writeError(writer, status, chatResponse{Error: err.Error()})
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), ChannelTurnTimeout())
@@ -145,10 +263,12 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		SessionID: turnRequest.SessionID,
 		Message:   turnRequest.Message,
 		TurnID:    turnRequest.TurnID,
+		Images:    turnRequest.Images,
 	}, TurnOptions{
 		Stream:         true,
 		TokenSink:      sseEventWriter{stream: stream, event: "message"},
 		ProgressWriter: sseEventWriter{stream: stream, event: "progress"},
+		ToolEventSink:  sseToolEventSink{stream: stream},
 		MaxIterations:  ChannelMaxIterations(),
 		Stage: agent.StageConfig{
 			MaxIterations:     WebUIStageMaxIterations(),
@@ -185,6 +305,38 @@ type sseEventWriter struct {
 	event  string
 }
 
+type sseToolEventSink struct {
+	stream *sseStream
+}
+
+func (sink sseToolEventSink) EmitToolEvent(event agent.ToolEvent) {
+	if sink.stream == nil || event.Kind == "" {
+		return
+	}
+	_ = sink.stream.writeEvent(event.Kind, event)
+}
+
+func (stream *sseStream) writeEvent(event string, value any) error {
+	if stream == nil {
+		return io.ErrClosedPipe
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	prefix := ""
+	if event != "" && event != "message" {
+		prefix = "event: " + event + "\n"
+	}
+	if _, err := fmt.Fprintf(stream.writer, "%sdata: %s\n\n", prefix, payload); err != nil {
+		return err
+	}
+	stream.flusher.Flush()
+	return nil
+}
+
 func (sink sseEventWriter) Write(data []byte) (int, error) {
 	if len(data) == 0 {
 		return 0, nil
@@ -201,20 +353,9 @@ func (sink sseEventWriter) Write(data []byte) (int, error) {
 		}
 		payloadValue = map[string]string{"message": message}
 	}
-	payload, err := json.Marshal(payloadValue)
-	if err != nil {
+	if err := sink.stream.writeEvent(sink.event, payloadValue); err != nil {
 		return 0, err
 	}
-	sink.stream.mu.Lock()
-	defer sink.stream.mu.Unlock()
-	prefix := ""
-	if sink.event != "" && sink.event != "message" {
-		prefix = "event: " + sink.event + "\n"
-	}
-	if _, err := fmt.Fprintf(sink.stream.writer, "%sdata: %s\n\n", prefix, payload); err != nil {
-		return 0, err
-	}
-	sink.stream.flusher.Flush()
 	return len(data), nil
 }
 

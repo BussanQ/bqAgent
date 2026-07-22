@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,11 +42,18 @@ type Client struct {
 	apiType    APIType
 }
 
+type CompletionState struct {
+	StopReason       string `json:"-"`
+	OutputTruncated  bool   `json:"-"`
+	IncompleteReason string `json:"-"`
+}
+
 type AssistantMessage struct {
-	Role      string     `json:"role"`
-	Content   any        `json:"content"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-	Usage     TokenUsage `json:"-"`
+	Role       string          `json:"role"`
+	Content    any             `json:"content"`
+	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
+	Completion CompletionState `json:"-"`
+	Usage      TokenUsage      `json:"-"`
 }
 
 type TokenUsage struct {
@@ -83,7 +91,8 @@ type chatCompletionStreamRequest struct {
 
 type chatCompletionResponse struct {
 	Choices []struct {
-		Message AssistantMessage `json:"message"`
+		Message      AssistantMessage `json:"message"`
+		FinishReason string           `json:"finish_reason"`
 	} `json:"choices"`
 	Usage TokenUsage `json:"usage"`
 }
@@ -117,6 +126,14 @@ type streamChoice struct {
 type streamChunk struct {
 	Choices []streamChoice `json:"choices"`
 	Usage   TokenUsage     `json:"usage,omitempty"`
+}
+
+func completionFromStopReason(reason string) CompletionState {
+	reason = strings.TrimSpace(reason)
+	return CompletionState{
+		StopReason:      reason,
+		OutputTruncated: strings.EqualFold(reason, "length") || strings.EqualFold(reason, "max_tokens") || strings.EqualFold(reason, "max_output_tokens"),
+	}
 }
 
 func NewClient(apiKey, baseURL string, httpClient *http.Client) *Client {
@@ -212,7 +229,9 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 		return AssistantMessage{}, fmt.Errorf("chat completions response contained no choices")
 	}
 
-	message := decoded.Choices[0].Message
+	choice := decoded.Choices[0]
+	message := choice.Message
+	message.Completion = completionFromStopReason(choice.FinishReason)
 	message.Usage = decoded.Usage
 	if message.Role == "" {
 		message.Role = "assistant"
@@ -274,6 +293,7 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 	var (
 		contentBuilder strings.Builder
 		role           string
+		finishReason   string
 		toolCallMap    = map[int]*partialToolCall{}
 		usage          TokenUsage
 	)
@@ -298,7 +318,11 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 		if len(chunk.Choices) == 0 {
 			continue
 		}
-		delta := chunk.Choices[0].Delta
+		choice := chunk.Choices[0]
+		if choice.FinishReason != "" {
+			finishReason = choice.FinishReason
+		}
+		delta := choice.Delta
 		if delta.Role != "" {
 			role = delta.Role
 		}
@@ -337,12 +361,18 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 	}
 
 	message := AssistantMessage{
-		Role:    role,
-		Content: contentBuilder.String(),
-		Usage:   usage,
+		Role:       role,
+		Content:    contentBuilder.String(),
+		Completion: completionFromStopReason(finishReason),
+		Usage:      usage,
 	}
-	for i := 0; i < len(toolCallMap); i++ {
-		ptc := toolCallMap[i]
+	indices := make([]int, 0, len(toolCallMap))
+	for index := range toolCallMap {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	for _, index := range indices {
+		ptc := toolCallMap[index]
 		message.ToolCalls = append(message.ToolCalls, ToolCall{
 			ID:   ptc.id,
 			Type: ptc.callType,

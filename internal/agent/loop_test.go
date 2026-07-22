@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -862,22 +863,20 @@ func TestRunContextFallsBackWhenSummarizationFails(t *testing.T) {
 	}
 }
 
-func TestRunSkillToolExecutesWorkspaceSkill(t *testing.T) {
+func TestRunConversationReadsWorkspaceSkillThroughRegularTool(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "demo"), 0o755); err != nil {
 		t.Fatalf("failed to create skill directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte("# Demo Skill\n\nRead README.md and summarize it."), 0o644); err != nil {
+	skillBody := "---\ndescription: Demo workflow.\n---\n\n# Demo Skill\n\nRead README.md and summarize it."
+	if err := os.WriteFile(filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"), []byte(skillBody), 0o644); err != nil {
 		t.Fatalf("failed to write skill file: %v", err)
 	}
 
-	client := &stubClient{
-		responses: []AssistantMessage{
-			{ToolCalls: []ToolCall{{ID: "skill-1", Function: FunctionCall{Name: "run_skill", Arguments: `{"skill":"demo","args":"focus on setup"}`}}}},
-			{Content: "skill result"},
-			{Content: "final answer"},
-		},
-	}
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "read-skill-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":".agent/skills/demo/SKILL.md"}`}}}},
+		{Content: "final answer"},
+	}}
 	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
 	app := NewWithOptions(client, "", Options{
 		ToolDefinitions: catalog.Definitions(),
@@ -885,30 +884,65 @@ func TestRunSkillToolExecutesWorkspaceSkill(t *testing.T) {
 		WorkspaceRoot:   root,
 	})
 
-	result, err := app.RunConversation(context.Background(), []map[string]any{{"role": "system", "content": "sys"}, {"role": "user", "content": "help me with demo skill"}}, 5)
+	result, err := app.RunConversation(context.Background(), []map[string]any{{"role": "system", "content": "sys"}, {"role": "user", "content": "read the selected skill"}}, 5)
 	if err != nil {
 		t.Fatalf("RunConversation returned error: %v", err)
 	}
 	if result != "final answer" {
 		t.Fatalf("result = %q, want %q", result, "final answer")
 	}
-	if len(client.messages) != 3 {
-		t.Fatalf("client saw %d requests, want 3", len(client.messages))
+	if len(client.messages) != 2 {
+		t.Fatalf("client saw %d requests, want 2 in one main loop", len(client.messages))
 	}
-	toolMessages := extractToolMessages(client.messages[2])
+	toolMessages := extractToolMessages(client.messages[1])
 	if len(toolMessages) != 1 {
 		t.Fatalf("tool messages = %d, want 1", len(toolMessages))
 	}
-	if content, _ := toolMessages[0]["content"].(string); content != "skill result" {
-		t.Fatalf("tool content = %q, want %q", content, "skill result")
+	if content, _ := toolMessages[0]["content"].(string); content != skillBody {
+		t.Fatalf("tool content = %q, want complete SKILL.md", content)
 	}
-	childRequest := client.messages[1]
-	if len(childRequest) < 2 {
-		t.Fatalf("child request messages = %d, want at least 2", len(childRequest))
+}
+
+func TestSanitizeCompletedToolHistoryRemovesLegacyRunSkillCall(t *testing.T) {
+	messages := []map[string]any{
+		{"role": "system", "content": "sys"},
+		{"role": "assistant", "tool_calls": []ToolCall{{ID: "legacy-1", Function: FunctionCall{Name: "run_skill", Arguments: `{"skill":"demo"}`}}}},
 	}
-	childUser, _ := childRequest[1]["content"].(string)
-	if !strings.Contains(childUser, "Read README.md and summarize it.") || !strings.Contains(childUser, "focus on setup") {
-		t.Fatalf("child skill prompt = %q, want skill body and args", childUser)
+
+	sanitized := sanitizeCompletedToolHistory(messages)
+	if len(sanitized) != 2 {
+		t.Fatalf("sanitized length = %d, want 2", len(sanitized))
+	}
+	if calls := extractToolCallsFromMessageMap(sanitized[1]); len(calls) != 0 {
+		t.Fatalf("legacy run_skill calls remain: %#v", calls)
+	}
+	content, _ := sanitized[1]["content"].(string)
+	if !strings.Contains(content, "Deprecated skill activity") || !strings.Contains(content, "read_file") {
+		t.Fatalf("legacy evidence = %q, want deprecation and read_file guidance", content)
+	}
+}
+
+func TestSanitizeCompletedToolHistoryPreservesNonSkillCallsInMixedLegacyBatch(t *testing.T) {
+	messages := []map[string]any{
+		{"role": "system", "content": "sys"},
+		{"role": "assistant", "tool_calls": []ToolCall{
+			{ID: "legacy-1", Function: FunctionCall{Name: "run_skill", Arguments: `{"skill":"demo"}`}},
+			{ID: "read-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"README.md"}`}},
+		}},
+		{"role": "tool", "tool_call_id": "legacy-1", "content": "old skill result"},
+		{"role": "tool", "tool_call_id": "read-1", "content": "read result"},
+	}
+
+	sanitized := sanitizeCompletedToolHistory(messages)
+	joined, _ := json.Marshal(sanitized)
+	if strings.Contains(string(joined), `"name":"run_skill"`) {
+		t.Fatalf("sanitized history still contains run_skill: %s", joined)
+	}
+	if !strings.Contains(string(joined), "read_file") || !strings.Contains(string(joined), "read result") {
+		t.Fatalf("sanitized history lost ordinary tool evidence: %s", joined)
+	}
+	if !strings.Contains(string(joined), "old skill result") {
+		t.Fatalf("sanitized history lost archived legacy result: %s", joined)
 	}
 }
 

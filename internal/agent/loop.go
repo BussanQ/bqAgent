@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"bqagent/internal/tools"
 	apptrace "bqagent/internal/trace"
-	"bqagent/internal/workspace"
 )
 
 const (
@@ -29,11 +29,30 @@ const (
 	EarlierConversationSummaryPrefix    = "Summary of earlier conversation:\n"
 	// maxParallelTools caps how many independent tool calls in one assistant turn
 	// run concurrently.
-	maxParallelTools = 8
+	maxParallelTools                    = 8
+	maxTruncatedToolRecoveries          = 3
+	truncatedToolBatchError             = "Error: Tool batch was not executed because the model output reached its token limit. No side effects occurred. Resend the complete tool-call batch with complete JSON arguments."
+	truncatedToolRecoveryStoppedMessage = "Tool-call recovery stopped after repeated output-token truncation. Increase the model output-token limit or request a smaller tool-call batch; no tools from the truncated batches were executed."
 )
 
 type MessageRecorder interface {
 	RecordMessage(message map[string]any) error
+}
+
+type ToolEvent struct {
+	Kind       string         `json:"-"`
+	Seq        uint64         `json:"seq"`
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Status     string         `json:"status"`
+	Arguments  map[string]any `json:"arguments,omitempty"`
+	Preview    string         `json:"preview,omitempty"`
+	DurationMS int64          `json:"duration_ms,omitempty"`
+	Truncated  bool           `json:"truncated"`
+}
+
+type ToolEventSink interface {
+	EmitToolEvent(ToolEvent)
 }
 
 type ContextCheckpointRecorder interface {
@@ -78,6 +97,7 @@ type Options struct {
 	WorkspaceRoot   string
 	ProgressWriter  io.Writer
 	TokenSink       io.Writer
+	ToolEventSink   ToolEventSink
 	Context         ContextConfig
 	Stage           StageConfig
 	Trace           *apptrace.Recorder
@@ -97,6 +117,8 @@ type Agent struct {
 	workspaceRoot   string
 	progressWriter  io.Writer
 	tokenSink       io.Writer
+	toolEventSink   ToolEventSink
+	toolEventSeq    atomic.Uint64
 	contextConfig   ContextConfig
 	stageConfig     StageConfig
 	trace           *apptrace.Recorder
@@ -152,6 +174,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		stream:          options.Stream,
 		workspaceRoot:   options.WorkspaceRoot,
 		tokenSink:       tokenSink,
+		toolEventSink:   options.ToolEventSink,
 		contextConfig:   contextConfig,
 		stageConfig:     normalizeStageConfig(options.Stage),
 		trace:           options.Trace,
@@ -241,18 +264,6 @@ func normalizeContextConfig(config ContextConfig) ContextConfig {
 	return config
 }
 
-func (a *Agent) RunSkill(ctx context.Context, skillID, args string, maxIterations int) (string, error) {
-	messages, err := a.executeSkillTool(ctx, nil, ToolCall{ID: "skill-direct-1", Function: FunctionCall{Name: "run_skill"}}, map[string]any{"skill": skillID, "args": args}, maxIterations)
-	if err != nil {
-		return "", err
-	}
-	if len(messages) == 0 {
-		return "", nil
-	}
-	content, _ := messages[len(messages)-1]["content"].(string)
-	return content, nil
-}
-
 func (a *Agent) RunPlanned(ctx context.Context, task string, maxIterations int) (string, error) {
 	messages := []map[string]any{{"role": "system", "content": a.systemPrompt}}
 	if err := a.recordMessages(messages...); err != nil {
@@ -322,6 +333,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 	}
 	defer cancelExploration()
 	loopGuard := newLoopGuard(a.stageConfig)
+	truncatedToolRecoveries := 0
 	defer func() {
 		logTurnTiming(a.logWriter, actualIterations, allowPlan, time.Since(startedAt), err)
 	}()
@@ -378,6 +390,10 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			return "", updatedMessages, err
 		}
 		message.normalizeInlineToolCalls()
+		truncatedToolBatch := message.Completion.OutputTruncated && len(message.ToolCalls) > 0
+		if truncatedToolBatch {
+			message.ToolCalls = replayableToolCalls(message.ToolCalls)
+		}
 
 		requestMessage := message.RequestMessage()
 		updatedMessages = append(updatedMessages, requestMessage)
@@ -394,6 +410,20 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		} else {
 			a.logf("[Agent] %s\n", message.DisplayContent())
 		}
+		if truncatedToolBatch {
+			truncatedToolRecoveries++
+			var recoveryErr error
+			updatedMessages, recoveryErr = a.appendTruncatedToolRecovery(updatedMessages, message.ToolCalls, truncatedToolRecoveries)
+			messages = updatedMessages
+			if recoveryErr != nil {
+				return "", updatedMessages, recoveryErr
+			}
+			if truncatedToolRecoveries > maxTruncatedToolRecoveries {
+				return truncatedToolRecoveryStoppedMessage, updatedMessages, nil
+			}
+			continue
+		}
+		truncatedToolRecoveries = 0
 		if len(message.ToolCalls) == 0 {
 			return message.FinalContent(), updatedMessages, nil
 		}
@@ -430,7 +460,14 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 
 				if toolCall.Function.Name == "plan" && allowPlan && a.planner != nil {
+					planStartedAt := time.Now()
+					a.emitToolEvent(ToolEvent{Kind: "tool_start", ID: toolCall.ID, Name: toolCall.Function.Name, Status: "running", Arguments: boundedToolEventArguments(arguments)})
 					result, updatedPlanMessages, planErr := a.executePlanTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
+					preview := result
+					if preview == "" && len(updatedPlanMessages) > 0 {
+						preview, _ = updatedPlanMessages[len(updatedPlanMessages)-1]["content"].(string)
+					}
+					a.emitToolResult(toolCall, preview, time.Since(planStartedAt), planErr != nil || strings.HasPrefix(strings.TrimSpace(preview), "Error:"))
 					updatedMessages = updatedPlanMessages
 					messages = updatedMessages
 					if planErr != nil {
@@ -438,16 +475,6 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					}
 					if result != "" {
 						return result, updatedMessages, nil
-					}
-					continue
-				}
-
-				if toolCall.Function.Name == "run_skill" {
-					updatedSkillMessages, skillErr := a.executeSkillTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
-					updatedMessages = updatedSkillMessages
-					messages = updatedMessages
-					if skillErr != nil {
-						return "", updatedMessages, skillErr
 					}
 					continue
 				}
@@ -674,75 +701,6 @@ func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, 
 	return strings.Join(results, "\n"), messages, nil
 }
 
-func (a *Agent) executeSkillTool(ctx context.Context, messages []map[string]any, toolCall ToolCall, arguments map[string]any, maxIterations int) (updated []map[string]any, err error) {
-	startedAt := time.Now()
-	defer func() {
-		if a.trace != nil {
-			result := ""
-			if len(updated) > 0 {
-				result, _ = updated[len(updated)-1]["content"].(string)
-			}
-			a.trace.ToolCall("run_skill", arguments, result, time.Since(startedAt), err)
-		}
-	}()
-	skillID, err := requireStringArgument("run_skill", arguments, "skill")
-	if err != nil {
-		return a.appendToolError(messages, toolCall.ID, "%v", err)
-	}
-	if strings.TrimSpace(a.workspaceRoot) == "" {
-		return a.appendToolError(messages, toolCall.ID, "workspace root is not configured for run_skill")
-	}
-
-	ws := &workspace.Workspace{Root: a.workspaceRoot}
-	skill, err := ws.LoadSkill(skillID)
-	if err != nil {
-		return a.appendToolError(messages, toolCall.ID, "%v", err)
-	}
-
-	argsText := ""
-	if rawArgs, ok := arguments["args"]; ok {
-		text, ok := rawArgs.(string)
-		if !ok {
-			return a.appendToolError(messages, toolCall.ID, "tool %q argument %q must be a string", "run_skill", "args")
-		}
-		argsText = strings.TrimSpace(text)
-	}
-
-	toolMessage := map[string]any{
-		"role":         "tool",
-		"tool_call_id": toolCall.ID,
-		"content":      fmt.Sprintf("Running skill %q...", skill.ID),
-	}
-	messages = append(messages, toolMessage)
-	if err := a.recordMessages(toolMessage); err != nil {
-		return messages, err
-	}
-
-	skillTask := buildSkillTask(skill, argsText)
-	child := &Agent{
-		client:          a.client,
-		model:           a.model,
-		logWriter:       a.logWriter,
-		progressWriter:  a.progressWriter,
-		systemPrompt:    a.systemPrompt,
-		toolDefinitions: a.toolDefinitionsForSkillRun(),
-		functions:       cloneFunctionMap(a.functions),
-		planner:         nil,
-		recorder:        a.recorder,
-		stream:          false,
-		workspaceRoot:   a.workspaceRoot,
-		contextConfig:   a.contextConfig,
-		trace:           a.trace,
-	}
-	skillResult, _, err := child.runConversation(ctx, []map[string]any{{"role": "system", "content": a.systemPrompt}, {"role": "user", "content": skillTask}}, maxIterations, false)
-	if err != nil {
-		return messages, err
-	}
-
-	messages[len(messages)-1]["content"] = skillResult
-	return messages, nil
-}
-
 // buildRequestMessages returns the message payload to send to the model and,
 // when pruning or summarization compacted the history, a non-nil bounded working
 // set the loop should adopt in place of its full in-memory history. This working
@@ -925,10 +883,18 @@ func messageTailGroups(messages []map[string]any, start int) []messageGroup {
 
 func truncateMessageGroupToBudget(group []map[string]any, budgetTokens int) []map[string]any {
 	cloned := duplicateMessages(group)
+	for _, message := range cloned {
+		if parts, ok := message["content"].([]any); ok {
+			message["content"] = cloneContentParts(parts)
+		}
+	}
 	if budgetTokens <= 0 {
 		return nil
 	}
 	for estimateMessagesTokens(cloned) > budgetTokens {
+		if dropOldestImagePart(cloned) {
+			continue
+		}
 		largestIndex := -1
 		largestContent := ""
 		for index, message := range cloned {
@@ -948,6 +914,72 @@ func truncateMessageGroupToBudget(group []map[string]any, budgetTokens int) []ma
 		cloned[largestIndex]["content"] = truncateTextMiddle(largestContent, maxChars)
 	}
 	return cloned
+}
+
+func cloneContentParts(parts []any) []any {
+	cloned := make([]any, len(parts))
+	for index, part := range parts {
+		cloned[index] = cloneContentValue(part)
+	}
+	return cloned
+}
+
+func cloneContentValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			result[key] = cloneContentValue(item)
+		}
+		return result
+	case []any:
+		return cloneContentParts(typed)
+	default:
+		return value
+	}
+}
+
+func dropOldestImagePart(messages []map[string]any) bool {
+	for _, message := range messages {
+		parts, ok := message["content"].([]any)
+		if !ok {
+			continue
+		}
+		for index, rawPart := range parts {
+			part, ok := rawPart.(map[string]any)
+			if !ok || !isImageContentPart(part) {
+				continue
+			}
+			parts = append(parts[:index], parts[index+1:]...)
+			if !hasTextContentPart(parts) {
+				parts = append([]any{map[string]any{"type": "text", "text": "Earlier image attachment omitted to fit context budget."}}, parts...)
+			}
+			message["content"] = parts
+			return true
+		}
+	}
+	return false
+}
+
+func isImageContentPart(part map[string]any) bool {
+	partType, _ := part["type"].(string)
+	partType = strings.ToLower(strings.TrimSpace(partType))
+	return strings.Contains(partType, "image") || part["image_url"] != nil
+}
+
+func hasTextContentPart(parts []any) bool {
+	for _, rawPart := range parts {
+		part, ok := rawPart.(map[string]any)
+		if !ok {
+			continue
+		}
+		partType, _ := part["type"].(string)
+		text, _ := part["text"].(string)
+		if strings.Contains(strings.ToLower(partType), "text") && strings.TrimSpace(text) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func truncateTextMiddle(text string, maxChars int) string {
@@ -1075,24 +1107,66 @@ func safeTailStart(messages []map[string]any, keepLastTurns int) int {
 }
 
 func estimateMessagesTokens(messages []map[string]any) int {
-	totalChars := 0
+	totalTokens := 0
 	for _, message := range messages {
-		for _, key := range []string{"role", "content", "tool_call_id"} {
+		for _, key := range []string{"role", "tool_call_id"} {
 			if text, ok := message[key].(string); ok {
-				totalChars += len(text)
+				totalTokens += estimateTextTokens(text)
 			}
 		}
+		totalTokens += estimateContentTokens(message["content"])
 		if toolCalls, ok := message["tool_calls"]; ok && toolCalls != nil {
 			encoded, err := json.Marshal(toolCalls)
 			if err == nil {
-				totalChars += len(encoded)
+				totalTokens += estimateTextTokens(string(encoded))
 			}
 		}
 	}
-	if totalChars == 0 {
+	return totalTokens
+}
+
+func estimateTextTokens(text string) int {
+	if text == "" {
 		return 0
 	}
-	return (totalChars + 3) / 4
+	return (len(text) + 3) / 4
+}
+
+func estimateContentTokens(content any) int {
+	switch typed := content.(type) {
+	case string:
+		if strings.HasPrefix(typed, "data:image/") {
+			return estimateDataURIImageTokens(typed)
+		}
+		return estimateTextTokens(typed)
+	case []any:
+		total := 0
+		for _, part := range typed {
+			total += estimateContentTokens(part)
+		}
+		return total
+	case map[string]any:
+		total := 0
+		for key, value := range typed {
+			switch key {
+			case "text", "url", "image_url", "source":
+				total += estimateContentTokens(value)
+			}
+		}
+		return total
+	default:
+		return 0
+	}
+}
+
+func estimateDataURIImageTokens(dataURI string) int {
+	comma := strings.IndexByte(dataURI, ',')
+	if comma < 0 {
+		return 256
+	}
+	encodedLength := len(dataURI) - comma - 1
+	rawBytes := encodedLength * 3 / 4
+	return 256 + (rawBytes+1023)/1024
 }
 
 func (a *Agent) logContextBudget(rawCount, sanitizedCount, requestCount, estimatedTokens int, pruned bool, summarized bool) {
@@ -1102,23 +1176,54 @@ func (a *Agent) logContextBudget(rawCount, sanitizedCount, requestCount, estimat
 	fmt.Fprintf(a.logWriter, "[Context] raw_messages=%d sanitized_messages=%d request_messages=%d estimated_tokens=%d pruned=%t summarized=%t target_tokens=%d\n", rawCount, sanitizedCount, requestCount, estimatedTokens, pruned, summarized, a.contextConfig.TargetInputTokens)
 }
 
-func buildSkillTask(skill workspace.Skill, args string) string {
-	parts := []string{
-		fmt.Sprintf("Execute workspace skill %q.", skill.ID),
-		fmt.Sprintf("Skill title: %s", skill.Title),
-		"Follow the skill instructions below and complete the requested task using the available tools.",
-		"Skill definition:",
-		skill.Body,
+func replayableToolCalls(toolCalls []ToolCall) []ToolCall {
+	filtered := make([]ToolCall, 0, len(toolCalls))
+	for _, toolCall := range toolCalls {
+		if strings.TrimSpace(toolCall.ID) == "" || strings.TrimSpace(toolCall.Function.Name) == "" || strings.TrimSpace(toolCall.Function.Arguments) == "" {
+			continue
+		}
+		var arguments map[string]any
+		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil || arguments == nil {
+			continue
+		}
+		filtered = append(filtered, toolCall)
 	}
-	if strings.TrimSpace(args) != "" {
-		parts = append(parts, "Skill arguments:", args)
+	return filtered
+}
+
+func (a *Agent) appendTruncatedToolRecovery(messages []map[string]any, toolCalls []ToolCall, attempt int) ([]map[string]any, error) {
+	updated := messages
+	for _, toolCall := range toolCalls {
+		a.emitToolEvent(ToolEvent{Kind: "tool_start", ID: toolCall.ID, Name: toolCall.Function.Name, Status: "running"})
+		a.emitToolResult(toolCall, truncatedToolBatchError, 0, true)
+		var err error
+		updated, err = a.appendToolMessage(updated, toolCall.ID, truncatedToolBatchError)
+		if err != nil {
+			return updated, err
+		}
 	}
-	return strings.Join(parts, "\n\n")
+	if attempt > maxTruncatedToolRecoveries {
+		finalMessage := map[string]any{"role": "assistant", "content": truncatedToolRecoveryStoppedMessage}
+		updated = append(updated, finalMessage)
+		if err := a.recordMessages(finalMessage); err != nil {
+			return updated, err
+		}
+		return updated, nil
+	}
+	recoveryMessage := map[string]any{
+		"role":    "user",
+		"content": "The previous assistant response reached its output-token limit while forming tool calls. No tools from that batch were executed. Reissue every required tool call in one complete response with complete JSON object arguments. Do not assume any side effects occurred.",
+	}
+	updated = append(updated, recoveryMessage)
+	if err := a.recordMessages(recoveryMessage); err != nil {
+		return updated, err
+	}
+	return updated, nil
 }
 
 func parseArguments(raw string) (any, error) {
 	if strings.TrimSpace(raw) == "" {
-		return map[string]any{}, nil
+		return nil, fmt.Errorf("tool arguments are empty")
 	}
 
 	var parsed any
@@ -1145,17 +1250,6 @@ func (a *Agent) toolDefinitionsForRun(allowPlan bool) []tools.Definition {
 	filtered := make([]tools.Definition, 0, len(a.toolDefinitions))
 	for _, definition := range a.toolDefinitions {
 		if definition.Function.Name == "plan" && (!allowPlan || a.planner == nil) {
-			continue
-		}
-		filtered = append(filtered, definition)
-	}
-	return filtered
-}
-
-func (a *Agent) toolDefinitionsForSkillRun() []tools.Definition {
-	filtered := make([]tools.Definition, 0, len(a.toolDefinitions))
-	for _, definition := range a.toolDefinitions {
-		if definition.Function.Name == "plan" || definition.Function.Name == "run_skill" {
 			continue
 		}
 		filtered = append(filtered, definition)
@@ -1211,10 +1305,110 @@ func duplicateMessages(messages []map[string]any) []map[string]any {
 	return cloned
 }
 
+type legacyRunSkillCall struct {
+	ID        string
+	Arguments string
+}
+
+func normalizeLegacyRunSkillHistory(messages []map[string]any) []map[string]any {
+	normalized := make([]map[string]any, 0, len(messages))
+	for index := 0; index < len(messages); index++ {
+		message := messages[index]
+		role, _ := message["role"].(string)
+		if role != "assistant" {
+			normalized = append(normalized, message)
+			continue
+		}
+
+		calls := extractToolCallsFromMessageMap(message)
+		legacyCalls := make([]legacyRunSkillCall, 0)
+		remainingCalls := make([]any, 0, len(calls))
+		legacyIDs := make(map[string]bool)
+		for _, rawCall := range calls {
+			id, name, arguments := toolCallIdentity(rawCall)
+			if name != "run_skill" {
+				remainingCalls = append(remainingCalls, rawCall)
+				continue
+			}
+			legacyCalls = append(legacyCalls, legacyRunSkillCall{ID: id, Arguments: arguments})
+			if id != "" {
+				legacyIDs[id] = true
+			}
+		}
+		if len(legacyCalls) == 0 {
+			normalized = append(normalized, message)
+			continue
+		}
+
+		end := index + 1
+		legacyResults := make(map[string]string)
+		ordinaryResults := make([]map[string]any, 0)
+		for end < len(messages) {
+			result := messages[end]
+			resultRole, _ := result["role"].(string)
+			if resultRole != "tool" {
+				break
+			}
+			toolCallID, _ := result["tool_call_id"].(string)
+			if legacyIDs[toolCallID] {
+				legacyResults[toolCallID], _ = result["content"].(string)
+			} else {
+				ordinaryResults = append(ordinaryResults, result)
+			}
+			end++
+		}
+
+		normalized = append(normalized, legacyRunSkillEvidence(legacyCalls, legacyResults))
+		if len(remainingCalls) > 0 {
+			copyMessage := make(map[string]any, len(message))
+			for key, value := range message {
+				copyMessage[key] = value
+			}
+			copyMessage["tool_calls"] = remainingCalls
+			normalized = append(normalized, copyMessage)
+			normalized = append(normalized, ordinaryResults...)
+		} else if content, _ := message["content"].(string); strings.TrimSpace(content) != "" {
+			normalized = append(normalized, map[string]any{"role": "assistant", "content": content})
+		}
+		index = end - 1
+	}
+	return normalized
+}
+
+func toolCallIdentity(raw any) (id, name, arguments string) {
+	switch call := raw.(type) {
+	case ToolCall:
+		return call.ID, call.Function.Name, call.Function.Arguments
+	case map[string]any:
+		id, _ = call["id"].(string)
+		function, _ := call["function"].(map[string]any)
+		name, _ = function["name"].(string)
+		arguments, _ = function["arguments"].(string)
+		return id, name, arguments
+	default:
+		return "", "", ""
+	}
+}
+
+func legacyRunSkillEvidence(calls []legacyRunSkillCall, results map[string]string) map[string]any {
+	parts := []string{"Deprecated skill activity from an earlier runtime version was removed from tool history before contacting the model."}
+	for _, call := range calls {
+		detail := "Requested legacy run_skill arguments: " + call.Arguments
+		if result := strings.TrimSpace(results[call.ID]); result != "" {
+			detail += "\nArchived result:\n" + result
+		} else {
+			detail += "\nNo completed result was recorded. If this skill is still needed, use the current Skills index and read_file to load its SKILL.md."
+		}
+		parts = append(parts, detail)
+	}
+	return map[string]any{"role": "assistant", "content": strings.Join(parts, "\n")}
+}
+
 func sanitizeCompletedToolHistory(messages []map[string]any) []map[string]any {
 	if len(messages) == 0 {
 		return messages
 	}
+	messages = normalizeLegacyRunSkillHistory(messages)
 
 	pendingAssistantIndex := -1
 	pendingToolStart := len(messages)
@@ -1318,8 +1512,6 @@ func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall, allowPlan bool) bool {
 		switch toolCall.Function.Name {
 		case "write_file", "edit_file":
 			return true
-		case "run_skill":
-			return true
 		case "plan":
 			if allowPlan && a.planner != nil {
 				return true
@@ -1333,24 +1525,111 @@ func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall, allowPlan bool) bool {
 // returning its tool_call_id and the result content (errors are rendered as
 // "Error: ..." content, matching appendToolError). It is safe to call from
 // multiple goroutines; the log/progress writers are synchronized.
+const maxToolEventPreviewRunes = 4 * 1024
+
+func (a *Agent) emitToolEvent(event ToolEvent) {
+	if a == nil || a.toolEventSink == nil {
+		return
+	}
+	event.Seq = a.toolEventSeq.Add(1)
+	a.toolEventSink.EmitToolEvent(event)
+}
+
+func (a *Agent) emitToolResult(toolCall ToolCall, result string, duration time.Duration, failed bool) {
+	preview, truncated := boundedToolEventPreview(result)
+	status := "succeeded"
+	if failed {
+		status = "failed"
+	}
+	a.emitToolEvent(ToolEvent{
+		Kind: "tool_result", ID: toolCall.ID, Name: toolCall.Function.Name,
+		Status: status, Preview: preview, DurationMS: duration.Milliseconds(), Truncated: truncated,
+	})
+}
+
+func boundedToolEventPreview(value string) (string, bool) {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) <= maxToolEventPreviewRunes {
+		return string(runes), false
+	}
+	return string(runes[:maxToolEventPreviewRunes]) + "\n... [preview truncated]", true
+}
+
+func boundedToolEventArguments(arguments map[string]any) map[string]any {
+	redacted := apptrace.RedactMap(arguments)
+	bounded, _ := boundToolEventValue(redacted, 0).(map[string]any)
+	return bounded
+}
+
+func boundToolEventValue(value any, depth int) any {
+	if depth >= 5 {
+		return "[depth limit]"
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		result := make(map[string]any)
+		count := 0
+		for key, item := range typed {
+			if count >= 64 {
+				result["..."] = "[entry limit]"
+				break
+			}
+			result[key] = boundToolEventValue(item, depth+1)
+			count++
+		}
+		return result
+	case []any:
+		limit := len(typed)
+		if limit > 32 {
+			limit = 32
+		}
+		result := make([]any, 0, limit+1)
+		for _, item := range typed[:limit] {
+			result = append(result, boundToolEventValue(item, depth+1))
+		}
+		if len(typed) > limit {
+			result = append(result, "[item limit]")
+		}
+		return result
+	case string:
+		preview, _ := boundedToolEventPreview(typed)
+		if len([]rune(preview)) > 1024 {
+			return string([]rune(preview)[:1024]) + "..."
+		}
+		return preview
+	default:
+		return value
+	}
+}
+
 func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (string, string) {
+	toolStartedAt := time.Now()
 	parsedArguments, err := parseArguments(toolCall.Function.Arguments)
 	if err != nil {
-		return toolCall.ID, fmt.Sprintf("Error: Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err)
+		result := fmt.Sprintf("Error: Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err)
+		a.emitToolEvent(ToolEvent{Kind: "tool_start", ID: toolCall.ID, Name: toolCall.Function.Name, Status: "running"})
+		a.emitToolResult(toolCall, result, time.Since(toolStartedAt), true)
+		return toolCall.ID, result
 	}
 	a.logf("[Tool] %s(%v)\n", toolCall.Function.Name, parsedArguments)
 
 	arguments, ok := parsedArguments.(map[string]any)
 	if !ok {
-		return toolCall.ID, fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
+		result := fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
+		a.emitToolEvent(ToolEvent{Kind: "tool_start", ID: toolCall.ID, Name: toolCall.Function.Name, Status: "running"})
+		a.emitToolResult(toolCall, result, time.Since(toolStartedAt), true)
+		return toolCall.ID, result
 	}
+	a.emitToolEvent(ToolEvent{
+		Kind: "tool_start", ID: toolCall.ID, Name: toolCall.Function.Name,
+		Status: "running", Arguments: boundedToolEventArguments(arguments),
+	})
 	if path, _ := arguments["path"].(string); strings.TrimSpace(path) != "" {
 		a.writeStageProgress(fmt.Sprintf("Running %s on %s", toolCall.Function.Name, path))
 	} else {
 		a.writeStageProgress(fmt.Sprintf("Running tool %s", toolCall.Function.Name))
 	}
 
-	toolStartedAt := time.Now()
 	toolResult := ""
 	var toolErr error
 	function, ok := a.functions[toolCall.Function.Name]
@@ -1363,17 +1642,19 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 			toolResult = formatToolError(toolErr, toolResult)
 		}
 	}
-	logToolTiming(a.logWriter, toolCall.Function.Name, time.Since(toolStartedAt), toolErr)
+	duration := time.Since(toolStartedAt)
+	logToolTiming(a.logWriter, toolCall.Function.Name, duration, toolErr)
 	status := "completed"
 	if toolErr != nil {
 		status = "failed"
 	}
 	a.writeStageProgress(fmt.Sprintf("Tool %s %s", toolCall.Function.Name, status))
+	a.emitToolResult(toolCall, toolResult, duration, toolErr != nil)
 	if toolCall.Function.Name == "todo_write" && toolErr == nil {
 		a.writeProgress(toolResult)
 	}
 	if a.trace != nil {
-		a.trace.ToolCall(toolCall.Function.Name, arguments, toolResult, time.Since(toolStartedAt), toolErr)
+		a.trace.ToolCall(toolCall.Function.Name, arguments, toolResult, duration, toolErr)
 		if toolErr == nil && (toolCall.Function.Name == "write_file" || toolCall.Function.Name == "edit_file") {
 			if path, _ := arguments["path"].(string); strings.TrimSpace(path) != "" {
 				if !filepath.IsAbs(path) {

@@ -49,8 +49,22 @@ type openAIResponseOutput struct {
 }
 
 type openAIResponseEnvelope struct {
+	Status            string `json:"status"`
+	IncompleteDetails *struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details,omitempty"`
 	Output []openAIResponseOutput `json:"output"`
 	Usage  openAIResponseUsage    `json:"usage"`
+}
+
+func completionFromOpenAIResponse(response openAIResponseEnvelope) CompletionState {
+	state := CompletionState{StopReason: strings.TrimSpace(response.Status)}
+	if response.IncompleteDetails != nil {
+		state.IncompleteReason = strings.TrimSpace(response.IncompleteDetails.Reason)
+	}
+	state.OutputTruncated = strings.EqualFold(state.StopReason, "incomplete") &&
+		(strings.EqualFold(state.IncompleteReason, "max_output_tokens") || strings.EqualFold(state.IncompleteReason, "max_tokens"))
+	return state
 }
 
 func (c *Client) createOpenAIResponse(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
@@ -90,6 +104,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	content := strings.Builder{}
 	calls := map[int]*partialCall{}
 	usage := TokenUsage{}
+	completion := CompletionState{}
 
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -143,15 +158,20 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 					call.arguments.WriteString(event.Item.Arguments)
 				}
 			}
-		case "response.completed":
+		case "response.completed", "response.incomplete":
 			usage = tokenUsageFromOpenAIResponse(event.Response.Usage)
+			completion = completionFromOpenAIResponse(event.Response)
+			if event.Type == "response.incomplete" && completion.StopReason == "" {
+				completion.StopReason = "incomplete"
+				completion.OutputTruncated = strings.EqualFold(completion.IncompleteReason, "max_output_tokens") || strings.EqualFold(completion.IncompleteReason, "max_tokens")
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return AssistantMessage{}, fmt.Errorf("reading responses stream: %w", err)
 	}
 
-	message := AssistantMessage{Role: "assistant", Content: content.String(), Usage: usage}
+	message := AssistantMessage{Role: "assistant", Content: content.String(), Completion: completion, Usage: usage}
 	indexes := make([]int, 0, len(calls))
 	for index := range calls {
 		indexes = append(indexes, index)
@@ -242,7 +262,7 @@ func openAIResponseContent(content any) any {
 
 func assistantFromOpenAIResponse(response openAIResponseEnvelope) AssistantMessage {
 	var content strings.Builder
-	message := AssistantMessage{Role: "assistant", Usage: tokenUsageFromOpenAIResponse(response.Usage)}
+	message := AssistantMessage{Role: "assistant", Completion: completionFromOpenAIResponse(response), Usage: tokenUsageFromOpenAIResponse(response.Usage)}
 	for _, output := range response.Output {
 		switch output.Type {
 		case "message":

@@ -11,8 +11,8 @@ import (
 
 func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 13 {
-		t.Fatalf("definitions length = %d, want 13", len(definitions))
+	if len(definitions) != 12 {
+		t.Fatalf("definitions length = %d, want 12", len(definitions))
 	}
 
 	tests := []struct {
@@ -33,7 +33,6 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		{index: 9, name: "install_skill", description: "Install a workspace skill from a URL into .agent/skills/<name>/SKILL.md.", required: []string{"url"}},
 		{index: 10, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
 		{index: 11, name: "mem_get", description: "Read memory contents. Use to recall saved knowledge and context.", required: []string{"target"}},
-		{index: 12, name: "run_skill", description: "Execute a workspace skill when one of the loaded skills is relevant to the task.", required: []string{"skill"}},
 	}
 
 	for _, testCase := range tests {
@@ -98,24 +97,20 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 	catalog := NewCatalog(Options{IncludePlan: true})
 	definitions := catalog.Definitions()
-	if len(definitions) != 14 {
-		t.Fatalf("definitions length = %d, want 14", len(definitions))
+	if len(definitions) != 13 {
+		t.Fatalf("definitions length = %d, want 13", len(definitions))
 	}
 	if definitions[len(definitions)-1].Function.Name != "plan" {
 		t.Fatalf("last definition name = %q, want %q", definitions[len(definitions)-1].Function.Name, "plan")
 	}
-	foundRunSkill := false
 	foundInstallSkill := false
 	for _, definition := range definitions {
 		if definition.Function.Name == "run_skill" {
-			foundRunSkill = true
+			t.Fatal("definitions should not include run_skill")
 		}
 		if definition.Function.Name == "install_skill" {
 			foundInstallSkill = true
 		}
-	}
-	if !foundRunSkill {
-		t.Fatal("definitions missing run_skill")
 	}
 	if !foundInstallSkill {
 		t.Fatal("definitions missing install_skill")

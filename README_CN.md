@@ -267,7 +267,9 @@ project/
 - `.agent/rules/*.md`
   - 规则全文注入 prompt
 - `.agent/skills/*/SKILL.md`
-  - Markdown 技能定义，当前会以摘要形式注入 prompt
+  - system prompt 只索引规范名称、frontmatter `description` 和工作区相对路径
+  - 当 Skill 与任务相关时，模型通过 `read_file` 按需读取完整 `SKILL.md`
+  - 显式 `/skill <名称或别名> [参数]` 及消息开头的 Skill ID/alias 都进入同一个主会话循环
 - `.agent/sessions/<session-id>/messages.jsonl`
   - 当前执行轮的 journal；compact 模式会在每轮结束后将其收敛为 bounded snapshot
 - `.agent/sessions/<session-id>/working_messages.jsonl`
@@ -303,6 +305,18 @@ project/
 - 相对路径的 `read_file` / `write_file` 会按 workspace root 解析
 - `execute_bash` 也会在 workspace root 下运行
 - `--server` 和 `--chat` 现在共用同一套内置本地工具，包括 shell、文件、网页搜索和 memory 工具
+
+Workspace Skill 使用渐进式披露。推荐在 Skill 顶部声明元数据：
+
+```yaml
+---
+description: 汇总仓库改动并生成简洁的发布说明。
+aliases:
+  - release-notes
+---
+```
+
+发现阶段的 system prompt 不包含 Skill 正文或 alias。模型会先对索引中的 `.agent/skills/<name>/SKILL.md` 路径调用 `read_file`，再在当前主会话中遵循完整指令。`/skill <名称或别名> [参数]` 只是显式选择 Skill 的快捷入口，不会创建独立 Skill Runner。
 
 ## 会话与后台模式
 
