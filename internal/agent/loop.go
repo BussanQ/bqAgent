@@ -438,7 +438,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			for _, toolCall := range message.ToolCalls {
 				parsedArguments, err := parseArguments(toolCall.Function.Arguments)
 				if err != nil {
-					toolMessage, recordErr := a.appendToolError(updatedMessages, toolCall.ID, "Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err)
+					result := fmt.Sprintf("Error: Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err)
+					a.emitToolResult(toolCall, result, 0, true)
+					toolMessage, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, result)
 					updatedMessages = toolMessage
 					if recordErr != nil {
 						return "", updatedMessages, recordErr
@@ -450,7 +452,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 
 				arguments, ok := parsedArguments.(map[string]any)
 				if !ok {
-					toolMessage, recordErr := a.appendToolError(updatedMessages, toolCall.ID, "Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
+					result := fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
+					a.emitToolResult(toolCall, result, 0, true)
+					toolMessage, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, result)
 					updatedMessages = toolMessage
 					if recordErr != nil {
 						return "", updatedMessages, recordErr
@@ -1194,7 +1198,6 @@ func replayableToolCalls(toolCalls []ToolCall) []ToolCall {
 func (a *Agent) appendTruncatedToolRecovery(messages []map[string]any, toolCalls []ToolCall, attempt int) ([]map[string]any, error) {
 	updated := messages
 	for _, toolCall := range toolCalls {
-		a.emitToolEvent(ToolEvent{Kind: "tool_start", ID: toolCall.ID, Name: toolCall.Function.Name, Status: "running"})
 		a.emitToolResult(toolCall, truncatedToolBatchError, 0, true)
 		var err error
 		updated, err = a.appendToolMessage(updated, toolCall.ID, truncatedToolBatchError)

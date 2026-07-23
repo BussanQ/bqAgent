@@ -77,6 +77,109 @@ func extractToolMessages(messages []map[string]any) []map[string]any {
 	return toolMessages
 }
 
+type recordingToolEventSink struct {
+	events []ToolEvent
+}
+
+func (sink *recordingToolEventSink) EmitToolEvent(event ToolEvent) {
+	sink.events = append(sink.events, event)
+}
+
+func TestRunConversationEmitsFailedToolResultsForInvalidSpecialToolArguments(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{
+			{ID: "write-invalid", Function: FunctionCall{Name: "write_file", Arguments: `{"path":`}},
+			{ID: "edit-non-object", Function: FunctionCall{Name: "edit_file", Arguments: `[]`}},
+		}},
+		{Content: "done"},
+	}}
+	sink := &recordingToolEventSink{}
+	executed := 0
+	app := NewWithOptions(client, "", Options{
+		Context:       ContextConfig{Enabled: false},
+		ToolEventSink: sink,
+		Functions: map[string]tools.Function{
+			"write_file": func(context.Context, map[string]any) (string, error) {
+				executed++
+				return "written", nil
+			},
+			"edit_file": func(context.Context, map[string]any) (string, error) {
+				executed++
+				return "edited", nil
+			},
+		},
+	})
+
+	result, err := app.RunConversation(context.Background(), []map[string]any{{"role": "user", "content": "update files"}}, 3)
+	if err != nil {
+		t.Fatalf("RunConversation returned error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q, want done", result)
+	}
+	if executed != 0 {
+		t.Fatalf("special tools executed %d times, want 0", executed)
+	}
+	if len(sink.events) != 2 {
+		t.Fatalf("tool events = %#v, want two failed results", sink.events)
+	}
+	for index, expectedID := range []string{"write-invalid", "edit-non-object"} {
+		event := sink.events[index]
+		if event.Kind != "tool_result" || event.ID != expectedID || event.Status != "failed" {
+			t.Fatalf("event %d = %#v, want failed tool_result for %q", index, event, expectedID)
+		}
+		if !strings.HasPrefix(event.Preview, "Error:") {
+			t.Fatalf("event %d preview = %q, want tool error", index, event.Preview)
+		}
+	}
+}
+
+func TestRunConversationTruncatedToolBatchEmitsResultWithoutStart(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{
+			Completion: CompletionState{OutputTruncated: true},
+			ToolCalls: []ToolCall{{
+				ID:       "read-truncated",
+				Function: FunctionCall{Name: "read_file", Arguments: `{"path":"README.md"}`},
+			}},
+		},
+		{Content: "recovered"},
+	}}
+	sink := &recordingToolEventSink{}
+	executed := 0
+	app := NewWithOptions(client, "", Options{
+		Context:       ContextConfig{Enabled: false},
+		ToolEventSink: sink,
+		Functions: map[string]tools.Function{
+			"read_file": func(context.Context, map[string]any) (string, error) {
+				executed++
+				return "content", nil
+			},
+		},
+	})
+
+	result, err := app.RunConversation(context.Background(), []map[string]any{{"role": "user", "content": "read"}}, 3)
+	if err != nil {
+		t.Fatalf("RunConversation returned error: %v", err)
+	}
+	if result != "recovered" {
+		t.Fatalf("result = %q, want recovered", result)
+	}
+	if executed != 0 {
+		t.Fatalf("truncated tool executed %d times, want 0", executed)
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("tool events = %#v, want one failed result without start", sink.events)
+	}
+	event := sink.events[0]
+	if event.Kind != "tool_result" || event.ID != "read-truncated" || event.Status != "failed" {
+		t.Fatalf("event = %#v, want failed tool_result", event)
+	}
+	if !strings.Contains(event.Preview, "No side effects occurred") {
+		t.Fatalf("preview = %q, want fail-closed explanation", event.Preview)
+	}
+}
+
 func TestRunConversationStageCheckpointPersistsSummary(t *testing.T) {
 	originalSelector := selectModelProgressMessage
 	selectModelProgressMessage = func([]string) string { return "Calculating…" }

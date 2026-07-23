@@ -1309,6 +1309,9 @@
       name.textContent = payload.name || "tool";
       var status = document.createElement("span");
       status.className = "tool-status";
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+      status.setAttribute("aria-atomic", "true");
       status.textContent = "运行中";
       button.appendChild(chevron);
       button.appendChild(dot);

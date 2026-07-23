@@ -54,6 +54,8 @@ func TestWebUIServesIndex(t *testing.T) {
 		`class="stop-icon"`,
 		`classList.add("is-streaming")`,
 		`role="status"`,
+		`status.setAttribute("aria-live", "polite")`,
+		`status.setAttribute("aria-atomic", "true")`,
 		`id="particle-field"`,
 		`getContext("2d")`,
 		`PARTICLE_MAX_COUNT = 80`,
