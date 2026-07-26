@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -203,6 +204,7 @@ func TestAnthropicClientStreamsTextAndToolCalls(t *testing.T) {
 		fmt.Fprintln(writer, `data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"read_file","input":{}}}`)
 		fmt.Fprintln(writer, `data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"README.md\"}"}}`)
 		fmt.Fprintln(writer, `data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`)
+		fmt.Fprintln(writer, `data: {"type":"message_stop"}`)
 	}))
 	defer server.Close()
 
@@ -222,6 +224,59 @@ func TestAnthropicClientStreamsTextAndToolCalls(t *testing.T) {
 	}
 	if message.Usage.TotalTokens != 12 {
 		t.Fatalf("usage = %#v", message.Usage)
+	}
+}
+
+func TestStreamClientsRejectMissingRequiredTerminalEvents(t *testing.T) {
+	tests := []struct {
+		name    string
+		apiType APIType
+		body    string
+	}{
+		{name: "chat completions", apiType: APITypeOpenAI, body: `data: {"choices":[{"delta":{"content":"partial"}}]}` + "\n"},
+		{name: "responses", apiType: APITypeOpenAIResponse, body: `data: {"type":"response.output_text.delta","delta":"partial"}` + "\n"},
+		{name: "anthropic", apiType: APITypeAnthropic, body: `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}` + "\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "text/event-stream")
+				_, _ = fmt.Fprint(writer, test.body)
+			}))
+			defer server.Close()
+			client := NewClientWithAPIType("", server.URL, test.apiType, server.Client())
+			_, err := client.CreateChatCompletionStream(context.Background(), "test", []map[string]any{{"role": "user", "content": "hi"}}, nil, nil)
+			var incomplete *IncompleteStreamError
+			if !errors.As(err, &incomplete) {
+				t.Fatalf("stream error = %v, want IncompleteStreamError", err)
+			}
+		})
+	}
+}
+
+func TestResponsesAndAnthropicStreamsFailOnErrorEvents(t *testing.T) {
+	tests := []struct {
+		name    string
+		apiType APIType
+		body    string
+		want    string
+	}{
+		{name: "responses", apiType: APITypeOpenAIResponse, body: `data: {"type":"response.failed","error":{"message":"quota exceeded"}}` + "\n", want: "quota exceeded"},
+		{name: "anthropic", apiType: APITypeAnthropic, body: `data: {"type":"error","error":{"message":"overloaded"}}` + "\n", want: "overloaded"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "text/event-stream")
+				_, _ = fmt.Fprint(writer, test.body)
+			}))
+			defer server.Close()
+			client := NewClientWithAPIType("", server.URL, test.apiType, server.Client())
+			_, err := client.CreateChatCompletionStream(context.Background(), "test", []map[string]any{{"role": "user", "content": "hi"}}, nil, nil)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("stream error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

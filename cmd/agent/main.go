@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
@@ -22,20 +24,21 @@ import (
 )
 
 type cliOptions struct {
-	plan        bool
-	background  bool
-	chat        bool
-	server      bool
-	stream      bool
-	ilinkLogin  bool
-	ilinkStatus bool
-	listen      string
-	serverURL   string
-	resumeID    string
-	sessionID   string
-	sessionRun  bool
-	serverRun   bool
-	subagentRun string
+	plan          bool
+	background    bool
+	chat          bool
+	server        bool
+	stream        bool
+	ilinkLogin    bool
+	ilinkStatus   bool
+	listen        string
+	serverURL     string
+	resumeID      string
+	sessionID     string
+	sessionRun    bool
+	serverRun     bool
+	subagentRun   string
+	subagentLease string
 }
 
 type runDeps struct {
@@ -45,7 +48,9 @@ type runDeps struct {
 }
 
 func main() {
-	os.Exit(run(context.Background(), os.Stdin, os.Stdout, os.Stderr, os.Args[1:], os.Getenv))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	os.Exit(run(ctx, os.Stdin, os.Stdout, os.Stderr, os.Args[1:], os.Getenv))
 }
 
 func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args []string, getenv func(string) string) int {
@@ -92,7 +97,7 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		return 1
 	}
 	if options.subagentRun != "" {
-		return runSubagentWorker(ctx, stderr, getenv, ws, options.subagentRun)
+		return runSubagentWorker(ctx, stderr, getenv, ws, options.subagentRun, options.subagentLease)
 	}
 
 	systemPrompt, err := ws.BuildSystemPrompt(agent.DefaultSystemPrompt)
@@ -143,6 +148,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.BoolVar(&options.sessionRun, "session-run", false, "internal background session runner")
 	fs.BoolVar(&options.serverRun, "server-run", false, "internal background server runner")
 	fs.StringVar(&options.subagentRun, "subagent-run", "", "internal persisted subagent worker id")
+	fs.StringVar(&options.subagentLease, "subagent-lease", "", "internal subagent execution lease")
 
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, nil, err
@@ -180,6 +186,12 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if options.ilinkLogin && len(fs.Args()) > 0 {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-login does not accept a task")
 	}
+	if options.subagentRun != "" && strings.TrimSpace(options.subagentLease) == "" {
+		return cliOptions{}, nil, fmt.Errorf("--subagent-run requires --subagent-lease")
+	}
+	if options.subagentLease != "" && options.subagentRun == "" {
+		return cliOptions{}, nil, fmt.Errorf("--subagent-lease requires --subagent-run")
+	}
 	if options.subagentRun != "" && (options.plan || options.background || options.chat || options.server || options.stream || options.sessionRun || options.serverRun || effectiveSessionID(options) != "" || len(fs.Args()) > 0) {
 		return cliOptions{}, nil, fmt.Errorf("--subagent-run cannot be combined with other execution flags or a task")
 	}
@@ -192,14 +204,14 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	return options, fs.Args(), nil
 }
 
-func runSubagentWorker(ctx context.Context, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, id string) int {
+func runSubagentWorker(ctx context.Context, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, id, lease string) int {
 	runtimeConfig := appruntime.ConfigFromEnv(getenv)
 	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
 	detections := extagent.Detect(ctx, externalConfig, nil)
 	broker := extagent.NewBroker(extagent.NewStateStore(ws.Root), detections, nil)
 	defer broker.Close()
 	manager := subagent.NewWorkerManager(ws.Root, broker, runtimeConfig.RunTraceEnabled)
-	if err := manager.RunPersisted(id); err != nil {
+	if err := manager.RunPersisted(ctx, id, lease); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}

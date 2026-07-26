@@ -117,7 +117,13 @@ The effective model and API type are injected into every built-in LLM system pro
 | `FIRECRAWL_API_KEY` | — | Firecrawl key used when `SEARCH_*` is not configured. |
 | `FIRECRAWL_BASE_URL` | provider default | Firecrawl endpoint override. |
 
-MCP header values in `.agent/mcp.json` may reference any environment variable with `${NAME}` syntax, for example `Bearer ${DASHSCOPE_API_KEY}`.
+### MCP
+
+| Variable | Default | Description |
+|---|---|---|
+| `MCP_ALLOWED_ENV` | empty | Comma-separated process-level allowlist for `${NAME}` / `$NAME` references in `.agent/mcp.json` header values. |
+
+Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header values, for example `MCP_ALLOWED_ENV=DASHSCOPE_API_KEY`. URL values never expand environment variables; unlisted, undefined, or malformed placeholders cause only that MCP server to be skipped.
 
 ### Server and channels
 
@@ -125,7 +131,7 @@ MCP header values in `.agent/mcp.json` may reference any environment variable wi
 |---|---|---|
 | `WEBUI_ENABLED` | `true` | Set to `false`, `0`, `no`, or `off` to disable `GET /`. |
 | `SERVERCHAN_BOT_TOKEN` | — | Token used by the ServerChan Bot webhook reply path. |
-| `SERVERCHAN_BOT_WEBHOOK_SECRET` | — | Optional required value for `X-Sc3Bot-Webhook-Secret`. |
+| `SERVERCHAN_BOT_WEBHOOK_SECRET` | — | Required non-blank value for `X-Sc3Bot-Webhook-Secret`; without it the bot webhook endpoint returns `503`. |
 | `QQ_BOT_ENABLED` | automatic | QQ is enabled when credentials exist; false-like values force-disable it. |
 | `QQ_BOT_APP_ID` | — | QQ Bot application ID. |
 | `QQ_BOT_CLIENT_SECRET` | — | QQ Bot client secret. |
@@ -141,6 +147,8 @@ MCP header values in `.agent/mcp.json` may reference any environment variable wi
 | Variable | Default | Description |
 |---|---|---|
 | `AGENT_MAX_ITERATIONS` | `1000` | Global loop runaway safety limit. |
+| `BASH_OUTPUT_MAX_BYTES` | `1048576` | Maximum combined stdout/stderr bytes retained by `execute_bash`; excess output is drained and discarded, then the result ends with a truncation marker. Non-positive or invalid values use the default. |
+| `READ_FILE_MAX_BYTES` | `1048576` | Maximum file-content bytes returned by `read_file`; excess content is drained and discarded, then the result ends with a truncation marker. Non-positive or invalid values use the default. |
 | `CHANNEL_AGENT_MAX_ITERATIONS` | `30` | Channel/WebUI maximum iterations per turn. |
 | `CHANNEL_TURN_TIMEOUT` | `10m` | Whole channel turn timeout. |
 | `CHANNEL_STAGE_MAX_ITERATIONS` | `20` | QQ/iLink iterations before a persisted stage checkpoint. |
@@ -283,7 +291,9 @@ project/
     startup; their tools are discovered via `tools/list` and exposed to the model as
     `mcp__<server>__<tool>`. Header environment expansion is described under
     [environment variables](#environment-variables).
-  - Discovery is best-effort: a server marked `"disabled": true`, missing, or unreachable is skipped
+  - The default file has no remote servers. Server URLs must be literal `http` or `https` URLs; only header
+    values can use allowlisted environment placeholders.
+  - Discovery is best-effort: a server marked `"disabled": true`, missing, unreachable, or invalid is skipped
     (a warning is logged) and never blocks startup. Only the Streamable HTTP transport is supported.
 
 ## Built-in tools

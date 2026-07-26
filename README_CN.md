@@ -117,7 +117,13 @@ LLM_MODEL=claude-sonnet-4-5
 | `FIRECRAWL_API_KEY` | — | 未配置 `SEARCH_*` 时使用的 Firecrawl Key。 |
 | `FIRECRAWL_BASE_URL` | 供应商默认值 | Firecrawl 端点覆盖。 |
 
-`.agent/mcp.json` 中的 MCP header 值可以使用 `${NAME}` 引用任意环境变量，例如 `Bearer ${DASHSCOPE_API_KEY}`。
+### MCP
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MCP_ALLOWED_ENV` | 空 | 进程级、逗号分隔的 allowlist，用于 `.agent/mcp.json` header 值中 `${NAME}` / `$NAME` 引用。 |
+
+使用 `.agent/mcp.json` header 中的占位符前，须设置 `MCP_ALLOWED_ENV`，例如 `MCP_ALLOWED_ENV=DASHSCOPE_API_KEY`。URL 值不会展开环境变量；未获授权、未定义或格式错误的占位符只会使对应 MCP server 被跳过。
 
 ### Server 与渠道
 
@@ -125,7 +131,7 @@ LLM_MODEL=claude-sonnet-4-5
 |---|---|---|
 | `WEBUI_ENABLED` | `true` | 设为 `false`、`0`、`no` 或 `off` 时关闭 `GET /`。 |
 | `SERVERCHAN_BOT_TOKEN` | — | ServerChan Bot webhook 回复使用的 Token。 |
-| `SERVERCHAN_BOT_WEBHOOK_SECRET` | — | 可选；设置后请求必须携带 `X-Sc3Bot-Webhook-Secret`。 |
+| `SERVERCHAN_BOT_WEBHOOK_SECRET` | — | 必填且不能全为空白；请求必须携带 `X-Sc3Bot-Webhook-Secret`，否则 bot webhook 端点返回 `503`。 |
 | `QQ_BOT_ENABLED` | 自动 | 凭据存在时自动启用；false-like 值可强制关闭。 |
 | `QQ_BOT_APP_ID` | — | QQ Bot 应用 ID。 |
 | `QQ_BOT_CLIENT_SECRET` | — | QQ Bot Client Secret。 |
@@ -141,6 +147,8 @@ LLM_MODEL=claude-sonnet-4-5
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `AGENT_MAX_ITERATIONS` | `1000` | 全局循环失控保险上限。 |
+| `BASH_OUTPUT_MAX_BYTES` | `1048576` | `execute_bash` 保留的 stdout/stderr 合并输出字节上限；超额输出仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
+| `READ_FILE_MAX_BYTES` | `1048576` | `read_file` 返回的文件内容字节上限；超额内容仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
 | `CHANNEL_AGENT_MAX_ITERATIONS` | `30` | 渠道/WebUI 单轮最大迭代数。 |
 | `CHANNEL_TURN_TIMEOUT` | `10m` | 渠道整轮超时。 |
 | `CHANNEL_STAGE_MAX_ITERATIONS` | `20` | QQ/iLink 生成阶段 checkpoint 前的迭代预算。 |
@@ -282,7 +290,9 @@ project/
   - MCP 服务器配置（`mcpServers` 映射）。这里配置的 **Streamable HTTP** 服务器会在启动时连接，
     通过 `tools/list` 发现其工具，并以 `mcp__<server>__<tool>` 的形式暴露给大模型。header 环境变量展开
     统一说明在[环境变量配置](#环境变量配置)章节。
-  - 发现过程是 best-effort：标记 `"disabled": true`、文件缺失或服务器不可达都会被跳过（仅记录一条
+  - 默认文件不配置远程 server。Server URL 必须是字面量 `http` 或 `https` URL；只有 header 值可以使用
+    allowlist 中的环境变量占位符。
+  - 发现过程是 best-effort：标记 `"disabled": true`、文件缺失、服务器不可达或配置非法都会被跳过（仅记录一条
     警告），不会阻塞启动。当前仅支持 Streamable HTTP 传输。
 
 ## 内建工具

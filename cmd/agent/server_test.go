@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,28 @@ import (
 
 	appserver "bqagent/internal/server"
 )
+
+type blockingTurnChannel struct {
+	done chan struct{}
+}
+
+func (channel *blockingTurnChannel) Name() string                  { return "blocking" }
+func (channel *blockingTurnChannel) Enabled() bool                 { return true }
+func (channel *blockingTurnChannel) RegisterRoutes(*http.ServeMux) {}
+func (channel *blockingTurnChannel) Start(context.Context)         {}
+func (channel *blockingTurnChannel) WaitTurns()                    { <-channel.done }
+
+func TestWaitForChannelTurnsHonorsShutdownDeadline(t *testing.T) {
+	channel := &blockingTurnChannel{done: make(chan struct{})}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	waitForChannelTurns(ctx, []appserver.Channel{channel})
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("wait duration = %s, want bounded by shutdown deadline", elapsed)
+	}
+	close(channel.done)
+}
 
 func TestRunWithServerBackgroundLaunchesChild(t *testing.T) {
 	root := t.TempDir()
@@ -105,6 +128,22 @@ func TestRunServerRequiresAPIKey(t *testing.T) {
 	}
 	if !hasTimestampPrefix(stderr.String()) {
 		t.Fatalf("stderr = %q, want timestamp prefix", stderr.String())
+	}
+}
+
+func TestServerShutdownTimeoutUsesConfiguredPositiveDuration(t *testing.T) {
+	configured := serverShutdownTimeout(func(key string) string {
+		if key == "SERVER_SHUTDOWN_TIMEOUT" {
+			return "7s"
+		}
+		return ""
+	})
+	if configured != 7*time.Second {
+		t.Fatalf("configured timeout = %s, want 7s", configured)
+	}
+	fallback := serverShutdownTimeout(func(string) string { return "invalid" })
+	if fallback != defaultServerShutdownTimeout {
+		t.Fatalf("fallback timeout = %s, want %s", fallback, defaultServerShutdownTimeout)
 	}
 }
 

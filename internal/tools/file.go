@@ -1,12 +1,19 @@
 package tools
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"bqagent/internal/atomicfile"
+	"bqagent/internal/safepath"
 )
 
 func ReadFile(ctx context.Context, args map[string]any) (string, error) {
@@ -14,6 +21,12 @@ func ReadFile(ctx context.Context, args map[string]any) (string, error) {
 }
 
 func ReadFileFromRoot(root string) Function {
+	return ReadFileFromRootWithMaxBytes(root, DefaultReadFileMaxBytes)
+}
+
+// ReadFileFromRootWithMaxBytes reads selected lines without retaining skipped
+// content, oversized lines, or returned content beyond maxBytes.
+func ReadFileFromRootWithMaxBytes(root string, maxBytes int64) Function {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, err := requireString(args, "path")
 		if err != nil {
@@ -27,43 +40,84 @@ func ReadFileFromRoot(root string) Function {
 		if err != nil {
 			return "", err
 		}
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 
-		resolvedPath, _, err := normalizeWorkspacePath(root, path)
+		resolvedPath, relativePath, err := normalizeWorkspacePath(root, path)
 		if err != nil {
 			return "", err
 		}
-		content, err := os.ReadFile(resolvedPath)
+		var file *os.File
+		var rootFS *os.Root
+		if strings.TrimSpace(root) == "" {
+			file, err = os.Open(resolvedPath)
+		} else {
+			rootFS, err = os.OpenRoot(root)
+			if err == nil {
+				file, err = rootFS.Open(relativePath)
+			}
+		}
 		if err != nil {
-			return "", fmt.Errorf("failed to read %q: %w", path, err)
+			if rootFS != nil {
+				_ = rootFS.Close()
+			}
+			return "", fmt.Errorf("failed to read %q: %w", path, rootPathError(path, err))
 		}
-		if offset == 0 && limit == 0 {
-			return string(content), nil
+		defer file.Close()
+		if rootFS != nil {
+			defer rootFS.Close()
 		}
-		return sliceLines(string(content), offset, limit), nil
+
+		output := newBoundedOutput(maxBytes, DefaultReadFileMaxBytes)
+		reader := bufio.NewReader(file)
+		startLine := offset
+		if startLine == 0 {
+			startLine = 1
+		}
+		line := 1
+		selected := 0
+
+		for {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			fragment, readErr := reader.ReadSlice('\n')
+			include := line >= startLine && (limit == 0 || selected < limit)
+			if include && len(fragment) > 0 {
+				// The old strings.Split/Join implementation excludes the newline
+				// after the final limited line, so avoid counting that delimiter
+				// against the output budget in the first place.
+				if limit > 0 && selected+1 == limit && readErr == nil {
+					fragment = fragment[:len(fragment)-1]
+				}
+				_, _ = output.Write(fragment)
+			}
+
+			switch {
+			case readErr == nil:
+				if include {
+					selected++
+				}
+				line++
+				if limit > 0 && selected >= limit {
+					return output.String(), nil
+				}
+			case errors.Is(readErr, bufio.ErrBufferFull):
+				// Continue draining this line in bounded fragments. The current
+				// line number and selection state remain unchanged until its '\n'.
+			case errors.Is(readErr, io.EOF):
+				return output.String(), nil
+			default:
+				return "", fmt.Errorf("failed to read %q: %w", path, readErr)
+			}
+		}
 	}
 }
 
-// sliceLines returns the lines of content starting at the 1-based offset (0 means
-// from the first line) for up to limit lines (0 means to the end).
-func sliceLines(content string, offset, limit int) string {
-	lines := strings.Split(content, "\n")
-	start := 0
-	if offset > 0 {
-		start = offset - 1
-	}
-	if start >= len(lines) {
-		return ""
-	}
-	end := len(lines)
-	if limit > 0 && start+limit < end {
-		end = start + limit
-	}
-	return strings.Join(lines[start:end], "\n")
-}
-
-// optionalPositiveInt reads an optional string-encoded non-negative integer
-// argument (sticking to the codebase's string-param convention). Missing/empty
-// returns 0; a non-numeric or negative value is an error.
+// optionalPositiveInt reads an optional non-negative integer argument. It
+// accepts strings and float64 values decoded from JSON. Missing or empty values
+// return 0; non-integral or negative values are errors.
 func optionalPositiveInt(args map[string]any, key string) (int, error) {
 	raw, ok := args[key]
 	if !ok || raw == nil {
@@ -74,7 +128,14 @@ func optionalPositiveInt(args map[string]any, key string) (int, error) {
 	case string:
 		text = strings.TrimSpace(value)
 	case float64:
-		return int(value), nil
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || math.Trunc(value) != value {
+			return 0, fmt.Errorf("argument %q must be a non-negative integer", key)
+		}
+		parsed := int(value)
+		if parsed < 0 || float64(parsed) != value {
+			return 0, fmt.Errorf("argument %q must be a non-negative integer", key)
+		}
+		return parsed, nil
 	default:
 		return 0, fmt.Errorf("argument %q must be a string integer", key)
 	}
@@ -107,8 +168,19 @@ func WriteFileToRoot(root string) Function {
 		if err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(resolvedPath, []byte(content), 0o644); err != nil {
-			return "", fmt.Errorf("failed to write %q: %w", path, err)
+		if strings.TrimSpace(root) == "" {
+			err = os.WriteFile(resolvedPath, []byte(content), 0o644)
+		} else {
+			rootFS, openErr := os.OpenRoot(root)
+			if openErr != nil {
+				err = openErr
+			} else {
+				err = atomicfile.WriteRoot(rootFS, relativePath, []byte(content), 0o644)
+				_ = rootFS.Close()
+			}
+		}
+		if err != nil {
+			return "", fmt.Errorf("failed to write %q: %w", path, rootPathError(path, err))
 		}
 		return fmt.Sprintf("Wrote to %s", relativePath), nil
 	}
@@ -144,9 +216,28 @@ func EditFileInRoot(root string) Function {
 		if err != nil {
 			return "", err
 		}
-		data, err := os.ReadFile(resolvedPath)
+		var data []byte
+		var rootFS *os.Root
+		if strings.TrimSpace(root) == "" {
+			data, err = os.ReadFile(resolvedPath)
+		} else {
+			rootFS, err = os.OpenRoot(root)
+			if err == nil {
+				data, err = rootFS.ReadFile(relativePath)
+			}
+		}
 		if err != nil {
-			return "", fmt.Errorf("failed to read %q: %w", path, err)
+			if rootFS != nil {
+				_ = rootFS.Close()
+			}
+			return "", fmt.Errorf("failed to read %q: %w", path, rootPathError(path, err))
+		}
+		if rootFS != nil {
+			defer func() {
+				if rootFS != nil {
+					_ = rootFS.Close()
+				}
+			}()
 		}
 		content := string(data)
 		count := strings.Count(content, oldString)
@@ -164,8 +255,18 @@ func EditFileInRoot(root string) Function {
 			updated = strings.Replace(content, oldString, newString, 1)
 			count = 1
 		}
-		if err := os.WriteFile(resolvedPath, []byte(updated), 0o644); err != nil {
-			return "", fmt.Errorf("failed to write %q: %w", path, err)
+		if rootFS != nil {
+			err = atomicfile.WriteRoot(rootFS, relativePath, []byte(updated), 0o644)
+			closeErr := rootFS.Close()
+			rootFS = nil
+			if err == nil {
+				err = closeErr
+			}
+		} else {
+			err = os.WriteFile(resolvedPath, []byte(updated), 0o644)
+		}
+		if err != nil {
+			return "", fmt.Errorf("failed to write %q: %w", path, rootPathError(path, err))
 		}
 		return fmt.Sprintf("Edited %s (%d replacement(s))", relativePath, count), nil
 	}
@@ -215,46 +316,23 @@ func normalizeWorkspacePath(root, path string) (absolute string, relative string
 	} else {
 		candidate = filepath.Join(rootAbs, filepath.FromSlash(path))
 	}
-	candidate, err = filepath.Abs(candidate)
+	logicalCandidate, err := filepath.Abs(candidate)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve path %q: %w", path, err)
 	}
-	candidate = filepath.Clean(candidate)
-	rel, err := filepath.Rel(rootAbs, candidate)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", "", fmt.Errorf("path %q is outside workspace %q; use a workspace-relative path such as the paths returned by glob", path, filepath.ToSlash(rootAbs))
+	logicalCandidate = filepath.Clean(logicalCandidate)
+	rootAbs, rel, err := safepath.Relative(rootAbs, logicalCandidate)
+	if err != nil {
+		return "", "", fmt.Errorf("path %q is outside workspace %q; use a workspace-relative path such as the paths returned by glob: %w", path, filepath.ToSlash(rootAbs), err)
 	}
-	if err := ensureWorkspaceSymlinkBoundary(rootAbs, candidate); err != nil {
-		return "", "", fmt.Errorf("path %q is outside workspace through a symbolic link; use a workspace-relative path inside the workspace: %w", path, err)
-	}
-	return candidate, filepath.ToSlash(rel), nil
+	return filepath.Join(rootAbs, rel), filepath.ToSlash(rel), nil
 }
 
-func ensureWorkspaceSymlinkBoundary(root, candidate string) error {
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		resolvedRoot = root
+func rootPathError(path string, err error) error {
+	if strings.Contains(strings.ToLower(err.Error()), "escapes") {
+		return fmt.Errorf("path %q is outside workspace through a symbolic link; use a workspace-relative path inside the workspace: %w", path, err)
 	}
-	existing := candidate
-	for {
-		if _, statErr := os.Lstat(existing); statErr == nil {
-			break
-		}
-		parent := filepath.Dir(existing)
-		if parent == existing {
-			return nil
-		}
-		existing = parent
-	}
-	resolvedExisting, err := filepath.EvalSymlinks(existing)
-	if err != nil {
-		return err
-	}
-	rel, err := filepath.Rel(resolvedRoot, resolvedExisting)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return fmt.Errorf("resolved path %q is not under %q", resolvedExisting, resolvedRoot)
-	}
-	return nil
+	return err
 }
 
 func isAbsoluteLike(path string) bool {

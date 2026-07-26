@@ -26,6 +26,7 @@ type QQChannel struct {
 	runner        *ChannelTurnRunner
 	mu            sync.Mutex
 	started       bool
+	stopping      bool
 	baseCtx       context.Context
 	turns         sync.WaitGroup
 }
@@ -122,12 +123,18 @@ func (channel *QQChannel) runGateway(ctx context.Context) {
 
 func (channel *QQChannel) dispatchUpdate(update qq.Update) {
 	channel.mu.Lock()
+	if channel.stopping {
+		channel.mu.Unlock()
+		return
+	}
 	baseCtx := channel.baseCtx
-	channel.mu.Unlock()
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
+	// StopAcceptingTurns holds this mutex while closing the admission gate, so
+	// WaitTurns cannot race a later WaitGroup.Add.
 	channel.turns.Add(1)
+	channel.mu.Unlock()
 	// Derive from the channel's root context (not the gateway connection
 	// context) so a turn survives gateway reconnects but stops on shutdown.
 	go func() {
@@ -140,7 +147,18 @@ func (channel *QQChannel) dispatchUpdate(update qq.Update) {
 	}()
 }
 
-// WaitTurns blocks until all in-flight update goroutines finish.
+// StopAcceptingTurns closes dispatch admission before shutdown starts draining.
+func (channel *QQChannel) StopAcceptingTurns() {
+	if channel == nil {
+		return
+	}
+	channel.mu.Lock()
+	channel.stopping = true
+	channel.mu.Unlock()
+}
+
+// WaitTurns blocks until all in-flight update goroutines finish. Call
+// StopAcceptingTurns first to prevent WaitGroup Add/Wait races.
 func (channel *QQChannel) WaitTurns() {
 	channel.turns.Wait()
 }

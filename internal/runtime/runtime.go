@@ -29,6 +29,8 @@ type Config struct {
 	RunTraceEnabled              bool
 	SessionTranscriptMode        session.TranscriptMode
 	SessionOutputMaxBytes        int64
+	BashOutputMaxBytes           int64
+	ReadFileMaxBytes             int64
 	SearchProvider               string
 	SearchAPIKey                 string
 	SearchBaseURL                string
@@ -93,6 +95,8 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		RunTraceEnabled:              envBool(getenv("RUN_TRACE_ENABLED"), false),
 		SessionTranscriptMode:        session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
 		SessionOutputMaxBytes:        envInt64(getenv("SESSION_OUTPUT_MAX_BYTES"), session.DefaultOutputMaxBytes),
+		BashOutputMaxBytes:           envPositiveInt64(getenv("BASH_OUTPUT_MAX_BYTES"), tools.DefaultBashOutputMaxBytes),
+		ReadFileMaxBytes:             envPositiveInt64(getenv("READ_FILE_MAX_BYTES"), tools.DefaultReadFileMaxBytes),
 		SearchProvider:               searchProvider,
 		SearchAPIKey:                 searchAPIKey,
 		SearchBaseURL:                searchBaseURL,
@@ -162,6 +166,18 @@ func envInt64(raw string, fallback int64) int64 {
 	return parsed
 }
 
+func envPositiveInt64(raw string, fallback int64) int64 {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(text, 10, 64)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
 func (factory Factory) Build(includePlan bool) Runtime {
 	apiType := agent.NormalizeAPIType(string(factory.Config.APIType))
 	model := agent.EffectiveModel(factory.Config.Model)
@@ -182,15 +198,17 @@ func (factory Factory) Build(includePlan bool) Runtime {
 	_ = memoryStore.Migrate()
 
 	catalog := tools.NewCatalog(tools.Options{
-		WorkspaceRoot:    factory.WorkspaceRoot,
-		IncludePlan:      includePlan,
-		SearchProvider:   factory.Config.SearchProvider,
-		SearchAPIKey:     factory.Config.SearchAPIKey,
-		SearchBaseURL:    factory.Config.SearchBaseURL,
-		MemoryDir:        factory.MemoryDir,
-		MemoryStore:      memoryStore,
-		ExtraDefinitions: mcpDefinitions,
-		ExtraFunctions:   mcpFunctions,
+		WorkspaceRoot:      factory.WorkspaceRoot,
+		BashOutputMaxBytes: factory.Config.BashOutputMaxBytes,
+		ReadFileMaxBytes:   factory.Config.ReadFileMaxBytes,
+		IncludePlan:        includePlan,
+		SearchProvider:     factory.Config.SearchProvider,
+		SearchAPIKey:       factory.Config.SearchAPIKey,
+		SearchBaseURL:      factory.Config.SearchBaseURL,
+		MemoryDir:          factory.MemoryDir,
+		MemoryStore:        memoryStore,
+		ExtraDefinitions:   mcpDefinitions,
+		ExtraFunctions:     mcpFunctions,
 	})
 
 	return Runtime{

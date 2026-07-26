@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -24,6 +23,12 @@ func ExecuteBash(ctx context.Context, args map[string]any) (string, error) {
 }
 
 func ExecuteBashInDir(root string) Function {
+	return ExecuteBashInDirWithMaxOutput(root, DefaultBashOutputMaxBytes)
+}
+
+// ExecuteBashInDirWithMaxOutput runs commands in root while bounding the
+// combined stdout/stderr retained for the tool result.
+func ExecuteBashInDirWithMaxOutput(root string, maxOutputBytes int64) Function {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		command, err := requireString(args, "command")
 		if err != nil {
@@ -42,13 +47,15 @@ func ExecuteBashInDir(root string) Function {
 		cmd.WaitDelay = commandWaitDelay
 		configureProcessGroup(cmd)
 
-		var stdout bytes.Buffer
-		var stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
+		// A shared writer preserves the observed stdout/stderr write order while
+		// placing both streams under one retention budget. It always accepts the
+		// whole write so os/exec continues draining both pipes after truncation.
+		outputBuffer := newBoundedOutput(maxOutputBytes, DefaultBashOutputMaxBytes)
+		cmd.Stdout = outputBuffer
+		cmd.Stderr = outputBuffer
 
 		err = cmd.Run()
-		output := stdout.String() + stderr.String()
+		output := outputBuffer.String()
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return output, ctxErr
 		}

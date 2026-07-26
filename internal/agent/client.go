@@ -35,6 +35,24 @@ type ChatCompletionOptions struct {
 	ResponseFormat map[string]any
 }
 
+// IncompleteStreamError means an upstream stream ended without the terminal
+// event required by that provider's protocol. Callers can use errors.As to
+// distinguish it from transport and JSON protocol errors.
+type IncompleteStreamError struct {
+	Provider string
+	Reason   string
+}
+
+func (err *IncompleteStreamError) Error() string {
+	if err == nil {
+		return "incomplete stream"
+	}
+	if err.Reason == "" {
+		return fmt.Sprintf("%s stream ended before completion", err.Provider)
+	}
+	return fmt.Sprintf("%s stream incomplete: %s", err.Provider, err.Reason)
+}
+
 type Client struct {
 	httpClient *http.Client
 	apiKey     string
@@ -296,21 +314,27 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 		finishReason   string
 		toolCallMap    = map[int]*partialToolCall{}
 		usage          TokenUsage
+		sawDone        bool
 	)
 
 	scanner := bufio.NewScanner(response.Body)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		data := strings.TrimPrefix(line, "data: ")
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" {
+			continue
+		}
 		if data == "[DONE]" {
+			sawDone = true
 			break
 		}
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue
+			return AssistantMessage{}, fmt.Errorf("invalid chat completions stream event: %w", err)
 		}
 		if chunk.Usage.TotalTokens > 0 {
 			usage = chunk.Usage
@@ -353,7 +377,10 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return AssistantMessage{}, fmt.Errorf("reading stream: %w", err)
+		return AssistantMessage{}, fmt.Errorf("reading chat completions stream: %w", err)
+	}
+	if !sawDone {
+		return AssistantMessage{}, &IncompleteStreamError{Provider: "chat completions", Reason: "missing [DONE] marker"}
 	}
 
 	if role == "" {

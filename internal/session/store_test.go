@@ -1,8 +1,12 @@
 package session
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -50,6 +54,30 @@ func TestSessionStorePersistsMessagesAndStatus(t *testing.T) {
 	}
 }
 
+func TestSessionStoreRejectsTraversalAndMismatchedMetadataID(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	if _, err := store.Open("../other"); err == nil {
+		t.Fatal("Open accepted a traversal session ID")
+	}
+
+	id := "safe-session"
+	dir := filepath.Join(root, ".agent", "sessions", id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content, err := json.Marshal(Meta{ID: "different-session", Status: StatusCreated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Open(id); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("Open mismatch error = %v, want metadata mismatch", err)
+	}
+}
+
 func TestSessionStorePersistsCheckpoint(t *testing.T) {
 	store := NewStore(t.TempDir())
 	savedSession, err := store.Create(CreateOptions{Task: "inspect repo", Chat: true})
@@ -57,6 +85,9 @@ func TestSessionStorePersistsCheckpoint(t *testing.T) {
 		t.Fatalf("Create returned error: %v", err)
 	}
 
+	if err := savedSession.RecordMessage(map[string]any{"role": "user", "content": "raw source"}); err != nil {
+		t.Fatalf("RecordMessage returned error: %v", err)
+	}
 	tail := []map[string]any{{"role": "user", "content": "continue here"}}
 	if err := savedSession.SaveCheckpointSummary("important summary", tail, "system prompt"); err != nil {
 		t.Fatalf("SaveCheckpointSummary returned error: %v", err)
@@ -77,6 +108,38 @@ func TestSessionStorePersistsCheckpoint(t *testing.T) {
 	}
 	if checkpoint.TailMessages[0]["content"] != "continue here" {
 		t.Fatalf("checkpoint tail content = %#v, want %q", checkpoint.TailMessages[0]["content"], "continue here")
+	}
+	rawTranscript, err := os.ReadFile(savedSession.MessagesPath())
+	if err != nil {
+		t.Fatalf("ReadFile transcript returned error: %v", err)
+	}
+	if checkpoint.SourceTranscriptSHA256 != fmt.Sprintf("%x", sha256.Sum256(rawTranscript)) {
+		t.Fatalf("checkpoint source hash = %q, want hash of raw transcript", checkpoint.SourceTranscriptSHA256)
+	}
+	if checkpoint.SourceTranscriptSize != int64(len(rawTranscript)) {
+		t.Fatalf("checkpoint source size = %d, want %d", checkpoint.SourceTranscriptSize, len(rawTranscript))
+	}
+}
+
+func TestSessionStoreLoadsLegacyCheckpointWithoutProvenance(t *testing.T) {
+	store := NewStore(t.TempDir())
+	savedSession, err := store.Create(CreateOptions{Task: "legacy checkpoint"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"summary":"legacy summary","tail_messages":[{"role":"user","content":"tail"}],"updated_at":"2026-01-02T03:04:05Z"}`)
+	if err := os.WriteFile(savedSession.CheckpointPath(), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := savedSession.LoadCheckpoint()
+	if err != nil {
+		t.Fatalf("LoadCheckpoint returned error: %v", err)
+	}
+	if checkpoint.SourceTranscriptSHA256 != "" || checkpoint.SourceTranscriptSize != 0 {
+		t.Fatalf("legacy checkpoint unexpectedly has provenance: %#v", checkpoint)
+	}
+	if checkpoint.Summary != "legacy summary" || len(checkpoint.TailMessages) != 1 {
+		t.Fatalf("legacy checkpoint = %#v", checkpoint)
 	}
 }
 

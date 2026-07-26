@@ -34,7 +34,11 @@ func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpC
 	// detected and skipped rather than silently producing a schema/function mismatch.
 	seen := make(map[string]string)
 
-	for name, server := range cfg.EnabledServers(getenv) {
+	enabled, invalid := cfg.enabledServers(getenv)
+	for name, err := range invalid {
+		logf("[MCP] server %q: invalid configuration, skipping: %v\n", name, err)
+	}
+	for name, server := range enabled {
 		client := NewClient(httpClient, server.URL, server.Headers)
 		if err := client.Initialize(ctx); err != nil {
 			logf("[MCP] server %q: initialize failed: %v\n", name, err)

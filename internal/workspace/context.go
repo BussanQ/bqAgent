@@ -29,9 +29,15 @@ const memoryTailLines = 50
 var nowFunc = time.Now
 
 func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
+	root, err := w.openRoot()
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+
 	parts := []string{strings.TrimSpace(base), w.workspaceSection()}
 
-	workspaceDocs, err := w.loadWorkspaceDocuments()
+	workspaceDocs, err := w.loadWorkspaceDocuments(root)
 	if err != nil {
 		return "", err
 	}
@@ -39,7 +45,7 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 		parts = append(parts, workspaceDocs)
 	}
 
-	rules, err := w.loadRules()
+	rules, err := w.loadRules(root)
 	if err != nil {
 		return "", err
 	}
@@ -47,7 +53,7 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 		parts = append(parts, rules)
 	}
 
-	skills, err := w.loadSkillsSection()
+	skills, err := w.loadSkillsSection(root)
 	if err != nil {
 		return "", err
 	}
@@ -55,7 +61,7 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 		parts = append(parts, skills)
 	}
 
-	memory, err := w.loadMemoryContext(memoryTailLines)
+	memory, err := w.loadMemoryContext(root, memoryTailLines)
 	if err != nil {
 		return "", err
 	}
@@ -73,17 +79,27 @@ func (w *Workspace) AppendMemory(task, result string) error {
 		return nil
 	}
 
+	root, err := w.openRoot()
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
 	now := nowFunc()
 	memoryPath := w.MemoryPath()
 	if w.UsesWorkspaceContext() {
 		memoryPath = w.DailyMemoryPath(now.Format("2006-01-02"))
 	}
-	if err := os.MkdirAll(filepath.Dir(memoryPath), 0o755); err != nil {
+	memoryPath, err = w.pathInsideRoot(memoryPath)
+	if err != nil {
+		return err
+	}
+	if err := root.MkdirAll(filepath.Dir(memoryPath), 0o755); err != nil {
 		return err
 	}
 
 	entry := fmt.Sprintf("\n## %s\n**Task:** %s\n**Result:** %s\n", now.Format("2006-01-02 15:04:05"), task, result)
-	file, err := os.OpenFile(memoryPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := root.OpenFile(memoryPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
@@ -111,7 +127,7 @@ func (w *Workspace) workspaceSection() string {
 	return strings.Join(lines, "\n")
 }
 
-func (w *Workspace) loadWorkspaceDocuments() (string, error) {
+func (w *Workspace) loadWorkspaceDocuments(root *os.Root) (string, error) {
 	documents := []struct {
 		label string
 		paths []string
@@ -124,7 +140,7 @@ func (w *Workspace) loadWorkspaceDocuments() (string, error) {
 
 	blocks := make([]string, 0, len(documents))
 	for _, document := range documents {
-		content, err := readFirstAvailable(document.paths...)
+		content, err := w.readFirstAvailable(root, document.paths...)
 		if err != nil {
 			return "", err
 		}
@@ -144,8 +160,8 @@ func (w *Workspace) loadWorkspaceDocuments() (string, error) {
 	return "# Workspace Context\n\n" + strings.Join(blocks, "\n\n"), nil
 }
 
-func (w *Workspace) loadRules() (string, error) {
-	entries, err := os.ReadDir(w.RulesDir())
+func (w *Workspace) loadRules(root *os.Root) (string, error) {
+	entries, err := w.readDirFromRoot(root, w.RulesDir())
 	if os.IsNotExist(err) {
 		return "", nil
 	}
@@ -163,7 +179,7 @@ func (w *Workspace) loadRules() (string, error) {
 			continue
 		}
 
-		content, err := os.ReadFile(filepath.Join(w.RulesDir(), entry.Name()))
+		content, err := w.readFileFromRoot(root, filepath.Join(w.RulesDir(), entry.Name()))
 		if err != nil {
 			return "", err
 		}
@@ -177,7 +193,16 @@ func (w *Workspace) loadRules() (string, error) {
 }
 
 func (w *Workspace) LoadSkills() ([]Skill, error) {
-	entries, err := os.ReadDir(w.SkillsDir())
+	root, err := w.openRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return w.loadSkills(root)
+}
+
+func (w *Workspace) loadSkills(root *os.Root) ([]Skill, error) {
+	entries, err := w.readDirFromRoot(root, w.SkillsDir())
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -196,7 +221,7 @@ func (w *Workspace) LoadSkills() ([]Skill, error) {
 		}
 
 		skillPath := filepath.Join(w.SkillsDir(), entry.Name(), "SKILL.md")
-		description, aliases, exists, err := readSkillMetadata(skillPath)
+		description, aliases, exists, err := w.readSkillMetadata(root, skillPath)
 		if err != nil {
 			return nil, err
 		}
@@ -271,8 +296,8 @@ func (w *Workspace) ResolveSkill(token string) (Skill, bool, error) {
 	return matches[0], true, nil
 }
 
-func (w *Workspace) loadSkillsSection() (string, error) {
-	skills, err := w.LoadSkills()
+func (w *Workspace) loadSkillsSection(root *os.Root) (string, error) {
+	skills, err := w.loadSkills(root)
 	if err != nil {
 		return "", err
 	}
@@ -306,8 +331,12 @@ func (w *Workspace) skillPromptPath(skillPath string) (string, error) {
 	return filepath.ToSlash(relative), nil
 }
 
-func readSkillMetadata(path string) (description string, aliases []string, exists bool, err error) {
-	file, err := os.Open(path)
+func (w *Workspace) readSkillMetadata(root *os.Root, path string) (description string, aliases []string, exists bool, err error) {
+	path, err = w.pathInsideRoot(path)
+	if err != nil {
+		return "", nil, false, err
+	}
+	file, err := root.Open(path)
 	if os.IsNotExist(err) {
 		return "", nil, false, nil
 	}
@@ -417,13 +446,19 @@ func cleanSkillAlias(raw string) string {
 	return strings.TrimSpace(alias)
 }
 
-func (w *Workspace) loadMemoryContext(maxLines int) (string, error) {
-	if fileExists(filepath.Join(w.WorkspaceMemoryDir(), "entries.jsonl")) {
+func (w *Workspace) loadMemoryContext(root *os.Root, maxLines int) (string, error) {
+	entriesPath, err := w.pathInsideRoot(filepath.Join(w.WorkspaceMemoryDir(), "entries.jsonl"))
+	if err != nil {
+		return "", err
+	}
+	if _, err := root.Stat(entriesPath); err == nil {
 		return "", nil
+	} else if !os.IsNotExist(err) {
+		return "", err
 	}
 	blocks := make([]string, 0, 4)
 
-	workspaceMemory, workspaceMemoryPath, err := readPreferredTail(maxLines, w.WorkspaceMemoryPath(), w.LegacyWorkspaceMemoryPath())
+	workspaceMemory, workspaceMemoryPath, err := w.readPreferredTail(root, maxLines, w.WorkspaceMemoryPath(), w.LegacyWorkspaceMemoryPath())
 	if err != nil {
 		return "", err
 	}
@@ -437,7 +472,7 @@ func (w *Workspace) loadMemoryContext(maxLines int) (string, error) {
 		now.Format("2006-01-02"),
 	}
 	for _, day := range dailyFiles {
-		dailyMemory, dailyMemoryPath, err := readPreferredTail(maxLines, w.DailyMemoryPath(day), w.LegacyDailyMemoryPath(day))
+		dailyMemory, dailyMemoryPath, err := w.readPreferredTail(root, maxLines, w.DailyMemoryPath(day), w.LegacyDailyMemoryPath(day))
 		if err != nil {
 			return "", err
 		}
@@ -447,7 +482,7 @@ func (w *Workspace) loadMemoryContext(maxLines int) (string, error) {
 		blocks = append(blocks, "## "+w.displayPath(dailyMemoryPath)+"\n"+dailyMemory)
 	}
 
-	legacyMemory, err := readTail(w.LegacyMemoryPath(), maxLines)
+	legacyMemory, err := w.readTail(root, w.LegacyMemoryPath(), maxLines)
 	if err != nil {
 		return "", err
 	}
@@ -461,8 +496,8 @@ func (w *Workspace) loadMemoryContext(maxLines int) (string, error) {
 	return strings.Join(blocks, "\n\n"), nil
 }
 
-func readTail(path string, maxLines int) (string, error) {
-	content, err := os.ReadFile(path)
+func (w *Workspace) readTail(root *os.Root, path string, maxLines int) (string, error) {
+	content, err := w.readFileFromRoot(root, path)
 	if os.IsNotExist(err) {
 		return "", nil
 	}
@@ -477,9 +512,9 @@ func readTail(path string, maxLines int) (string, error) {
 	return strings.TrimSpace(strings.Join(lines, "\n")), nil
 }
 
-func readFirstAvailable(paths ...string) ([]byte, error) {
+func (w *Workspace) readFirstAvailable(root *os.Root, paths ...string) ([]byte, error) {
 	for _, path := range paths {
-		content, err := os.ReadFile(path)
+		content, err := w.readFileFromRoot(root, path)
 		if os.IsNotExist(err) {
 			continue
 		}
@@ -491,9 +526,9 @@ func readFirstAvailable(paths ...string) ([]byte, error) {
 	return nil, nil
 }
 
-func readPreferredTail(maxLines int, paths ...string) (string, string, error) {
+func (w *Workspace) readPreferredTail(root *os.Root, maxLines int, paths ...string) (string, string, error) {
 	for _, path := range paths {
-		content, err := readTail(path, maxLines)
+		content, err := w.readTail(root, path, maxLines)
 		if err != nil {
 			return "", "", err
 		}

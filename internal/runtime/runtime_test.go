@@ -76,6 +76,41 @@ func TestConfigFromEnvUsesSessionStorageDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnvUsesToolOutputLimitDefaultsAndOverrides(t *testing.T) {
+	defaults := ConfigFromEnv(func(string) string { return "" })
+	if defaults.BashOutputMaxBytes != 1<<20 || defaults.ReadFileMaxBytes != 1<<20 {
+		t.Fatalf("tool output defaults = bash %d read %d, want 1048576 each", defaults.BashOutputMaxBytes, defaults.ReadFileMaxBytes)
+	}
+
+	overrides := ConfigFromEnv(func(key string) string {
+		switch key {
+		case "BASH_OUTPUT_MAX_BYTES":
+			return "123"
+		case "READ_FILE_MAX_BYTES":
+			return "456"
+		default:
+			return ""
+		}
+	})
+	if overrides.BashOutputMaxBytes != 123 || overrides.ReadFileMaxBytes != 456 {
+		t.Fatalf("tool output overrides = bash %d read %d", overrides.BashOutputMaxBytes, overrides.ReadFileMaxBytes)
+	}
+
+	invalid := ConfigFromEnv(func(key string) string {
+		switch key {
+		case "BASH_OUTPUT_MAX_BYTES":
+			return "0"
+		case "READ_FILE_MAX_BYTES":
+			return "-1"
+		default:
+			return ""
+		}
+	})
+	if invalid.BashOutputMaxBytes != 1<<20 || invalid.ReadFileMaxBytes != 1<<20 {
+		t.Fatalf("invalid tool limits = bash %d read %d, want defaults", invalid.BashOutputMaxBytes, invalid.ReadFileMaxBytes)
+	}
+}
+
 func TestConfigFromEnvEnablesRunTrace(t *testing.T) {
 	config := ConfigFromEnv(func(key string) string {
 		if key == "RUN_TRACE_ENABLED" {

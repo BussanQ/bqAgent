@@ -53,7 +53,10 @@ func TestVerifyWebhookSecret(t *testing.T) {
 	if VerifyWebhookSecret(header, "wrong-secret") {
 		t.Fatal("VerifyWebhookSecret returned true, want false")
 	}
-	if !VerifyWebhookSecret(http.Header{}, "") {
-		t.Fatal("VerifyWebhookSecret returned false for empty expected secret, want true")
+	if VerifyWebhookSecret(http.Header{}, "") {
+		t.Fatal("VerifyWebhookSecret returned true for empty expected secret, want false")
+	}
+	if VerifyWebhookSecret(http.Header{}, " \t ") {
+		t.Fatal("VerifyWebhookSecret returned true for whitespace expected secret, want false")
 	}
 }

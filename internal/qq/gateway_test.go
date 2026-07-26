@@ -92,6 +92,138 @@ func TestGatewayClientIdentifyAndDispatch(t *testing.T) {
 	}
 }
 
+func TestGatewayClientReconnectsWhenHeartbeatACKMissing(t *testing.T) {
+	heartbeats := make(chan GatewayPayload, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		conn, err := websocket.Accept(writer, request, nil)
+		if err != nil {
+			t.Fatalf("Accept() error = %v", err)
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		writeWSPayload(t, conn, GatewayPayload{Op: opHello, D: rawJSON(`{"heartbeat_interval":50}`)})
+		if payload := readWSPayload(t, conn); payload.Op != opIdentify {
+			t.Errorf("first payload op = %d, want identify", payload.Op)
+			return
+		}
+		heartbeats <- readWSPayload(t, conn)
+		<-request.Context().Done()
+	}))
+	defer wsServer.Close()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte(`{"url":` + jsonQuote(httpToWS(wsServer.URL)) + `}`))
+	}))
+	defer apiServer.Close()
+
+	client := NewGatewayClient(fakeTokenSource{token: "token-1", configured: true}, apiServer.URL, apiServer.Client())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := client.Connect(ctx, GatewaySessionState{}, nil)
+	if !errors.Is(err, ErrGatewayHeartbeatTimeout) {
+		t.Fatalf("Connect() error = %v, want ErrGatewayHeartbeatTimeout", err)
+	}
+	if payload := <-heartbeats; payload.Op != opHeartbeat {
+		t.Fatalf("heartbeat op = %d, want heartbeat", payload.Op)
+	}
+}
+
+func TestGatewayClientReturnsContextCancellationBeforeHeartbeatTimeout(t *testing.T) {
+	heartbeats := make(chan struct{}, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		conn, err := websocket.Accept(writer, request, nil)
+		if err != nil {
+			t.Fatalf("Accept() error = %v", err)
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		writeWSPayload(t, conn, GatewayPayload{Op: opHello, D: rawJSON(`{"heartbeat_interval":200}`)})
+		if payload := readWSPayload(t, conn); payload.Op != opIdentify {
+			t.Errorf("first payload op = %d, want identify", payload.Op)
+			return
+		}
+		if payload := readWSPayload(t, conn); payload.Op != opHeartbeat {
+			t.Errorf("heartbeat op = %d, want heartbeat", payload.Op)
+			return
+		}
+		heartbeats <- struct{}{}
+		<-request.Context().Done()
+	}))
+	defer wsServer.Close()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte(`{"url":` + jsonQuote(httpToWS(wsServer.URL)) + `}`))
+	}))
+	defer apiServer.Close()
+
+	client := NewGatewayClient(fakeTokenSource{token: "token-1", configured: true}, apiServer.URL, apiServer.Client())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	connectDone := make(chan error, 1)
+	go func() {
+		_, err := client.Connect(ctx, GatewaySessionState{}, nil)
+		connectDone <- err
+	}()
+	select {
+	case <-heartbeats:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for heartbeat")
+	}
+	cancel()
+	select {
+	case err := <-connectDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Connect() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for canceled Connect")
+	}
+}
+
+func TestGatewayClientKeepsAliveWithHeartbeatACKs(t *testing.T) {
+	const heartbeatCount = 3
+	heartbeats := make(chan GatewayPayload, heartbeatCount)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		conn, err := websocket.Accept(writer, request, nil)
+		if err != nil {
+			t.Fatalf("Accept() error = %v", err)
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		writeWSPayload(t, conn, GatewayPayload{Op: opHello, D: rawJSON(`{"heartbeat_interval":30}`)})
+		if payload := readWSPayload(t, conn); payload.Op != opIdentify {
+			t.Errorf("first payload op = %d, want identify", payload.Op)
+			return
+		}
+		for range heartbeatCount {
+			payload := readWSPayload(t, conn)
+			heartbeats <- payload
+			writeWSPayload(t, conn, GatewayPayload{Op: opHeartbeatACK})
+		}
+		writeWSPayload(t, conn, GatewayPayload{ID: "event-1", Op: opDispatch, T: "C2C_MESSAGE_CREATE", S: int64Ptr(1), D: rawJSON(`{"author":{"user_openid":"user-1"},"content":"done","id":"message-1"}`)})
+		<-request.Context().Done()
+	}))
+	defer wsServer.Close()
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte(`{"url":` + jsonQuote(httpToWS(wsServer.URL)) + `}`))
+	}))
+	defer apiServer.Close()
+
+	stop := errors.New("stop after acknowledged heartbeats")
+	client := NewGatewayClient(fakeTokenSource{token: "token-1", configured: true}, apiServer.URL, apiServer.Client())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := client.Connect(ctx, GatewaySessionState{}, func(context.Context, Update) error {
+		return stop
+	})
+	if !errors.Is(err, stop) {
+		t.Fatalf("Connect() error = %v, want handler error", err)
+	}
+	for range heartbeatCount {
+		if payload := <-heartbeats; payload.Op != opHeartbeat {
+			t.Fatalf("heartbeat op = %d, want heartbeat", payload.Op)
+		}
+	}
+}
+
 func TestGatewayClientReconnectOpcode(t *testing.T) {
 	client, closeServer := newGatewayOpcodeTestClient(t, GatewayPayload{Op: opReconnect})
 	defer closeServer()

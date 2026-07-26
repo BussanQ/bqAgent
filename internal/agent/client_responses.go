@@ -105,6 +105,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	calls := map[int]*partialCall{}
 	usage := TokenUsage{}
 	completion := CompletionState{}
+	sawTerminal := false
 
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -119,13 +120,24 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 		}
 		var event struct {
 			Type        string                 `json:"type"`
+			Message     string                 `json:"message"`
 			Delta       string                 `json:"delta"`
 			OutputIndex int                    `json:"output_index"`
 			Item        openAIResponseOutput   `json:"item"`
 			Response    openAIResponseEnvelope `json:"response"`
+			Error       struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			continue
+			return AssistantMessage{}, fmt.Errorf("invalid responses stream event: %w", err)
+		}
+		if event.Type == "response.failed" || event.Type == "error" {
+			message := firstNonBlank(strings.TrimSpace(event.Error.Message), strings.TrimSpace(event.Message))
+			if message == "" {
+				message = "upstream reported " + event.Type
+			}
+			return AssistantMessage{}, fmt.Errorf("responses stream failed: %s", message)
 		}
 		switch event.Type {
 		case "response.output_text.delta":
@@ -159,6 +171,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				}
 			}
 		case "response.completed", "response.incomplete":
+			sawTerminal = true
 			usage = tokenUsageFromOpenAIResponse(event.Response.Usage)
 			completion = completionFromOpenAIResponse(event.Response)
 			if event.Type == "response.incomplete" && completion.StopReason == "" {
@@ -169,6 +182,9 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	}
 	if err := scanner.Err(); err != nil {
 		return AssistantMessage{}, fmt.Errorf("reading responses stream: %w", err)
+	}
+	if !sawTerminal {
+		return AssistantMessage{}, &IncompleteStreamError{Provider: "responses", Reason: "missing response.completed or response.incomplete event"}
 	}
 
 	message := AssistantMessage{Role: "assistant", Content: content.String(), Completion: completion, Usage: usage}

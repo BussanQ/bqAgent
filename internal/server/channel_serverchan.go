@@ -16,6 +16,7 @@ type ServerChanChannel struct {
 	botWebhookProcessor *BotWebhookProcessor
 	runner              *ChannelTurnRunner
 	mu                  sync.Mutex
+	stopping            bool
 	baseCtx             context.Context
 	turns               sync.WaitGroup
 }
@@ -54,12 +55,34 @@ func (channel *ServerChanChannel) Start(ctx context.Context) {
 	channel.mu.Unlock()
 }
 
-// WaitTurns blocks until all in-flight webhook goroutines finish.
+// StopAcceptingTurns closes request and webhook dispatch admission before
+// shutdown starts draining.
+func (channel *ServerChanChannel) StopAcceptingTurns() {
+	if channel == nil {
+		return
+	}
+	channel.mu.Lock()
+	channel.stopping = true
+	channel.mu.Unlock()
+}
+
+func (channel *ServerChanChannel) acceptingTurns() bool {
+	channel.mu.Lock()
+	defer channel.mu.Unlock()
+	return !channel.stopping
+}
+
+// WaitTurns blocks until all in-flight webhook goroutines finish. Call
+// StopAcceptingTurns first to prevent WaitGroup Add/Wait races.
 func (channel *ServerChanChannel) WaitTurns() {
 	channel.turns.Wait()
 }
 
 func (channel *ServerChanChannel) handleChat(writer http.ResponseWriter, request *http.Request) {
+	if !channel.acceptingTurns() {
+		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "server is shutting down"})
+		return
+	}
 	if request.Method != http.MethodPost {
 		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
 		return
@@ -115,6 +138,10 @@ func (channel *ServerChanChannel) handleChat(writer http.ResponseWriter, request
 }
 
 func (channel *ServerChanChannel) handleBotWebhook(writer http.ResponseWriter, request *http.Request) {
+	if !channel.acceptingTurns() {
+		writePlainText(writer, http.StatusServiceUnavailable, "server is shutting down")
+		return
+	}
 	if request.Method != http.MethodPost {
 		writePlainText(writer, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -143,14 +170,21 @@ func (channel *ServerChanChannel) handleBotWebhook(writer http.ResponseWriter, r
 		return
 	}
 
-	writePlainText(writer, http.StatusOK, "ok")
 	channel.mu.Lock()
+	if channel.stopping {
+		channel.mu.Unlock()
+		writePlainText(writer, http.StatusServiceUnavailable, "server is shutting down")
+		return
+	}
 	baseCtx := channel.baseCtx
-	channel.mu.Unlock()
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
+	// StopAcceptingTurns holds this mutex while closing the admission gate, so
+	// WaitTurns cannot race a later WaitGroup.Add.
 	channel.turns.Add(1)
+	channel.mu.Unlock()
+	writePlainText(writer, http.StatusOK, "ok")
 	go func(update serverchanclient.BotUpdate) {
 		defer channel.turns.Done()
 		ctx, cancel := context.WithTimeout(baseCtx, ChannelTurnTimeout())

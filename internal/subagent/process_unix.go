@@ -14,3 +14,13 @@ func terminateWorkerPID(pid int) error {
 	}
 	return nil
 }
+
+// workerProcessAlive uses kill(pid, 0), which checks process existence without
+// delivering a signal. EPERM still proves that the process exists.
+func workerProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
+}

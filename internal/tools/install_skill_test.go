@@ -79,6 +79,26 @@ func TestInstallSkillRefusesOverwriteByDefault(t *testing.T) {
 	}
 }
 
+func TestInstallSkillRejectsEscapingSkillsSymlink(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte("# Demo"))
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".agent", "skills")); err != nil {
+		t.Skipf("creating symlink is unavailable: %v", err)
+	}
+	_, err := InstallSkillToRootWithClient(root, server.Client(), true)(context.Background(), map[string]any{"url": server.URL + "/demo"})
+	if err == nil || !strings.Contains(err.Error(), "escapes workspace") {
+		t.Fatalf("InstallSkill error = %v, want escaping path error", err)
+	}
+}
+
 func TestInstallSkillOverwritesWhenRequested(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/markdown")

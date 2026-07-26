@@ -479,6 +479,19 @@ func TestQQChannelNotifiesUserWhenTurnTimesOut(t *testing.T) {
 	}
 }
 
+func TestQQChannelStopAcceptingTurnsRejectsDispatch(t *testing.T) {
+	channel := &QQChannel{baseCtx: context.Background()}
+	channel.StopAcceptingTurns()
+	channel.dispatchUpdate(c2cUpdate("event-1", "message-1", "ignored"))
+	done := make(chan struct{})
+	go func() { channel.WaitTurns(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stopped QQ channel admitted a new turn")
+	}
+}
+
 func newTestQQChannel(root string, service *Service, qqBaseURL string, gateway qqGateway) *QQChannel {
 	tokenClient := qqclient.NewTokenClient("app-1", "secret-1", qqBaseURL, nil)
 	tokenSource := qqclient.NewCachedTokenSource(tokenClient)

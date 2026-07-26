@@ -26,6 +26,7 @@ type IlinkChannel struct {
 
 	mu            sync.Mutex
 	started       bool
+	stopping      bool
 	baseCtx       context.Context
 	turns         sync.WaitGroup
 	pollerRunning bool
@@ -281,12 +282,18 @@ func (channel *IlinkChannel) run(ctx context.Context) {
 
 func (channel *IlinkChannel) dispatchUpdate(tokenState weixin.TokenState, update weixin.Update) {
 	channel.mu.Lock()
+	if channel.stopping {
+		channel.mu.Unlock()
+		return
+	}
 	baseCtx := channel.baseCtx
-	channel.mu.Unlock()
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
+	// StopAcceptingTurns holds this mutex while closing the admission gate, so
+	// WaitTurns cannot race a later WaitGroup.Add.
 	channel.turns.Add(1)
+	channel.mu.Unlock()
 	go func() {
 		defer channel.turns.Done()
 		turnCtx, cancel := context.WithTimeout(baseCtx, ChannelTurnTimeout())
@@ -306,7 +313,18 @@ func (channel *IlinkChannel) dispatchUpdate(tokenState weixin.TokenState, update
 	}()
 }
 
-// WaitTurns blocks until all in-flight update goroutines finish.
+// StopAcceptingTurns closes dispatch admission before shutdown starts draining.
+func (channel *IlinkChannel) StopAcceptingTurns() {
+	if channel == nil {
+		return
+	}
+	channel.mu.Lock()
+	channel.stopping = true
+	channel.mu.Unlock()
+}
+
+// WaitTurns blocks until all in-flight update goroutines finish. Call
+// StopAcceptingTurns first to prevent WaitGroup Add/Wait races.
 func (channel *IlinkChannel) WaitTurns() {
 	channel.turns.Wait()
 }

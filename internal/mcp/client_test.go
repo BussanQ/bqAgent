@@ -150,3 +150,31 @@ func TestDiscoverSkipsUnreachableServer(t *testing.T) {
 		t.Fatalf("expected no tools from unreachable server, got %d defs / %d fns", len(defs), len(fns))
 	}
 }
+
+func TestDiscoverSkipsInvalidServerAndKeepsValidServer(t *testing.T) {
+	server := httptest.NewServer(mcpHandler(t, false))
+	defer server.Close()
+	cfg := Config{Servers: map[string]ServerConfig{
+		"good": {Type: "streamable-http", URL: server.URL},
+		"bad": {
+			Type: "streamable-http", URL: "https://invalid.test/mcp",
+			Headers: map[string]string{"Authorization": "Bearer ${UNAUTHORIZED}"},
+		},
+	}}
+	var logs strings.Builder
+	defs, fns := Discover(context.Background(), cfg, func(key string) string {
+		if key == "UNAUTHORIZED" {
+			return "must-not-appear-in-logs"
+		}
+		return ""
+	}, server.Client(), func(format string, args ...any) { fmt.Fprintf(&logs, format, args...) })
+	if len(defs) != 1 || len(fns) != 1 {
+		t.Fatalf("expected valid server tools only, got %d defs / %d fns", len(defs), len(fns))
+	}
+	if !strings.Contains(logs.String(), `server "bad": invalid configuration`) {
+		t.Fatalf("logs = %q, want invalid server warning", logs.String())
+	}
+	if strings.Contains(logs.String(), "must-not-appear-in-logs") {
+		t.Fatalf("logs leaked secret: %q", logs.String())
+	}
+}

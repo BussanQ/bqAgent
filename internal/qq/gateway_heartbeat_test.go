@@ -65,3 +65,27 @@ func TestSendHeartbeatsRecoversFromIntermittentFailure(t *testing.T) {
 	default:
 	}
 }
+
+func TestWriteHeartbeatUsesBoundedContext(t *testing.T) {
+	const interval = 20 * time.Millisecond
+	started := time.Now()
+	err := writeHeartbeat(context.Background(), interval, func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("writeHeartbeat() error = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("write context elapsed = %s, want bounded near %s", elapsed, interval)
+	}
+}
+
+func TestHeartbeatWriteTimeoutIsCapped(t *testing.T) {
+	if got := heartbeatWriteTimeout(20 * time.Second); got != maxHeartbeatWriteTimeout {
+		t.Fatalf("heartbeatWriteTimeout() = %s, want %s", got, maxHeartbeatWriteTimeout)
+	}
+	if got := heartbeatWriteTimeout(20 * time.Millisecond); got != 20*time.Millisecond {
+		t.Fatalf("heartbeatWriteTimeout() = %s, want interval", got)
+	}
+}

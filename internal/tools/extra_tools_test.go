@@ -30,6 +30,67 @@ func TestReadFileOffsetLimit(t *testing.T) {
 	if _, err := read(context.Background(), map[string]any{"path": "lines.txt", "limit": "-1"}); err == nil {
 		t.Fatal("negative limit should error")
 	}
+	trailingPath := filepath.Join(dir, "trailing.txt")
+	if err := os.WriteFile(trailingPath, []byte("a\nb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	trailing, err := read(context.Background(), map[string]any{"path": "trailing.txt", "offset": "2"})
+	if err != nil || trailing != "b\n" {
+		t.Fatalf("trailing newline read = %q, err = %v", trailing, err)
+	}
+}
+
+func TestReadFileBoundsReturnedContentAndAcceptsOnlyIntegerFloats(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "large.txt")
+	if err := os.WriteFile(path, []byte("abcdef\ntrailing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	read := ReadFileFromRootWithMaxBytes(dir, 6)
+	content, err := read(context.Background(), map[string]any{"path": "large.txt"})
+	if err != nil {
+		t.Fatalf("bounded read error: %v", err)
+	}
+	if want := "abcdef" + truncatedOutputMarker; content != want {
+		t.Fatalf("bounded content = %q, want %q", content, want)
+	}
+	content, err = read(context.Background(), map[string]any{"path": "large.txt", "limit": "1"})
+	if err != nil {
+		t.Fatalf("bounded limited read error: %v", err)
+	}
+	if content != "abcdef" {
+		t.Fatalf("bounded limited content = %q, want %q", content, "abcdef")
+	}
+
+	for _, value := range []float64{-1, 1.5} {
+		if _, err := read(context.Background(), map[string]any{"path": "large.txt", "limit": value}); err == nil {
+			t.Fatalf("limit %v should be rejected", value)
+		}
+	}
+	content, err = read(context.Background(), map[string]any{"path": "large.txt", "offset": float64(1), "limit": float64(1)})
+	if err != nil {
+		t.Fatalf("integer float arguments should work: %v", err)
+	}
+	if content != "abcdef" {
+		t.Fatalf("integer float read = %q, want %q", content, "abcdef")
+	}
+}
+
+func TestReadFileBoundsLongLineWithoutRetainingIt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "long.txt")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 2*8192)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := ReadFileFromRootWithMaxBytes(dir, 8)(context.Background(), map[string]any{"path": "long.txt"})
+	if err != nil {
+		t.Fatalf("long line read error: %v", err)
+	}
+	if want := "xxxxxxxx" + truncatedOutputMarker; content != want {
+		t.Fatalf("long line content = %q, want %q", content, want)
+	}
 }
 
 func TestWorkspacePathsNormalizeInsideAndRejectOutside(t *testing.T) {
@@ -54,6 +115,56 @@ func TestWorkspacePathsNormalizeInsideAndRejectOutside(t *testing.T) {
 	}
 	if _, err := read(context.Background(), map[string]any{"path": "/Users/example/project/main.go"}); err == nil || (!strings.Contains(err.Error(), "another platform") && !strings.Contains(err.Error(), "outside workspace")) {
 		t.Fatalf("foreign absolute path error = %v, want fast actionable rejection", err)
+	}
+}
+
+func TestReadFileRejectsEscapingSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape.txt")); err != nil {
+		t.Skipf("creating symlink is unavailable: %v", err)
+	}
+	_, err := ReadFileFromRoot(root)(context.Background(), map[string]any{"path": "escape.txt"})
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("ReadFile error = %v, want symlink boundary rejection", err)
+	}
+}
+
+func TestWriteAndEditFileRejectEscapingSymlinks(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skipf("creating symlink is unavailable, commonly without Windows developer privileges: %v", err)
+	}
+
+	_, err := WriteFileToRoot(root)(context.Background(), map[string]any{"path": "escape/created.txt", "content": "secret"})
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("WriteFile error = %v, want symbolic link boundary rejection", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "created.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write escaped workspace; outside target stat error = %v, want not exist", err)
+	}
+
+	outsideFile := filepath.Join(outside, "existing.txt")
+	if err := os.WriteFile(outsideFile, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(root, "linked.txt")); err != nil {
+		t.Skipf("creating symlink is unavailable, commonly without Windows developer privileges: %v", err)
+	}
+	_, err = EditFileInRoot(root)(context.Background(), map[string]any{"path": "linked.txt", "old_string": "old", "new_string": "new"})
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("EditFile error = %v, want symbolic link boundary rejection", err)
+	}
+	content, err := os.ReadFile(outsideFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "old" {
+		t.Fatalf("edit escaped workspace; outside content = %q, want old", content)
 	}
 }
 

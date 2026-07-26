@@ -30,11 +30,14 @@ const (
 	// maxHeartbeatFailures is the number of consecutive heartbeat write
 	// failures tolerated before the connection is torn down for a reconnect.
 	maxHeartbeatFailures = 2
+
+	maxHeartbeatWriteTimeout = 10 * time.Second
 )
 
 var (
-	ErrGatewayReconnect      = errors.New("qq gateway reconnect requested")
-	ErrGatewayInvalidSession = errors.New("qq gateway invalid session")
+	ErrGatewayReconnect        = errors.New("qq gateway reconnect requested")
+	ErrGatewayInvalidSession   = errors.New("qq gateway invalid session")
+	ErrGatewayHeartbeatTimeout = errors.New("qq gateway heartbeat acknowledgement timed out")
 )
 
 type GatewayClient struct {
@@ -45,6 +48,55 @@ type GatewayClient struct {
 
 type GatewayURLResponse struct {
 	URL string `json:"url"`
+}
+
+// heartbeatTracker serializes a heartbeat acknowledgement with the heartbeat
+// it confirms. QQ heartbeat ACK payloads do not carry an ID, so at most one
+// heartbeat may be outstanding at a time.
+type heartbeatTracker struct {
+	mu          sync.Mutex
+	epoch       uint64
+	outstanding uint64
+	timedOut    bool
+}
+
+func (tracker *heartbeatTracker) begin() (uint64, bool) {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if tracker.outstanding != 0 {
+		return 0, false
+	}
+	tracker.epoch++
+	tracker.outstanding = tracker.epoch
+	return tracker.epoch, true
+}
+
+func (tracker *heartbeatTracker) acknowledge() {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	// An ACK always confirms the currently outstanding heartbeat: the gateway
+	// does not permit a second one to be sent until this is cleared.
+	tracker.outstanding = 0
+}
+
+func (tracker *heartbeatTracker) clear(epoch uint64) {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if tracker.outstanding == epoch {
+		tracker.outstanding = 0
+	}
+}
+
+func (tracker *heartbeatTracker) markTimedOut() {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	tracker.timedOut = true
+}
+
+func (tracker *heartbeatTracker) didTimeOut() bool {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	return tracker.timedOut
 }
 
 type helloData struct {
@@ -175,10 +227,19 @@ func (client *GatewayClient) Connect(ctx context.Context, state GatewaySessionSt
 	}
 
 	heartbeatCtx, heartbeatCancel := context.WithCancel(ctx)
+	heartbeats := &heartbeatTracker{}
+	var heartbeatCloseOnce sync.Once
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
 		sendHeartbeats(heartbeatCtx, interval, func() error {
+			epoch, ok := heartbeats.begin()
+			if !ok {
+				// The prior heartbeat was not acknowledged before this tick.
+				heartbeats.markTimedOut()
+				return ErrGatewayHeartbeatTimeout
+			}
+
 			stateMu.Lock()
 			seq := state.Seq
 			stateMu.Unlock()
@@ -186,15 +247,29 @@ func (client *GatewayClient) Connect(ctx context.Context, state GatewaySessionSt
 			if seq > 0 {
 				data = seq
 			}
-			return writeGatewayPayload(ctx, conn, &writeMu, gatewayPayload(opHeartbeat, data))
+			err := writeHeartbeat(heartbeatCtx, interval, func(writeCtx context.Context) error {
+				return writeGatewayPayload(writeCtx, conn, &writeMu, gatewayPayload(opHeartbeat, data))
+			})
+			if err != nil {
+				heartbeats.clear(epoch)
+			}
+			return err
 		}, func() {
 			// Close the connection so the read loop fails and Connect
-			// returns, letting the caller reconnect.
-			_ = conn.Close(websocket.StatusInternalError, "heartbeat write failed")
+			// returns, letting the caller reconnect. Close is idempotent because
+			// this may race with deferred connection cleanup.
+			heartbeatCloseOnce.Do(func() {
+				_ = conn.CloseNow()
+			})
 		})
 	}()
 	defer func() {
 		heartbeatCancel()
+		// A cancellation-aware write is bounded, and closing the connection also
+		// releases a blocked websocket write before waiting for the goroutine.
+		heartbeatCloseOnce.Do(func() {
+			_ = conn.CloseNow()
+		})
 		<-heartbeatDone
 	}()
 
@@ -203,6 +278,9 @@ func (client *GatewayClient) Connect(ctx context.Context, state GatewaySessionSt
 		if err != nil {
 			if ctx.Err() != nil {
 				return state, ctx.Err()
+			}
+			if heartbeats.didTimeOut() {
+				return state, ErrGatewayHeartbeatTimeout
 			}
 			return state, err
 		}
@@ -244,14 +322,28 @@ func (client *GatewayClient) Connect(ctx context.Context, state GatewaySessionSt
 			stateMu.Unlock()
 			return state, ErrGatewayInvalidSession
 		case opHeartbeatACK:
-			continue
+			heartbeats.acknowledge()
 		}
 	}
 }
 
+func heartbeatWriteTimeout(interval time.Duration) time.Duration {
+	if interval <= 0 || interval > maxHeartbeatWriteTimeout {
+		return maxHeartbeatWriteTimeout
+	}
+	return interval
+}
+
+func writeHeartbeat(ctx context.Context, interval time.Duration, write func(context.Context) error) error {
+	writeCtx, cancel := context.WithTimeout(ctx, heartbeatWriteTimeout(interval))
+	defer cancel()
+	return write(writeCtx)
+}
+
 // sendHeartbeats writes a heartbeat every interval and calls teardown after
-// maxHeartbeatFailures consecutive write failures, so a dead connection is
-// torn down instead of lingering until the server drops it.
+// an unacknowledged heartbeat or maxHeartbeatFailures consecutive write
+// failures, so a dead connection is torn down instead of lingering until the
+// server drops it.
 func sendHeartbeats(ctx context.Context, interval time.Duration, write func() error, teardown func()) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -262,6 +354,10 @@ func sendHeartbeats(ctx context.Context, interval time.Duration, write func() er
 			return
 		case <-ticker.C:
 			if err := write(); err != nil {
+				if errors.Is(err, ErrGatewayHeartbeatTimeout) {
+					teardown()
+					return
+				}
 				failures++
 				if failures >= maxHeartbeatFailures {
 					teardown()

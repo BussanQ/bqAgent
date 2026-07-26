@@ -189,6 +189,13 @@ func TestPrepareConversationPrefersWorkingContextSnapshot(t *testing.T) {
 	if err := conversation.Session.SaveWorkingMessages(working); err != nil {
 		t.Fatalf("SaveWorkingMessages returned error: %v", err)
 	}
+	now := time.Now()
+	if err := os.Chtimes(conversation.Session.MessagesPath(), now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(conversation.Session.WorkingMessagesPath(), now.Add(time.Second), now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
 
 	restored, err := PrepareConversation(store, conversation.Session.ID(), nil, "system prompt")
 	if err != nil {
@@ -292,7 +299,7 @@ func TestPrepareConversationFallsBackToFreshSessionWhenMissing(t *testing.T) {
 	}
 }
 
-func TestPrepareConversationRestoresCheckpointSummaryAndTail(t *testing.T) {
+func TestPrepareConversationRestoresFreshProvenanceCheckpoint(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	createOptions := &session.CreateOptions{Task: "hello", Chat: true}
 
@@ -353,6 +360,77 @@ func TestPrepareConversationIgnoresCheckpointWhenSystemPromptChanges(t *testing.
 	}
 	if restored.Messages[1]["content"] != "old detail" {
 		t.Fatalf("second restored content = %#v, want original stored message", restored.Messages[1]["content"])
+	}
+}
+
+func TestPrepareConversationDoesNotRestoreStaleCheckpointOverNewTranscript(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	conversation, err := PrepareConversation(store, "", &session.CreateOptions{Task: "hello", Chat: true}, "system prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conversation.AddUserMessage("detail at checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	if err := conversation.Session.SaveCheckpointSummary("stale summary", []map[string]any{{"role": "user", "content": "stale tail"}}, "system prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := conversation.AddUserMessage("new transcript detail"); err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := PrepareConversation(store, conversation.Session.ID(), nil, "system prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Messages) != 3 {
+		t.Fatalf("restored messages = %#v, want current transcript without stale checkpoint", restored.Messages)
+	}
+	if restored.Messages[2]["content"] != "new transcript detail" {
+		t.Fatalf("last restored message = %#v, want new transcript detail", restored.Messages[2])
+	}
+}
+
+func TestPrepareConversationAppliesLegacyCheckpointConservatively(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		checkpointAt   time.Time
+		wantCheckpoint bool
+	}{
+		{name: "stale", checkpointAt: time.Date(2026, 1, 2, 3, 4, 4, 0, time.UTC), wantCheckpoint: false},
+		{name: "not earlier", checkpointAt: time.Date(2026, 1, 2, 3, 4, 6, 0, time.UTC), wantCheckpoint: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := session.NewStore(t.TempDir())
+			conversation, err := PrepareConversation(store, "", &session.CreateOptions{Task: "hello", Chat: true}, "system prompt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := conversation.AddUserMessage("stored detail"); err != nil {
+				t.Fatal(err)
+			}
+			transcriptAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+			if err := os.Chtimes(conversation.Session.MessagesPath(), transcriptAt, transcriptAt); err != nil {
+				t.Fatal(err)
+			}
+			if err := conversation.Session.SaveCheckpoint(session.ContextCheckpoint{
+				Summary:      "legacy summary",
+				TailMessages: []map[string]any{{"role": "user", "content": "legacy tail"}},
+				SystemPrompt: "system prompt",
+				UpdatedAt:    test.checkpointAt,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			restored, err := PrepareConversation(store, conversation.Session.ID(), nil, "system prompt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasCheckpoint := len(restored.Messages) == 3 && restored.Messages[2]["content"] == "legacy tail"
+			if hasCheckpoint != test.wantCheckpoint {
+				t.Fatalf("restored messages = %#v, checkpoint applied = %t, want %t", restored.Messages, hasCheckpoint, test.wantCheckpoint)
+			}
+		})
 	}
 }
 

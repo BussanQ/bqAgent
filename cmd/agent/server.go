@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -60,7 +61,6 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 	configureServerChannelLimits(stderr, getenv)
 
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, stdout)
-	defer externalBroker.Close()
 
 	botProcessor := appserver.NewBotWebhookProcessor(
 		service,
@@ -108,14 +108,77 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 			Service:  service,
 			Channels: channels,
 		}),
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
 	fmt.Fprintf(stdout, "server listening on %s\n", options.listen)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fmt.Fprintln(stderr, err)
-		return 1
+	serveResult := make(chan error, 1)
+	go func() { serveResult <- server.ListenAndServe() }()
+
+	select {
+	case err := <-serveResult:
+		_ = externalBroker.Close()
+		if err != nil && err != http.ErrServerClosed {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case <-ctx.Done():
+		// Close channel admission before waiting for channel goroutines. This
+		// establishes the required happens-before edge for WaitGroup.Add/Wait.
+		stopChannelTurns(channels)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout(getenv))
+		shutdownErr := server.Shutdown(shutdownCtx)
+		waitForChannelTurns(shutdownCtx, channels)
+		cancel()
+		// Channel turn runners own their keyed locks; closing the broker only after
+		// they have drained avoids racing a live ACP request or resurrecting its
+		// client during shutdown.
+		_ = externalBroker.Close()
+		if shutdownErr != nil && shutdownErr != context.DeadlineExceeded {
+			fmt.Fprintf(stderr, "server shutdown: %v\n", shutdownErr)
+		}
+		return 0
 	}
-	return 0
+}
+
+const defaultServerShutdownTimeout = 15 * time.Second
+
+func serverShutdownTimeout(getenv func(string) string) time.Duration {
+	if raw := strings.TrimSpace(getenv("SERVER_SHUTDOWN_TIMEOUT")); raw != "" {
+		if timeout, err := time.ParseDuration(raw); err == nil && timeout > 0 {
+			return timeout
+		}
+	}
+	return defaultServerShutdownTimeout
+}
+
+// stopChannelTurns closes dispatch admission before graceful shutdown waits
+// for each channel's in-flight goroutines.
+func stopChannelTurns(channels []appserver.Channel) {
+	for _, channel := range channels {
+		if stopper, ok := channel.(interface{ StopAcceptingTurns() }); ok {
+			stopper.StopAcceptingTurns()
+		}
+	}
+}
+
+// waitForChannelTurns waits only up to ctx's deadline. A broken external
+// channel must not keep process shutdown blocked forever.
+func waitForChannelTurns(ctx context.Context, channels []appserver.Channel) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, channel := range channels {
+			if waiter, ok := channel.(interface{ WaitTurns() }); ok {
+				waiter.WaitTurns()
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 func configureServerChannelLimits(stderr io.Writer, getenv func(string) string) {

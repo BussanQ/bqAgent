@@ -249,6 +249,11 @@ func (c *stdioACPClient) handleSessionUpdate(raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return
 	}
+	// ACP uses session/update for thoughts, tool activity, and extension-defined
+	// updates too. Only agent_message_chunk is user-visible assistant output.
+	if payload.Update.SessionUpdate != "agent_message_chunk" {
+		return
+	}
 	text := extractACPText(payload.Update.Content)
 	if strings.TrimSpace(text) == "" {
 		return

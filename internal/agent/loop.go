@@ -339,6 +339,12 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 	}()
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
+		// Parent cancellation always wins over a stage boundary. A checkpoint is
+		// meaningful only when the stage's own budget expired, not when the caller
+		// stopped the whole turn or the server is shutting down.
+		if parentErr := ctx.Err(); parentErr != nil {
+			return "", updatedMessages, parentErr
+		}
 		if reason := a.stageBoundaryReason(iteration, explorationCtx); reason != "" {
 			return a.finishStageCheckpoint(ctx, updatedMessages, reason, actualIterations)
 		}
@@ -559,19 +565,34 @@ func (a *Agent) stageBoundaryReason(iteration int, explorationCtx context.Contex
 }
 
 func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string]any, reason string, iterations int) (string, []map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return "", messages, err
+	}
 	a.writeStageProgress(fmt.Sprintf("Preparing stage summary after %d iterations", iterations))
 	request, compacted := a.buildRequestMessages(ctx, messages)
 	if compacted != nil {
 		messages = compacted
+	}
+	if err := ctx.Err(); err != nil {
+		return "", messages, err
 	}
 	request = append(request, map[string]any{
 		"role":    "user",
 		"content": fmt.Sprintf("The current interactive analysis stage must stop now because %s. Based only on the work and tool results above, provide a concise checkpoint with exactly these sections: 已发现, 未完成, 建议下一步. State that the user can reply ‘继续’ to resume from this session. Do not call tools.", reason),
 	})
 	message, summaryErr := a.client.CreateChatCompletion(ctx, a.model, request, nil)
+	if err := ctx.Err(); err != nil {
+		return "", messages, err
+	}
 	summary := strings.TrimSpace(message.FinalContent())
 	if summaryErr != nil || summary == "" {
+		if err := ctx.Err(); err != nil {
+			return "", messages, err
+		}
 		summary = fmt.Sprintf("阶段已暂停（%s）。\n\n已发现\n- 已完成 %d 轮探索，相关工具结果已保留在当前会话中。\n\n未完成\n- 仍需基于现有结果继续分析。\n\n建议下一步\n- 回复“继续”，我会沿用当前 session 和已保存的上下文继续。", reason, iterations)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", messages, err
 	}
 	checkpoint := map[string]any{"role": "assistant", "content": summary}
 	messages = append(messages, checkpoint)

@@ -94,6 +94,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 	calls := map[int]*partialCall{}
 	usage := TokenUsage{}
 	stopReason := ""
+	sawMessageStop := false
 
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -120,9 +121,19 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 				StopReason  string `json:"stop_reason"`
 			} `json:"delta"`
 			Usage anthropicUsage `json:"usage"`
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			continue
+			return AssistantMessage{}, fmt.Errorf("invalid anthropic stream event: %w", err)
+		}
+		if event.Type == "error" {
+			message := strings.TrimSpace(event.Error.Message)
+			if message == "" {
+				message = "upstream reported an error event"
+			}
+			return AssistantMessage{}, fmt.Errorf("anthropic stream failed: %s", message)
 		}
 		switch event.Type {
 		case "message_start":
@@ -154,10 +165,15 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 			if event.Delta.StopReason != "" {
 				stopReason = event.Delta.StopReason
 			}
+		case "message_stop":
+			sawMessageStop = true
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return AssistantMessage{}, fmt.Errorf("reading anthropic stream: %w", err)
+	}
+	if !sawMessageStop {
+		return AssistantMessage{}, &IncompleteStreamError{Provider: "anthropic", Reason: "missing message_stop event"}
 	}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 

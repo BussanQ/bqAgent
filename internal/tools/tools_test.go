@@ -21,8 +21,8 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		description string
 		required    []string
 	}{
-		{index: 0, name: "execute_bash", description: "Execute a bash command when it verifies or produces information needed for the task.", required: []string{"command"}},
-		{index: 1, name: "read_file", description: "Read a workspace file using a workspace-relative path, preferably copied from glob output. Absolute paths are accepted only when they are inside the workspace. Optionally pass offset and limit.", required: []string{"path"}},
+		{index: 0, name: "execute_bash", description: "Execute a bash command when it verifies or produces information needed for the task. Captured combined stdout/stderr is byte-capped and ends with a truncation marker when over budget.", required: []string{"command"}},
+		{index: 1, name: "read_file", description: "Read a workspace file using a workspace-relative path, preferably copied from glob output. Absolute paths are accepted only when they are inside the workspace. Optionally pass offset and limit. Returned content is byte-capped and ends with a truncation marker when over budget.", required: []string{"path"}},
 		{index: 2, name: "write_file", description: "Write a workspace file using a workspace-relative path (overwrites the whole file). Absolute paths outside the workspace are rejected. Prefer edit_file for partial changes.", required: []string{"path", "content"}},
 		{index: 3, name: "edit_file", description: "Replace an exact string in a workspace file using a workspace-relative path. old_string must match exactly once unless replace_all is true.", required: []string{"path", "old_string", "new_string"}},
 		{index: 4, name: "grep", description: "Search workspace file contents by Go regular expression. Use a workspace-relative path when provided. Returns path:line:text and skips .git and binary files.", required: []string{"pattern"}},
@@ -124,6 +124,35 @@ func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 	}
 }
 
+func TestCatalogInjectsToolOutputLimits(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte("abcdef"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog := NewCatalog(Options{WorkspaceRoot: root, BashOutputMaxBytes: 3, ReadFileMaxBytes: 3})
+	registry := catalog.Registry()
+
+	content, err := registry["read_file"](context.Background(), map[string]any{"path": "large.txt"})
+	if err != nil {
+		t.Fatalf("catalog read_file error: %v", err)
+	}
+	if want := "abc" + truncatedOutputMarker; content != want {
+		t.Fatalf("catalog read_file = %q, want %q", content, want)
+	}
+
+	command := "printf abcdef"
+	if runtime.GOOS == "windows" {
+		command = "set /p unused=abcdef<nul&exit /b 0"
+	}
+	output, err := registry["execute_bash"](context.Background(), map[string]any{"command": command})
+	if err != nil {
+		t.Fatalf("catalog execute_bash error: %v", err)
+	}
+	if want := "abc" + truncatedOutputMarker; output != want {
+		t.Fatalf("catalog execute_bash = %q, want %q", output, want)
+	}
+}
+
 func TestExecuteBashReturnsErrorAndOutputOnNonZeroExit(t *testing.T) {
 	command := "printf sentinel; exit 7"
 	if runtime.GOOS == "windows" {
@@ -135,6 +164,21 @@ func TestExecuteBashReturnsErrorAndOutputOnNonZeroExit(t *testing.T) {
 	}
 	if !strings.Contains(output, "sentinel") {
 		t.Fatalf("output = %q, want sentinel", output)
+	}
+}
+
+func TestExecuteBashSharesBoundedOutputBudget(t *testing.T) {
+	command := "printf 123456; printf abcdef >&2"
+	if runtime.GOOS == "windows" {
+		command = "set /p unused=123456<nul&set /p unused=abcdef<nul 1>&2&exit /b 0"
+	}
+
+	output, err := ExecuteBashInDirWithMaxOutput("", 8)(context.Background(), map[string]any{"command": command})
+	if err != nil {
+		t.Fatalf("ExecuteBash error: %v", err)
+	}
+	if want := "123456ab" + truncatedOutputMarker; output != want {
+		t.Fatalf("output = %q, want %q", output, want)
 	}
 }
 

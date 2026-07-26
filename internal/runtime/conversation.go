@@ -47,7 +47,9 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 		messages, usingWorkingContext, err = savedSession.LoadResumableMessages()
 		if err == nil && !usingWorkingContext {
 			if checkpoint, checkpointErr := savedSession.LoadCheckpoint(); checkpointErr == nil {
-				messages = restoreCheckpointMessages(messages, checkpoint, systemPrompt)
+				if provenance, provenanceErr := savedSession.LoadTranscriptProvenance(); provenanceErr == nil && checkpointCanRestore(checkpoint, systemPrompt, provenance) {
+					messages = restoreCheckpointMessages(messages, checkpoint, systemPrompt)
+				}
 			}
 		}
 		if err != nil {
@@ -103,6 +105,16 @@ func (conversation *Conversation) EnsureSystemMessage(systemPrompt string) error
 		return conversation.Session.RewriteMessages(conversation.Messages)
 	}
 	return nil
+}
+
+func checkpointCanRestore(checkpoint session.ContextCheckpoint, systemPrompt string, provenance session.TranscriptProvenance) bool {
+	if strings.TrimSpace(checkpoint.SystemPrompt) != "" && stablePrompt(checkpoint.SystemPrompt) != stablePrompt(systemPrompt) {
+		return false
+	}
+	if checkpoint.SourceTranscriptSHA256 != "" {
+		return checkpoint.SourceTranscriptSHA256 == provenance.SHA256 && checkpoint.SourceTranscriptSize == provenance.Size
+	}
+	return !checkpoint.UpdatedAt.Before(provenance.ModTime)
 }
 
 func restoreCheckpointMessages(messages []map[string]any, checkpoint session.ContextCheckpoint, systemPrompt string) []map[string]any {

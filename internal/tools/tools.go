@@ -61,13 +61,15 @@ type Definition struct {
 type Function func(ctx context.Context, args map[string]any) (string, error)
 
 type Options struct {
-	WorkspaceRoot  string
-	IncludePlan    bool
-	SearchProvider string
-	SearchAPIKey   string
-	SearchBaseURL  string
-	MemoryDir      string
-	MemoryStore    *appmemory.Store
+	WorkspaceRoot      string
+	BashOutputMaxBytes int64
+	ReadFileMaxBytes   int64
+	IncludePlan        bool
+	SearchProvider     string
+	SearchAPIKey       string
+	SearchBaseURL      string
+	MemoryDir          string
+	MemoryStore        *appmemory.Store
 	// Todos backs the todo_write tool. When nil a fresh store is created so the
 	// tool still works (its list is just not shared with the caller).
 	Todos *TodoStore
@@ -100,8 +102,8 @@ func RegistryWithOptions(options Options) map[string]Function {
 		todoStore = NewTodoStore()
 	}
 	registry := map[string]Function{
-		"execute_bash":  ExecuteBashInDir(options.WorkspaceRoot),
-		"read_file":     ReadFileFromRoot(options.WorkspaceRoot),
+		"execute_bash":  ExecuteBashInDirWithMaxOutput(options.WorkspaceRoot, options.BashOutputMaxBytes),
+		"read_file":     ReadFileFromRootWithMaxBytes(options.WorkspaceRoot, options.ReadFileMaxBytes),
 		"write_file":    WriteFileToRoot(options.WorkspaceRoot),
 		"edit_file":     EditFileInRoot(options.WorkspaceRoot),
 		"grep":          GrepInRoot(options.WorkspaceRoot),
@@ -196,7 +198,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "execute_bash",
-				Description: "Execute a bash command when it verifies or produces information needed for the task.",
+				Description: "Execute a bash command when it verifies or produces information needed for the task. Captured combined stdout/stderr is byte-capped and ends with a truncation marker when over budget.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
@@ -210,7 +212,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "read_file",
-				Description: "Read a workspace file using a workspace-relative path, preferably copied from glob output. Absolute paths are accepted only when they are inside the workspace. Optionally pass offset and limit.",
+				Description: "Read a workspace file using a workspace-relative path, preferably copied from glob output. Absolute paths are accepted only when they are inside the workspace. Optionally pass offset and limit. Returned content is byte-capped and ends with a truncation marker when over budget.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{

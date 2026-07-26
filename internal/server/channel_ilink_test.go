@@ -486,6 +486,19 @@ func TestIlinkChannelStopCancelsRunningProcessGroup(t *testing.T) {
 	channel.WaitTurns()
 }
 
+func TestIlinkChannelStopAcceptingTurnsRejectsDispatch(t *testing.T) {
+	channel := &IlinkChannel{baseCtx: context.Background()}
+	channel.StopAcceptingTurns()
+	channel.dispatchUpdate(weixin.TokenState{}, weixin.Update{})
+	done := make(chan struct{})
+	go func() { channel.WaitTurns(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stopped iLink channel admitted a new turn")
+	}
+}
+
 func waitForIlinkSend(t *testing.T, requests <-chan weixin.SendMessageRequest) weixin.SendMessageRequest {
 	t.Helper()
 	select {

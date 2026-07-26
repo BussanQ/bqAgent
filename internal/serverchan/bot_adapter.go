@@ -66,7 +66,7 @@ func ParseBotWebhookPayload(reader io.Reader) (BotUpdate, error) {
 func VerifyWebhookSecret(header http.Header, expected string) bool {
 	expected = strings.TrimSpace(expected)
 	if expected == "" {
-		return true
+		return false
 	}
 	provided := strings.TrimSpace(firstNonEmpty(header.Get("X-Sc3Bot-Webhook-Secret"), header.Get("x-sc3bot-webhook-secret")))
 	if provided == "" {

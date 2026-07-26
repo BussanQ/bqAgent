@@ -11,6 +11,9 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"bqagent/internal/atomicfile"
+	"bqagent/internal/safepath"
 )
 
 var repeatedDashPattern = regexp.MustCompile(`-+`)
@@ -42,7 +45,7 @@ func installSkillToRootWithClient(root string, client *http.Client, allowPrivate
 			return "", err
 		}
 
-		result, err := fetchReadableContent(ctx, client, allowPrivateHosts, rawURL, extractModeMarkdown, 0)
+		result, err := fetchReadableContent(ctx, webFetchOptions{client: client, allowPrivateHosts: allowPrivateHosts}, rawURL, extractModeMarkdown, 0)
 		if err != nil {
 			return "", err
 		}
@@ -72,23 +75,30 @@ func installSkillToRootWithClient(root string, client *http.Client, allowPrivate
 			}
 		}
 
-		skillDir := filepath.Join(workspaceRoot, ".agent", "skills", skillName)
-		skillPath := filepath.Join(skillDir, "SKILL.md")
+		if err := safepath.ValidateComponent(skillName); err != nil {
+			return "", fmt.Errorf("invalid skill name: %w", err)
+		}
+		workspaceRoot, skillPath, err := safepath.Relative(workspaceRoot, filepath.Join(".agent", "skills", skillName, "SKILL.md"))
+		if err != nil {
+			return "", fmt.Errorf("skill path escapes workspace: %w", err)
+		}
+		rootFS, err := os.OpenRoot(workspaceRoot)
+		if err != nil {
+			return "", fmt.Errorf("open workspace root: %w", err)
+		}
+		defer rootFS.Close()
 		if !overwrite {
-			if _, statErr := os.Stat(skillPath); statErr == nil {
+			if _, statErr := rootFS.Stat(skillPath); statErr == nil {
 				return "", fmt.Errorf("skill %q already exists; pass overwrite=true to replace it", skillName)
 			} else if !os.IsNotExist(statErr) {
-				return "", statErr
+				return "", fmt.Errorf("skill path escapes workspace: %w", statErr)
 			}
 		}
-		if err := os.MkdirAll(skillDir, 0o755); err != nil {
-			return "", fmt.Errorf("failed to create skill directory: %w", err)
-		}
-		if err := os.WriteFile(skillPath, []byte(content), 0o644); err != nil {
+		if err := atomicfile.WriteRoot(rootFS, skillPath, []byte(content), 0o644); err != nil {
 			return "", fmt.Errorf("failed to write skill %q: %w", skillName, err)
 		}
 
-		return fmt.Sprintf("Installed skill %q to %s", skillName, skillPath), nil
+		return fmt.Sprintf("Installed skill %q to %s", skillName, filepath.Join(workspaceRoot, skillPath)), nil
 	}
 }
 

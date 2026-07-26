@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -154,6 +156,22 @@ func TestCLIAdapterIncludesStderrInErrors(t *testing.T) {
 	}
 }
 
+func TestACPCollectsOnlyAgentMessageChunks(t *testing.T) {
+	collector := &strings.Builder{}
+	client := &stdioACPClient{collectors: map[string]*strings.Builder{"session-1": collector}}
+	for _, update := range []string{
+		`{"sessionId":"session-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"text":"hidden thought"}}}`,
+		`{"sessionId":"session-1","update":{"sessionUpdate":"tool_call","content":{"text":"tool details"}}}`,
+		`{"sessionId":"session-1","update":{"sessionUpdate":"unknown_extension_update","content":{"text":"unknown"}}}`,
+		`{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"text":"visible reply"}}}`,
+	} {
+		client.handleSessionUpdate(json.RawMessage(update))
+	}
+	if got := collector.String(); got != "visible reply" {
+		t.Fatalf("collected reply = %q, want only agent message content", got)
+	}
+}
+
 func TestBrokerReusesACPClientAcrossTurns(t *testing.T) {
 	root := t.TempDir()
 	startLog := filepath.Join(root, "starts.log")
@@ -243,6 +261,176 @@ func TestBrokerUsesDistinctACPClientsAcrossAgents(t *testing.T) {
 	}
 	if stored.Agent != AgentOpenCode || stored.Transport != TransportACP {
 		t.Fatalf("stored state = %#v, want OpenCode ACP", stored)
+	}
+}
+
+func TestBrokerCoalescesACPInitializationAndLetsWaiterCancel(t *testing.T) {
+	root := t.TempDir()
+	client := &blockingInitializeACPClient{started: make(chan struct{}), release: make(chan struct{})}
+	factoryCalls := 0
+	broker := NewBroker(NewStateStore(root), nil, func(CommandSpec, string) (ACPClient, error) {
+		factoryCalls++
+		return client, nil
+	})
+	defer broker.Close()
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := broker.acpClient(context.Background(), "session-1", AgentClaude, CommandSpec{Command: "claude-acp"}, root, 0)
+		firstDone <- err
+	}()
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for ACP initialize")
+	}
+
+	waiterCtx, cancel := context.WithCancel(context.Background())
+	waiterDone := make(chan error, 1)
+	go func() {
+		_, err := broker.acpClient(waiterCtx, "session-1", AgentClaude, CommandSpec{Command: "claude-acp"}, root, 0)
+		waiterDone <- err
+	}()
+	cancel()
+	select {
+	case err := <-waiterDone:
+		if err != context.Canceled {
+			t.Fatalf("waiter error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiter did not honor cancellation")
+	}
+	_ = client.Close()
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("initializer error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initializer did not finish")
+	}
+	if factoryCalls != 1 {
+		t.Fatalf("factory calls = %d, want exactly one", factoryCalls)
+	}
+}
+
+func TestBrokerSerializesConcurrentTurnsForOneSession(t *testing.T) {
+	root := t.TempDir()
+	client := newTurnBlockingACPClient()
+	broker := NewBroker(NewStateStore(root), map[AgentName]DetectionResult{
+		AgentClaude: {Agent: AgentClaude, Preferred: &AgentTransport{Agent: AgentClaude, Kind: TransportACP, Command: CommandSpec{Command: "fake"}}},
+	}, func(CommandSpec, string) (ACPClient, error) { return client, nil })
+	defer broker.Close()
+
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+	go func() {
+		_, err := broker.SendTurn(context.Background(), TurnRequest{BQSessionID: "session-1", Agent: AgentClaude, Prompt: "first", CWD: root})
+		first <- err
+	}()
+	select {
+	case <-client.firstPromptStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first turn did not reach Prompt")
+	}
+	go func() {
+		_, err := broker.SendTurn(context.Background(), TurnRequest{BQSessionID: "session-1", Agent: AgentClaude, Prompt: "second", CWD: root})
+		second <- err
+	}()
+	select {
+	case <-client.secondPromptStarted:
+		t.Fatal("same-session second turn reached Prompt before the first finished")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(client.releaseFirst)
+	for _, done := range []<-chan error{first, second} {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("SendTurn returned error: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("concurrent turn did not finish")
+		}
+	}
+	if max := client.maxInFlight(); max != 1 {
+		t.Fatalf("same-session concurrent prompts = %d, want 1", max)
+	}
+}
+
+func TestBrokerClearWaitsForTurnAndCannotBeUndoneByLateSave(t *testing.T) {
+	root := t.TempDir()
+	client := newTurnBlockingACPClient()
+	store := NewStateStore(root)
+	broker := NewBroker(store, map[AgentName]DetectionResult{
+		AgentClaude: {Agent: AgentClaude, Preferred: &AgentTransport{Agent: AgentClaude, Kind: TransportACP, Command: CommandSpec{Command: "fake"}}},
+	}, func(CommandSpec, string) (ACPClient, error) { return client, nil })
+	defer broker.Close()
+
+	turnDone := make(chan error, 1)
+	go func() {
+		_, err := broker.SendTurn(context.Background(), TurnRequest{BQSessionID: "session-1", Agent: AgentClaude, Prompt: "turn", CWD: root})
+		turnDone <- err
+	}()
+	select {
+	case <-client.firstPromptStarted:
+	case <-time.After(time.Second):
+		t.Fatal("turn did not reach Prompt")
+	}
+	clearDone := make(chan error, 1)
+	go func() { clearDone <- broker.Clear("session-1") }()
+	select {
+	case err := <-clearDone:
+		t.Fatalf("Clear returned before the active turn finished: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(client.releaseFirst)
+	if err := <-turnDone; err != nil {
+		t.Fatalf("SendTurn returned error: %v", err)
+	}
+	if err := <-clearDone; err != nil {
+		t.Fatalf("Clear returned error: %v", err)
+	}
+	state, err := store.Load("session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Agent != "" || state.ExternalSessionID != "" {
+		t.Fatalf("Clear was undone by a late Save: %+v", state)
+	}
+}
+
+func TestBrokerClearDoesNotReviveLateACPInitialization(t *testing.T) {
+	root := t.TempDir()
+	client := &blockingInitializeACPClient{started: make(chan struct{}), release: make(chan struct{})}
+	broker := NewBroker(NewStateStore(root), nil, func(CommandSpec, string) (ACPClient, error) {
+		return client, nil
+	})
+	defer broker.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := broker.acpClient(context.Background(), "session-1", AgentClaude, CommandSpec{Command: "claude-acp"}, root, 0)
+		done <- err
+	}()
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for ACP initialize")
+	}
+	if err := broker.Clear("session-1"); err != nil {
+		t.Fatalf("Clear returned error: %v", err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, errBrokerSessionCleared) {
+			t.Fatalf("late initializer error = %v, want cleared session", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("late initializer did not finish")
+	}
+	if len(broker.acpClients) != 0 {
+		t.Fatalf("cached clients = %d, want no late client revival", len(broker.acpClients))
 	}
 }
 
@@ -389,6 +577,93 @@ func TestBrokerClearRemovesSessionBinding(t *testing.T) {
 	if explicit || agent != "" || prompt != "hello" {
 		t.Fatalf("resolve = (%q, %q, %v), want (\"\", \"hello\", false)", agent, prompt, explicit)
 	}
+}
+
+type turnBlockingACPClient struct {
+	mu                  sync.Mutex
+	firstPromptStarted  chan struct{}
+	secondPromptStarted chan struct{}
+	releaseFirst        chan struct{}
+	prompts             int
+	inFlight            int
+	max                 int
+}
+
+func newTurnBlockingACPClient() *turnBlockingACPClient {
+	return &turnBlockingACPClient{
+		firstPromptStarted:  make(chan struct{}),
+		secondPromptStarted: make(chan struct{}),
+		releaseFirst:        make(chan struct{}),
+	}
+}
+
+func (client *turnBlockingACPClient) Initialize(context.Context) error { return nil }
+func (client *turnBlockingACPClient) LoadSessionSupported() bool       { return true }
+func (client *turnBlockingACPClient) NewSession(context.Context, string) (string, error) {
+	return "external-session", nil
+}
+func (client *turnBlockingACPClient) LoadSession(_ context.Context, sessionID, _ string) (string, error) {
+	return sessionID, nil
+}
+func (client *turnBlockingACPClient) Prompt(_ context.Context, _ string, prompt string) (string, error) {
+	client.mu.Lock()
+	client.prompts++
+	ordinal := client.prompts
+	client.inFlight++
+	if client.inFlight > client.max {
+		client.max = client.inFlight
+	}
+	if ordinal == 1 {
+		close(client.firstPromptStarted)
+	} else if ordinal == 2 {
+		close(client.secondPromptStarted)
+	}
+	client.mu.Unlock()
+	if ordinal == 1 {
+		<-client.releaseFirst
+	}
+	client.mu.Lock()
+	client.inFlight--
+	client.mu.Unlock()
+	return "reply:" + prompt, nil
+}
+func (client *turnBlockingACPClient) Close() error { return nil }
+func (client *turnBlockingACPClient) maxInFlight() int {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.max
+}
+
+type blockingInitializeACPClient struct {
+	started   chan struct{}
+	release   chan struct{}
+	startOnce sync.Once
+	closeOnce sync.Once
+}
+
+func (client *blockingInitializeACPClient) Initialize(ctx context.Context) error {
+	client.startOnce.Do(func() { close(client.started) })
+	select {
+	case <-client.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (client *blockingInitializeACPClient) LoadSessionSupported() bool { return false }
+func (client *blockingInitializeACPClient) NewSession(context.Context, string) (string, error) {
+	return "blocking-session", nil
+}
+func (client *blockingInitializeACPClient) LoadSession(_ context.Context, sessionID, _ string) (string, error) {
+	return sessionID, nil
+}
+func (client *blockingInitializeACPClient) Prompt(_ context.Context, _, prompt string) (string, error) {
+	return "reply:" + prompt, nil
+}
+func (client *blockingInitializeACPClient) Close() error {
+	client.closeOnce.Do(func() { close(client.release) })
+	return nil
 }
 
 type trackingACPClient struct {

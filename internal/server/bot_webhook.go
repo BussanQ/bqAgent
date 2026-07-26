@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	serverchanclient "bqagent/internal/serverchan"
 )
@@ -28,7 +29,7 @@ func NewBotWebhookProcessor(service *Service, client *serverchanclient.BotClient
 }
 
 func (processor *BotWebhookProcessor) Configured() bool {
-	return processor != nil && processor.service != nil && processor.client != nil && processor.client.Configured() && processor.states != nil
+	return processor != nil && processor.service != nil && processor.client != nil && processor.client.Configured() && processor.states != nil && strings.TrimSpace(processor.secret) != ""
 }
 
 func (processor *BotWebhookProcessor) VerifySecret(header http.Header) bool {

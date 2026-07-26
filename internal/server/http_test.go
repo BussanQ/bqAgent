@@ -484,6 +484,36 @@ func TestServerChanBotWebhookRequiresConfiguredToken(t *testing.T) {
 	}
 }
 
+func TestServerChanBotWebhookRequiresConfiguredSecret(t *testing.T) {
+	root := t.TempDir()
+	handler := newTestHandlerWithBot(root, "http://example.invalid", "http://example.invalid", "bot-token", " \t ")
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	status, body := postBotWebhook(t, apiServer.URL+"/api/v1/serverchan/bot/webhook", "anything", `{"ok":true,"update_id":1,"message":{"message_id":11,"text":"hello","chat_id":42}}`)
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", status)
+	}
+	if body != "serverchan bot is not configured" {
+		t.Fatalf("body = %q, want %q", body, "serverchan bot is not configured")
+	}
+}
+
+func TestServerChanBotWebhookRejectsIncorrectSecret(t *testing.T) {
+	root := t.TempDir()
+	handler := newTestHandlerWithBot(root, "http://example.invalid", "http://example.invalid", "bot-token", "expected-secret")
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	status, body := postBotWebhook(t, apiServer.URL+"/api/v1/serverchan/bot/webhook", "wrong-secret", `{"ok":true,"update_id":1,"message":{"message_id":11,"text":"hello","chat_id":42}}`)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", status)
+	}
+	if body != "unauthorized" {
+		t.Fatalf("body = %q, want %q", body, "unauthorized")
+	}
+}
+
 func assertPiStyleSkillRoute(t *testing.T, input, skillID, skillContent, expectedArgs, expectedReply string) {
 	t.Helper()
 	var requestCount atomic.Int32
@@ -780,6 +810,17 @@ func TestChatEndpointRejectsEmptySlashPrefixedMessage(t *testing.T) {
 	}
 	if !strings.Contains(payload.Error, "message is required after /claude") {
 		t.Fatalf("error = %q, want validation message", payload.Error)
+	}
+}
+
+func TestServiceHandleTurnRejectsTraversalSessionIDBeforeLocking(t *testing.T) {
+	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir()})
+	_, err := service.HandleTurn(context.Background(), TurnRequest{SessionID: "../other", Message: "hello"})
+	if err == nil || !strings.Contains(err.Error(), "invalid session id") {
+		t.Fatalf("HandleTurn error = %v, want invalid session ID", err)
+	}
+	if len(service.locker.locks) != 0 {
+		t.Fatalf("locker entries = %d, want no lock for invalid ID", len(service.locker.locks))
 	}
 }
 

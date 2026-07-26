@@ -225,6 +225,28 @@ func TestRunConversationStageCheckpointPersistsSummary(t *testing.T) {
 	}
 }
 
+func TestFinishStageCheckpointDoesNotWriteAfterParentCancellation(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{{Content: "must not be requested"}}}
+	app := NewWithOptions(client, "", Options{Context: ContextConfig{Enabled: false}})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	messages := []map[string]any{{"role": "user", "content": "analyze"}}
+
+	result, updated, err := app.finishStageCheckpoint(ctx, messages, "stage iteration budget reached", 1)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("finishStageCheckpoint error = %v, want context canceled", err)
+	}
+	if result != "" {
+		t.Fatalf("result = %q, want empty", result)
+	}
+	if len(updated) != len(messages) {
+		t.Fatalf("updated messages = %#v, want no checkpoint", updated)
+	}
+	if len(client.messages) != 0 {
+		t.Fatalf("summary requests = %d, want 0 after cancellation", len(client.messages))
+	}
+}
+
 func TestRunConversationLoopProtectionStopsRepeatedFailures(t *testing.T) {
 	toolResponse := func(id string) AssistantMessage {
 		return AssistantMessage{ToolCalls: []ToolCall{{ID: id, Function: FunctionCall{Name: "read_file", Arguments: `{"path":"missing.go"}`}}}}

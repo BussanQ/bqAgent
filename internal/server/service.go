@@ -247,6 +247,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 
 	sessionID := strings.TrimSpace(request.SessionID)
+	if sessionID != "" {
+		canonicalID, canonicalErr := session.CanonicalID(sessionID)
+		if canonicalErr != nil {
+			return TurnResponse{}, canonicalErr
+		}
+		sessionID = canonicalID
+	}
 	createOptions := &session.CreateOptions{Task: effectiveText, Planned: service.planner != nil, Chat: true}
 	if sessionID != "" {
 		unlock := service.locker.Lock(sessionID)

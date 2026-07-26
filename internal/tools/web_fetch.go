@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -54,6 +55,21 @@ func WebFetch(ctx context.Context, args map[string]any) (string, error) {
 }
 
 func WebFetchWithClient(client *http.Client, allowPrivateHosts bool) Function {
+	return webFetchWithOptions(webFetchOptions{client: client, allowPrivateHosts: allowPrivateHosts})
+}
+
+type webFetchResolver interface {
+	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
+}
+
+type webFetchOptions struct {
+	client            *http.Client
+	allowPrivateHosts bool
+	resolver          webFetchResolver
+	dialContext       func(context.Context, string, string) (net.Conn, error)
+}
+
+func webFetchWithOptions(options webFetchOptions) Function {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		rawURL, err := requireString(args, "url")
 		if err != nil {
@@ -68,7 +84,7 @@ func WebFetchWithClient(client *http.Client, allowPrivateHosts bool) Function {
 			return "", err
 		}
 
-		result, err := fetchReadableContent(ctx, client, allowPrivateHosts, rawURL, extractMode, maxChars)
+		result, err := fetchReadableContent(ctx, options, rawURL, extractMode, maxChars)
 		if err != nil {
 			return "", err
 		}
@@ -76,33 +92,18 @@ func WebFetchWithClient(client *http.Client, allowPrivateHosts bool) Function {
 	}
 }
 
-func fetchReadableContent(ctx context.Context, client *http.Client, allowPrivateHosts bool, rawURL, extractMode string, maxChars int) (fetchResult, error) {
+func fetchReadableContent(ctx context.Context, options webFetchOptions, rawURL, extractMode string, maxChars int) (fetchResult, error) {
+	client := options.client
 	if client == nil {
 		client = &http.Client{Timeout: defaultFetchTimeout}
 	}
 
-	baseTransport := client.Transport
-	if baseTransport == nil {
-		baseTransport = http.DefaultTransport
-	}
-	transport, ok := baseTransport.(*http.Transport)
-	if !ok {
-		transport = http.DefaultTransport.(*http.Transport).Clone()
-	} else {
-		transport = transport.Clone()
-	}
-	if !allowPrivateHosts {
-		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, err
-			}
-			if err := validateHost(host, allowPrivateHosts); err != nil {
-				return nil, err
-			}
-			var dialer net.Dialer
-			return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
-		}
+	transport := cloneFetchTransport(client.Transport)
+	if !options.allowPrivateHosts {
+		transport.Proxy = nil
+		transport.DialTLSContext = nil
+		transport.DialTLS = nil
+		transport.DialContext = newVerifiedDialContext(options.resolver, options.dialContext)
 	}
 
 	fetchClient := *client
@@ -111,14 +112,14 @@ func fetchReadableContent(ctx context.Context, client *http.Client, allowPrivate
 		if len(via) >= 10 {
 			return fmt.Errorf("stopped after 10 redirects")
 		}
-		return validateRequestURL(req.URL, allowPrivateHosts)
+		return validateRequestURL(req.URL, options.allowPrivateHosts)
 	}
 
 	parsedURL, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
 		return fetchResult{}, fmt.Errorf("invalid url: %w", err)
 	}
-	if err := validateRequestURL(parsedURL, allowPrivateHosts); err != nil {
+	if err := validateRequestURL(parsedURL, options.allowPrivateHosts); err != nil {
 		return fetchResult{}, err
 	}
 
@@ -180,6 +181,13 @@ func fetchReadableContent(ctx context.Context, client *http.Client, allowPrivate
 	return result, nil
 }
 
+func cloneFetchTransport(base http.RoundTripper) *http.Transport {
+	if transport, ok := base.(*http.Transport); ok {
+		return transport.Clone()
+	}
+	return http.DefaultTransport.(*http.Transport).Clone()
+}
+
 func validateRequestURL(parsedURL *url.URL, allowPrivateHosts bool) error {
 	if parsedURL == nil {
 		return fmt.Errorf("invalid url")
@@ -187,47 +195,127 @@ func validateRequestURL(parsedURL *url.URL, allowPrivateHosts bool) error {
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 		return fmt.Errorf("unsupported url scheme %q", parsedURL.Scheme)
 	}
-	if parsedURL.Hostname() == "" {
+	host := parsedURL.Hostname()
+	if host == "" {
 		return fmt.Errorf("url must include a host")
 	}
-	return validateHost(parsedURL.Hostname(), allowPrivateHosts)
-}
-
-func validateHost(host string, allowPrivateHosts bool) error {
 	if allowPrivateHosts {
 		return nil
 	}
 	if strings.EqualFold(host, "localhost") {
 		return fmt.Errorf("refusing to fetch localhost addresses")
 	}
-	if ip, err := netip.ParseAddr(host); err == nil {
-		if isBlockedIP(ip) {
-			return fmt.Errorf("refusing to fetch private or local address %q", host)
-		}
-		return nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return fmt.Errorf("failed to resolve host %q: %w", host, err)
-	}
-	for _, ip := range ips {
-		addr, ok := netip.AddrFromSlice(ip.IP)
-		if !ok {
-			continue
-		}
-		if isBlockedIP(addr.Unmap()) {
-			return fmt.Errorf("refusing to fetch private or local address %q", host)
-		}
+	if ip, err := netip.ParseAddr(host); err == nil && isBlockedIP(ip) {
+		return fmt.Errorf("refusing to fetch private or local address %q", host)
 	}
 	return nil
 }
 
+type verifiedDialer struct {
+	resolver webFetchResolver
+	dial     func(context.Context, string, string) (net.Conn, error)
+	mu       sync.Mutex
+	resolved map[string][]netip.Addr
+}
+
+func newVerifiedDialContext(resolver webFetchResolver, dial func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	if dial == nil {
+		var dialer net.Dialer
+		dial = dialer.DialContext
+	}
+	verified := &verifiedDialer{resolver: resolver, dial: dial, resolved: make(map[string][]netip.Addr)}
+	return verified.dialContext
+}
+
+func (dialer *verifiedDialer) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := dialer.resolve(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, ip := range ips {
+		connection, err := dialer.dial(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return connection, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("failed to dial verified addresses for %q: %w", host, lastErr)
+}
+
+func (dialer *verifiedDialer) resolve(ctx context.Context, host string) ([]netip.Addr, error) {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	dialer.mu.Lock()
+	defer dialer.mu.Unlock()
+	if ips, ok := dialer.resolved[host]; ok {
+		return ips, nil
+	}
+
+	var addresses []netip.Addr
+	if parsed, err := netip.ParseAddr(host); err == nil {
+		addresses = []netip.Addr{parsed.Unmap()}
+	} else {
+		resolved, err := dialer.resolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve host %q: %w", host, err)
+		}
+		for _, entry := range resolved {
+			ip, ok := netip.AddrFromSlice(entry.IP)
+			if !ok {
+				continue
+			}
+			addresses = append(addresses, ip.Unmap())
+		}
+	}
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("failed to resolve host %q: no addresses", host)
+	}
+	for _, ip := range addresses {
+		if isBlockedIP(ip) {
+			return nil, fmt.Errorf("refusing to fetch private or local address %q", host)
+		}
+	}
+	dialer.resolved[host] = addresses
+	return addresses, nil
+}
+
 func isBlockedIP(addr netip.Addr) bool {
 	addr = addr.Unmap()
-	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsUnspecified()
+	if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsUnspecified() || addr.IsMulticast() {
+		return true
+	}
+	for _, prefix := range nonPublicIPPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// nonPublicIPPrefixes covers globally-unicast-looking addresses reserved for
+// local, documentation, benchmarking, protocol, or future use. netip's
+// IsGlobalUnicast deliberately includes several of these ranges.
+var nonPublicIPPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("2001:10::/28"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"),
 }
 
 func parseExtractMode(args map[string]any) (string, error) {

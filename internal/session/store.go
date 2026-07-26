@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"bqagent/internal/atomicfile"
+	"bqagent/internal/safepath"
 )
 
 type Status string
@@ -77,15 +81,27 @@ func NormalizeOptions(options Options) Options {
 }
 
 type ContextCheckpoint struct {
-	Summary      string           `json:"summary"`
-	TailMessages []map[string]any `json:"tail_messages"`
-	SystemPrompt string           `json:"system_prompt,omitempty"`
-	UpdatedAt    time.Time        `json:"updated_at"`
+	Summary                string           `json:"summary"`
+	TailMessages           []map[string]any `json:"tail_messages"`
+	SystemPrompt           string           `json:"system_prompt,omitempty"`
+	SourceTranscriptSHA256 string           `json:"source_transcript_sha256,omitempty"`
+	SourceTranscriptSize   int64            `json:"source_transcript_size,omitempty"`
+	UpdatedAt              time.Time        `json:"updated_at"`
+}
+
+// TranscriptProvenance identifies the exact raw messages.jsonl content used to
+// build a context checkpoint. ModTime is retained only for legacy checkpoints
+// that predate the content-based fields.
+type TranscriptProvenance struct {
+	SHA256  string
+	Size    int64
+	ModTime time.Time
 }
 
 type Session struct {
 	store *Store
 	meta  Meta
+	dir   string
 }
 
 func NewStore(workspaceRoot string, configured ...Options) *Store {
@@ -109,9 +125,15 @@ func (s *Store) Create(options CreateOptions) (*Session, error) {
 		return nil, err
 	}
 
+	dir, err := s.sessionDir(id)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC()
 	session := &Session{
 		store: s,
+		dir:   dir,
 		meta: Meta{
 			ID:            id,
 			WorkspaceRoot: s.workspaceRoot,
@@ -131,7 +153,15 @@ func (s *Store) Create(options CreateOptions) (*Session, error) {
 }
 
 func (s *Store) Open(id string) (*Session, error) {
-	content, err := os.ReadFile(s.metaPath(id))
+	canonicalID, err := CanonicalID(id)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := s.sessionDir(canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "meta.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -140,14 +170,36 @@ func (s *Store) Open(id string) (*Session, error) {
 	if err := json.Unmarshal(content, &meta); err != nil {
 		return nil, err
 	}
+	metaID, err := CanonicalID(meta.ID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid session metadata id: %w", err)
+	}
+	if metaID != canonicalID {
+		return nil, fmt.Errorf("session metadata id %q does not match requested id %q", meta.ID, canonicalID)
+	}
+	meta.ID = canonicalID
 	if meta.WorkspaceRoot == "" {
 		meta.WorkspaceRoot = s.workspaceRoot
 	}
-	return &Session{store: s, meta: meta}, nil
+	return &Session{store: s, meta: meta, dir: dir}, nil
 }
 
-func (s *Store) metaPath(id string) string {
-	return filepath.Join(s.workspaceRoot, ".agent", "sessions", id, "meta.json")
+// CanonicalID trims an externally supplied session ID and verifies it is one
+// safe filesystem path component.
+func CanonicalID(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if err := safepath.ValidateComponent(id); err != nil {
+		return "", fmt.Errorf("invalid session id: %w", err)
+	}
+	return id, nil
+}
+
+func (s *Store) sessionDir(id string) (string, error) {
+	id, err := CanonicalID(id)
+	if err != nil {
+		return "", err
+	}
+	return safepath.Resolve(s.workspaceRoot, filepath.Join(".agent", "sessions", id))
 }
 
 func (session *Session) ID() string {
@@ -159,7 +211,7 @@ func (session *Session) Meta() Meta {
 }
 
 func (session *Session) Dir() string {
-	return filepath.Join(session.store.workspaceRoot, ".agent", "sessions", session.meta.ID)
+	return session.dir
 }
 
 func (session *Session) MessagesPath() string {
@@ -187,6 +239,29 @@ func (session *Session) LoadWorkingMessages() ([]map[string]any, error) {
 		return nil, err
 	}
 	return readMessagesJSONL(session.WorkingMessagesPath())
+}
+
+// LoadTranscriptProvenance returns the SHA-256 and byte size of the raw
+// messages.jsonl file. A missing transcript is represented as an empty file;
+// this allows a checkpoint made before the first message to be identified too.
+func (session *Session) LoadTranscriptProvenance() (TranscriptProvenance, error) {
+	content, err := os.ReadFile(session.MessagesPath())
+	if os.IsNotExist(err) {
+		content = nil
+	} else if err != nil {
+		return TranscriptProvenance{}, err
+	}
+
+	provenance := TranscriptProvenance{
+		SHA256: fmt.Sprintf("%x", sha256.Sum256(content)),
+		Size:   int64(len(content)),
+	}
+	if info, statErr := os.Stat(session.MessagesPath()); statErr == nil {
+		provenance.ModTime = info.ModTime()
+	} else if !os.IsNotExist(statErr) {
+		return TranscriptProvenance{}, statErr
+	}
+	return provenance, nil
 }
 
 func (session *Session) LoadResumableMessages() ([]map[string]any, bool, error) {
@@ -281,7 +356,7 @@ func (session *Session) SaveCheckpoint(checkpoint ContextCheckpoint) error {
 		return err
 	}
 	content = append(content, '\n')
-	return os.WriteFile(session.CheckpointPath(), content, 0o644)
+	return atomicfile.Write(session.CheckpointPath(), content, 0o644)
 }
 
 func (session *Session) LoadCheckpoint() (ContextCheckpoint, error) {
@@ -297,6 +372,11 @@ func (session *Session) LoadCheckpoint() (ContextCheckpoint, error) {
 }
 
 func (session *Session) SaveCheckpointSummary(summary string, tailMessages []map[string]any, systemPrompt string) error {
+	provenance, err := session.LoadTranscriptProvenance()
+	if err != nil {
+		return err
+	}
+
 	clonedTail := make([]map[string]any, len(tailMessages))
 	for i, message := range tailMessages {
 		copyMessage := make(map[string]any, len(message))
@@ -306,10 +386,12 @@ func (session *Session) SaveCheckpointSummary(summary string, tailMessages []map
 		clonedTail[i] = copyMessage
 	}
 	checkpoint := ContextCheckpoint{
-		Summary:      strings.TrimSpace(summary),
-		TailMessages: clonedTail,
-		SystemPrompt: systemPrompt,
-		UpdatedAt:    time.Now().UTC(),
+		Summary:                strings.TrimSpace(summary),
+		TailMessages:           clonedTail,
+		SystemPrompt:           systemPrompt,
+		SourceTranscriptSHA256: provenance.SHA256,
+		SourceTranscriptSize:   provenance.Size,
+		UpdatedAt:              time.Now().UTC(),
 	}
 	return session.SaveCheckpoint(checkpoint)
 }
@@ -438,7 +520,7 @@ func (session *Session) persistMeta() error {
 		return err
 	}
 	content = append(content, '\n')
-	return os.WriteFile(filepath.Join(session.Dir(), "meta.json"), content, 0o644)
+	return atomicfile.Write(filepath.Join(session.Dir(), "meta.json"), content, 0o644)
 }
 
 func newSessionID() (string, error) {
