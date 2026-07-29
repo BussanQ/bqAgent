@@ -51,6 +51,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		Client:          runtime.Client,
 		APIType:         runtime.APIType,
 		Model:           runtime.Model,
+		Models:          runtime.Models,
 		DefaultMaxTurns: runtime.MaxIterations,
 		SystemPrompt:    systemPrompt,
 		SystemPromptBuilder: func() (string, error) {

@@ -82,7 +82,6 @@ type StageConfig struct {
 	EmitProgress         bool
 	DuplicateCallLimit   int
 	RepeatedFailureLimit int
-	EmptyAssistantLimit  int
 }
 
 type Options struct {
@@ -187,9 +186,6 @@ func normalizeStageConfig(config StageConfig) StageConfig {
 	}
 	if config.RepeatedFailureLimit <= 0 {
 		config.RepeatedFailureLimit = 3
-	}
-	if config.EmptyAssistantLimit <= 0 {
-		config.EmptyAssistantLimit = 8
 	}
 	return config
 }
@@ -407,9 +403,6 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			return "", updatedMessages, err
 		}
 		messages = updatedMessages
-		if reason := loopGuard.observeAssistant(message); reason != "" {
-			return a.finishStageCheckpoint(ctx, updatedMessages, reason, actualIterations)
-		}
 
 		if a.stream && len(message.ToolCalls) == 0 {
 			// content already streamed via onChunk; skip log line
@@ -604,30 +597,14 @@ func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string
 }
 
 type loopGuard struct {
-	config          StageConfig
-	callCounts      map[string]int
-	failureCounts   map[string]int
-	pathFailures    map[string]int
-	emptyAssistants int
+	config        StageConfig
+	callCounts    map[string]int
+	failureCounts map[string]int
+	pathFailures  map[string]int
 }
 
 func newLoopGuard(config StageConfig) *loopGuard {
 	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, pathFailures: map[string]int{}}
-}
-
-func (guard *loopGuard) observeAssistant(message AssistantMessage) string {
-	if guard == nil || !guard.config.LoopProtection {
-		return ""
-	}
-	if strings.TrimSpace(message.FinalContent()) == "" && len(message.ToolCalls) > 0 {
-		guard.emptyAssistants++
-	} else {
-		guard.emptyAssistants = 0
-	}
-	if guard.emptyAssistants >= guard.config.EmptyAssistantLimit {
-		return fmt.Sprintf("loop protection: %d consecutive empty assistant tool rounds", guard.emptyAssistants)
-	}
-	return ""
 }
 
 func (guard *loopGuard) observeTool(call ToolCall, result string) string {

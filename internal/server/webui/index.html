@@ -694,9 +694,13 @@
   .tool-section + .tool-section { margin-top: 8px; }
   .tool-section-label { color: var(--text-muted); font-size: 10px; margin-bottom: 4px; text-transform: uppercase; }
   .tool-json, .tool-preview { margin: 0; color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font-size: 11px; line-height: 1.5; }
-  .user-message-text + .user-images { margin-top: 10px; }
+  .user-message-text + .user-images, .user-message-text + .user-files, .user-images + .user-files { margin-top: 10px; }
   .user-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 180px)); gap: 8px; }
   .user-image { display: block; width: 100%; max-height: 220px; object-fit: cover; border-radius: 9px; border: 1px solid rgba(255,255,255,.2); background: rgba(0,0,0,.12); }
+  .user-files { display: flex; flex-wrap: wrap; gap: 7px; }
+  .user-file { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 6px 9px; border: 1px solid rgba(var(--signal-rgb),.22); border-radius: 8px; color: var(--text-soft); background: rgba(var(--signal-rgb),.07); font: 11px/1.35 ui-monospace, "SFMono-Regular", Consolas, monospace; }
+  .user-file svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--signal); }
+  .user-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .message-actions {
     min-height: 28px;
@@ -758,7 +762,33 @@
   .attachment-remove { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0; border-radius: 50%; display: grid; place-items: center; color: #fff; background: rgba(var(--danger-rgb),.86); border-color: transparent; font-size: 13px; line-height: 1; }
   .attachment-remove:hover { transform: none; box-shadow: 0 0 14px rgba(var(--danger-rgb),.35); }
   .attachment-badge { position: absolute; left: 3px; bottom: 3px; padding: 1px 4px; border-radius: 4px; color: #fff; background: rgba(3,7,17,.72); font: 9px/1.4 ui-monospace, monospace; }
+  .attachment-file { min-width: 0; max-width: 270px; height: 40px; display: flex; align-items: center; gap: 8px; padding: 6px 7px 6px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-strong); }
+  .attachment-file.loading { opacity: .66; }
+  .attachment-file-icon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--signal); }
+  .attachment-file-copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .attachment-file-name { overflow: hidden; color: var(--text); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+  .attachment-file-meta { color: var(--text-muted); font: 9px/1.25 ui-monospace, "SFMono-Regular", Consolas, monospace; }
+  .attachment-file .attachment-remove { position: static; flex: 0 0 auto; margin-left: 2px; background: transparent; color: var(--text-muted); border-color: transparent; }
+  .attachment-file .attachment-remove:hover { color: #fff; background: rgba(var(--danger-rgb),.86); }
   .attachment-error { color: var(--danger); font-size: 11px; padding: 0 10px 0 30px; }
+  .attachment-actions { position: relative; flex: 0 0 36px; margin-bottom: 5px; }
+  .attachment-trigger { color: var(--text-soft); }
+  .attachment-trigger[aria-expanded="true"] { color: var(--bg); border-color: var(--signal); background: var(--signal); box-shadow: 0 0 22px rgba(var(--signal-rgb),.25); transform: rotate(45deg); }
+  .attachment-trigger svg { width: 18px; height: 18px; transition: transform .18s ease; }
+  .attachment-menu[hidden] { display: none; }
+  .attachment-menu { position: absolute; right: 0; bottom: calc(100% + 11px); width: min(310px, calc(100vw - 32px)); padding: 8px; border: 1px solid var(--line-strong); border-radius: 13px; background: var(--panel-strong); box-shadow: var(--shadow), 0 0 30px rgba(var(--signal-rgb),.09); backdrop-filter: blur(24px); }
+  .attachment-menu::after { content: ""; position: absolute; right: 11px; bottom: -5px; width: 9px; height: 9px; border-right: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); background: var(--panel-strong); transform: rotate(45deg); }
+  .attachment-menu-action { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-color: transparent; border-radius: 9px; color: var(--text); background: transparent; text-align: left; }
+  .attachment-menu-action:hover { border-color: rgba(var(--signal-rgb),.22); background: rgba(var(--signal-rgb),.08); transform: none; box-shadow: none; }
+  .attachment-menu-action svg { width: 17px; height: 17px; color: var(--signal); }
+  .attachment-menu-action strong { display: block; font-size: 12px; }
+  .attachment-menu-action span { display: block; margin-top: 1px; color: var(--text-muted); font-size: 10px; }
+  .attachment-menu-separator { height: 1px; margin: 7px 3px; background: var(--line); }
+  .attachment-path-label { display: block; padding: 0 3px 5px; color: var(--text-muted); font: 9px/1.3 ui-monospace, "SFMono-Regular", Consolas, monospace; text-transform: uppercase; letter-spacing: .08em; }
+  .attachment-path-row { display: flex; gap: 6px; }
+  .attachment-path-row input { min-width: 0; flex: 1 1 auto; padding: 8px 9px; color: var(--text); border: 1px solid var(--line); border-radius: 8px; background: var(--panel); outline: none; font: 11px/1.35 ui-monospace, "SFMono-Regular", Consolas, monospace; }
+  .attachment-path-row input:focus { border-color: var(--signal); box-shadow: 0 0 0 2px rgba(var(--signal-rgb),.10); }
+  .attachment-path-add { flex: 0 0 auto; padding: 7px 10px; border-color: rgba(var(--signal-rgb),.3); border-radius: 8px; color: var(--signal); background: rgba(var(--signal-rgb),.08); font-size: 11px; }
   .composer::before {
     content: ">";
     position: absolute;
@@ -909,10 +939,30 @@
   <footer>
     <div class="composer">
       <div class="composer-content">
-        <div class="attachment-tray" id="attachment-tray" aria-label="待发送图片" hidden></div>
+        <div class="attachment-tray" id="attachment-tray" aria-label="待发送附件" hidden></div>
         <div class="attachment-error" id="attachment-error" role="status" aria-live="polite"></div>
         <div class="input-shell">
-          <textarea id="input" rows="1" placeholder="给 bqagent 发送消息，可直接粘贴图片" autofocus></textarea>
+          <textarea id="input" rows="1" placeholder="给 bqagent 发送消息，可粘贴图片或添加文件" autofocus></textarea>
+        </div>
+      </div>
+      <div class="attachment-actions" id="attachment-actions">
+        <button class="icon-button attachment-trigger" id="add-attachment" type="button" title="添加文件" aria-label="添加文件" aria-expanded="false" aria-controls="attachment-menu">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
+            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <input id="file-input" type="file" multiple hidden>
+        <div class="attachment-menu" id="attachment-menu" role="dialog" aria-label="添加文件" hidden>
+          <button class="attachment-menu-action" id="upload-file" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span><strong>上传本地文件</strong><span>保存到当前会话的 workspace</span></span>
+          </button>
+          <div class="attachment-menu-separator" aria-hidden="true"></div>
+          <label class="attachment-path-label" for="server-file-path">服务端 workspace 路径</label>
+          <div class="attachment-path-row">
+            <input id="server-file-path" type="text" placeholder="例如 docs/design.md" autocomplete="off" spellcheck="false">
+            <button class="attachment-path-add" id="add-server-path" type="button">添加</button>
+          </div>
         </div>
       </div>
       <button class="send" id="send" type="button" title="发送" aria-label="发送">
@@ -924,7 +974,7 @@
         </svg>
       </button>
     </div>
-    <div class="composer-meta">Enter 发送 · Shift + Enter 换行 · 支持 Markdown · 可粘贴图片</div>
+    <div class="composer-meta">Enter 发送 · Shift + Enter 换行 · 支持 Markdown · 可粘贴图片或添加文件</div>
   </footer>
 
 <script>
@@ -938,11 +988,19 @@
   var input = document.getElementById("input");
   var attachmentTray = document.getElementById("attachment-tray");
   var attachmentError = document.getElementById("attachment-error");
+  var attachmentActions = document.getElementById("attachment-actions");
+  var addAttachmentBtn = document.getElementById("add-attachment");
+  var attachmentMenu = document.getElementById("attachment-menu");
+  var uploadFileBtn = document.getElementById("upload-file");
+  var fileInput = document.getElementById("file-input");
+  var serverFilePath = document.getElementById("server-file-path");
+  var addServerPathBtn = document.getElementById("add-server-path");
   var sendBtn = document.getElementById("send");
   var newChatBtn = document.getElementById("new-chat");
   var themeToggle = document.getElementById("theme-toggle");
   var statusEl = document.getElementById("status");
   var runtimeModelEl = document.getElementById("runtime-model");
+  var runtimeModelLoadID = 0;
   var sessionId = localStorage.getItem(SESSION_KEY) || "";
   var busy = false;
   var currentTurnId = "";
@@ -951,10 +1009,15 @@
   var preparingSend = false;
   var pendingImages = [];
   var pendingImageReads = [];
+  var pendingFiles = [];
+  var pendingFileReads = [];
   var nextAttachmentID = 1;
   var MAX_PENDING_IMAGES = 4;
   var MAX_PENDING_IMAGE_BYTES = 3 * 1024 * 1024;
   var MAX_PENDING_TOTAL_BYTES = 8 * 1024 * 1024;
+  var MAX_PENDING_FILES = 5;
+  var MAX_PENDING_FILE_BYTES = 2 * 1024 * 1024;
+  var MAX_PENDING_TOTAL_FILE_BYTES = 6 * 1024 * 1024;
   var ALLOWED_IMAGE_TYPES = { "image/png": true, "image/jpeg": true, "image/gif": true };
 
   var PARTICLE_MAX_COUNT = 80;
@@ -1203,15 +1266,22 @@
     refreshParticleCapability();
   }
 
+  function updateRuntimeModel(apiType, model) {
+    if (!model) return;
+    runtimeModelEl.textContent = (apiType || "llm") + " · " + model;
+    runtimeModelEl.title = "Current runtime model";
+  }
+
   async function loadRuntimeModel() {
+    var loadID = ++runtimeModelLoadID;
     try {
-      var response = await fetch("/api/v1/status", { headers: { "Accept": "application/json" } });
+      var url = "/api/v1/status";
+      if (sessionId) url += "?session_id=" + encodeURIComponent(sessionId);
+      var response = await fetch(url, { headers: { "Accept": "application/json" } });
       if (!response.ok) return;
       var payload = await response.json();
-      if (!payload || !payload.llm || !payload.llm.model) return;
-      var apiType = payload.llm.api_type || "llm";
-      runtimeModelEl.textContent = apiType + " · " + payload.llm.model;
-      runtimeModelEl.title = "Current runtime model";
+      if (loadID !== runtimeModelLoadID || !payload || !payload.llm) return;
+      updateRuntimeModel(payload.llm.api_type, payload.llm.model);
     } catch (_) {
       // Status display is best-effort and must never block chat startup.
     }
@@ -1250,7 +1320,7 @@
     return bubble;
   }
 
-  function renderUserMessage(bubble, text, images) {
+  function renderUserMessage(bubble, text, images, files) {
     bubble.textContent = "";
     if (text) {
       var textNode = document.createElement("div");
@@ -1269,6 +1339,22 @@
         gallery.appendChild(preview);
       });
       bubble.appendChild(gallery);
+    }
+    if (files && files.length) {
+      var fileList = document.createElement("div");
+      fileList.className = "user-files";
+      files.forEach(function (file) {
+        var chip = document.createElement("span");
+        chip.className = "user-file";
+        var icon = createFileIcon();
+        icon.classList.remove("attachment-file-icon");
+        var name = document.createElement("span");
+        name.textContent = file.path ? pathBaseName(file.path) : file.name;
+        chip.appendChild(icon);
+        chip.appendChild(name);
+        fileList.appendChild(chip);
+      });
+      bubble.appendChild(fileList);
     }
   }
 
@@ -1372,9 +1458,31 @@
     attachmentError.textContent = message || "";
   }
 
-  function renderPendingImages() {
+  function formatBytes(bytes) {
+    if (!bytes) return "0 B";
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0) + " KiB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MiB";
+  }
+
+  function pathBaseName(value) {
+    var parts = String(value || "").replace(/\\/g, "/").split("/");
+    return parts[parts.length - 1] || value;
+  }
+
+  function createFileIcon() {
+    var icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 24 24");
+    icon.setAttribute("aria-hidden", "true");
+    icon.setAttribute("fill", "none");
+    icon.classList.add("attachment-file-icon");
+    icon.innerHTML = '<path d="M7 3.5h6l4 4V20H7zM13 3.5V8h4" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>';
+    return icon;
+  }
+
+  function renderPendingAttachments() {
     attachmentTray.textContent = "";
-    attachmentTray.hidden = pendingImages.length === 0;
+    attachmentTray.hidden = pendingImages.length === 0 && pendingFiles.length === 0;
     pendingImages.forEach(function (image, index) {
       var item = document.createElement("div");
       item.className = "attachment-item" + (image.loading ? " loading" : "");
@@ -1396,6 +1504,32 @@
       item.appendChild(badge);
       attachmentTray.appendChild(item);
     });
+    pendingFiles.forEach(function (file) {
+      var item = document.createElement("div");
+      item.className = "attachment-file" + (file.loading ? " loading" : "");
+      item.appendChild(createFileIcon());
+      var copy = document.createElement("div");
+      copy.className = "attachment-file-copy";
+      var name = document.createElement("span");
+      name.className = "attachment-file-name";
+      name.textContent = file.name;
+      name.title = file.path || file.name;
+      var meta = document.createElement("span");
+      meta.className = "attachment-file-meta";
+      meta.textContent = file.loading ? "读取中" : (file.kind === "path" ? "服务器路径" : formatBytes(file.size));
+      copy.appendChild(name);
+      copy.appendChild(meta);
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "attachment-remove";
+      remove.textContent = "×";
+      remove.disabled = busy;
+      remove.setAttribute("aria-label", "删除文件 " + file.name);
+      remove.addEventListener("click", function () { removePendingFile(file.id); });
+      item.appendChild(copy);
+      item.appendChild(remove);
+      attachmentTray.appendChild(item);
+    });
   }
 
   function removePendingImage(id) {
@@ -1405,30 +1539,38 @@
       URL.revokeObjectURL(image.objectURL);
       return false;
     });
-    renderPendingImages();
+    renderPendingAttachments();
   }
 
-  function clearPendingImages() {
+  function removePendingFile(id) {
+    if (busy) return;
+    pendingFiles = pendingFiles.filter(function (file) { return file.id !== id; });
+    renderPendingAttachments();
+  }
+
+  function clearPendingAttachments() {
     pendingImages.forEach(function (image) { URL.revokeObjectURL(image.objectURL); });
     pendingImages = [];
     pendingImageReads = [];
-    renderPendingImages();
+    pendingFiles = [];
+    pendingFileReads = [];
+    renderPendingAttachments();
     clearAttachmentError();
   }
 
-  function readImageAsBase64(file, attachment) {
+  function readAsBase64(file, attachment, failureMessage) {
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
       reader.onload = function () {
         var dataURL = String(reader.result || "");
         var comma = dataURL.indexOf(",");
-        if (comma < 0) return reject(new Error("无法读取图片数据"));
+        if (comma < 0) return reject(new Error(failureMessage));
         attachment.dataBase64 = dataURL.slice(comma + 1);
         attachment.loading = false;
-        renderPendingImages();
+        renderPendingAttachments();
         resolve();
       };
-      reader.onerror = function () { reject(new Error("读取图片失败")); };
+      reader.onerror = function () { reject(new Error(failureMessage)); };
       reader.readAsDataURL(file);
     });
   }
@@ -1444,14 +1586,52 @@
       totalBytes += file.size;
       var attachment = { id: nextAttachmentID++, mimeType: file.type, size: file.size, dataBase64: "", objectURL: URL.createObjectURL(file), loading: true };
       pendingImages.push(attachment);
-      var read = readImageAsBase64(file, attachment).catch(function (error) {
+      var read = readAsBase64(file, attachment, "读取图片失败").catch(function (error) {
         setAttachmentError(error.message || String(error));
         removePendingImage(attachment.id);
-        throw error;
       });
       pendingImageReads.push(read);
     });
-    renderPendingImages();
+    renderPendingAttachments();
+  }
+
+  function addLocalFiles(files) {
+    clearAttachmentError();
+    var totalBytes = pendingFiles.reduce(function (sum, file) { return sum + (file.kind === "upload" ? file.size : 0); }, 0);
+    Array.prototype.forEach.call(files, function (file) {
+      if (pendingFiles.length >= MAX_PENDING_FILES) return setAttachmentError("每次最多添加 " + MAX_PENDING_FILES + " 个文件");
+      if (file.size > MAX_PENDING_FILE_BYTES) return setAttachmentError("单个文件不能超过 2 MiB");
+      if (totalBytes + file.size > MAX_PENDING_TOTAL_FILE_BYTES) return setAttachmentError("文件总大小不能超过 6 MiB");
+      totalBytes += file.size;
+      var attachment = { id: nextAttachmentID++, kind: "upload", name: file.name || "未命名文件", size: file.size, dataBase64: "", loading: true };
+      pendingFiles.push(attachment);
+      var read = readAsBase64(file, attachment, "读取文件失败").catch(function (error) {
+        setAttachmentError(error.message || String(error));
+        removePendingFile(attachment.id);
+      });
+      pendingFileReads.push(read);
+    });
+    renderPendingAttachments();
+  }
+
+  function addServerPath() {
+    if (busy) return;
+    clearAttachmentError();
+    var value = serverFilePath.value.trim();
+    if (!value) return setAttachmentError("请输入 workspace 内的文件路径");
+    if (pendingFiles.length >= MAX_PENDING_FILES) return setAttachmentError("每次最多添加 " + MAX_PENDING_FILES + " 个文件");
+    pendingFiles.push({ id: nextAttachmentID++, kind: "path", name: pathBaseName(value), path: value, size: 0, loading: false });
+    serverFilePath.value = "";
+    setAttachmentMenu(false);
+    renderPendingAttachments();
+    input.focus();
+  }
+
+  function setAttachmentMenu(open) {
+    open = Boolean(open) && !busy;
+    attachmentMenu.hidden = !open;
+    addAttachmentBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) setTimeout(function () { uploadFileBtn.focus(); }, 0);
   }
 
   function clearStreamingState(bubble) {
@@ -1766,6 +1946,11 @@
     sendBtn.title = on ? "停止生成" : "发送";
     sendBtn.setAttribute("aria-label", on ? "停止生成" : "发送");
     input.disabled = on;
+    addAttachmentBtn.disabled = on;
+    uploadFileBtn.disabled = on;
+    serverFilePath.disabled = on;
+    addServerPathBtn.disabled = on;
+    if (on) setAttachmentMenu(false);
     if (on) {
       statusEl.textContent = "处理中";
       statusEl.classList.remove("error");
@@ -1773,7 +1958,7 @@
       statusEl.textContent = "在线";
     }
     statusEl.classList.toggle("busy", on);
-    renderPendingImages();
+    renderPendingAttachments();
     if (!on) input.focus();
   }
 
@@ -1892,10 +2077,12 @@
     if (busy || preparingSend) return;
     preparingSend = true;
     try {
-      await Promise.all(pendingImageReads);
+      await Promise.all(pendingImageReads.concat(pendingFileReads));
       pendingImageReads = [];
+      pendingFileReads = [];
     } catch (_) {
       pendingImageReads = [];
+      pendingFileReads = [];
       preparingSend = false;
       return;
     }
@@ -1903,7 +2090,10 @@
     var sentImages = pendingImages.filter(function (image) { return !image.loading && image.dataBase64; }).map(function (image) {
       return { mime_type: image.mimeType, data_base64: image.dataBase64 };
     });
-    if (!text && !sentImages.length) {
+    var sentFiles = pendingFiles.filter(function (file) { return !file.loading; }).map(function (file) {
+      return file.kind === "path" ? { path: file.path } : { name: file.name, data_base64: file.dataBase64 };
+    });
+    if (!text && !sentImages.length && !sentFiles.length) {
       preparingSend = false;
       return;
     }
@@ -1912,7 +2102,7 @@
     currentController = new AbortController();
     stopRequested = false;
 
-    renderUserMessage(addMessage("user"), text, sentImages);
+    renderUserMessage(addMessage("user"), text, sentImages, sentFiles);
     input.value = "";
     autoGrow();
 
@@ -1931,7 +2121,7 @@
       var res = await fetch("/api/v1/webui/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, images: sentImages, session_id: sessionId, turn_id: currentTurnId }),
+        body: JSON.stringify({ message: text, images: sentImages, files: sentFiles, session_id: sessionId, turn_id: currentTurnId }),
         signal: currentController.signal
       });
       if (!res.ok || !res.body) {
@@ -1939,7 +2129,6 @@
         try { errorText = await res.text(); } catch (_) {}
         throw new Error("HTTP " + res.status + (errorText ? ": " + errorText : ""));
       }
-      clearPendingImages();
 
       var reader = res.body.getReader();
       var decoder = new TextDecoder();
@@ -1966,6 +2155,11 @@
               sessionId = done.session_id;
               localStorage.setItem(SESSION_KEY, sessionId);
             }
+            if (done.model) {
+              runtimeModelLoadID++;
+              updateRuntimeModel(done.api_type, done.model);
+            }
+            clearPendingAttachments();
             bubble.classList.add("rendered");
             var finalReply = done.reply || streamed;
             renderReply(bubble, finalReply);
@@ -2052,10 +2246,12 @@
     if (busy) return;
     sessionId = "";
     localStorage.removeItem(SESSION_KEY);
-    clearPendingImages();
+    clearPendingAttachments();
+    setAttachmentMenu(false);
     thread.innerHTML = emptyMarkup();
     statusEl.textContent = "在线";
     statusEl.classList.remove("error", "busy");
+    loadRuntimeModel();
     input.focus();
   }
 
@@ -2063,6 +2259,36 @@
     if (busy) stopCurrentTurn(); else send();
   });
   newChatBtn.addEventListener("click", newChat);
+  addAttachmentBtn.addEventListener("click", function () {
+    setAttachmentMenu(attachmentMenu.hidden);
+  });
+  uploadFileBtn.addEventListener("click", function () {
+    setAttachmentMenu(false);
+    fileInput.click();
+  });
+  fileInput.addEventListener("change", function () {
+    if (fileInput.files && fileInput.files.length) addLocalFiles(fileInput.files);
+    fileInput.value = "";
+  });
+  addServerPathBtn.addEventListener("click", addServerPath);
+  serverFilePath.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addServerPath();
+    } else if (event.key === "Escape") {
+      setAttachmentMenu(false);
+      addAttachmentBtn.focus();
+    }
+  });
+  document.addEventListener("click", function (event) {
+    if (!attachmentMenu.hidden && !attachmentActions.contains(event.target)) setAttachmentMenu(false);
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !attachmentMenu.hidden) {
+      setAttachmentMenu(false);
+      addAttachmentBtn.focus();
+    }
+  });
   themeToggle.addEventListener("click", function () {
     var current = document.documentElement.getAttribute("data-theme") || "dark";
     setTheme(current === "dark" ? "light" : "dark");

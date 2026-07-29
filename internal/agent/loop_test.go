@@ -247,6 +247,46 @@ func TestFinishStageCheckpointDoesNotWriteAfterParentCancellation(t *testing.T) 
 	}
 }
 
+func TestRunConversationLoopProtectionAllowsConsecutiveToolOnlyRounds(t *testing.T) {
+	responses := make([]AssistantMessage, 0, 10)
+	for index := 0; index < 9; index++ {
+		path := strings.Repeat("x", index+1) + ".go"
+		responses = append(responses, AssistantMessage{ToolCalls: []ToolCall{{
+			ID: "read-" + path,
+			Function: FunctionCall{
+				Name:      "read_file",
+				Arguments: `{"path":"` + path + `"}`,
+			},
+		}}})
+	}
+	responses = append(responses, AssistantMessage{Content: "done"})
+
+	client := &stubClient{responses: responses}
+	calls := 0
+	app := NewWithOptions(client, "", Options{
+		Context: ContextConfig{Enabled: false},
+		Stage:   StageConfig{MaxIterations: 20, LoopProtection: true},
+		Functions: map[string]tools.Function{
+			"read_file": func(context.Context, map[string]any) (string, error) {
+				calls++
+				return "content", nil
+			},
+		},
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}}},
+	})
+
+	result, err := app.Run(context.Background(), "inspect", 20)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q, want done", result)
+	}
+	if calls != 9 {
+		t.Fatalf("tool calls = %d, want 9", calls)
+	}
+}
+
 func TestRunConversationLoopProtectionStopsRepeatedFailures(t *testing.T) {
 	toolResponse := func(id string) AssistantMessage {
 		return AssistantMessage{ToolCalls: []ToolCall{{ID: id, Function: FunctionCall{Name: "read_file", Arguments: `{"path":"missing.go"}`}}}}

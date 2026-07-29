@@ -25,6 +25,7 @@ type Config struct {
 	APIKey                       string
 	BaseURL                      string
 	Model                        string
+	Models                       []string
 	MaxIterations                int
 	RunTraceEnabled              bool
 	SessionTranscriptMode        session.TranscriptMode
@@ -63,6 +64,7 @@ type Runtime struct {
 	Catalog         tools.Catalog
 	APIType         agent.APIType
 	Model           string
+	Models          []string
 	MaxIterations   int
 	RunTraceEnabled bool
 	SessionOptions  session.Options
@@ -91,6 +93,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		APIKey:                       apiKey,
 		BaseURL:                      baseURL,
 		Model:                        model,
+		Models:                       splitEnvList(getenv("LLM_MODELS")),
 		MaxIterations:                envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
 		RunTraceEnabled:              envBool(getenv("RUN_TRACE_ENABLED"), false),
 		SessionTranscriptMode:        session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
@@ -128,6 +131,17 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func splitEnvList(raw string) []string {
+	values := make([]string, 0)
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func envBool(raw string, fallback bool) bool {
@@ -217,6 +231,7 @@ func (factory Factory) Build(includePlan bool) Runtime {
 		Catalog:         catalog,
 		APIType:         apiType,
 		Model:           model,
+		Models:          append([]string(nil), factory.Config.Models...),
 		MaxIterations:   factory.Config.MaxIterations,
 		RunTraceEnabled: factory.Config.RunTraceEnabled,
 		SessionOptions: session.Options{

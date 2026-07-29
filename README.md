@@ -51,6 +51,7 @@ LLM_API_TYPE=openai
 LLM_API_KEY=your-key-here
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o-mini
+LLM_MODELS=gpt-4o-mini,fast=gpt-5.1
 ```
 
 The same variables can be set directly in a shell:
@@ -79,7 +80,8 @@ Generic `LLM_*` values take precedence over provider-specific compatibility vari
 | `LLM_API_TYPE` | `openai` | Wire protocol: `openai`, `openai-response`, or `anthropic`. |
 | `LLM_API_KEY` | — | Generic API key. Required in server mode. |
 | `LLM_BASE_URL` | provider default | Generic provider endpoint override. |
-| `LLM_MODEL` | `MiniMax-M2.5` | Effective built-in model. |
+| `LLM_MODEL` | `MiniMax-M2.5` | Default built-in model. |
+| `LLM_MODELS` | empty | Comma-separated switchable models for the same provider; supports `alias=model-id`. Use `/model` to list, `/model <name-or-alias>` to switch the current session, and `/model default` to restore the default. |
 | `OPENAI_API_TYPE` | — | Compatibility alias for `LLM_API_TYPE`. |
 | `OPENAI_API_KEY` | — | OpenAI-compatible API key fallback. |
 | `OPENAI_BASE_URL` | provider default | OpenAI-compatible endpoint fallback. |
@@ -331,7 +333,7 @@ The discovery prompt does not include the skill body or aliases. The model first
 
 ## Sessions and background mode
 
-`--chat` starts an interactive multi-turn conversation in the terminal. Type your messages one at a time; the agent keeps the conversation going across turns. Type `/exit` or press Ctrl-D (EOF) to end the session. Chat sessions are automatically persisted under `.agent/sessions/`.
+`--chat` starts an interactive multi-turn conversation in the terminal. Type your messages one at a time; the agent keeps the conversation going across turns. Type `/exit` or press Ctrl-D (EOF) to end the session. Chat sessions are automatically persisted under `.agent/sessions/`. With `LLM_MODELS` configured, use `/model` to list models, `/model <name-or-alias>` to switch the current session, and `/model default` to restore the default. The selection is stored in the session `meta.json` and survives restarts.
 
 Long conversations now use request-time context management before each model call:
 
@@ -370,6 +372,8 @@ It never exposes API keys or provider endpoint URLs. The WebUI displays this
 identity under the bqagent title when the endpoint is available.
 
 `GET /` serves a self-contained, single-page chat UI (HTML/CSS/JS embedded in the binary, no external assets). Open `http://127.0.0.1:8080` in a browser and chat directly. The UI supports light/dark themes and safely renders Markdown headings, lists, task lists, tables, blockquotes, links, images, and copyable fenced code blocks, making README-style `.md` content easy to read. Replies stream token-by-token over Server-Sent Events from `POST /api/v1/webui/chat`; while a turn is running, the send button becomes a stop button backed by the channel-independent `POST /api/v1/chat/stop` endpoint, which cancels the active model request and tool execution identified by `turn_id`. The cancellation registry lives in the shared conversation service, so other channels can opt in later without WebUI-specific stop logic. `event: progress` reports iterations, tool activity, and stage checkpoints. Long WebUI work pauses with a persisted stage summary, so replying "继续" resumes the same `session_id` instead of restarting exploration. The web UI is enabled by default and can be disabled through the [environment variables](#environment-variables) configuration.
+
+The “+” button in the WebUI composer can upload browser-local files or reference paths inside the server workspace. A turn accepts up to 5 files, 2 MiB each and 6 MiB total. Uploads are stored under `.agent/uploads/<session-id>/` without overwriting same-name files. UTF-8 text is inlined into the turn context up to 64 KiB per file, with a truncation note and the full `read_file`-accessible path; binary files contribute path metadata only. Server paths must remain inside the workspace and cannot escape through `..` components or symbolic links.
 
 `/api/v1/serverchan/chat` is the existing sendkey-based push adapter: it generates a reply and forwards it through ServerChan using the `text` / `desp` / `sendkey` shape from the Go demo.
 

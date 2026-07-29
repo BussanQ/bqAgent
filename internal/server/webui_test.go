@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,6 +52,8 @@ func TestWebUIServesIndex(t *testing.T) {
 		`/api/v1/status`,
 		`id="runtime-model"`,
 		`loadRuntimeModel()`,
+		`"?session_id=" + encodeURIComponent(sessionId)`,
+		`updateRuntimeModel(done.api_type, done.model)`,
 		`class="stop-icon"`,
 		`classList.add("is-streaming")`,
 		`role="status"`,
@@ -68,6 +71,11 @@ func TestWebUIServesIndex(t *testing.T) {
 		`visibilitychange`,
 		`(hover: hover) and (pointer: fine)`,
 		`event.pointerType !== "mouse"`,
+		`id="add-attachment"`,
+		`id="file-input"`,
+		`id="server-file-path"`,
+		`var pendingFiles = []`,
+		`files: sentFiles`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("served page missing WebUI feature %q", expected)
@@ -141,6 +149,91 @@ func TestWebUIStreamChat(t *testing.T) {
 	second := postWebUIChat(t, apiServer.URL, fmt.Sprintf(`{"session_id":%q,"message":"again"}`, first.done.SessionID))
 	if second.done.SessionID != first.done.SessionID {
 		t.Fatalf("second session_id = %q, want %q", second.done.SessionID, first.done.SessionID)
+	}
+}
+
+func TestWebUIModelCommandReturnsUpdatedRuntimeModel(t *testing.T) {
+	service := NewService(ServiceOptions{
+		WorkspaceRoot: t.TempDir(),
+		APIType:       agent.APITypeOpenAI,
+		Model:         "default-model",
+		Models:        []string{"fast=selected-model"},
+		SystemPrompt:  "base prompt",
+	})
+	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	switchResult := postWebUIChat(t, apiServer.URL, `{"message":"/model fast"}`)
+	if switchResult.done.Model != "selected-model" || switchResult.done.APIType != string(agent.APITypeOpenAI) {
+		t.Fatalf("switch done event = %#v, want openai selected-model", switchResult.done)
+	}
+
+	resetBody := fmt.Sprintf(`{"session_id":%q,"message":"/model default"}`, switchResult.done.SessionID)
+	resetResult := postWebUIChat(t, apiServer.URL, resetBody)
+	if resetResult.done.Model != "default-model" {
+		t.Fatalf("reset done model = %q, want default-model", resetResult.done.Model)
+	}
+}
+
+func TestDecodeWebUIChatRequestAcceptsUploadedAndWorkspaceFiles(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString([]byte("hello attachment"))
+	body := fmt.Sprintf(`{"files":[{"name":"notes.txt","data_base64":%q},{"path":"docs/design.md"}]}`, encoded)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/webui/chat", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+
+	turn, err := decodeWebUIChatRequest(httptest.NewRecorder(), request)
+	if err != nil {
+		t.Fatalf("decode returned error: %v", err)
+	}
+	if len(turn.Files) != 2 {
+		t.Fatalf("files = %#v, want 2", turn.Files)
+	}
+	if turn.Files[0].Name != "notes.txt" || string(turn.Files[0].Data) != "hello attachment" {
+		t.Fatalf("uploaded file = %#v", turn.Files[0])
+	}
+	if turn.Files[1].Path != "docs/design.md" {
+		t.Fatalf("path file = %#v", turn.Files[1])
+	}
+}
+
+func TestDecodeWebUIChatRequestRejectsInvalidFilePayloads(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "missing source", body: `{"files":[{"name":"notes.txt"}]}`},
+		{name: "both sources", body: `{"files":[{"name":"notes.txt","data_base64":"","path":"notes.txt"}]}`},
+		{name: "invalid base64", body: `{"files":[{"name":"notes.txt","data_base64":"***"}]}`},
+		{name: "unknown field", body: `{"files":[{"name":"notes.txt","data_base64":"","extra":true}]}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/webui/chat", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			if _, err := decodeWebUIChatRequest(httptest.NewRecorder(), request); err == nil {
+				t.Fatal("decode returned nil error")
+			}
+		})
+	}
+}
+
+func TestDecodeWebUIChatRequestAcceptsFileOnlyAndEnforcesLimit(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/webui/chat", strings.NewReader(`{"files":[{"name":"empty.txt","data_base64":""}]}`))
+	request.Header.Set("Content-Type", "application/json")
+	turn, err := decodeWebUIChatRequest(httptest.NewRecorder(), request)
+	if err != nil {
+		t.Fatalf("file-only decode returned error: %v", err)
+	}
+	if len(turn.Files) != 1 || turn.Files[0].Data == nil {
+		t.Fatalf("file-only turn = %#v", turn)
+	}
+
+	tooLarge := base64.StdEncoding.EncodeToString(make([]byte, maxWebUIFileBytes+1))
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/webui/chat", strings.NewReader(fmt.Sprintf(`{"files":[{"name":"large.bin","data_base64":%q}]}`, tooLarge)))
+	request.Header.Set("Content-Type", "application/json")
+	if _, err := decodeWebUIChatRequest(httptest.NewRecorder(), request); err == nil {
+		t.Fatal("oversized file decode returned nil error")
 	}
 }
 
@@ -251,6 +344,8 @@ type webUIResult struct {
 type doneEvent struct {
 	SessionID string `json:"session_id"`
 	Reply     string `json:"reply"`
+	APIType   string `json:"api_type"`
+	Model     string `json:"model"`
 }
 
 func postWebUIChat(t *testing.T, baseURL, body string) webUIResult {

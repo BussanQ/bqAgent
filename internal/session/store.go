@@ -39,6 +39,7 @@ type Meta struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 	LastError     string    `json:"last_error,omitempty"`
 	LastRunID     string    `json:"last_run_id,omitempty"`
+	CurrentModel  string    `json:"current_model,omitempty"`
 }
 
 type Store struct {
@@ -499,6 +500,12 @@ func (session *Session) MarkFailed(err error) error {
 
 func (session *Session) SetLastRunID(runID string) error {
 	session.meta.LastRunID = strings.TrimSpace(runID)
+	session.meta.UpdatedAt = time.Now().UTC()
+	return session.persistMeta()
+}
+
+func (session *Session) SetCurrentModel(model string) error {
+	session.meta.CurrentModel = strings.TrimSpace(model)
 	session.meta.UpdatedAt = time.Now().UTC()
 	return session.persistMeta()
 }

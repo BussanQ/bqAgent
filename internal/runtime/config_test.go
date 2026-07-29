@@ -34,6 +34,23 @@ func TestConfigFromEnvUsesSelectedLLMAPIType(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnvParsesConfiguredModels(t *testing.T) {
+	values := map[string]string{
+		"LLM_MODELS": " k3, , MiniMax-M2.5, fast=gpt-5.1 ",
+	}
+
+	config := ConfigFromEnv(func(key string) string { return values[key] })
+	want := []string{"k3", "MiniMax-M2.5", "fast=gpt-5.1"}
+	if len(config.Models) != len(want) {
+		t.Fatalf("Models = %#v, want %#v", config.Models, want)
+	}
+	for index := range want {
+		if config.Models[index] != want[index] {
+			t.Fatalf("Models = %#v, want %#v", config.Models, want)
+		}
+	}
+}
+
 func TestConfigFromEnvSupportsGenericLLMOverrides(t *testing.T) {
 	values := map[string]string{
 		"OPENAI_API_TYPE": "OpenAI-Response",

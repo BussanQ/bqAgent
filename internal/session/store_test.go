@@ -54,6 +54,36 @@ func TestSessionStorePersistsMessagesAndStatus(t *testing.T) {
 	}
 }
 
+func TestSessionCurrentModelPersists(t *testing.T) {
+	store := NewStore(t.TempDir())
+	savedSession, err := store.Create(CreateOptions{Task: "switch model", Chat: true})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if err := savedSession.SetCurrentModel(" gpt-5.1 "); err != nil {
+		t.Fatalf("SetCurrentModel returned error: %v", err)
+	}
+
+	reopened, err := store.Open(savedSession.ID())
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	if reopened.Meta().CurrentModel != "gpt-5.1" {
+		t.Fatalf("CurrentModel = %q, want gpt-5.1", reopened.Meta().CurrentModel)
+	}
+
+	if err := reopened.SetCurrentModel(""); err != nil {
+		t.Fatalf("SetCurrentModel reset returned error: %v", err)
+	}
+	reopened, err = store.Open(savedSession.ID())
+	if err != nil {
+		t.Fatalf("Open after reset returned error: %v", err)
+	}
+	if reopened.Meta().CurrentModel != "" {
+		t.Fatalf("CurrentModel after reset = %q, want empty", reopened.Meta().CurrentModel)
+	}
+}
+
 func TestSessionStoreRejectsTraversalAndMismatchedMetadataID(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)

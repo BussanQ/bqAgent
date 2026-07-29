@@ -51,6 +51,7 @@ LLM_API_TYPE=openai
 LLM_API_KEY=your-key-here
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o-mini
+LLM_MODELS=gpt-4o-mini,fast=gpt-5.1
 ```
 
 也可以直接在 shell 中设置：
@@ -79,7 +80,8 @@ set LLM_API_KEY=your-key-here
 | `LLM_API_TYPE` | `openai` | 接口协议：`openai`、`openai-response` 或 `anthropic`。 |
 | `LLM_API_KEY` | — | 通用 API Key；Server 模式必填。 |
 | `LLM_BASE_URL` | 供应商默认值 | 通用供应商端点覆盖。 |
-| `LLM_MODEL` | `MiniMax-M2.5` | 内置 LLM 的有效模型。 |
+| `LLM_MODEL` | `MiniMax-M2.5` | 内置 LLM 的默认模型。 |
+| `LLM_MODELS` | 空 | 同一供应商下可切换的模型列表，逗号分隔；支持 `别名=模型ID`。聊天中使用 `/model` 查看，`/model <名称或别名>` 切换当前会话，`/model default` 恢复默认。 |
 | `OPENAI_API_TYPE` | — | `LLM_API_TYPE` 的兼容别名。 |
 | `OPENAI_API_KEY` | — | OpenAI 兼容 API Key 回退值。 |
 | `OPENAI_BASE_URL` | 供应商默认值 | OpenAI 兼容端点回退值。 |
@@ -330,7 +332,7 @@ aliases:
 
 ## 会话与后台模式
 
-`--chat` 启动交互式多轮对话模式。在终端中逐条输入消息，智能体会在整个会话过程中持续接续上下文。输入 `/exit` 或按 Ctrl-D（EOF）结束会话。对话会自动持久化到 `.agent/sessions/` 目录下。
+`--chat` 启动交互式多轮对话模式。在终端中逐条输入消息，智能体会在整个会话过程中持续接续上下文。输入 `/exit` 或按 Ctrl-D（EOF）结束会话。对话会自动持久化到 `.agent/sessions/` 目录下。配置 `LLM_MODELS` 后，可用 `/model` 查看模型列表、`/model <名称或别名>` 切换当前会话模型、`/model default` 恢复默认模型；选择会写入 session 的 `meta.json` 并在重启后保留。
 
 长对话现在会在每次请求模型前做上下文管理：
 
@@ -366,6 +368,8 @@ aliases:
 `GET /api/v1/status` 返回内置 LLM 的有效运行时身份，例如 `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`。该接口不会暴露 API Key 或供应商端点 URL；WebUI 会在 bqagent 标题下展示这项信息。
 
 `GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖）。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。界面支持明暗主题，并会安全渲染 Markdown 标题、列表、任务列表、表格、引用、链接、图片与带复制按钮的代码块，适合直接阅读 README 等 `.md` 内容。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；发送后按钮会切换为停止按钮，通过与渠道无关的 `POST /api/v1/chat/stop` 接口按 `turn_id` 取消当前模型请求和工具执行。取消注册表位于共享对话服务中，其他通道后续接入时无需依赖 WebUI。`event: progress` 会持续报告迭代轮次、工具活动和阶段 checkpoint。长任务达到阶段预算后会返回并持久化阶段总结，用户回复“继续”即可沿用同一 `session_id` 继续，而不会重新探索。该网页渠道默认开启，可在[环境变量配置](#环境变量配置)中关闭。
+
+WebUI 输入区的 “+” 按钮支持上传浏览器本地文件，或引用运行 bqagent 的服务端 workspace 内路径。每轮最多 5 个文件，单文件最多 2 MiB、合计最多 6 MiB；上传文件保存在 `.agent/uploads/<session-id>/`，同名文件不会覆盖。UTF-8 文本会内联到当轮上下文（每个文件最多 64 KiB，超出时截断并保留可供 `read_file` 使用的完整路径）；二进制文件只注入路径说明。服务端路径必须位于 workspace 内，并通过根目录约束读取，不能借助 `..` 或符号链接逃逸。
 
 `/api/v1/serverchan/chat` 保留为现有的 sendkey 推送型接口：它会生成回复，然后按 demo 中的 `text` / `desp` / `sendkey` 语义把结果推送出去。
 

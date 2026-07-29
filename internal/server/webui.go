@@ -25,11 +25,14 @@ import (
 const (
 	defaultWebUIStageTimeout       = 90 * time.Second
 	defaultWebUIStageMaxIterations = 20
-	maxWebUIRequestBodyBytes       = 12 << 20
+	maxWebUIRequestBodyBytes       = 21 << 20
 	maxWebUIImages                 = 4
 	maxWebUIImageBytes             = 3 << 20
 	maxWebUITotalImageBytes        = 8 << 20
 	maxWebUIImagePixels            = 20_000_000
+	maxWebUIFiles                  = 5
+	maxWebUIFileBytes              = 2 << 20
+	maxWebUITotalFileBytes         = 6 << 20
 )
 
 type webUIChatRequest struct {
@@ -37,11 +40,18 @@ type webUIChatRequest struct {
 	TurnID    string              `json:"turn_id"`
 	Message   string              `json:"message"`
 	Images    []webUIImagePayload `json:"images,omitempty"`
+	Files     []webUIFilePayload  `json:"files,omitempty"`
 }
 
 type webUIImagePayload struct {
 	MIMEType   string `json:"mime_type"`
 	DataBase64 string `json:"data_base64"`
+}
+
+type webUIFilePayload struct {
+	Name       string  `json:"name,omitempty"`
+	DataBase64 *string `json:"data_base64,omitempty"`
+	Path       string  `json:"path,omitempty"`
 }
 
 type webUIRequestError struct {
@@ -182,10 +192,60 @@ func decodeWebUIChatRequest(writer http.ResponseWriter, request *http.Request) (
 		}
 		images = append(images, imageAttachment)
 	}
-	if strings.TrimSpace(payload.Message) == "" && len(images) == 0 {
-		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("message or images are required")}
+	if len(payload.Files) > maxWebUIFiles {
+		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("at most %d files are allowed", maxWebUIFiles)}
 	}
-	return TurnRequest{SessionID: strings.TrimSpace(payload.SessionID), TurnID: strings.TrimSpace(payload.TurnID), Message: payload.Message, Images: images}, nil
+	files := make([]FileAttachment, 0, len(payload.Files))
+	totalFileBytes := 0
+	for index, filePayload := range payload.Files {
+		fileAttachment, err := decodeWebUIFile(filePayload)
+		if err != nil {
+			return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("file %d: %w", index+1, err)}
+		}
+		totalFileBytes += len(fileAttachment.Data)
+		if totalFileBytes > maxWebUITotalFileBytes {
+			return TurnRequest{}, &webUIRequestError{Status: http.StatusRequestEntityTooLarge, Err: fmt.Errorf("decoded file data exceeds %d bytes", maxWebUITotalFileBytes)}
+		}
+		files = append(files, fileAttachment)
+	}
+	if strings.TrimSpace(payload.Message) == "" && len(images) == 0 && len(files) == 0 {
+		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("message, images, or files are required")}
+	}
+	return TurnRequest{SessionID: strings.TrimSpace(payload.SessionID), TurnID: strings.TrimSpace(payload.TurnID), Message: payload.Message, Images: images, Files: files}, nil
+}
+
+func decodeWebUIFile(payload webUIFilePayload) (FileAttachment, error) {
+	name := strings.TrimSpace(payload.Name)
+	path := strings.TrimSpace(payload.Path)
+	hasUpload := payload.DataBase64 != nil
+	hasPath := path != ""
+	if hasUpload == hasPath {
+		return FileAttachment{}, fmt.Errorf("provide either name with data_base64 or path")
+	}
+	if hasPath {
+		if name != "" {
+			return FileAttachment{}, fmt.Errorf("name is not allowed with path")
+		}
+		return FileAttachment{Path: path}, nil
+	}
+	if name == "" {
+		return FileAttachment{}, fmt.Errorf("uploaded file name is required")
+	}
+	encoded := strings.TrimSpace(*payload.DataBase64)
+	if strings.HasPrefix(strings.ToLower(encoded), "data:") {
+		return FileAttachment{}, fmt.Errorf("data URI wrappers are not accepted")
+	}
+	if len(encoded) > base64.StdEncoding.EncodedLen(maxWebUIFileBytes) {
+		return FileAttachment{}, fmt.Errorf("file exceeds %d decoded bytes", maxWebUIFileBytes)
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return FileAttachment{}, fmt.Errorf("invalid base64 data: %w", err)
+	}
+	if len(data) > maxWebUIFileBytes {
+		return FileAttachment{}, fmt.Errorf("file exceeds %d decoded bytes", maxWebUIFileBytes)
+	}
+	return FileAttachment{Name: name, Data: data}, nil
 }
 
 func decodeWebUIImage(payload webUIImagePayload) (agent.ImageAttachment, error) {
@@ -264,6 +324,7 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		Message:   turnRequest.Message,
 		TurnID:    turnRequest.TurnID,
 		Images:    turnRequest.Images,
+		Files:     turnRequest.Files,
 	}, TurnOptions{
 		Stream:         true,
 		TokenSink:      sseEventWriter{stream: stream, event: "message"},
@@ -291,6 +352,8 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		"session_id": response.SessionID,
 		"run_id":     response.RunID,
 		"reply":      sanitizeChannelReply(response.Reply),
+		"api_type":   string(channel.service.apiType),
+		"model":      response.Model,
 	})
 }
 

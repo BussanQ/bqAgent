@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ type ServiceOptions struct {
 	Client              agent.ChatCompletionClient
 	APIType             agent.APIType
 	Model               string
+	Models              []string
 	SystemPrompt        string
 	SystemPromptBuilder func() (string, error)
 	Planner             *agent.Planner
@@ -49,6 +51,7 @@ type Service struct {
 	client              agent.ChatCompletionClient
 	apiType             agent.APIType
 	model               string
+	models              []configuredModel
 	systemPrompt        string
 	systemPromptBuilder func() (string, error)
 	planner             *agent.Planner
@@ -67,6 +70,12 @@ type Service struct {
 	activeTurns         *activeTurnRegistry
 }
 
+type FileAttachment struct {
+	Name string
+	Data []byte
+	Path string
+}
+
 type TurnRequest struct {
 	SessionID string `json:"session_id"`
 	Message   string `json:"message"`
@@ -79,17 +88,23 @@ type TurnRequest struct {
 	// Images are decoded inbound images attached to this turn. They are set by
 	// channels (e.g. iLink) and sent to the model as a multimodal user message.
 	Images []agent.ImageAttachment `json:"-"`
+	// Files are uploaded bytes or workspace-local paths attached by callers.
+	Files []FileAttachment `json:"-"`
 }
 
-// imageOnlyPlaceholder is the synthetic task/memory text used when a turn carries
-// images but no text. It keeps session bookkeeping and memory readable; the model
-// still receives the actual image content.
-const imageOnlyPlaceholder = "[图片]"
+// Attachment placeholders keep session bookkeeping and memory readable for
+// turns that have no text. The model still receives the actual attachments.
+const (
+	imageOnlyPlaceholder = "[图片]"
+	fileOnlyPlaceholder  = "[文件附件]"
+	mixedOnlyPlaceholder = "[图片和文件附件]"
+)
 
 type TurnResponse struct {
 	SessionID string `json:"session_id"`
 	Reply     string `json:"reply"`
 	RunID     string `json:"run_id,omitempty"`
+	Model     string `json:"model,omitempty"`
 	Streamed  bool   `json:"-"`
 }
 
@@ -121,6 +136,7 @@ func NewService(options ServiceOptions) *Service {
 		client:              options.Client,
 		apiType:             agent.NormalizeAPIType(string(options.APIType)),
 		model:               agent.EffectiveModel(options.Model),
+		models:              parseConfiguredModels(options.Models),
 		systemPrompt:        options.SystemPrompt,
 		systemPromptBuilder: options.SystemPromptBuilder,
 		planner:             options.Planner,
@@ -219,8 +235,8 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		reply := service.stopProcessGroupReply(request.PeerKey, request.SessionID)
 		return TurnResponse{SessionID: strings.TrimSpace(request.SessionID), Reply: reply}, nil
 	}
-	if message == "" && len(request.Images) == 0 {
-		return TurnResponse{}, fmt.Errorf("message is required")
+	if message == "" && len(request.Images) == 0 && len(request.Files) == 0 {
+		return TurnResponse{}, fmt.Errorf("message or attachments are required")
 	}
 	turnID := strings.TrimSpace(request.TurnID)
 	if turnID != "" {
@@ -243,7 +259,14 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	// turns it falls back to a placeholder so those stay readable.
 	effectiveText := message
 	if effectiveText == "" {
-		effectiveText = imageOnlyPlaceholder
+		switch {
+		case len(request.Images) > 0 && len(request.Files) > 0:
+			effectiveText = mixedOnlyPlaceholder
+		case len(request.Files) > 0:
+			effectiveText = fileOnlyPlaceholder
+		default:
+			effectiveText = imageOnlyPlaceholder
+		}
 	}
 
 	sessionID := strings.TrimSpace(request.SessionID)
@@ -253,13 +276,21 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			return TurnResponse{}, canonicalErr
 		}
 		sessionID = canonicalID
-	}
-	createOptions := &session.CreateOptions{Task: effectiveText, Planned: service.planner != nil, Chat: true}
-	if sessionID != "" {
 		unlock := service.locker.Lock(sessionID)
 		defer unlock()
 	}
-	systemPrompt, err := service.currentSystemPrompt(effectiveText)
+	effectiveModel := service.model
+	if sessionID != "" {
+		savedSession, openErr := service.store.Open(sessionID)
+		switch {
+		case openErr == nil:
+			effectiveModel = service.effectiveModel(savedSession)
+		case !errors.Is(openErr, os.ErrNotExist):
+			return TurnResponse{}, openErr
+		}
+	}
+	createOptions := &session.CreateOptions{Task: effectiveText, Planned: service.planner != nil, Chat: true}
+	systemPrompt, err := service.currentSystemPrompt(effectiveText, effectiveModel)
 	if err != nil {
 		return TurnResponse{}, err
 	}
@@ -267,6 +298,12 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if err != nil {
 		return TurnResponse{}, err
 	}
+	defer func() {
+		if response.SessionID != "" {
+			response.Model = service.effectiveModel(conversation.Session)
+		}
+	}()
+	effectiveModel = service.effectiveModel(conversation.Session)
 
 	logFile, err := conversation.Session.OpenOutputFile()
 	if err != nil {
@@ -306,10 +343,43 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{SessionID: conversation.Session.ID(), Reply: feedbackReply}, nil
 	}
 
+	if command, _ := splitFirstToken(message); strings.EqualFold(command, "/model") && (len(request.Images) > 0 || len(request.Files) > 0) {
+		modelErr := fmt.Errorf("/model 命令不能携带图片或文件附件")
+		writeTurnError(turnErrorWriter, modelErr)
+		markConversationFailed(conversation, modelErr)
+		return TurnResponse{}, modelErr
+	}
+	previousModel := conversation.Session.Meta().CurrentModel
+	if modelReply, handled, modelErr := service.handleModelCommand(message, conversation.Session); handled {
+		if modelErr != nil {
+			writeTurnError(turnErrorWriter, modelErr)
+			markConversationFailed(conversation, modelErr)
+			return TurnResponse{}, modelErr
+		}
+		userMessage := map[string]any{"role": "user", "content": message}
+		assistantMessage := map[string]any{"role": "assistant", "content": modelReply}
+		if recordErr := conversation.Session.RecordMessages(userMessage, assistantMessage); recordErr != nil {
+			if conversation.Session.Meta().CurrentModel != previousModel {
+				if rollbackErr := conversation.Session.SetCurrentModel(previousModel); rollbackErr != nil {
+					recordErr = errors.Join(recordErr, fmt.Errorf("rollback model selection: %w", rollbackErr))
+				}
+			}
+			markConversationFailed(conversation, recordErr)
+			return TurnResponse{}, recordErr
+		}
+		conversation.Messages = append(conversation.Messages, userMessage, assistantMessage)
+		if completeErr := service.completeConversation(conversation); completeErr != nil {
+			markConversationFailed(conversation, completeErr)
+			return TurnResponse{}, completeErr
+		}
+		writeTurnReply(logWriter, modelReply, false)
+		return TurnResponse{SessionID: conversation.Session.ID(), Reply: modelReply}, nil
+	}
+
 	var runRecorder *apptrace.Recorder
 	if service.traceStore != nil {
 		var traceErr error
-		runRecorder, traceErr = service.traceStore.Create(conversation.Session.ID(), apptrace.NewID("turn"), "", "agent", service.model, systemPrompt)
+		runRecorder, traceErr = service.traceStore.Create(conversation.Session.ID(), apptrace.NewID("turn"), "", "agent", effectiveModel, systemPrompt)
 		if traceErr != nil {
 			fmt.Fprintf(turnErrorWriter, "trace create failed: %v\n", traceErr)
 		}
@@ -342,6 +412,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		markConversationFailed(conversation, skillErr)
 		return TurnResponse{}, skillErr
 	}
+	resolvedFiles, attachmentErr := service.materializeFiles(conversation.Session.ID(), request.Files)
+	if attachmentErr != nil {
+		writeTurnError(turnErrorWriter, attachmentErr)
+		markConversationFailed(conversation, attachmentErr)
+		return TurnResponse{}, attachmentErr
+	}
+	modelMessage += formatAttachmentContext(resolvedFiles)
 	if skillInvocation != nil && runRecorder != nil {
 		_ = runRecorder.Event("skill_invocation", map[string]any{
 			"skill": skillInvocation.Skill.ID,
@@ -448,13 +525,17 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 
 	functions := service.functionsForTurn(request.PeerKey, conversation.Session.ID())
-	app := agent.NewWithOptions(service.client, service.model, agent.Options{
+	var planner *agent.Planner
+	if service.planner != nil {
+		planner = agent.NewPlanner(service.client, effectiveModel)
+	}
+	app := agent.NewWithOptions(service.client, effectiveModel, agent.Options{
 		SystemPrompt:    systemPrompt,
 		APIType:         service.apiType,
 		LogWriter:       logWriter,
 		ToolDefinitions: service.toolDefinitions,
 		Functions:       functions,
-		Planner:         service.planner,
+		Planner:         planner,
 		Recorder:        conversation.Recorder(),
 		Stream:          options.Stream,
 		WorkspaceRoot:   service.workspaceRoot,
@@ -846,7 +927,7 @@ func splitFirstToken(message string) (string, string) {
 	return message, ""
 }
 
-func (service *Service) currentSystemPrompt(query string) (string, error) {
+func (service *Service) currentSystemPrompt(query string, model string) (string, error) {
 	if service == nil {
 		return "", nil
 	}
@@ -889,7 +970,7 @@ func (service *Service) currentSystemPrompt(query string) (string, error) {
 			prompt += memory.String()
 		}
 	}
-	return agent.AppendModelIdentitySystemPrompt(prompt, service.model, service.apiType), nil
+	return agent.AppendModelIdentitySystemPrompt(prompt, model, service.apiType), nil
 }
 
 type RuntimeLLMInfo struct {
@@ -902,6 +983,24 @@ func (service *Service) RuntimeLLMInfo() RuntimeLLMInfo {
 		return RuntimeLLMInfo{}
 	}
 	return RuntimeLLMInfo{APIType: service.apiType, Model: service.model}
+}
+
+func (service *Service) RuntimeLLMInfoForSession(sessionID string) RuntimeLLMInfo {
+	info := service.RuntimeLLMInfo()
+	if service == nil || strings.TrimSpace(sessionID) == "" {
+		return info
+	}
+	canonicalID, err := session.CanonicalID(sessionID)
+	if err != nil {
+		return info
+	}
+	unlock := service.locker.Lock(canonicalID)
+	defer unlock()
+	savedSession, err := service.store.Open(canonicalID)
+	if err == nil {
+		info.Model = service.effectiveModel(savedSession)
+	}
+	return info
 }
 
 func cloneFunctions(functions map[string]tools.Function) map[string]tools.Function {

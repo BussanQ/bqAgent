@@ -101,6 +101,7 @@ func TestStatusEndpointReturnsEffectiveRuntimeModelWithoutSecrets(t *testing.T) 
 		WorkspaceRoot: t.TempDir(),
 		APIType:       agent.APITypeAnthropic,
 		Model:         "claude-test",
+		Models:        []string{"fast=claude-fast"},
 	})
 	apiServer := httptest.NewServer(NewHandler(HandlerOptions{Service: service}))
 	defer apiServer.Close()
@@ -125,6 +126,23 @@ func TestStatusEndpointReturnsEffectiveRuntimeModelWithoutSecrets(t *testing.T) 
 		if strings.Contains(strings.ToLower(string(encoded)), forbidden) {
 			t.Fatalf("status payload exposes forbidden field %q: %s", forbidden, encoded)
 		}
+	}
+
+	switchResponse, err := service.HandleTurn(context.Background(), TurnRequest{Message: "/model fast"})
+	if err != nil {
+		t.Fatalf("switch model failed: %v", err)
+	}
+	sessionStatus, err := http.Get(apiServer.URL + "/api/v1/status?session_id=" + switchResponse.SessionID)
+	if err != nil {
+		t.Fatalf("GET session status failed: %v", err)
+	}
+	defer sessionStatus.Body.Close()
+	var sessionPayload statusResponse
+	if err := json.NewDecoder(sessionStatus.Body).Decode(&sessionPayload); err != nil {
+		t.Fatalf("decode session status failed: %v", err)
+	}
+	if sessionPayload.LLM.Model != "claude-fast" {
+		t.Fatalf("session status model = %q, want claude-fast", sessionPayload.LLM.Model)
 	}
 
 	request, err := http.NewRequest(http.MethodPost, apiServer.URL+"/api/v1/status", nil)

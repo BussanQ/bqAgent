@@ -105,7 +105,8 @@ func (handler *handler) handleStatus(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "service is unavailable"})
 		return
 	}
-	writeJSON(writer, http.StatusOK, statusResponse{Status: "ok", LLM: handler.service.RuntimeLLMInfo()})
+	sessionID := request.URL.Query().Get("session_id")
+	writeJSON(writer, http.StatusOK, statusResponse{Status: "ok", LLM: handler.service.RuntimeLLMInfoForSession(sessionID)})
 }
 
 func (handler *handler) handleChat(writer http.ResponseWriter, request *http.Request) {
