@@ -33,7 +33,7 @@ func TestClientCreateChatCompletionUsesOpenAICompatibleRequest(t *testing.T) {
 			t.Fatalf("failed to decode request: %v", err)
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`))
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"}}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9,"completion_tokens_details":{"reasoning_tokens":2}}}`))
 	}))
 	defer server.Close()
 
@@ -64,6 +64,9 @@ func TestClientCreateChatCompletionUsesOpenAICompatibleRequest(t *testing.T) {
 	}
 	if message.FinalContent() != "done" {
 		t.Fatalf("final content = %q, want %q", message.FinalContent(), "done")
+	}
+	if message.Usage.CompletionTokens != 4 || message.Usage.ReasoningTokens != 2 {
+		t.Fatalf("usage = %#v", message.Usage)
 	}
 }
 

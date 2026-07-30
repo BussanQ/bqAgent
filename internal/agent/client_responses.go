@@ -30,9 +30,12 @@ type openAIResponseTool struct {
 }
 
 type openAIResponseUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+	OutputTokensDetails struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"output_tokens_details"`
 }
 
 type openAIResponseOutput struct {
@@ -304,7 +307,12 @@ func tokenUsageFromOpenAIResponse(usage openAIResponseUsage) TokenUsage {
 	if total == 0 {
 		total = usage.InputTokens + usage.OutputTokens
 	}
-	return TokenUsage{PromptTokens: usage.InputTokens, CompletionTokens: usage.OutputTokens, TotalTokens: total}
+	return TokenUsage{
+		PromptTokens:     usage.InputTokens,
+		CompletionTokens: usage.OutputTokens,
+		ReasoningTokens:  usage.OutputTokensDetails.ReasoningTokens,
+		TotalTokens:      total,
+	}
 }
 
 func (c *Client) doJSONRequest(ctx context.Context, url string, payload any, stream bool, label string) (*http.Response, error) {

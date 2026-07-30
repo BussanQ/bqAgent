@@ -134,6 +134,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 	progressWriter := synchronizeLogWriter(options.ProgressWriter)
 	tokenSink := synchronizeLogWriter(options.TokenSink)
 	client = instrumentChatCompletionClient(client, logWriter, progressWriter)
+	client = instrumentGenerationMetrics(client)
 
 	systemPrompt := AppendModelIdentitySystemPrompt(options.SystemPrompt, model, options.APIType)
 
@@ -208,6 +209,15 @@ func (a *Agent) RunConversation(ctx context.Context, messages []map[string]any, 
 
 func (a *Agent) RunConversationTurn(ctx context.Context, messages []map[string]any, maxIterations int) (string, []map[string]any, error) {
 	return a.runConversation(ctx, duplicateMessages(messages), maxIterations, a.planner != nil)
+}
+
+func (a *Agent) RunConversationTurnWithMetrics(ctx context.Context, messages []map[string]any, maxIterations int) (string, []map[string]any, TurnGenerationMetrics, error) {
+	metricsCtx, collector := withTurnGenerationCollector(ctx)
+	result, updatedMessages, err := a.runConversation(metricsCtx, duplicateMessages(messages), maxIterations, a.planner != nil)
+	if err != nil {
+		return result, updatedMessages, TurnGenerationMetrics{}, err
+	}
+	return result, updatedMessages, collector.metricsFor(result), nil
 }
 
 func DefaultContextConfig() ContextConfig {

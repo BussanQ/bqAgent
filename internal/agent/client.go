@@ -77,6 +77,7 @@ type AssistantMessage struct {
 type TokenUsage struct {
 	PromptTokens     int  `json:"prompt_tokens,omitempty"`
 	CompletionTokens int  `json:"completion_tokens,omitempty"`
+	ReasoningTokens  int  `json:"reasoning_tokens,omitempty"`
 	TotalTokens      int  `json:"total_tokens,omitempty"`
 	Estimated        bool `json:"estimated,omitempty"`
 }
@@ -107,12 +108,34 @@ type chatCompletionStreamRequest struct {
 	StreamOptions map[string]any     `json:"stream_options,omitempty"`
 }
 
+type chatCompletionUsage struct {
+	PromptTokens            int `json:"prompt_tokens"`
+	CompletionTokens        int `json:"completion_tokens"`
+	TotalTokens             int `json:"total_tokens"`
+	CompletionTokensDetails struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+}
+
+func (usage chatCompletionUsage) tokenUsage() TokenUsage {
+	totalTokens := usage.TotalTokens
+	if totalTokens == 0 {
+		totalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	return TokenUsage{
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		ReasoningTokens:  usage.CompletionTokensDetails.ReasoningTokens,
+		TotalTokens:      totalTokens,
+	}
+}
+
 type chatCompletionResponse struct {
 	Choices []struct {
 		Message      AssistantMessage `json:"message"`
 		FinishReason string           `json:"finish_reason"`
 	} `json:"choices"`
-	Usage TokenUsage `json:"usage"`
+	Usage chatCompletionUsage `json:"usage"`
 }
 
 type inlineToolCallPayload struct {
@@ -142,8 +165,8 @@ type streamChoice struct {
 }
 
 type streamChunk struct {
-	Choices []streamChoice `json:"choices"`
-	Usage   TokenUsage     `json:"usage,omitempty"`
+	Choices []streamChoice      `json:"choices"`
+	Usage   chatCompletionUsage `json:"usage,omitempty"`
 }
 
 func completionFromStopReason(reason string) CompletionState {
@@ -250,7 +273,7 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 	choice := decoded.Choices[0]
 	message := choice.Message
 	message.Completion = completionFromStopReason(choice.FinishReason)
-	message.Usage = decoded.Usage
+	message.Usage = decoded.Usage.tokenUsage()
 	if message.Role == "" {
 		message.Role = "assistant"
 	}
@@ -336,8 +359,8 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			return AssistantMessage{}, fmt.Errorf("invalid chat completions stream event: %w", err)
 		}
-		if chunk.Usage.TotalTokens > 0 {
-			usage = chunk.Usage
+		if chunk.Usage.TotalTokens > 0 || chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+			usage = chunk.Usage.tokenUsage()
 		}
 		if len(chunk.Choices) == 0 {
 			continue

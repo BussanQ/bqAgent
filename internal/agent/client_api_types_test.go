@@ -31,7 +31,7 @@ func TestOpenAIResponseClientConvertsRequestAndResponse(t *testing.T) {
 				{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},
 				{"type":"function_call","id":"fc_1","call_id":"call_1","name":"web_search","arguments":"{\"query\":\"news\"}"}
 			],
-			"usage":{"input_tokens":12,"output_tokens":4,"total_tokens":16}
+			"usage":{"input_tokens":12,"output_tokens":4,"total_tokens":16,"output_tokens_details":{"reasoning_tokens":1}}
 		}`)
 	}))
 	defer server.Close()
@@ -80,7 +80,7 @@ func TestOpenAIResponseClientConvertsRequestAndResponse(t *testing.T) {
 	if message.ToolCalls[0].ID != "call_1" || message.ToolCalls[0].Function.Name != "web_search" {
 		t.Fatalf("tool call = %#v", message.ToolCalls[0])
 	}
-	if message.Usage.TotalTokens != 16 {
+	if message.Usage.TotalTokens != 16 || message.Usage.ReasoningTokens != 1 {
 		t.Fatalf("usage = %#v", message.Usage)
 	}
 }
@@ -93,7 +93,7 @@ func TestOpenAIResponseClientStreamsTextAndToolCalls(t *testing.T) {
 		fmt.Fprintln(writer, `data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"read_file"}}`)
 		fmt.Fprintln(writer, `data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"path\":"}`)
 		fmt.Fprintln(writer, `data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"\"README.md\"}"}`)
-		fmt.Fprintln(writer, `data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}`)
+		fmt.Fprintln(writer, `data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5,"output_tokens_details":{"reasoning_tokens":1}}}}`)
 	}))
 	defer server.Close()
 
@@ -111,7 +111,7 @@ func TestOpenAIResponseClientStreamsTextAndToolCalls(t *testing.T) {
 	if len(message.ToolCalls) != 1 || message.ToolCalls[0].Function.Arguments != `{"path":"README.md"}` {
 		t.Fatalf("tool calls = %#v", message.ToolCalls)
 	}
-	if message.Usage.TotalTokens != 5 {
+	if message.Usage.TotalTokens != 5 || message.Usage.ReasoningTokens != 1 {
 		t.Fatalf("usage = %#v", message.Usage)
 	}
 }

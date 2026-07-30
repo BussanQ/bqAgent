@@ -43,6 +43,15 @@ type webUIChatRequest struct {
 	Files     []webUIFilePayload  `json:"files,omitempty"`
 }
 
+type webUIDoneEvent struct {
+	SessionID  string             `json:"session_id"`
+	RunID      string             `json:"run_id,omitempty"`
+	Reply      string             `json:"reply"`
+	APIType    string             `json:"api_type"`
+	Model      string             `json:"model"`
+	Generation *GenerationMetrics `json:"generation,omitempty"`
+}
+
 type webUIImagePayload struct {
 	MIMEType   string `json:"mime_type"`
 	DataBase64 string `json:"data_base64"`
@@ -348,12 +357,13 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		return
 	}
 
-	writeSSEEvent(writer, flusher, "done", map[string]string{
-		"session_id": response.SessionID,
-		"run_id":     response.RunID,
-		"reply":      sanitizeChannelReply(response.Reply),
-		"api_type":   string(channel.service.apiType),
-		"model":      response.Model,
+	writeSSEEvent(writer, flusher, "done", webUIDoneEvent{
+		SessionID:  response.SessionID,
+		RunID:      response.RunID,
+		Reply:      sanitizeChannelReply(response.Reply),
+		APIType:    string(channel.service.apiType),
+		Model:      response.Model,
+		Generation: response.Generation,
 	})
 }
 

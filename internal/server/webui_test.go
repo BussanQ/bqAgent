@@ -48,6 +48,9 @@ func TestWebUIServesIndex(t *testing.T) {
 		`class="table-wrap"`,
 		`class="copy-code"`,
 		`row.className = "message-actions"`,
+		`.message-meta`,
+		`function addMessageMeta(bubble, generation)`,
+		`addMessageMeta(bubble, done.generation)`,
 		`/api/v1/chat/stop`,
 		`/api/v1/status`,
 		`id="runtime-model"`,
@@ -112,12 +115,15 @@ func TestWebUIStreamChat(t *testing.T) {
 	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := writer.(http.Flusher)
+		time.Sleep(time.Millisecond)
 		for _, chunk := range []string{"Hello", ", world"} {
 			fmt.Fprintf(writer, "data: %s\n\n", streamDeltaJSON(chunk))
 			if flusher != nil {
 				flusher.Flush()
 			}
+			time.Sleep(time.Millisecond)
 		}
+		fmt.Fprintln(writer, `data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":6,"total_tokens":9,"completion_tokens_details":{"reasoning_tokens":1}}}`)
 		fmt.Fprint(writer, "data: [DONE]\n\n")
 	}))
 	defer llmServer.Close()
@@ -144,6 +150,15 @@ func TestWebUIStreamChat(t *testing.T) {
 	if first.done.SessionID == "" {
 		t.Fatal("done event missing session_id")
 	}
+	if first.done.Generation == nil {
+		t.Fatal("done event missing generation metrics")
+	}
+	if first.done.Generation.FirstTokenLatencyMS <= 0 || first.done.Generation.GenerationDurationMS <= 0 {
+		t.Fatalf("generation timing = %#v, want positive values", first.done.Generation)
+	}
+	if first.done.Generation.CompletionTokens != 6 || first.done.Generation.ReasoningTokens != 1 || first.done.Generation.TokensPerSecond <= 0 {
+		t.Fatalf("generation metrics = %#v", first.done.Generation)
+	}
 
 	// A follow-up carrying the session_id must reuse the same conversation.
 	second := postWebUIChat(t, apiServer.URL, fmt.Sprintf(`{"session_id":%q,"message":"again"}`, first.done.SessionID))
@@ -167,6 +182,9 @@ func TestWebUIModelCommandReturnsUpdatedRuntimeModel(t *testing.T) {
 	switchResult := postWebUIChat(t, apiServer.URL, `{"message":"/model fast"}`)
 	if switchResult.done.Model != "selected-model" || switchResult.done.APIType != string(agent.APITypeOpenAI) {
 		t.Fatalf("switch done event = %#v, want openai selected-model", switchResult.done)
+	}
+	if switchResult.done.Generation != nil {
+		t.Fatalf("model command generation = %#v, want nil", switchResult.done.Generation)
 	}
 
 	resetBody := fmt.Sprintf(`{"session_id":%q,"message":"/model default"}`, switchResult.done.SessionID)
@@ -342,10 +360,11 @@ type webUIResult struct {
 }
 
 type doneEvent struct {
-	SessionID string `json:"session_id"`
-	Reply     string `json:"reply"`
-	APIType   string `json:"api_type"`
-	Model     string `json:"model"`
+	SessionID  string             `json:"session_id"`
+	Reply      string             `json:"reply"`
+	APIType    string             `json:"api_type"`
+	Model      string             `json:"model"`
+	Generation *GenerationMetrics `json:"generation"`
 }
 
 func postWebUIChat(t *testing.T, baseURL, body string) webUIResult {

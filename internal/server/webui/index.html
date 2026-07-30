@@ -702,6 +702,15 @@
   .user-file svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--signal); }
   .user-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+  .message-meta {
+    width: 100%;
+    margin: 7px 4px 0;
+    color: var(--text-soft);
+    font: 600 12px/1.5 ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    text-align: right;
+    letter-spacing: .2px;
+    text-shadow: 0 0 8px rgba(var(--signal-rgb),.2);
+  }
   .message-actions {
     min-height: 28px;
     margin: 7px 4px 0;
@@ -1988,6 +1997,40 @@
     });
   }
 
+  function addMessageMeta(bubble, generation) {
+    var stack = bubble && bubble.parentElement;
+    if (!stack) return;
+    var previous = stack.querySelector(".message-meta");
+    if (previous) previous.remove();
+    if (!generation) return;
+
+    var firstTokenLatency = Number(generation.first_token_latency_ms);
+    var tokensPerSecond = Number(generation.tokens_per_second);
+    var parts = [];
+    if (isFinite(firstTokenLatency) && firstTokenLatency > 0) {
+      parts.push("首字 " + Math.round(firstTokenLatency) + " ms");
+    }
+    if (isFinite(tokensPerSecond) && tokensPerSecond > 0) {
+      parts.push("约 " + tokensPerSecond.toFixed(1).replace(/\.0$/, "") + " token/s");
+    }
+    if (!parts.length) return;
+
+    var row = document.createElement("div");
+    row.className = "message-meta";
+    row.textContent = parts.join(" · ");
+    row.setAttribute("aria-label", row.textContent);
+
+    var details = [];
+    var completionTokens = Number(generation.completion_tokens);
+    var reasoningTokens = Number(generation.reasoning_tokens);
+    var generationDuration = Number(generation.generation_duration_ms);
+    if (isFinite(completionTokens) && completionTokens > 0) details.push("输出 " + Math.round(completionTokens) + " tokens");
+    if (isFinite(reasoningTokens) && reasoningTokens > 0) details.push("其中推理 " + Math.round(reasoningTokens) + " tokens");
+    if (isFinite(generationDuration) && generationDuration > 0) details.push("生成区间 " + Math.round(generationDuration) + " ms");
+    if (details.length) row.title = details.join(" · ");
+    stack.appendChild(row);
+  }
+
   function addMessageControls(bubble, runId, reply) {
     var stack = bubble.parentElement;
     if (!stack) return;
@@ -2163,6 +2206,7 @@
             bubble.classList.add("rendered");
             var finalReply = done.reply || streamed;
             renderReply(bubble, finalReply);
+            addMessageMeta(bubble, done.generation);
             addMessageControls(bubble, done.run_id, finalReply);
           } else if (evt.event === "stopped") {
             finished = true;

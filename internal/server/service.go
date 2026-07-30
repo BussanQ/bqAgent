@@ -100,12 +100,44 @@ const (
 	mixedOnlyPlaceholder = "[图片和文件附件]"
 )
 
+type GenerationMetrics struct {
+	FirstTokenLatencyMS  int64   `json:"first_token_latency_ms"`
+	CompletionTokens     int     `json:"completion_tokens,omitempty"`
+	ReasoningTokens      int     `json:"reasoning_tokens,omitempty"`
+	GenerationDurationMS int64   `json:"generation_duration_ms,omitempty"`
+	TokensPerSecond      float64 `json:"tokens_per_second,omitempty"`
+}
+
 type TurnResponse struct {
-	SessionID string `json:"session_id"`
-	Reply     string `json:"reply"`
-	RunID     string `json:"run_id,omitempty"`
-	Model     string `json:"model,omitempty"`
-	Streamed  bool   `json:"-"`
+	SessionID  string             `json:"session_id"`
+	Reply      string             `json:"reply"`
+	RunID      string             `json:"run_id,omitempty"`
+	Model      string             `json:"model,omitempty"`
+	Generation *GenerationMetrics `json:"generation,omitempty"`
+	Streamed   bool               `json:"-"`
+}
+
+func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *GenerationMetrics {
+	if !metrics.Available || metrics.FirstTokenLatency < 0 {
+		return nil
+	}
+	firstTokenLatencyMS := metrics.FirstTokenLatency.Milliseconds()
+	if firstTokenLatencyMS == 0 {
+		firstTokenLatencyMS = 1
+	}
+	generation := &GenerationMetrics{
+		FirstTokenLatencyMS: firstTokenLatencyMS,
+		CompletionTokens:    metrics.CompletionTokens,
+		ReasoningTokens:     metrics.ReasoningTokens,
+		TokensPerSecond:     metrics.TokensPerSecond,
+	}
+	if metrics.GenerationDuration > 0 {
+		generation.GenerationDurationMS = metrics.GenerationDuration.Milliseconds()
+		if generation.GenerationDurationMS == 0 {
+			generation.GenerationDurationMS = 1
+		}
+	}
+	return generation
 }
 
 type TurnOptions struct {
@@ -551,7 +583,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if options.MaxIterations > 0 {
 		maxTurns = options.MaxIterations
 	}
-	result, updatedMessages, err := app.RunConversationTurn(ctx, conversation.Messages, maxTurns)
+	result, updatedMessages, generation, err := app.RunConversationTurnWithMetrics(ctx, conversation.Messages, maxTurns)
 	if err != nil {
 		conversation.Messages = agent.BoundWorkingMessages(updatedMessages, service.context)
 		// Best effort: even a failed model/tool request may already have pruned a
@@ -569,7 +601,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	service.appendMemory(effectiveText, result)
 	writeTurnReply(logWriter, result, options.Stream)
 
-	return TurnResponse{SessionID: conversation.Session.ID(), Reply: result, RunID: runID, Streamed: options.Stream}, nil
+	return TurnResponse{
+		SessionID:  conversation.Session.ID(),
+		Reply:      result,
+		RunID:      runID,
+		Generation: generationMetricsFromAgent(generation),
+		Streamed:   options.Stream,
+	}, nil
 }
 
 func (service *Service) completeConversation(conversation *appruntime.Conversation) error {
