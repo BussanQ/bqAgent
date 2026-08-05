@@ -138,6 +138,8 @@ func (channel *WebUIChannel) RegisterRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("/", channel.handleIndex)
 	mux.HandleFunc("/api/v1/webui/chat", channel.handleStreamChat)
+	mux.HandleFunc("/api/v1/webui/workspace", channel.handleWorkspaceList)
+	mux.HandleFunc("/api/v1/webui/workspace/preview", channel.handleWorkspacePreview)
 }
 
 // Start has no work to do: the web UI is purely request-driven.

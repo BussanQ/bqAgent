@@ -360,6 +360,8 @@ The command immediately prints the session ID, session directory, and log path.
 - `GET /api/v1/status` (effective built-in LLM API type and model)
 - `POST /api/v1/chat`
 - `POST /api/v1/webui/chat`
+- `GET /api/v1/webui/workspace` (paginated workspace directory listing)
+- `GET /api/v1/webui/workspace/preview` (read-only workspace file preview)
 - `POST /api/v1/chat/stop`
 - `POST /api/v1/serverchan/chat`
 - `POST /api/v1/serverchan/bot/webhook`
@@ -372,6 +374,8 @@ It never exposes API keys or provider endpoint URLs. The WebUI displays this
 identity under the bqagent title when the endpoint is available.
 
 `GET /` serves a self-contained, single-page chat UI (HTML/CSS/JS embedded in the binary, no external assets). Open `http://127.0.0.1:8080` in a browser and chat directly. The UI supports light/dark themes and safely renders Markdown headings, lists, task lists, tables, blockquotes, links, images, and copyable fenced code blocks, making README-style `.md` content easy to read. Replies stream token-by-token over Server-Sent Events from `POST /api/v1/webui/chat`; while a turn is running, the send button becomes a stop button backed by the channel-independent `POST /api/v1/chat/stop` endpoint, which cancels the active model request and tool execution identified by `turn_id`. The cancellation registry lives in the shared conversation service, so other channels can opt in later without WebUI-specific stop logic. `event: progress` reports iterations, tool activity, and stage checkpoints. Long WebUI work pauses with a persisted stage summary, so replying "继续" resumes the same `session_id` instead of restarting exploration. The web UI is enabled by default and can be disabled through the [environment variables](#environment-variables) configuration.
+
+The workspace button opens a desktop sidebar or mobile drawer. Directories load lazily in pages; selecting a regular file switches the sidebar in place to a read-only preview, and the back button restores the previous tree position. UTF-8 text previews include up to the first 512 KiB, while PNG, JPEG, GIF, and WebP previews are limited to 3 MiB; other binary files show metadata only. The tree refreshes after every completed chat turn and also has a manual refresh button. Changes made by an external program while the UI is idle require a manual refresh. Everything except a `.git` component is visible—including `.env`, `.agent`, and `.gitignore`-excluded content—so do not expose the WebUI to untrusted users. Symbolic links are listed but cannot be expanded, previewed, or attached from the explorer.
 
 The “+” button in the WebUI composer can upload browser-local files or reference paths inside the server workspace. A turn accepts up to 5 files, 2 MiB each and 6 MiB total. Uploads are stored under `.agent/uploads/<session-id>/` without overwriting same-name files. UTF-8 text is inlined into the turn context up to 64 KiB per file, with a truncation note and the full `read_file`-accessible path; binary files contribute path metadata only. Server paths must remain inside the workspace and cannot escape through `..` components or symbolic links.
 

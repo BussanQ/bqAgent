@@ -8,9 +8,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/tools"
@@ -79,6 +83,16 @@ func TestWebUIServesIndex(t *testing.T) {
 		`id="server-file-path"`,
 		`var pendingFiles = []`,
 		`files: sentFiles`,
+		`id="workspace-toggle"`,
+		`id="workspace-sidebar"`,
+		`id="workspace-tree"`,
+		`id="workspace-preview-view"`,
+		`id="workspace-preview-attach"`,
+		`function renderWorkspaceTree()`,
+		`function loadWorkspacePreview()`,
+		`function addWorkspacePath(value, size)`,
+		`/api/v1/webui/workspace?path=`,
+		`/api/v1/webui/workspace/preview?path=`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("served page missing WebUI feature %q", expected)
@@ -108,6 +122,15 @@ func TestWebUIDisabledDoesNotServeIndex(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 when web UI disabled", response.StatusCode)
+	}
+
+	workspaceResponse, err := http.Get(apiServer.URL + "/api/v1/webui/workspace")
+	if err != nil {
+		t.Fatalf("GET workspace endpoint failed: %v", err)
+	}
+	defer workspaceResponse.Body.Close()
+	if workspaceResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("workspace status = %d, want 404 when web UI disabled", workspaceResponse.StatusCode)
 	}
 }
 
@@ -331,6 +354,227 @@ func TestWebUIStopCancelsActiveTurn(t *testing.T) {
 	if stopPayload.Stopped {
 		t.Fatal("completed turn still reported as active")
 	}
+}
+
+func TestWebUIWorkspaceList(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceTestFile := func(relative string, data []byte) {
+		t.Helper()
+		absolute := filepath.Join(root, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(absolute), 0o755); err != nil {
+			t.Fatalf("create parent for %s: %v", relative, err)
+		}
+		if err := os.WriteFile(absolute, data, 0o644); err != nil {
+			t.Fatalf("write %s: %v", relative, err)
+		}
+	}
+	writeWorkspaceTestFile(".git/secret", []byte("hidden"))
+	writeWorkspaceTestFile(".agent/AGENT.md", []byte("visible agent config"))
+	writeWorkspaceTestFile(".env", []byte("VISIBLE_IN_EXPLORER=true"))
+	writeWorkspaceTestFile("docs/readme.txt", []byte("nested"))
+	writeWorkspaceTestFile("root.txt", []byte("root"))
+	for index := 0; index < webUIWorkspacePageSize+1; index++ {
+		writeWorkspaceTestFile(fmt.Sprintf("many/%03d.txt", index), []byte("page"))
+	}
+	symlinkCreated := os.Symlink("docs", filepath.Join(root, "docs-link")) == nil
+
+	service := newTestService(root, "http://example.invalid")
+	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	var listing webUIWorkspaceListResponse
+	headers := getWebUIJSON(t, apiServer.URL, "/api/v1/webui/workspace", &listing)
+	if cacheControl := headers.Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("cache-control = %q, want no-store", cacheControl)
+	}
+	if listing.Path != "" {
+		t.Fatalf("root listing path = %q, want empty", listing.Path)
+	}
+	entriesByName := make(map[string]webUIWorkspaceEntry)
+	seenNonDirectory := false
+	for _, entry := range listing.Entries {
+		entriesByName[entry.Name] = entry
+		if entry.Name == ".git" {
+			t.Fatal("root listing exposed .git")
+		}
+		if entry.Type == "directory" {
+			if seenNonDirectory {
+				t.Fatalf("directory %q appeared after a non-directory", entry.Name)
+			}
+		} else {
+			seenNonDirectory = true
+		}
+	}
+	for _, visible := range []string{".agent", ".env", "docs", "many", "root.txt"} {
+		if _, ok := entriesByName[visible]; !ok {
+			t.Fatalf("root listing missing %q: %#v", visible, listing.Entries)
+		}
+	}
+	if entry := entriesByName["root.txt"]; entry.Type != "file" || !entry.Attachable || entry.Size != 4 {
+		t.Fatalf("root.txt entry = %#v, want attachable four-byte file", entry)
+	}
+	if symlinkCreated {
+		if entry := entriesByName["docs-link"]; entry.Type != "symlink" || entry.Attachable {
+			t.Fatalf("docs-link entry = %#v, want non-attachable symlink", entry)
+		}
+		if status := webUIRequestStatus(t, http.MethodGet, apiServer.URL+"/api/v1/webui/workspace?path=docs-link"); status != http.StatusBadRequest {
+			t.Fatalf("symlink directory status = %d, want 400", status)
+		}
+	}
+
+	var nested webUIWorkspaceListResponse
+	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/workspace?path="+url.QueryEscape("docs"), &nested)
+	if nested.Path != "docs" || len(nested.Entries) != 1 || nested.Entries[0].Path != "docs/readme.txt" {
+		t.Fatalf("nested listing = %#v", nested)
+	}
+
+	var firstPage webUIWorkspaceListResponse
+	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/workspace?path=many", &firstPage)
+	if len(firstPage.Entries) != webUIWorkspacePageSize || firstPage.NextOffset == nil || *firstPage.NextOffset != webUIWorkspacePageSize {
+		t.Fatalf("first page entries=%d next=%v", len(firstPage.Entries), firstPage.NextOffset)
+	}
+	var secondPage webUIWorkspaceListResponse
+	getWebUIJSON(t, apiServer.URL, fmt.Sprintf("/api/v1/webui/workspace?path=many&offset=%d", *firstPage.NextOffset), &secondPage)
+	if len(secondPage.Entries) != 1 || secondPage.NextOffset != nil || secondPage.Entries[0].Name != "250.txt" {
+		t.Fatalf("second page = %#v", secondPage)
+	}
+
+	for _, test := range []struct {
+		name   string
+		target string
+		status int
+	}{
+		{name: "git hidden", target: "/api/v1/webui/workspace?path=.git", status: http.StatusNotFound},
+		{name: "parent traversal", target: "/api/v1/webui/workspace?path=..%2Foutside", status: http.StatusBadRequest},
+		{name: "absolute drive", target: "/api/v1/webui/workspace?path=C%3A%2FWindows", status: http.StatusBadRequest},
+		{name: "negative offset", target: "/api/v1/webui/workspace?offset=-1", status: http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if status := webUIRequestStatus(t, http.MethodGet, apiServer.URL+test.target); status != test.status {
+				t.Fatalf("status = %d, want %d", status, test.status)
+			}
+		})
+	}
+	if status := webUIRequestStatus(t, http.MethodPost, apiServer.URL+"/api/v1/webui/workspace"); status != http.StatusMethodNotAllowed {
+		t.Fatalf("POST workspace status = %d, want 405", status)
+	}
+}
+
+func TestWebUIWorkspacePreview(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceTestFile := func(relative string, data []byte) {
+		t.Helper()
+		absolute := filepath.Join(root, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(absolute), 0o755); err != nil {
+			t.Fatalf("create parent for %s: %v", relative, err)
+		}
+		if err := os.WriteFile(absolute, data, 0o644); err != nil {
+			t.Fatalf("write %s: %v", relative, err)
+		}
+	}
+	writeWorkspaceTestFile("notes.txt", []byte("hello workspace"))
+	largeText := strings.Repeat("界", maxWebUIPreviewTextBytes/3+10)
+	writeWorkspaceTestFile("large.txt", []byte(largeText))
+	writeWorkspaceTestFile("binary.bin", []byte{0, 1, 2, 3, 4})
+	pngData, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatalf("decode PNG fixture: %v", err)
+	}
+	writeWorkspaceTestFile("pixel.png", pngData)
+	oversizedPNG := make([]byte, maxWebUIPreviewImageBytes+1)
+	copy(oversizedPNG, pngData)
+	writeWorkspaceTestFile("oversized.png", oversizedPNG)
+	writeWorkspaceTestFile("folder/file.txt", []byte("nested"))
+	writeWorkspaceTestFile(".git/secret.txt", []byte("hidden"))
+
+	service := newTestService(root, "http://example.invalid")
+	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	var textPreview webUIWorkspacePreviewResponse
+	headers := getWebUIJSON(t, apiServer.URL, "/api/v1/webui/workspace/preview?path=notes.txt", &textPreview)
+	if headers.Get("Cache-Control") != "no-store" {
+		t.Fatalf("cache-control = %q, want no-store", headers.Get("Cache-Control"))
+	}
+	if textPreview.PreviewType != "text" || textPreview.Content != "hello workspace" || textPreview.Truncated || !textPreview.Attachable {
+		t.Fatalf("text preview = %#v", textPreview)
+	}
+
+	var largePreview webUIWorkspacePreviewResponse
+	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/workspace/preview?path=large.txt", &largePreview)
+	if largePreview.PreviewType != "text" || !largePreview.Truncated || len(largePreview.Content) > maxWebUIPreviewTextBytes || !utf8.ValidString(largePreview.Content) {
+		t.Fatalf("large preview type=%q truncated=%v bytes=%d valid=%v", largePreview.PreviewType, largePreview.Truncated, len(largePreview.Content), utf8.ValidString(largePreview.Content))
+	}
+
+	var imagePreview webUIWorkspacePreviewResponse
+	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/workspace/preview?path=pixel.png", &imagePreview)
+	decodedImage, decodeErr := base64.StdEncoding.DecodeString(imagePreview.DataBase64)
+	if imagePreview.PreviewType != "image" || imagePreview.MIMEType != "image/png" || decodeErr != nil || string(decodedImage) != string(pngData) {
+		t.Fatalf("image preview type=%q mime=%q decodeErr=%v bytes=%d", imagePreview.PreviewType, imagePreview.MIMEType, decodeErr, len(decodedImage))
+	}
+
+	var binaryPreview webUIWorkspacePreviewResponse
+	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/workspace/preview?path=binary.bin", &binaryPreview)
+	if binaryPreview.PreviewType != "binary" || binaryPreview.Reason == "" || binaryPreview.Content != "" || binaryPreview.DataBase64 != "" {
+		t.Fatalf("binary preview = %#v", binaryPreview)
+	}
+
+	var oversizedPreview webUIWorkspacePreviewResponse
+	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/workspace/preview?path=oversized.png", &oversizedPreview)
+	if oversizedPreview.PreviewType != "unavailable" || oversizedPreview.Reason == "" || oversizedPreview.Attachable {
+		t.Fatalf("oversized preview = %#v", oversizedPreview)
+	}
+
+	for _, test := range []struct {
+		name   string
+		target string
+		status int
+	}{
+		{name: "directory", target: "/api/v1/webui/workspace/preview?path=folder", status: http.StatusBadRequest},
+		{name: "missing", target: "/api/v1/webui/workspace/preview?path=missing.txt", status: http.StatusNotFound},
+		{name: "git hidden", target: "/api/v1/webui/workspace/preview?path=.git%2Fsecret.txt", status: http.StatusNotFound},
+		{name: "outside", target: "/api/v1/webui/workspace/preview?path=..%2Foutside.txt", status: http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if status := webUIRequestStatus(t, http.MethodGet, apiServer.URL+test.target); status != test.status {
+				t.Fatalf("status = %d, want %d", status, test.status)
+			}
+		})
+	}
+}
+
+func getWebUIJSON(t *testing.T, baseURL, target string, destination any) http.Header {
+	t.Helper()
+	response, err := http.Get(baseURL + target)
+	if err != nil {
+		t.Fatalf("GET %s failed: %v", target, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("GET %s status = %d, want 200: %s", target, response.StatusCode, body)
+	}
+	if err := json.NewDecoder(response.Body).Decode(destination); err != nil {
+		t.Fatalf("decode GET %s response: %v", target, err)
+	}
+	return response.Header.Clone()
+}
+
+func webUIRequestStatus(t *testing.T, method, target string) int {
+	t.Helper()
+	request, err := http.NewRequest(method, target, nil)
+	if err != nil {
+		t.Fatalf("create %s request: %v", method, err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("%s %s failed: %v", method, target, err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+	return response.StatusCode
 }
 
 type cancelAwareTurnClient struct {

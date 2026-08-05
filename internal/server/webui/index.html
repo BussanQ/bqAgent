@@ -37,6 +37,7 @@
     --particle-static: rgba(53, 184, 255, .20);
     --radius: 14px;
     --maxw: 1080px;
+    --workspace-width: clamp(300px, 26vw, 420px);
   }
 
   @media (prefers-color-scheme: light) {
@@ -311,6 +312,256 @@
     background: var(--panel);
   }
   .icon-button svg { width: 17px; height: 17px; }
+
+  .workspace-toggle { color: var(--text-soft); }
+  .workspace-toggle[aria-expanded="true"] {
+    color: var(--signal);
+    border-color: var(--line-strong);
+    background: rgba(var(--signal-rgb), .09);
+  }
+
+  .app-layout {
+    position: relative;
+    z-index: 1;
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    overflow: hidden;
+  }
+  .conversation-column {
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .workspace-sidebar {
+    position: relative;
+    z-index: 4;
+    width: var(--workspace-width);
+    min-width: var(--workspace-width);
+    min-height: 0;
+    flex: 0 0 var(--workspace-width);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-right: 1px solid var(--line);
+    background: var(--panel-strong);
+    box-shadow: 18px 0 50px rgba(0, 0, 0, .16);
+    backdrop-filter: blur(22px);
+    transition: margin-left .22s cubic-bezier(.22, .8, .28, 1), transform .22s cubic-bezier(.22, .8, .28, 1);
+  }
+  .app-layout.workspace-closed .workspace-sidebar { margin-left: calc(0px - var(--workspace-width)); }
+  .workspace-backdrop[hidden] { display: none; }
+  .workspace-backdrop { display: none; }
+  .workspace-view {
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .workspace-view[hidden] { display: none; }
+  .workspace-toolbar {
+    min-height: 58px;
+    flex: 0 0 auto;
+    padding: 10px 11px 9px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(var(--signal-rgb), .035);
+  }
+  .workspace-heading { min-width: 0; flex: 1 1 auto; }
+  .workspace-heading strong {
+    display: block;
+    overflow: hidden;
+    color: var(--text);
+    font: 700 12px/1.35 ui-monospace, "SFMono-Regular", Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .workspace-heading span {
+    display: block;
+    overflow: hidden;
+    margin-top: 2px;
+    color: var(--text-muted);
+    font: 10px/1.3 ui-monospace, "SFMono-Regular", Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .workspace-tool {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border-radius: 9px;
+    color: var(--text-soft);
+    background: transparent;
+  }
+  .workspace-tool svg { width: 15px; height: 15px; }
+  .workspace-tree-scroll {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 8px 7px 16px;
+    scrollbar-color: rgba(var(--signal-rgb), .28) transparent;
+  }
+  .workspace-tree-status {
+    min-height: 22px;
+    padding: 4px 8px 7px;
+    color: var(--text-muted);
+    font: 10px/1.4 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+  .workspace-tree-status:empty { display: none; }
+  .workspace-tree-status.error { color: var(--danger); }
+  .workspace-tree { min-width: 0; }
+  .workspace-row,
+  .workspace-load-more {
+    width: 100%;
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 8px 5px calc(7px + var(--tree-depth, 0) * 16px);
+    border-color: transparent;
+    border-radius: 8px;
+    color: var(--text-soft);
+    background: transparent;
+    box-shadow: none;
+    text-align: left;
+  }
+  .workspace-row:hover,
+  .workspace-load-more:hover {
+    transform: none;
+    border-color: rgba(var(--signal-rgb), .16);
+    background: rgba(var(--signal-rgb), .065);
+    box-shadow: none;
+  }
+  .workspace-row:disabled { opacity: .62; cursor: default; }
+  .workspace-row:disabled:hover { border-color: transparent; background: transparent; }
+  .workspace-row.active {
+    color: var(--text);
+    border-color: rgba(var(--signal-rgb), .25);
+    background: rgba(var(--signal-rgb), .10);
+  }
+  .workspace-chevron {
+    width: 10px;
+    flex: 0 0 10px;
+    color: var(--signal);
+    font-size: 10px;
+    transition: transform .15s ease;
+  }
+  .workspace-chevron.expanded { transform: rotate(90deg); }
+  .workspace-entry-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    color: var(--signal);
+  }
+  .workspace-entry-icon svg { width: 100%; height: 100%; display: block; }
+  .workspace-entry-icon.muted { color: var(--text-muted); }
+  .workspace-entry-name {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    font: 11px/1.35 ui-monospace, "SFMono-Regular", Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .workspace-entry-size {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font: 9px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+  .workspace-load-more {
+    justify-content: center;
+    color: var(--signal);
+    font: 10px/1.3 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+  .workspace-inline-state {
+    padding: 5px 8px 5px calc(30px + var(--tree-depth, 0) * 16px);
+    color: var(--text-muted);
+    font: 10px/1.4 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+  .workspace-inline-state.error { color: var(--danger); }
+  .workspace-preview-scroll {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 14px;
+  }
+  .workspace-preview-meta {
+    margin-bottom: 12px;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    color: var(--text-muted);
+    background: rgba(var(--signal-rgb), .035);
+    font: 10px/1.5 ui-monospace, "SFMono-Regular", Consolas, monospace;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  .workspace-preview-content { min-height: 100px; }
+  .workspace-preview-content pre {
+    min-width: 100%;
+    width: max-content;
+    max-width: none;
+    margin: 0;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--text);
+    background: var(--code-bg);
+    font: 11px/1.55 ui-monospace, "SFMono-Regular", Consolas, monospace;
+    white-space: pre;
+  }
+  .workspace-preview-content img {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    max-height: 60vh;
+    margin: 0 auto;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, .10);
+    object-fit: contain;
+  }
+  .workspace-preview-message {
+    padding: 22px 14px;
+    border: 1px dashed var(--line-strong);
+    border-radius: 10px;
+    color: var(--text-soft);
+    background: rgba(var(--signal-rgb), .035);
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  .workspace-preview-message.error { color: var(--danger); border-color: rgba(var(--danger-rgb), .42); }
+  .workspace-preview-truncated {
+    margin: 10px 0 0;
+    color: var(--progress);
+    font: 10px/1.45 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+  .workspace-preview-actions {
+    flex: 0 0 auto;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: rgba(var(--signal-rgb), .025);
+  }
+  .workspace-attach {
+    width: 100%;
+    min-height: 38px;
+    border-color: rgba(var(--signal-rgb), .38);
+    border-radius: 10px;
+    color: var(--bg);
+    background: var(--signal);
+    font-size: 12px;
+    font-weight: 750;
+  }
+  .workspace-attach:disabled { color: var(--text-muted); background: var(--panel); }
 
   main {
     position: relative;
@@ -868,6 +1119,32 @@
   .send.stop .send-icon { display: none; }
   .send.stop .stop-icon { display: block; }
 
+  @media (max-width: 900px) {
+    .workspace-sidebar {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: min(92vw, 420px);
+      min-width: min(92vw, 420px);
+      max-width: 420px;
+      margin-left: 0 !important;
+      transform: translateX(-104%);
+      box-shadow: 24px 0 70px rgba(0, 0, 0, .48);
+    }
+    .app-layout.workspace-open .workspace-sidebar { transform: translateX(0); }
+    .workspace-backdrop {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      display: block;
+      border: 0;
+      border-radius: 0;
+      background: rgba(1, 5, 12, .62);
+      box-shadow: none;
+      backdrop-filter: blur(3px);
+    }
+    .workspace-backdrop:hover { transform: none; border: 0; box-shadow: none; }
+  }
+
   @media (max-width: 720px) {
     header { padding: 12px; }
     .brand span { display: none; }
@@ -918,6 +1195,12 @@
       </div>
     </div>
     <div class="actions">
+      <button class="icon-button workspace-toggle" id="workspace-toggle" type="button" title="切换工作区文件" aria-label="切换工作区文件" aria-expanded="true" aria-controls="workspace-sidebar">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
+          <path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M3.5 10.5h17" stroke="currentColor" stroke-width="1.7"/>
+        </svg>
+      </button>
       <div class="status" id="status" role="status" aria-live="polite" aria-atomic="true">在线</div>
       <button class="icon-button" id="theme-toggle" type="button" title="切换主题" aria-label="切换明暗主题">
         <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
@@ -931,6 +1214,53 @@
       </button>
     </div>
   </header>
+  <div class="app-layout" id="app-layout">
+    <button class="workspace-backdrop" id="workspace-backdrop" type="button" aria-label="关闭工作区文件" hidden></button>
+    <aside class="workspace-sidebar" id="workspace-sidebar" aria-label="工作区文件">
+      <section class="workspace-view" id="workspace-tree-view">
+        <div class="workspace-toolbar">
+          <div class="workspace-heading">
+            <strong>工作区</strong>
+            <span>文件浏览器</span>
+          </div>
+          <button class="workspace-tool" id="workspace-refresh" type="button" title="刷新文件树" aria-label="刷新文件树">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M19 8a7.5 7.5 0 1 0 .4 7M19 4v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="workspace-tool" id="workspace-close" type="button" title="收起工作区文件" aria-label="收起工作区文件">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="workspace-tree-scroll" id="workspace-tree-scroll">
+          <div class="workspace-tree-status" id="workspace-tree-status" role="status" aria-live="polite"></div>
+          <div class="workspace-tree" id="workspace-tree" role="tree" aria-label="工作区文件树"></div>
+        </div>
+      </section>
+      <section class="workspace-view" id="workspace-preview-view" hidden>
+        <div class="workspace-toolbar">
+          <button class="workspace-tool" id="workspace-preview-back" type="button" title="返回文件树" aria-label="返回文件树">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M19 12H5m0 0 6-6m-6 6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="workspace-heading">
+            <strong id="workspace-preview-title">文件预览</strong>
+            <span id="workspace-preview-path"></span>
+          </div>
+          <button class="workspace-tool" id="workspace-preview-refresh" type="button" title="刷新文件预览" aria-label="刷新文件预览">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M19 8a7.5 7.5 0 1 0 .4 7M19 4v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="workspace-tool" id="workspace-preview-close" type="button" title="收起工作区文件" aria-label="收起工作区文件">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="workspace-preview-scroll" id="workspace-preview-scroll">
+          <div class="workspace-preview-meta" id="workspace-preview-meta"></div>
+          <div class="workspace-preview-content" id="workspace-preview-content"></div>
+        </div>
+        <div class="workspace-preview-actions">
+          <button class="workspace-attach" id="workspace-preview-attach" type="button" disabled>加入附件</button>
+        </div>
+      </section>
+    </aside>
+    <div class="conversation-column">
   <main id="main">
     <div class="thread" id="thread">
       <div class="empty" id="empty">
@@ -985,15 +1315,38 @@
     </div>
     <div class="composer-meta">Enter 发送 · Shift + Enter 换行 · 支持 Markdown · 可粘贴图片或添加文件</div>
   </footer>
+    </div>
+  </div>
 
 <script>
 (function () {
   "use strict";
   var SESSION_KEY = "bqagent.webui.session";
   var THEME_KEY = "bqagent.webui.theme";
+  var WORKSPACE_SIDEBAR_KEY = "bqagent.webui.workspace-sidebar";
   var thread = document.getElementById("thread");
   var main = document.getElementById("main");
   var particleCanvas = document.getElementById("particle-field");
+  var appLayout = document.getElementById("app-layout");
+  var workspaceSidebar = document.getElementById("workspace-sidebar");
+  var workspaceToggle = document.getElementById("workspace-toggle");
+  var workspaceBackdrop = document.getElementById("workspace-backdrop");
+  var workspaceClose = document.getElementById("workspace-close");
+  var workspaceTreeView = document.getElementById("workspace-tree-view");
+  var workspaceTreeScroll = document.getElementById("workspace-tree-scroll");
+  var workspaceTreeStatus = document.getElementById("workspace-tree-status");
+  var workspaceTree = document.getElementById("workspace-tree");
+  var workspaceRefresh = document.getElementById("workspace-refresh");
+  var workspacePreviewView = document.getElementById("workspace-preview-view");
+  var workspacePreviewBack = document.getElementById("workspace-preview-back");
+  var workspacePreviewClose = document.getElementById("workspace-preview-close");
+  var workspacePreviewRefresh = document.getElementById("workspace-preview-refresh");
+  var workspacePreviewTitle = document.getElementById("workspace-preview-title");
+  var workspacePreviewPath = document.getElementById("workspace-preview-path");
+  var workspacePreviewScroll = document.getElementById("workspace-preview-scroll");
+  var workspacePreviewMeta = document.getElementById("workspace-preview-meta");
+  var workspacePreviewContent = document.getElementById("workspace-preview-content");
+  var workspacePreviewAttach = document.getElementById("workspace-preview-attach");
   var input = document.getElementById("input");
   var attachmentTray = document.getElementById("attachment-tray");
   var attachmentError = document.getElementById("attachment-error");
@@ -1028,6 +1381,15 @@
   var MAX_PENDING_FILE_BYTES = 2 * 1024 * 1024;
   var MAX_PENDING_TOTAL_FILE_BYTES = 6 * 1024 * 1024;
   var ALLOWED_IMAGE_TYPES = { "image/png": true, "image/jpeg": true, "image/gif": true };
+  var WORKSPACE_PREVIEW_IMAGE_TYPES = { "image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true };
+  var workspaceDirectories = Object.create(null);
+  var workspaceExpanded = Object.create(null);
+  var workspaceTreeScrollTop = 0;
+  var workspaceCurrentPreview = null;
+  var workspacePreviewRequestID = 0;
+  var workspaceRefreshInFlight = false;
+  var workspaceDesktopQuery = window.matchMedia ? window.matchMedia("(min-width: 901px)") : null;
+  workspaceExpanded[""] = true;
 
   var PARTICLE_MAX_COUNT = 80;
   var PARTICLE_TARGET_FPS = 30;
@@ -1296,6 +1658,374 @@
     }
   }
 
+  function isWorkspaceDesktop() {
+    return !workspaceDesktopQuery || workspaceDesktopQuery.matches;
+  }
+
+  function setWorkspaceSidebarOpen(open, persist) {
+    open = Boolean(open);
+    var desktop = isWorkspaceDesktop();
+    appLayout.classList.toggle("workspace-closed", desktop && !open);
+    appLayout.classList.toggle("workspace-open", !desktop && open);
+    workspaceBackdrop.hidden = desktop || !open;
+    workspaceToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    workspaceSidebar.setAttribute("aria-hidden", open ? "false" : "true");
+    if ("inert" in workspaceSidebar) workspaceSidebar.inert = !open;
+    if (persist && desktop) {
+      try { localStorage.setItem(WORKSPACE_SIDEBAR_KEY, open ? "open" : "closed"); } catch (_) {}
+    }
+  }
+
+  function syncWorkspaceSidebarForViewport() {
+    if (isWorkspaceDesktop()) {
+      var saved = "";
+      try { saved = localStorage.getItem(WORKSPACE_SIDEBAR_KEY) || ""; } catch (_) {}
+      setWorkspaceSidebarOpen(saved !== "closed", false);
+    } else {
+      setWorkspaceSidebarOpen(false, false);
+    }
+  }
+
+  function workspaceDirectoryState(directoryPath) {
+    if (!workspaceDirectories[directoryPath]) {
+      workspaceDirectories[directoryPath] = {
+        path: directoryPath,
+        entries: [],
+        nextOffset: null,
+        loaded: false,
+        loading: false,
+        error: "",
+        requestID: 0
+      };
+    }
+    return workspaceDirectories[directoryPath];
+  }
+
+  async function workspaceFetchJSON(url) {
+    var response = await fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" });
+    if (!response.ok) {
+      var message = "HTTP " + response.status;
+      try {
+        var errorPayload = await response.json();
+        if (errorPayload && errorPayload.error) message = errorPayload.error;
+      } catch (_) {}
+      throw new Error(message);
+    }
+    return response.json();
+  }
+
+  async function requestWorkspaceDirectoryPage(directoryPath, offset) {
+    var url = "/api/v1/webui/workspace?path=" + encodeURIComponent(directoryPath) + "&offset=" + offset;
+    var payload = await workspaceFetchJSON(url);
+    return {
+      entries: payload && Array.isArray(payload.entries) ? payload.entries : [],
+      nextOffset: payload && typeof payload.next_offset === "number" ? payload.next_offset : null
+    };
+  }
+
+  async function loadWorkspaceDirectory(directoryPath, append, preservePages) {
+    var state = workspaceDirectoryState(directoryPath);
+    if (state.loading && append) return;
+    var priorEntries = state.entries.slice();
+    var priorNextOffset = state.nextOffset;
+    var pages = preservePages ? Math.max(1, Math.ceil(priorEntries.length / 250)) : 1;
+    var requestID = ++state.requestID;
+    state.loading = true;
+    state.error = "";
+    renderWorkspaceTree();
+    try {
+      var gathered = append ? state.entries.slice() : [];
+      var nextOffset = append ? state.nextOffset : 0;
+      if (append && typeof nextOffset !== "number") return;
+      for (var pageIndex = 0; pageIndex < pages && typeof nextOffset === "number"; pageIndex++) {
+        var page = await requestWorkspaceDirectoryPage(directoryPath, nextOffset);
+        if (requestID !== state.requestID) return;
+        var seen = Object.create(null);
+        gathered.forEach(function (entry) { seen[entry.path] = true; });
+        page.entries.forEach(function (entry) {
+          if (!seen[entry.path]) {
+            seen[entry.path] = true;
+            gathered.push(entry);
+          }
+        });
+        nextOffset = page.nextOffset;
+        if (append) break;
+      }
+      if (requestID !== state.requestID) return;
+      state.entries = gathered;
+      state.nextOffset = nextOffset;
+      state.loaded = true;
+    } catch (error) {
+      if (requestID !== state.requestID) return;
+      if (!append && priorEntries.length) {
+        state.entries = priorEntries;
+        state.nextOffset = priorNextOffset;
+      }
+      state.error = error && error.message ? error.message : String(error);
+    } finally {
+      if (requestID === state.requestID) {
+        state.loading = false;
+        renderWorkspaceTree();
+      }
+    }
+  }
+
+  function createWorkspaceEntryIcon(type) {
+    var icon = document.createElement("span");
+    icon.className = "workspace-entry-icon" + (type === "symlink" || type === "other" ? " muted" : "");
+    icon.setAttribute("aria-hidden", "true");
+    if (type === "directory") {
+      icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>';
+    } else if (type === "symlink") {
+      icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M9.5 14.5l5-5M8 17H6.5a3.5 3.5 0 0 1 0-7H10m4 0h3.5a3.5 3.5 0 0 1 0 7H14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+    } else {
+      icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M7 3.5h6l4 4V20H7zM13 3.5V8h4" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>';
+    }
+    return icon;
+  }
+
+  function appendWorkspaceInlineState(text, depth, error) {
+    var state = document.createElement("div");
+    state.className = "workspace-inline-state" + (error ? " error" : "");
+    state.style.setProperty("--tree-depth", depth);
+    state.textContent = text;
+    workspaceTree.appendChild(state);
+  }
+
+  function appendWorkspaceDirectory(directoryPath, depth) {
+    var state = workspaceDirectoryState(directoryPath);
+    state.entries.forEach(function (entry) {
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "workspace-row" + (workspaceCurrentPreview && workspaceCurrentPreview.path === entry.path ? " active" : "");
+      row.style.setProperty("--tree-depth", depth);
+      row.setAttribute("role", "treeitem");
+      row.setAttribute("aria-level", String(depth + 1));
+      row.title = entry.path;
+
+      var chevron = document.createElement("span");
+      chevron.className = "workspace-chevron";
+      if (entry.type === "directory") {
+        var expanded = Boolean(workspaceExpanded[entry.path]);
+        chevron.textContent = "▶";
+        chevron.classList.toggle("expanded", expanded);
+        row.setAttribute("aria-expanded", expanded ? "true" : "false");
+      }
+      row.appendChild(chevron);
+      row.appendChild(createWorkspaceEntryIcon(entry.type));
+
+      var name = document.createElement("span");
+      name.className = "workspace-entry-name";
+      name.textContent = entry.name;
+      row.appendChild(name);
+      if (entry.type === "file") {
+        var size = document.createElement("span");
+        size.className = "workspace-entry-size";
+        size.textContent = formatBytes(entry.size);
+        row.appendChild(size);
+      }
+
+      if (entry.type === "directory") {
+        row.addEventListener("click", function () {
+          workspaceExpanded[entry.path] = !workspaceExpanded[entry.path];
+          var child = workspaceDirectoryState(entry.path);
+          if (workspaceExpanded[entry.path] && !child.loaded && !child.loading) {
+            loadWorkspaceDirectory(entry.path, false, false);
+          } else {
+            renderWorkspaceTree();
+          }
+        });
+      } else if (entry.type === "file") {
+        row.addEventListener("click", function () { openWorkspacePreview(entry); });
+      } else {
+        row.disabled = true;
+        row.title = entry.path + "（符号链接或特殊文件不可浏览）";
+      }
+      workspaceTree.appendChild(row);
+
+      if (entry.type === "directory" && workspaceExpanded[entry.path]) {
+        var childState = workspaceDirectoryState(entry.path);
+        if (childState.loaded) appendWorkspaceDirectory(entry.path, depth + 1);
+        if (childState.loading) appendWorkspaceInlineState("加载中…", depth + 1, false);
+        if (childState.error) appendWorkspaceInlineState("加载失败：" + childState.error, depth + 1, true);
+      }
+    });
+
+    if (typeof state.nextOffset === "number") {
+      var more = document.createElement("button");
+      more.type = "button";
+      more.className = "workspace-load-more";
+      more.style.setProperty("--tree-depth", depth);
+      more.textContent = state.loading ? "加载中…" : "加载更多";
+      more.disabled = state.loading;
+      more.addEventListener("click", function () { loadWorkspaceDirectory(directoryPath, true, false); });
+      workspaceTree.appendChild(more);
+    }
+  }
+
+  function renderWorkspaceTree() {
+    var scrollTop = workspaceTreeScroll.scrollTop;
+    workspaceTree.textContent = "";
+    workspaceTreeStatus.textContent = "";
+    workspaceTreeStatus.classList.remove("error");
+    var root = workspaceDirectoryState("");
+    if (!root.loaded && root.loading) {
+      workspaceTreeStatus.textContent = "正在读取工作区…";
+    } else if (root.error && !root.entries.length) {
+      workspaceTreeStatus.textContent = "读取失败：" + root.error;
+      workspaceTreeStatus.classList.add("error");
+    } else if (root.loaded && !root.entries.length) {
+      workspaceTreeStatus.textContent = "工作区为空";
+    } else {
+      appendWorkspaceDirectory("", 0);
+      if (root.error) {
+        workspaceTreeStatus.textContent = "刷新失败，当前显示上次结果：" + root.error;
+        workspaceTreeStatus.classList.add("error");
+      }
+    }
+    workspaceTreeScroll.scrollTop = scrollTop;
+  }
+
+  async function refreshWorkspaceTree() {
+    if (workspaceRefreshInFlight) return;
+    workspaceRefreshInFlight = true;
+    workspaceRefresh.disabled = true;
+    var paths = Object.keys(workspaceDirectories).filter(function (directoryPath) {
+      return workspaceDirectories[directoryPath].loaded || directoryPath === "";
+    });
+    if (!paths.length) paths = [""];
+    try {
+      await Promise.all(paths.map(function (directoryPath) {
+        return loadWorkspaceDirectory(directoryPath, false, true);
+      }));
+    } finally {
+      workspaceRefreshInFlight = false;
+      workspaceRefresh.disabled = false;
+    }
+  }
+
+  function showWorkspaceTreeView() {
+    workspacePreviewView.hidden = true;
+    workspaceTreeView.hidden = false;
+    renderWorkspaceTree();
+    requestAnimationFrame(function () { workspaceTreeScroll.scrollTop = workspaceTreeScrollTop; });
+  }
+
+  function showWorkspacePreviewMessage(message, error) {
+    workspacePreviewContent.textContent = "";
+    var notice = document.createElement("div");
+    notice.className = "workspace-preview-message" + (error ? " error" : "");
+    notice.textContent = message;
+    workspacePreviewContent.appendChild(notice);
+  }
+
+  function updateWorkspacePreviewAttachState() {
+    var current = workspaceCurrentPreview;
+    var duplicate = Boolean(current && pendingFiles.some(function (file) {
+      return file.kind === "path" && file.path === current.path;
+    }));
+    var attachable = Boolean(current && current.payload && current.payload.attachable);
+    var countLimited = Boolean(current && pendingFiles.length >= MAX_PENDING_FILES);
+    var knownTotalBytes = pendingFiles.reduce(function (sum, file) { return sum + (Number(file.size) || 0); }, 0);
+    var totalLimited = Boolean(current && current.payload && current.payload.size && knownTotalBytes + current.payload.size > MAX_PENDING_TOTAL_FILE_BYTES);
+    workspacePreviewAttach.disabled = busy || !attachable || duplicate || countLimited || totalLimited;
+    if (duplicate) {
+      workspacePreviewAttach.textContent = "已加入附件";
+      workspacePreviewAttach.title = "该文件已在待发送附件中";
+    } else if (countLimited) {
+      workspacePreviewAttach.textContent = "已达 5 个附件上限";
+      workspacePreviewAttach.title = "请先移除一个待发送文件";
+    } else if (totalLimited) {
+      workspacePreviewAttach.textContent = "超过 6 MiB 合计上限";
+      workspacePreviewAttach.title = "请先移除部分待发送文件";
+    } else if (current && current.payload && !current.payload.attachable) {
+      workspacePreviewAttach.textContent = "超过 2 MiB 附件上限";
+      workspacePreviewAttach.title = "工作区路径附件单文件不能超过 2 MiB";
+    } else if (busy) {
+      workspacePreviewAttach.textContent = "生成期间不可添加";
+      workspacePreviewAttach.title = "请等待当前回复结束";
+    } else {
+      workspacePreviewAttach.textContent = "加入附件";
+      workspacePreviewAttach.title = "将此工作区文件加入当前消息";
+    }
+  }
+
+  function renderWorkspacePreview(payload) {
+    if (!workspaceCurrentPreview) return;
+    workspaceCurrentPreview.payload = payload;
+    workspacePreviewTitle.textContent = payload.name || pathBaseName(payload.path);
+    workspacePreviewPath.textContent = payload.path || workspaceCurrentPreview.path;
+    workspacePreviewMeta.textContent = (payload.path || workspaceCurrentPreview.path) + "\n" + formatBytes(payload.size) + " · " + (payload.mime_type || "未知类型");
+    workspacePreviewContent.textContent = "";
+    if (payload.preview_type === "text") {
+      var code = document.createElement("pre");
+      code.textContent = payload.content || "";
+      workspacePreviewContent.appendChild(code);
+      if (payload.truncated) {
+        var truncated = document.createElement("div");
+        truncated.className = "workspace-preview-truncated";
+        truncated.textContent = "预览已截断，仅显示前 512 KiB。";
+        workspacePreviewContent.appendChild(truncated);
+      }
+    } else if (payload.preview_type === "image") {
+      var mimeType = String(payload.mime_type || "").split(";")[0].toLowerCase();
+      if (WORKSPACE_PREVIEW_IMAGE_TYPES[mimeType] && payload.data_base64) {
+        var image = document.createElement("img");
+        image.alt = payload.name || "工作区图片预览";
+        image.src = "data:" + mimeType + ";base64," + payload.data_base64;
+        workspacePreviewContent.appendChild(image);
+      } else {
+        showWorkspacePreviewMessage("图片预览数据无效", true);
+      }
+    } else {
+      showWorkspacePreviewMessage(payload.reason || "该文件无法在浏览器中预览", false);
+    }
+    updateWorkspacePreviewAttachState();
+  }
+
+  async function loadWorkspacePreview() {
+    if (!workspaceCurrentPreview) return;
+    var currentPath = workspaceCurrentPreview.path;
+    var requestID = ++workspacePreviewRequestID;
+    workspacePreviewRefresh.disabled = true;
+    workspacePreviewMeta.textContent = currentPath;
+    showWorkspacePreviewMessage("正在读取文件…", false);
+    workspaceCurrentPreview.payload = null;
+    updateWorkspacePreviewAttachState();
+    try {
+      var payload = await workspaceFetchJSON("/api/v1/webui/workspace/preview?path=" + encodeURIComponent(currentPath));
+      if (requestID !== workspacePreviewRequestID || !workspaceCurrentPreview || workspaceCurrentPreview.path !== currentPath) return;
+      renderWorkspacePreview(payload);
+    } catch (error) {
+      if (requestID !== workspacePreviewRequestID || !workspaceCurrentPreview || workspaceCurrentPreview.path !== currentPath) return;
+      workspacePreviewMeta.textContent = currentPath;
+      showWorkspacePreviewMessage("预览失败：" + (error && error.message ? error.message : error), true);
+      updateWorkspacePreviewAttachState();
+    } finally {
+      if (requestID === workspacePreviewRequestID) workspacePreviewRefresh.disabled = false;
+    }
+  }
+
+  function openWorkspacePreview(entry) {
+    workspaceTreeScrollTop = workspaceTreeScroll.scrollTop;
+    workspaceCurrentPreview = { path: entry.path, name: entry.name, size: entry.size, payload: null };
+    workspaceTreeView.hidden = true;
+    workspacePreviewView.hidden = false;
+    workspacePreviewTitle.textContent = entry.name;
+    workspacePreviewPath.textContent = entry.path;
+    workspacePreviewScroll.scrollTop = 0;
+    setWorkspaceSidebarOpen(true, false);
+    renderWorkspaceTree();
+    loadWorkspacePreview();
+  }
+
+  function initializeWorkspaceExplorer() {
+    syncWorkspaceSidebarForViewport();
+    listenMediaQuery(workspaceDesktopQuery, syncWorkspaceSidebarForViewport);
+    renderWorkspaceTree();
+    loadWorkspaceDirectory("", false, false);
+  }
+
   function scrollToBottom() {
     main.scrollTop = main.scrollHeight;
   }
@@ -1525,7 +2255,7 @@
       name.title = file.path || file.name;
       var meta = document.createElement("span");
       meta.className = "attachment-file-meta";
-      meta.textContent = file.loading ? "读取中" : (file.kind === "path" ? "服务器路径" : formatBytes(file.size));
+      meta.textContent = file.loading ? "读取中" : (file.kind === "path" ? "服务器路径" + (file.size ? " · " + formatBytes(file.size) : "") : formatBytes(file.size));
       copy.appendChild(name);
       copy.appendChild(meta);
       var remove = document.createElement("button");
@@ -1539,6 +2269,7 @@
       item.appendChild(remove);
       attachmentTray.appendChild(item);
     });
+    updateWorkspacePreviewAttachState();
   }
 
   function removePendingImage(id) {
@@ -1606,7 +2337,7 @@
 
   function addLocalFiles(files) {
     clearAttachmentError();
-    var totalBytes = pendingFiles.reduce(function (sum, file) { return sum + (file.kind === "upload" ? file.size : 0); }, 0);
+    var totalBytes = pendingFiles.reduce(function (sum, file) { return sum + (Number(file.size) || 0); }, 0);
     Array.prototype.forEach.call(files, function (file) {
       if (pendingFiles.length >= MAX_PENDING_FILES) return setAttachmentError("每次最多添加 " + MAX_PENDING_FILES + " 个文件");
       if (file.size > MAX_PENDING_FILE_BYTES) return setAttachmentError("单个文件不能超过 2 MiB");
@@ -1623,16 +2354,44 @@
     renderPendingAttachments();
   }
 
+  function addWorkspacePath(value, size) {
+    if (busy) return false;
+    clearAttachmentError();
+    value = String(value || "").trim().replace(/\\/g, "/");
+    if (!value) {
+      setAttachmentError("请输入 workspace 内的文件路径");
+      return false;
+    }
+    if (pendingFiles.some(function (file) { return file.kind === "path" && file.path === value; })) {
+      setAttachmentError("该 workspace 文件已添加");
+      updateWorkspacePreviewAttachState();
+      return false;
+    }
+    if (pendingFiles.length >= MAX_PENDING_FILES) {
+      setAttachmentError("每次最多添加 " + MAX_PENDING_FILES + " 个文件");
+      return false;
+    }
+    size = Number(size) || 0;
+    if (size > MAX_PENDING_FILE_BYTES) {
+      setAttachmentError("单个文件不能超过 2 MiB");
+      return false;
+    }
+    var knownTotalBytes = pendingFiles.reduce(function (sum, file) { return sum + (Number(file.size) || 0); }, 0);
+    if (size && knownTotalBytes + size > MAX_PENDING_TOTAL_FILE_BYTES) {
+      setAttachmentError("文件总大小不能超过 6 MiB");
+      return false;
+    }
+    pendingFiles.push({ id: nextAttachmentID++, kind: "path", name: pathBaseName(value), path: value, size: size, loading: false });
+    renderPendingAttachments();
+    return true;
+  }
+
   function addServerPath() {
     if (busy) return;
-    clearAttachmentError();
     var value = serverFilePath.value.trim();
-    if (!value) return setAttachmentError("请输入 workspace 内的文件路径");
-    if (pendingFiles.length >= MAX_PENDING_FILES) return setAttachmentError("每次最多添加 " + MAX_PENDING_FILES + " 个文件");
-    pendingFiles.push({ id: nextAttachmentID++, kind: "path", name: pathBaseName(value), path: value, size: 0, loading: false });
+    if (!addWorkspacePath(value, 0)) return;
     serverFilePath.value = "";
     setAttachmentMenu(false);
-    renderPendingAttachments();
     input.focus();
   }
 
@@ -2283,6 +3042,7 @@
       currentController = null;
       stopRequested = false;
       scrollToBottom();
+      refreshWorkspaceTree();
     }
   }
 
@@ -2303,6 +3063,20 @@
     if (busy) stopCurrentTurn(); else send();
   });
   newChatBtn.addEventListener("click", newChat);
+  workspaceToggle.addEventListener("click", function () {
+    setWorkspaceSidebarOpen(workspaceToggle.getAttribute("aria-expanded") !== "true", true);
+  });
+  workspaceClose.addEventListener("click", function () { setWorkspaceSidebarOpen(false, true); });
+  workspacePreviewClose.addEventListener("click", function () { setWorkspaceSidebarOpen(false, true); });
+  workspaceBackdrop.addEventListener("click", function () { setWorkspaceSidebarOpen(false, false); });
+  workspaceRefresh.addEventListener("click", refreshWorkspaceTree);
+  workspacePreviewBack.addEventListener("click", showWorkspaceTreeView);
+  workspacePreviewRefresh.addEventListener("click", loadWorkspacePreview);
+  workspacePreviewAttach.addEventListener("click", function () {
+    if (!workspaceCurrentPreview || !workspaceCurrentPreview.payload) return;
+    addWorkspacePath(workspaceCurrentPreview.path, workspaceCurrentPreview.payload.size);
+    updateWorkspacePreviewAttachState();
+  });
   addAttachmentBtn.addEventListener("click", function () {
     setAttachmentMenu(attachmentMenu.hidden);
   });
@@ -2331,6 +3105,9 @@
     if (event.key === "Escape" && !attachmentMenu.hidden) {
       setAttachmentMenu(false);
       addAttachmentBtn.focus();
+    } else if (event.key === "Escape" && !isWorkspaceDesktop() && workspaceToggle.getAttribute("aria-expanded") === "true") {
+      setWorkspaceSidebarOpen(false, false);
+      workspaceToggle.focus();
     }
   });
   themeToggle.addEventListener("click", function () {
@@ -2386,6 +3163,7 @@
   });
   setTheme(localStorage.getItem(THEME_KEY) ||
     (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+  initializeWorkspaceExplorer();
   initParticleField();
   loadRuntimeModel();
   autoGrow();
