@@ -31,9 +31,13 @@ const (
 	// run concurrently.
 	maxParallelTools                    = 8
 	maxTruncatedToolRecoveries          = 3
+	maxEmptyFinalRecoveries             = 2
 	truncatedToolBatchError             = "Error: Tool batch was not executed because the model output reached its token limit. No side effects occurred. Resend the complete tool-call batch with complete JSON arguments."
 	truncatedToolRecoveryStoppedMessage = "Tool-call recovery stopped after repeated output-token truncation. Increase the model output-token limit or request a smaller tool-call batch; no tools from the truncated batches were executed."
+	emptyFinalRecoveryPrompt            = "The previous assistant response contained no usable final content. Continue the task from the existing conversation and completed tool results. If additional work or verification is needed, call the required tools now. Otherwise provide a concise final answer stating what was completed and any verification limitations. Do not return an empty response."
 )
+
+var errEmptyFinalResponse = errors.New("model returned an empty final response")
 
 type MessageRecorder interface {
 	RecordMessage(message map[string]any) error
@@ -99,6 +103,7 @@ type Options struct {
 	ToolEventSink   ToolEventSink
 	Context         ContextConfig
 	Stage           StageConfig
+	ReasoningEffort ReasoningEffort
 	Trace           *apptrace.Recorder
 }
 
@@ -120,6 +125,7 @@ type Agent struct {
 	toolEventSeq    atomic.Uint64
 	contextConfig   ContextConfig
 	stageConfig     StageConfig
+	reasoningEffort ReasoningEffort
 	trace           *apptrace.Recorder
 }
 
@@ -177,6 +183,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		toolEventSink:   options.ToolEventSink,
 		contextConfig:   contextConfig,
 		stageConfig:     normalizeStageConfig(options.Stage),
+		reasoningEffort: options.ReasoningEffort,
 		trace:           options.Trace,
 	}
 }
@@ -340,6 +347,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 	defer cancelExploration()
 	loopGuard := newLoopGuard(a.stageConfig)
 	truncatedToolRecoveries := 0
+	emptyFinalRecoveries := 0
 	defer func() {
 		logTurnTiming(a.logWriter, actualIterations, allowPlan, time.Since(startedAt), err)
 	}()
@@ -368,8 +376,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			requestErr error
 		)
 		modelStartedAt := time.Now()
+		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort}
 		if a.stream {
-			message, requestErr = a.client.CreateChatCompletionStream(explorationCtx, a.model, requestMessages, definitions, func(chunk string) {
+			onChunk := func(chunk string) {
 				sink := a.tokenSink
 				if sink == nil {
 					sink = a.logWriter
@@ -377,7 +386,14 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				if sink != nil {
 					_, _ = io.WriteString(sink, chunk)
 				}
-			})
+			}
+			if client, ok := a.client.(chatCompletionStreamOptionsClient); ok {
+				message, requestErr = client.CreateChatCompletionStreamWithOptions(explorationCtx, a.model, requestMessages, definitions, completionOptions, onChunk)
+			} else {
+				message, requestErr = a.client.CreateChatCompletionStream(explorationCtx, a.model, requestMessages, definitions, onChunk)
+			}
+		} else if client, ok := a.client.(chatCompletionOptionsClient); ok {
+			message, requestErr = client.CreateChatCompletionWithOptions(explorationCtx, a.model, requestMessages, definitions, completionOptions)
 		} else {
 			message, requestErr = a.client.CreateChatCompletion(explorationCtx, a.model, requestMessages, definitions)
 		}
@@ -434,8 +450,24 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		truncatedToolRecoveries = 0
 		if len(message.ToolCalls) == 0 {
-			return message.FinalContent(), updatedMessages, nil
+			finalContent := message.FinalContent()
+			if message.Content != nil && strings.TrimSpace(finalContent) != "" {
+				return finalContent, updatedMessages, nil
+			}
+
+			emptyFinalRecoveries++
+			if emptyFinalRecoveries > maxEmptyFinalRecoveries {
+				return "", updatedMessages, fmt.Errorf("%w after %d consecutive attempts", errEmptyFinalResponse, emptyFinalRecoveries)
+			}
+			a.writeStageProgress(fmt.Sprintf("Retrying empty final response (%d/%d)", emptyFinalRecoveries, maxEmptyFinalRecoveries))
+			updatedMessages, err = a.appendEmptyFinalRecovery(updatedMessages)
+			messages = updatedMessages
+			if err != nil {
+				return "", updatedMessages, err
+			}
+			continue
 		}
+		emptyFinalRecoveries = 0
 		if !a.stageConfig.ImmediateProgress {
 			a.writeStageProgress(fmt.Sprintf("Analyzing tool requests in iteration %d", actualIterations))
 		}
@@ -1201,6 +1233,18 @@ func replayableToolCalls(toolCalls []ToolCall) []ToolCall {
 		filtered = append(filtered, toolCall)
 	}
 	return filtered
+}
+
+func (a *Agent) appendEmptyFinalRecovery(messages []map[string]any) ([]map[string]any, error) {
+	recoveryMessage := map[string]any{
+		"role":    "user",
+		"content": emptyFinalRecoveryPrompt,
+	}
+	updated := append(messages, recoveryMessage)
+	if err := a.recordMessages(recoveryMessage); err != nil {
+		return updated, err
+	}
+	return updated, nil
 }
 
 func (a *Agent) appendTruncatedToolRecovery(messages []map[string]any, toolCalls []ToolCall, attempt int) ([]map[string]any, error) {

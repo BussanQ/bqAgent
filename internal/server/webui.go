@@ -23,24 +23,27 @@ import (
 )
 
 const (
-	defaultWebUIStageTimeout       = 90 * time.Second
-	defaultWebUIStageMaxIterations = 20
-	maxWebUIRequestBodyBytes       = 21 << 20
-	maxWebUIImages                 = 4
-	maxWebUIImageBytes             = 3 << 20
-	maxWebUITotalImageBytes        = 8 << 20
-	maxWebUIImagePixels            = 20_000_000
-	maxWebUIFiles                  = 5
-	maxWebUIFileBytes              = 2 << 20
-	maxWebUITotalFileBytes         = 6 << 20
+	// WebUI turns run until completion by default. Positive WEBUI_STAGE_*
+	// overrides can opt back into persisted stage checkpoints.
+	defaultWebUIStageTimeout       time.Duration = 0
+	defaultWebUIStageMaxIterations               = 0
+	maxWebUIRequestBodyBytes                     = 21 << 20
+	maxWebUIImages                               = 4
+	maxWebUIImageBytes                           = 3 << 20
+	maxWebUITotalImageBytes                      = 8 << 20
+	maxWebUIImagePixels                          = 20_000_000
+	maxWebUIFiles                                = 5
+	maxWebUIFileBytes                            = 2 << 20
+	maxWebUITotalFileBytes                       = 6 << 20
 )
 
 type webUIChatRequest struct {
-	SessionID string              `json:"session_id"`
-	TurnID    string              `json:"turn_id"`
-	Message   string              `json:"message"`
-	Images    []webUIImagePayload `json:"images,omitempty"`
-	Files     []webUIFilePayload  `json:"files,omitempty"`
+	SessionID       string              `json:"session_id"`
+	TurnID          string              `json:"turn_id"`
+	Message         string              `json:"message"`
+	ReasoningEffort string              `json:"reasoning_effort,omitempty"`
+	Images          []webUIImagePayload `json:"images,omitempty"`
+	Files           []webUIFilePayload  `json:"files,omitempty"`
 }
 
 type webUIDoneEvent struct {
@@ -187,6 +190,10 @@ func decodeWebUIChatRequest(writer http.ResponseWriter, request *http.Request) (
 		}
 		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("invalid trailing JSON data: %w", err)}
 	}
+	reasoningEffort, err := agent.ParseReasoningEffort(payload.ReasoningEffort)
+	if err != nil {
+		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: err}
+	}
 	if len(payload.Images) > maxWebUIImages {
 		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("at most %d images are allowed", maxWebUIImages)}
 	}
@@ -222,7 +229,14 @@ func decodeWebUIChatRequest(writer http.ResponseWriter, request *http.Request) (
 	if strings.TrimSpace(payload.Message) == "" && len(images) == 0 && len(files) == 0 {
 		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("message, images, or files are required")}
 	}
-	return TurnRequest{SessionID: strings.TrimSpace(payload.SessionID), TurnID: strings.TrimSpace(payload.TurnID), Message: payload.Message, Images: images, Files: files}, nil
+	return TurnRequest{
+		SessionID:       strings.TrimSpace(payload.SessionID),
+		TurnID:          strings.TrimSpace(payload.TurnID),
+		Message:         payload.Message,
+		Images:          images,
+		Files:           files,
+		ReasoningEffort: reasoningEffort,
+	}, nil
 }
 
 func decodeWebUIFile(payload webUIFilePayload) (FileAttachment, error) {
@@ -318,9 +332,6 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		writeError(writer, status, chatResponse{Error: err.Error()})
 		return
 	}
-	ctx, cancel := context.WithTimeout(request.Context(), ChannelTurnTimeout())
-	defer cancel()
-
 	writer.Header().Set("Content-Type", "text/event-stream")
 	writer.Header().Set("Cache-Control", "no-cache")
 	writer.Header().Set("Connection", "keep-alive")
@@ -330,18 +341,20 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	flusher.Flush()
 
 	stream := &sseStream{writer: writer, flusher: flusher}
-	response, err := channel.service.HandleTurnWithOptions(ctx, TurnRequest{
-		SessionID: turnRequest.SessionID,
-		Message:   turnRequest.Message,
-		TurnID:    turnRequest.TurnID,
-		Images:    turnRequest.Images,
-		Files:     turnRequest.Files,
+	// WebUI follows the browser request lifetime and the service-wide runaway
+	// valve; the tighter channel budgets are reserved for message delivery paths.
+	response, err := channel.service.HandleTurnWithOptions(request.Context(), TurnRequest{
+		SessionID:       turnRequest.SessionID,
+		Message:         turnRequest.Message,
+		TurnID:          turnRequest.TurnID,
+		Images:          turnRequest.Images,
+		Files:           turnRequest.Files,
+		ReasoningEffort: turnRequest.ReasoningEffort,
 	}, TurnOptions{
 		Stream:         true,
 		TokenSink:      sseEventWriter{stream: stream, event: "message"},
 		ProgressWriter: sseEventWriter{stream: stream, event: "progress"},
 		ToolEventSink:  sseToolEventSink{stream: stream},
-		MaxIterations:  ChannelMaxIterations(),
 		Stage: agent.StageConfig{
 			MaxIterations:     WebUIStageMaxIterations(),
 			Timeout:           WebUIStageTimeout(),

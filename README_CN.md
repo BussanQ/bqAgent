@@ -151,12 +151,12 @@ LLM_MODEL=claude-sonnet-4-5
 | `AGENT_MAX_ITERATIONS` | `1000` | 全局循环失控保险上限。 |
 | `BASH_OUTPUT_MAX_BYTES` | `1048576` | `execute_bash` 保留的 stdout/stderr 合并输出字节上限；超额输出仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
 | `READ_FILE_MAX_BYTES` | `1048576` | `read_file` 返回的文件内容字节上限；超额内容仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
-| `CHANNEL_AGENT_MAX_ITERATIONS` | `30` | 渠道/WebUI 单轮最大迭代数。 |
-| `CHANNEL_TURN_TIMEOUT` | `10m` | 渠道整轮超时。 |
+| `CHANNEL_AGENT_MAX_ITERATIONS` | `30` | QQ、iLink、ServerChan Bot 等消息渠道的单轮最大迭代数；不限制 WebUI。 |
+| `CHANNEL_TURN_TIMEOUT` | `10m` | QQ、iLink、ServerChan Bot 等消息渠道的整轮超时；不限制 WebUI。 |
 | `CHANNEL_STAGE_MAX_ITERATIONS` | `20` | QQ/iLink 生成阶段 checkpoint 前的迭代预算。 |
 | `CHANNEL_STAGE_TIMEOUT` | `90s` | QQ/iLink 阶段时间预算。 |
-| `WEBUI_STAGE_MAX_ITERATIONS` | `20` | WebUI 生成阶段 checkpoint 前的迭代预算。 |
-| `WEBUI_STAGE_TIMEOUT` | `90s` | WebUI 阶段时间预算。 |
+| `WEBUI_STAGE_MAX_ITERATIONS` | `0`（默认禁用） | 可选的 WebUI 阶段 checkpoint 迭代预算；仅正值启用。 |
+| `WEBUI_STAGE_TIMEOUT` | `0`（默认禁用） | 可选的 WebUI 阶段时间预算；仅正 duration 启用。 |
 | `CONTEXT_MANAGEMENT_ENABLED` | `true` | 启用请求时上下文预算管理。 |
 | `CONTEXT_MAX_INPUT_TOKENS` | `24000` | 模型输入 token 估算上限。 |
 | `CONTEXT_TARGET_INPUT_TOKENS` | `20000` | 裁剪或摘要后的目标大小。 |
@@ -369,7 +369,9 @@ aliases:
 
 `GET /api/v1/status` 返回内置 LLM 的有效运行时身份，例如 `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`。该接口不会暴露 API Key 或供应商端点 URL；WebUI 会在 bqagent 标题下展示这项信息。
 
-`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖）。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。界面支持明暗主题，并会安全渲染 Markdown 标题、列表、任务列表、表格、引用、链接、图片与带复制按钮的代码块，适合直接阅读 README 等 `.md` 内容。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；发送后按钮会切换为停止按钮，通过与渠道无关的 `POST /api/v1/chat/stop` 接口按 `turn_id` 取消当前模型请求和工具执行。取消注册表位于共享对话服务中，其他通道后续接入时无需依赖 WebUI。`event: progress` 会持续报告迭代轮次、工具活动和阶段 checkpoint。长任务达到阶段预算后会返回并持久化阶段总结，用户回复“继续”即可沿用同一 `session_id` 继续，而不会重新探索。该网页渠道默认开启，可在[环境变量配置](#环境变量配置)中关闭。
+`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖）。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。界面支持明暗主题，并会安全渲染 Markdown 标题、列表、任务列表、表格、引用、链接、图片与带复制按钮的代码块，适合直接阅读 README 等 `.md` 内容。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；发送后按钮会切换为停止按钮，通过与渠道无关的 `POST /api/v1/chat/stop` 接口按 `turn_id` 取消当前模型请求和工具执行。取消注册表位于共享对话服务中，其他通道后续接入时无需依赖 WebUI。`event: progress` 会持续报告迭代轮次和工具活动。WebUI 默认不设置固定阶段轮数、阶段时间或整轮超时，会在同一次请求中持续执行到最终回复。流式模型 HTTP 请求不使用 `http.Client` 总时限，其生命周期由请求 context 控制，包括浏览器断连、显式停止、主动启用的阶段 deadline 或服务关闭；非流式模型请求仍保留默认两分钟客户端超时。重复工具调用和连续失败仍受循环保护，整体循环仍受 `AGENT_MAX_ITERATIONS`（默认 1000）的失控安全阀约束。需要人工分阶段时，可显式配置正值的 `WEBUI_STAGE_MAX_ITERATIONS` 或 `WEBUI_STAGE_TIMEOUT`，恢复持久化阶段总结和“继续”机制。该网页渠道默认开启，可在[环境变量配置](#环境变量配置)中关闭。
+
+输入区还提供“推理强度”选择器，包含**自动、低、中、高**四档。默认“自动”不会向上游发送 effort 参数，因此保持模型或供应商的默认行为；选择会保存在浏览器 `localStorage` 中，并随每次 WebUI 请求显式发送，但不会写入 session 元数据。非自动档位在 OpenAI Chat Completions 中映射为 `reasoning_effort`，在 OpenAI Responses 中映射为 `reasoning.effort`，在 Anthropic Messages 中映射为 adaptive `thinking` 与 `output_config.effort`。
 
 WebUI 的工作区按钮会打开桌面侧栏或移动端抽屉。目录按需分页加载；点击普通文件后，侧栏原位切换到只读预览，再通过返回按钮恢复原文件树位置。UTF-8 文本最多预览前 512 KiB，PNG、JPEG、GIF 和 WebP 图片最多预览 3 MiB，其他二进制文件只显示元信息。文件树在每轮对话结束后自动刷新，也可手动刷新；外部程序在空闲期间产生的改动需要手动刷新才能显示。除任意层级的 `.git` 外，包括 `.env`、`.agent` 和被 `.gitignore` 忽略的内容都会显示，因此不要把 WebUI 暴露给不受信任的访问者。符号链接会显示，但不能展开、预览或从文件树加入附件。
 

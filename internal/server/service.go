@@ -90,6 +90,9 @@ type TurnRequest struct {
 	Images []agent.ImageAttachment `json:"-"`
 	// Files are uploaded bytes or workspace-local paths attached by callers.
 	Files []FileAttachment `json:"-"`
+	// ReasoningEffort controls the main model loop for this turn. The empty value
+	// keeps the provider or model default.
+	ReasoningEffort agent.ReasoningEffort `json:"reasoning_effort,omitempty"`
 }
 
 // Attachment placeholders keep session bookkeeping and memory readable for
@@ -576,6 +579,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		ToolEventSink:   options.ToolEventSink,
 		Context:         service.context,
 		Stage:           options.Stage,
+		ReasoningEffort: request.ReasoningEffort,
 		Trace:           runRecorder,
 	})
 

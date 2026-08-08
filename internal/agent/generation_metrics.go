@@ -102,6 +102,10 @@ func (client *generationMetricsClient) CreateChatCompletionWithOptions(ctx conte
 }
 
 func (client *generationMetricsClient) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error) {
+	return client.CreateChatCompletionStreamWithOptions(ctx, model, messages, definitions, ChatCompletionOptions{}, onChunk)
+}
+
+func (client *generationMetricsClient) CreateChatCompletionStreamWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error) {
 	startedAt := client.now()
 	var firstChunkAt, lastChunkAt time.Time
 	wrappedOnChunk := func(chunk string) {
@@ -117,7 +121,15 @@ func (client *generationMetricsClient) CreateChatCompletionStream(ctx context.Co
 		}
 	}
 
-	message, err := client.inner.CreateChatCompletionStream(ctx, model, messages, definitions, wrappedOnChunk)
+	var (
+		message AssistantMessage
+		err     error
+	)
+	if inner, ok := client.inner.(chatCompletionStreamOptionsClient); ok {
+		message, err = inner.CreateChatCompletionStreamWithOptions(ctx, model, messages, definitions, options, wrappedOnChunk)
+	} else {
+		message, err = client.inner.CreateChatCompletionStream(ctx, model, messages, definitions, wrappedOnChunk)
+	}
 	if err != nil || firstChunkAt.IsZero() || len(message.ToolCalls) > 0 || message.FinalContent() == "" {
 		return message, err
 	}

@@ -30,9 +30,9 @@ const (
 	defaultChannelStageMaxIterations = 20
 )
 
-// Channel entry points are interactive, so their default is deliberately more
-// conservative than the CLI runaway valve. CHANNEL_AGENT_MAX_ITERATIONS can
-// still override it explicitly.
+// Message-channel entry points use a conservative budget because their delivery
+// constraints differ from WebUI. CHANNEL_AGENT_MAX_ITERATIONS can still override
+// it explicitly; WebUI uses the service's global runaway valve instead.
 const DefaultChannelMaxIterations = 30
 
 var channelTurnTimeoutNanos atomic.Int64

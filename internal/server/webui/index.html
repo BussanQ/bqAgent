@@ -1049,6 +1049,30 @@
   .attachment-path-row input { min-width: 0; flex: 1 1 auto; padding: 8px 9px; color: var(--text); border: 1px solid var(--line); border-radius: 8px; background: var(--panel); outline: none; font: 11px/1.35 ui-monospace, "SFMono-Regular", Consolas, monospace; }
   .attachment-path-row input:focus { border-color: var(--signal); box-shadow: 0 0 0 2px rgba(var(--signal-rgb),.10); }
   .attachment-path-add { flex: 0 0 auto; padding: 7px 10px; border-color: rgba(var(--signal-rgb),.3); border-radius: 8px; color: var(--signal); background: rgba(var(--signal-rgb),.08); font-size: 11px; }
+  .reasoning-effort { position: relative; flex: 0 0 auto; margin-bottom: 5px; }
+  .reasoning-effort-trigger { height: 36px; min-width: 58px; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border-color: transparent; border-radius: 10px; color: var(--text-soft); background: transparent; font-size: 12px; }
+  .reasoning-effort-trigger:hover, .reasoning-effort-trigger[aria-expanded="true"] { color: var(--text); border-color: var(--line); background: rgba(var(--signal-rgb),.07); transform: none; box-shadow: none; }
+  .reasoning-effort-trigger svg { width: 12px; height: 12px; transition: transform .18s ease; }
+  .reasoning-effort-trigger[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .reasoning-effort-menu[hidden] { display: none; }
+  .reasoning-effort-menu { position: absolute; right: 0; bottom: calc(100% + 11px); width: 228px; padding: 13px 14px 12px; border: 1px solid var(--line-strong); border-radius: 15px; background: var(--panel-strong); box-shadow: var(--shadow), 0 0 30px rgba(var(--signal-rgb),.09); backdrop-filter: blur(24px); }
+  .reasoning-effort-menu::after { content: ""; position: absolute; right: 24px; bottom: -5px; width: 9px; height: 9px; border-right: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); background: var(--panel-strong); transform: rotate(45deg); }
+  .reasoning-effort-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; color: var(--text-soft); font-size: 11px; }
+  .reasoning-effort-heading strong { color: var(--text); font-size: 12px; font-weight: 650; }
+  .reasoning-effort-slider { --effort-fill: 0%; position: relative; height: 28px; }
+  .reasoning-effort-track { position: absolute; left: 7px; right: 7px; top: 10px; height: 8px; border-radius: 999px; background: var(--line-strong); overflow: hidden; }
+  .reasoning-effort-track::before { content: ""; display: block; width: var(--effort-fill); height: 100%; border-radius: inherit; background: var(--signal); transition: width .16s ease; }
+  .reasoning-effort-dots { position: absolute; left: 7px; right: 7px; top: 12px; display: flex; justify-content: space-between; pointer-events: none; }
+  .reasoning-effort-dots span { width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,.38); box-shadow: 0 0 0 1px rgba(0,0,0,.08); }
+  .reasoning-effort-range { position: absolute; inset: 0; z-index: 2; width: 100%; height: 28px; margin: 0; appearance: none; -webkit-appearance: none; cursor: pointer; background: transparent; }
+  .reasoning-effort-range::-webkit-slider-runnable-track { height: 8px; background: transparent; }
+  .reasoning-effort-range::-webkit-slider-thumb { width: 24px; height: 24px; margin-top: -8px; appearance: none; -webkit-appearance: none; border: 2px solid rgba(255,255,255,.88); border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.28); }
+  .reasoning-effort-range::-moz-range-track { height: 8px; background: transparent; }
+  .reasoning-effort-range::-moz-range-thumb { width: 21px; height: 21px; border: 2px solid rgba(255,255,255,.88); border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.28); }
+  .reasoning-effort-range:focus-visible { outline: none; }
+  .reasoning-effort-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(var(--signal-rgb),.24), 0 2px 8px rgba(0,0,0,.28); }
+  .reasoning-effort-labels { display: flex; justify-content: space-between; padding: 1px 1px 0; color: var(--text-muted); font-size: 9px; }
+  .reasoning-effort-labels span.active { color: var(--signal); }
   .composer::before {
     content: ">";
     position: absolute;
@@ -1304,6 +1328,21 @@
           </div>
         </div>
       </div>
+      <div class="reasoning-effort" id="reasoning-effort">
+        <button class="reasoning-effort-trigger" id="reasoning-effort-toggle" type="button" title="推理强度" aria-label="推理强度：自动" aria-expanded="false" aria-controls="reasoning-effort-menu">
+          <span id="reasoning-effort-label">自动</span>
+          <svg viewBox="0 0 16 16" aria-hidden="true" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="reasoning-effort-menu" id="reasoning-effort-menu" role="dialog" aria-label="设置推理强度" hidden>
+          <div class="reasoning-effort-heading"><span>推理强度</span><strong id="reasoning-effort-current">自动</strong></div>
+          <div class="reasoning-effort-slider" id="reasoning-effort-slider">
+            <div class="reasoning-effort-track" aria-hidden="true"></div>
+            <div class="reasoning-effort-dots" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <input class="reasoning-effort-range" id="reasoning-effort-range" type="range" min="0" max="3" step="1" value="0" aria-label="推理强度" aria-valuetext="自动">
+          </div>
+          <div class="reasoning-effort-labels" id="reasoning-effort-labels" aria-hidden="true"><span>自动</span><span>低</span><span>中</span><span>高</span></div>
+        </div>
+      </div>
       <button class="send" id="send" type="button" title="发送" aria-label="发送">
         <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none">
           <path d="M5 12h13M13 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1324,6 +1363,9 @@
   var SESSION_KEY = "bqagent.webui.session";
   var THEME_KEY = "bqagent.webui.theme";
   var WORKSPACE_SIDEBAR_KEY = "bqagent.webui.workspace-sidebar";
+  var REASONING_EFFORT_KEY = "bqagent.webui.reasoning-effort";
+  var REASONING_EFFORT_VALUES = ["auto", "low", "medium", "high"];
+  var REASONING_EFFORT_LABELS = { auto: "自动", low: "低", medium: "中", high: "高" };
   var thread = document.getElementById("thread");
   var main = document.getElementById("main");
   var particleCanvas = document.getElementById("particle-field");
@@ -1357,6 +1399,14 @@
   var fileInput = document.getElementById("file-input");
   var serverFilePath = document.getElementById("server-file-path");
   var addServerPathBtn = document.getElementById("add-server-path");
+  var reasoningEffortControl = document.getElementById("reasoning-effort");
+  var reasoningEffortToggle = document.getElementById("reasoning-effort-toggle");
+  var reasoningEffortMenu = document.getElementById("reasoning-effort-menu");
+  var reasoningEffortLabel = document.getElementById("reasoning-effort-label");
+  var reasoningEffortCurrent = document.getElementById("reasoning-effort-current");
+  var reasoningEffortSlider = document.getElementById("reasoning-effort-slider");
+  var reasoningEffortRange = document.getElementById("reasoning-effort-range");
+  var reasoningEffortLabels = document.getElementById("reasoning-effort-labels");
   var sendBtn = document.getElementById("send");
   var newChatBtn = document.getElementById("new-chat");
   var themeToggle = document.getElementById("theme-toggle");
@@ -1364,6 +1414,7 @@
   var runtimeModelEl = document.getElementById("runtime-model");
   var runtimeModelLoadID = 0;
   var sessionId = localStorage.getItem(SESSION_KEY) || "";
+  var reasoningEffort = "auto";
   var busy = false;
   var currentTurnId = "";
   var currentController = null;
@@ -2397,9 +2448,39 @@
 
   function setAttachmentMenu(open) {
     open = Boolean(open) && !busy;
+    if (open) setReasoningEffortMenu(false);
     attachmentMenu.hidden = !open;
     addAttachmentBtn.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) setTimeout(function () { uploadFileBtn.focus(); }, 0);
+  }
+
+  function normalizeReasoningEffort(value) {
+    value = String(value || "").toLowerCase();
+    return REASONING_EFFORT_VALUES.indexOf(value) >= 0 ? value : "auto";
+  }
+
+  function setReasoningEffort(value, persist) {
+    reasoningEffort = normalizeReasoningEffort(value);
+    var index = REASONING_EFFORT_VALUES.indexOf(reasoningEffort);
+    var label = REASONING_EFFORT_LABELS[reasoningEffort];
+    reasoningEffortRange.value = String(index);
+    reasoningEffortRange.setAttribute("aria-valuetext", label);
+    reasoningEffortToggle.setAttribute("aria-label", "推理强度：" + label);
+    reasoningEffortLabel.textContent = label;
+    reasoningEffortCurrent.textContent = label;
+    reasoningEffortSlider.style.setProperty("--effort-fill", (index / (REASONING_EFFORT_VALUES.length - 1) * 100) + "%");
+    Array.prototype.forEach.call(reasoningEffortLabels.children, function (item, itemIndex) {
+      item.classList.toggle("active", itemIndex === index);
+    });
+    if (persist) localStorage.setItem(REASONING_EFFORT_KEY, reasoningEffort);
+  }
+
+  function setReasoningEffortMenu(open) {
+    open = Boolean(open) && !busy;
+    if (open) setAttachmentMenu(false);
+    reasoningEffortMenu.hidden = !open;
+    reasoningEffortToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) setTimeout(function () { reasoningEffortRange.focus(); }, 0);
   }
 
   function clearStreamingState(bubble) {
@@ -2718,7 +2799,12 @@
     uploadFileBtn.disabled = on;
     serverFilePath.disabled = on;
     addServerPathBtn.disabled = on;
-    if (on) setAttachmentMenu(false);
+    reasoningEffortToggle.disabled = on;
+    reasoningEffortRange.disabled = on;
+    if (on) {
+      setAttachmentMenu(false);
+      setReasoningEffortMenu(false);
+    }
     if (on) {
       statusEl.textContent = "处理中";
       statusEl.classList.remove("error");
@@ -2923,7 +3009,14 @@
       var res = await fetch("/api/v1/webui/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, images: sentImages, files: sentFiles, session_id: sessionId, turn_id: currentTurnId }),
+        body: JSON.stringify({
+          message: text,
+          images: sentImages,
+          files: sentFiles,
+          session_id: sessionId,
+          turn_id: currentTurnId,
+          reasoning_effort: reasoningEffort === "auto" ? "" : reasoningEffort
+        }),
         signal: currentController.signal
       });
       if (!res.ok || !res.body) {
@@ -2963,10 +3056,18 @@
             }
             clearPendingAttachments();
             bubble.classList.add("rendered");
-            var finalReply = done.reply || streamed;
-            renderReply(bubble, finalReply);
-            addMessageMeta(bubble, done.generation);
-            addMessageControls(bubble, done.run_id, finalReply);
+            var finalReply = typeof done.reply === "string" ? done.reply : "";
+            if (!finalReply.trim()) {
+              bubble.classList.add("error");
+              bubble.textContent = "出错：服务端未返回有效回复";
+              statusEl.textContent = "回复无效";
+              statusEl.classList.remove("busy");
+              statusEl.classList.add("error");
+            } else {
+              renderReply(bubble, finalReply);
+              addMessageMeta(bubble, done.generation);
+              addMessageControls(bubble, done.run_id, finalReply);
+            }
           } else if (evt.event === "stopped") {
             finished = true;
             clearStreamingState(bubble);
@@ -3012,13 +3113,14 @@
       if (!finished) {
         clearStreamingState(bubble);
         caret.remove();
-        bubble.classList.add("rendered");
-        if (streamed) {
-          renderReply(bubble, streamed);
-          addMessageControls(bubble, "", streamed);
-        } else {
-          bubble.innerHTML = "<em>（无回复）</em>";
-        }
+        bubble.classList.add("rendered", "error");
+        var incompleteReply = streamed
+          ? streamed + "\n\n> 响应在完成事件到达前中断。"
+          : "出错：响应未正常完成。";
+        renderReply(bubble, incompleteReply);
+        statusEl.textContent = "响应中断";
+        statusEl.classList.remove("busy");
+        statusEl.classList.add("error");
       }
     } catch (err) {
       clearStreamingState(bubble);
@@ -3052,6 +3154,7 @@
     localStorage.removeItem(SESSION_KEY);
     clearPendingAttachments();
     setAttachmentMenu(false);
+    setReasoningEffortMenu(false);
     thread.innerHTML = emptyMarkup();
     statusEl.textContent = "在线";
     statusEl.classList.remove("error", "busy");
@@ -3080,6 +3183,13 @@
   addAttachmentBtn.addEventListener("click", function () {
     setAttachmentMenu(attachmentMenu.hidden);
   });
+  reasoningEffortToggle.addEventListener("click", function () {
+    setReasoningEffortMenu(reasoningEffortMenu.hidden);
+  });
+  reasoningEffortRange.addEventListener("input", function () {
+    var index = Math.max(0, Math.min(REASONING_EFFORT_VALUES.length - 1, Number(reasoningEffortRange.value) || 0));
+    setReasoningEffort(REASONING_EFFORT_VALUES[index], true);
+  });
   uploadFileBtn.addEventListener("click", function () {
     setAttachmentMenu(false);
     fileInput.click();
@@ -3100,11 +3210,15 @@
   });
   document.addEventListener("click", function (event) {
     if (!attachmentMenu.hidden && !attachmentActions.contains(event.target)) setAttachmentMenu(false);
+    if (!reasoningEffortMenu.hidden && !reasoningEffortControl.contains(event.target)) setReasoningEffortMenu(false);
   });
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape" && !attachmentMenu.hidden) {
       setAttachmentMenu(false);
       addAttachmentBtn.focus();
+    } else if (event.key === "Escape" && !reasoningEffortMenu.hidden) {
+      setReasoningEffortMenu(false);
+      reasoningEffortToggle.focus();
     } else if (event.key === "Escape" && !isWorkspaceDesktop() && workspaceToggle.getAttribute("aria-expanded") === "true") {
       setWorkspaceSidebarOpen(false, false);
       workspaceToggle.focus();
@@ -3161,6 +3275,7 @@
   window.addEventListener("beforeunload", function () {
     pendingImages.forEach(function (image) { URL.revokeObjectURL(image.objectURL); });
   });
+  setReasoningEffort(localStorage.getItem(REASONING_EFFORT_KEY), false);
   setTheme(localStorage.getItem(THEME_KEY) ||
     (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
   initializeWorkspaceExplorer();

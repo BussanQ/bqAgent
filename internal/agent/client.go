@@ -31,8 +31,37 @@ type ChatCompletionClient interface {
 	CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error)
 }
 
+type ReasoningEffort string
+
+const (
+	ReasoningEffortAuto   ReasoningEffort = ""
+	ReasoningEffortLow    ReasoningEffort = "low"
+	ReasoningEffortMedium ReasoningEffort = "medium"
+	ReasoningEffortHigh   ReasoningEffort = "high"
+)
+
+func ParseReasoningEffort(raw string) (ReasoningEffort, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "auto":
+		return ReasoningEffortAuto, nil
+	case string(ReasoningEffortLow):
+		return ReasoningEffortLow, nil
+	case string(ReasoningEffortMedium):
+		return ReasoningEffortMedium, nil
+	case string(ReasoningEffortHigh):
+		return ReasoningEffortHigh, nil
+	default:
+		return ReasoningEffortAuto, fmt.Errorf("unsupported reasoning effort %q; expected auto, low, medium, or high", strings.TrimSpace(raw))
+	}
+}
+
 type ChatCompletionOptions struct {
-	ResponseFormat map[string]any
+	ResponseFormat  map[string]any
+	ReasoningEffort ReasoningEffort
+}
+
+type chatCompletionStreamOptionsClient interface {
+	CreateChatCompletionStreamWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error)
 }
 
 // IncompleteStreamError means an upstream stream ended without the terminal
@@ -94,18 +123,20 @@ type FunctionCall struct {
 }
 
 type chatCompletionRequest struct {
-	Model          string             `json:"model"`
-	Messages       []map[string]any   `json:"messages"`
-	Tools          []tools.Definition `json:"tools,omitempty"`
-	ResponseFormat map[string]any     `json:"response_format,omitempty"`
+	Model           string             `json:"model"`
+	Messages        []map[string]any   `json:"messages"`
+	Tools           []tools.Definition `json:"tools,omitempty"`
+	ResponseFormat  map[string]any     `json:"response_format,omitempty"`
+	ReasoningEffort ReasoningEffort    `json:"reasoning_effort,omitempty"`
 }
 
 type chatCompletionStreamRequest struct {
-	Model         string             `json:"model"`
-	Messages      []map[string]any   `json:"messages"`
-	Tools         []tools.Definition `json:"tools,omitempty"`
-	Stream        bool               `json:"stream"`
-	StreamOptions map[string]any     `json:"stream_options,omitempty"`
+	Model           string             `json:"model"`
+	Messages        []map[string]any   `json:"messages"`
+	Tools           []tools.Definition `json:"tools,omitempty"`
+	Stream          bool               `json:"stream"`
+	StreamOptions   map[string]any     `json:"stream_options,omitempty"`
+	ReasoningEffort ReasoningEffort    `json:"reasoning_effort,omitempty"`
 }
 
 type chatCompletionUsage struct {
@@ -197,6 +228,12 @@ func NewClientWithAPIType(apiKey, baseURL string, apiType APIType, httpClient *h
 	}
 }
 
+func (c *Client) doStreamingRequest(request *http.Request) (*http.Response, error) {
+	streamingClient := *c.httpClient
+	streamingClient.Timeout = 0
+	return streamingClient.Do(request)
+}
+
 func NormalizeAPIType(raw string) APIType {
 	normalized := strings.ToLower(strings.TrimSpace(raw))
 	normalized = strings.ReplaceAll(normalized, "_", "-")
@@ -230,10 +267,11 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 	}
 
 	body, err := json.Marshal(chatCompletionRequest{
-		Model:          model,
-		Messages:       messages,
-		Tools:          definitions,
-		ResponseFormat: options.ResponseFormat,
+		Model:           model,
+		Messages:        messages,
+		Tools:           definitions,
+		ResponseFormat:  options.ResponseFormat,
+		ReasoningEffort: options.ReasoningEffort,
 	})
 	if err != nil {
 		return AssistantMessage{}, err
@@ -282,19 +320,24 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 }
 
 func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error) {
+	return c.CreateChatCompletionStreamWithOptions(ctx, model, messages, definitions, ChatCompletionOptions{}, onChunk)
+}
+
+func (c *Client) CreateChatCompletionStreamWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error) {
 	switch c.apiType {
 	case APITypeOpenAIResponse:
-		return c.createOpenAIResponseStream(ctx, model, messages, definitions, onChunk)
+		return c.createOpenAIResponseStream(ctx, model, messages, definitions, options, onChunk)
 	case APITypeAnthropic:
-		return c.createAnthropicMessageStream(ctx, model, messages, definitions, onChunk)
+		return c.createAnthropicMessageStream(ctx, model, messages, definitions, options, onChunk)
 	}
 
 	body, err := json.Marshal(chatCompletionStreamRequest{
-		Model:         model,
-		Messages:      messages,
-		Tools:         definitions,
-		Stream:        true,
-		StreamOptions: map[string]any{"include_usage": true},
+		Model:           model,
+		Messages:        messages,
+		Tools:           definitions,
+		Stream:          true,
+		StreamOptions:   map[string]any{"include_usage": true},
+		ReasoningEffort: options.ReasoningEffort,
 	})
 	if err != nil {
 		return AssistantMessage{}, err
@@ -310,7 +353,7 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 		request.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
-	response, err := c.httpClient.Do(request)
+	response, err := c.doStreamingRequest(request)
 	if err != nil {
 		return AssistantMessage{}, err
 	}

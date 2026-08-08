@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/session"
 	"bqagent/internal/tools"
 )
 
@@ -61,6 +62,9 @@ func TestWebUIServesIndex(t *testing.T) {
 		`loadRuntimeModel()`,
 		`"?session_id=" + encodeURIComponent(sessionId)`,
 		`updateRuntimeModel(done.api_type, done.model)`,
+		`var finalReply = typeof done.reply === "string" ? done.reply : "";`,
+		`服务端未返回有效回复`,
+		`响应在完成事件到达前中断`,
 		`class="stop-icon"`,
 		`classList.add("is-streaming")`,
 		`role="status"`,
@@ -83,6 +87,11 @@ func TestWebUIServesIndex(t *testing.T) {
 		`id="server-file-path"`,
 		`var pendingFiles = []`,
 		`files: sentFiles`,
+		`id="reasoning-effort-toggle"`,
+		`id="reasoning-effort-menu"`,
+		`id="reasoning-effort-range"`,
+		`bqagent.webui.reasoning-effort`,
+		`reasoning_effort:`,
 		`id="workspace-toggle"`,
 		`id="workspace-sidebar"`,
 		`id="workspace-tree"`,
@@ -101,7 +110,7 @@ func TestWebUIServesIndex(t *testing.T) {
 	if strings.Contains(page, "<script src=") {
 		t.Fatal("served page should remain self-contained without external scripts")
 	}
-	for _, obsolete := range []string{"ambient-particles", "ambient-particle", "cursor-stars", "ambientDrift"} {
+	for _, obsolete := range []string{"ambient-particles", "ambient-particle", "cursor-stars", "ambientDrift", "done.reply || streamed"} {
 		if strings.Contains(page, obsolete) {
 			t.Fatalf("served page still contains obsolete particle implementation %q", obsolete)
 		}
@@ -190,6 +199,164 @@ func TestWebUIStreamChat(t *testing.T) {
 	}
 }
 
+func TestWebUIReasoningEffortReachesModel(t *testing.T) {
+	var seenReasoningEffort string
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			ReasoningEffort string `json:"reasoning_effort"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode model request failed: %v", err)
+		}
+		seenReasoningEffort = payload.ReasoningEffort
+		writer.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer llmServer.Close()
+
+	root := t.TempDir()
+	service := newTestService(root, llmServer.URL)
+	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	result := postWebUIChat(t, apiServer.URL, `{"message":"hi","reasoning_effort":"high"}`)
+	if result.done.Reply != "done" {
+		t.Fatalf("reply = %q, want done", result.done.Reply)
+	}
+	if seenReasoningEffort != "high" {
+		t.Fatalf("upstream reasoning_effort = %q, want high", seenReasoningEffort)
+	}
+}
+
+func TestWebUIEmptyFinalResponseFailsSession(t *testing.T) {
+	root := t.TempDir()
+	client := &sequenceChatClient{responses: []agent.AssistantMessage{
+		{},
+		{Content: " \n\t"},
+		{Content: ""},
+	}}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   root,
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		DefaultMaxTurns: agent.DefaultMaxIterations,
+	})
+	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	response, err := http.Post(apiServer.URL+"/api/v1/webui/chat", "application/json", strings.NewReader(`{"message":"finish the task"}`))
+	if err != nil {
+		t.Fatalf("POST /api/v1/webui/chat failed: %v", err)
+	}
+	defer response.Body.Close()
+	payload, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read stream failed: %v", err)
+	}
+	raw := string(payload)
+	if !strings.Contains(raw, "event: error") || !strings.Contains(raw, "empty final response") {
+		t.Fatalf("stream missing empty-response error:\n%s", raw)
+	}
+	if strings.Contains(raw, "event: done") {
+		t.Fatalf("empty final response must not emit done:\n%s", raw)
+	}
+	if client.requests != 3 {
+		t.Fatalf("model requests = %d, want 3", client.requests)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(root, ".agent", "sessions"))
+	if err != nil {
+		t.Fatalf("read sessions directory failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("session directories = %d, want 1", len(entries))
+	}
+	savedSession, err := session.NewStore(root).Open(entries[0].Name())
+	if err != nil {
+		t.Fatalf("open saved session failed: %v", err)
+	}
+	meta := savedSession.Meta()
+	if meta.Status != session.StatusFailed {
+		t.Fatalf("session status = %q, want failed", meta.Status)
+	}
+	if !strings.Contains(meta.LastError, "empty final response") {
+		t.Fatalf("last error = %q, want empty-response error", meta.LastError)
+	}
+}
+
+func TestWebUIDefaultStageBudgetsAreDisabled(t *testing.T) {
+	if maxIterations := WebUIStageMaxIterations(); maxIterations != 0 {
+		t.Fatalf("WebUIStageMaxIterations = %d, want disabled", maxIterations)
+	}
+	if timeout := WebUIStageTimeout(); timeout != 0 {
+		t.Fatalf("WebUIStageTimeout = %s, want disabled", timeout)
+	}
+}
+
+func TestWebUIRunsUntilCompletionBeyondChannelBudget(t *testing.T) {
+	responses := make([]agent.AssistantMessage, 0, DefaultChannelMaxIterations+2)
+	for iteration := 0; iteration <= DefaultChannelMaxIterations; iteration++ {
+		responses = append(responses, agent.AssistantMessage{ToolCalls: []agent.ToolCall{{
+			ID: fmt.Sprintf("tool-%d", iteration),
+			Function: agent.FunctionCall{
+				Name:      "missing_tool",
+				Arguments: fmt.Sprintf(`{"step":%d}`, iteration),
+			},
+		}}})
+	}
+	responses = append(responses, agent.AssistantMessage{Content: "one-shot complete"})
+	client := &sequenceChatClient{responses: responses}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot:   t.TempDir(),
+		Client:          client,
+		SystemPrompt:    "You are a helpful assistant. Be concise.",
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "missing_tool"}}},
+		DefaultMaxTurns: agent.DefaultMaxIterations,
+	})
+	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	result := postWebUIChat(t, apiServer.URL, `{"message":"finish the whole task"}`)
+	if result.done.Reply != "one-shot complete" {
+		t.Fatalf("reply = %q, want final completion", result.done.Reply)
+	}
+	if client.requests != DefaultChannelMaxIterations+2 {
+		t.Fatalf("requests = %d, want %d", client.requests, DefaultChannelMaxIterations+2)
+	}
+	for _, unexpected := range []string{"Preparing stage summary", "建议下一步", "回复‘继续’", "回复“继续”"} {
+		if strings.Contains(result.raw, unexpected) {
+			t.Fatalf("stream unexpectedly contains checkpoint text %q:\n%s", unexpected, result.raw)
+		}
+	}
+}
+
+func TestWebUIDoesNotApplyChannelTurnTimeout(t *testing.T) {
+	previousTimeout := ChannelTurnTimeout()
+	SetChannelTurnTimeout(time.Hour)
+	defer SetChannelTurnTimeout(previousTimeout)
+
+	client := &deadlineCheckingTurnClient{}
+	service := NewService(ServiceOptions{
+		WorkspaceRoot: t.TempDir(),
+		Client:        client,
+		SystemPrompt:  "You are a helpful assistant. Be concise.",
+	})
+	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	result := postWebUIChat(t, apiServer.URL, `{"message":"long task","turn_id":"turn-no-timeout"}`)
+	if client.deadlineSeen {
+		t.Fatal("WebUI model context inherited a channel or stage deadline")
+	}
+	if result.done.Reply != "completed without deadline" {
+		t.Fatalf("reply = %q, want completion without deadline", result.done.Reply)
+	}
+}
+
 func TestWebUIModelCommandReturnsUpdatedRuntimeModel(t *testing.T) {
 	service := NewService(ServiceOptions{
 		WorkspaceRoot: t.TempDir(),
@@ -214,6 +381,41 @@ func TestWebUIModelCommandReturnsUpdatedRuntimeModel(t *testing.T) {
 	resetResult := postWebUIChat(t, apiServer.URL, resetBody)
 	if resetResult.done.Model != "default-model" {
 		t.Fatalf("reset done model = %q, want default-model", resetResult.done.Model)
+	}
+}
+
+func TestDecodeWebUIChatRequestReasoningEffort(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+		want agent.ReasoningEffort
+	}{
+		{name: "omitted", raw: "", want: agent.ReasoningEffortAuto},
+		{name: "auto", raw: "auto", want: agent.ReasoningEffortAuto},
+		{name: "low", raw: "low", want: agent.ReasoningEffortLow},
+		{name: "medium", raw: "medium", want: agent.ReasoningEffortMedium},
+		{name: "high", raw: "high", want: agent.ReasoningEffortHigh},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"message":"hi","reasoning_effort":%q}`, test.raw)
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/webui/chat", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			turn, err := decodeWebUIChatRequest(httptest.NewRecorder(), request)
+			if err != nil {
+				t.Fatalf("decode returned error: %v", err)
+			}
+			if turn.ReasoningEffort != test.want {
+				t.Fatalf("reasoning effort = %q, want %q", turn.ReasoningEffort, test.want)
+			}
+		})
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/webui/chat", strings.NewReader(`{"message":"hi","reasoning_effort":"xhigh"}`))
+	request.Header.Set("Content-Type", "application/json")
+	_, err := decodeWebUIChatRequest(httptest.NewRecorder(), request)
+	requestErr, ok := err.(*webUIRequestError)
+	if !ok || requestErr.Status != http.StatusBadRequest {
+		t.Fatalf("invalid effort error = %#v, want HTTP 400 request error", err)
 	}
 }
 
@@ -575,6 +777,26 @@ func webUIRequestStatus(t *testing.T, method, target string) int {
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, response.Body)
 	return response.StatusCode
+}
+
+type deadlineCheckingTurnClient struct {
+	deadlineSeen bool
+}
+
+func (client *deadlineCheckingTurnClient) CreateChatCompletion(ctx context.Context, _ string, _ []map[string]any, _ []tools.Definition) (agent.AssistantMessage, error) {
+	return client.complete(ctx)
+}
+
+func (client *deadlineCheckingTurnClient) CreateChatCompletionStream(ctx context.Context, _ string, _ []map[string]any, _ []tools.Definition, _ func(string)) (agent.AssistantMessage, error) {
+	return client.complete(ctx)
+}
+
+func (client *deadlineCheckingTurnClient) complete(ctx context.Context) (agent.AssistantMessage, error) {
+	if _, ok := ctx.Deadline(); ok {
+		client.deadlineSeen = true
+		return agent.AssistantMessage{}, fmt.Errorf("unexpected WebUI deadline")
+	}
+	return agent.AssistantMessage{Content: "completed without deadline"}, nil
 }
 
 type cancelAwareTurnClient struct {

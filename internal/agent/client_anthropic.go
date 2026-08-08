@@ -17,12 +17,22 @@ import (
 const anthropicDefaultMaxTokens = 8192
 
 type anthropicRequest struct {
-	Model     string             `json:"model"`
-	System    string             `json:"system,omitempty"`
-	Messages  []anthropicMessage `json:"messages"`
-	Tools     []anthropicTool    `json:"tools,omitempty"`
-	MaxTokens int                `json:"max_tokens"`
-	Stream    bool               `json:"stream,omitempty"`
+	Model        string                 `json:"model"`
+	System       string                 `json:"system,omitempty"`
+	Messages     []anthropicMessage     `json:"messages"`
+	Tools        []anthropicTool        `json:"tools,omitempty"`
+	MaxTokens    int                    `json:"max_tokens"`
+	Thinking     *anthropicThinking     `json:"thinking,omitempty"`
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+	Stream       bool                   `json:"stream,omitempty"`
+}
+
+type anthropicThinking struct {
+	Type string `json:"type"`
+}
+
+type anthropicOutputConfig struct {
+	Effort ReasoningEffort `json:"effort"`
 }
 
 type anthropicMessage struct {
@@ -74,8 +84,8 @@ func (c *Client) createAnthropicMessage(ctx context.Context, model string, messa
 	return assistantFromAnthropic(decoded), nil
 }
 
-func (c *Client) createAnthropicMessageStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error) {
-	payload, err := buildAnthropicRequest(model, messages, definitions, ChatCompletionOptions{}, true)
+func (c *Client) createAnthropicMessageStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error) {
+	payload, err := buildAnthropicRequest(model, messages, definitions, options, true)
 	if err != nil {
 		return AssistantMessage{}, err
 	}
@@ -203,6 +213,10 @@ func buildAnthropicRequest(model string, messages []map[string]any, definitions 
 	request := anthropicRequest{
 		Model: model, System: system, Messages: converted,
 		MaxTokens: anthropicDefaultMaxTokens, Stream: stream,
+	}
+	if options.ReasoningEffort != ReasoningEffortAuto {
+		request.Thinking = &anthropicThinking{Type: "adaptive"}
+		request.OutputConfig = &anthropicOutputConfig{Effort: options.ReasoningEffort}
 	}
 	for _, definition := range definitions {
 		schema, err := toolSchema(definition)
@@ -343,7 +357,12 @@ func (c *Client) doAnthropicRequest(ctx context.Context, payload anthropicReques
 	if c.apiKey != "" {
 		request.Header.Set("x-api-key", c.apiKey)
 	}
-	response, err := c.httpClient.Do(request)
+	var response *http.Response
+	if stream {
+		response, err = c.doStreamingRequest(request)
+	} else {
+		response, err = c.httpClient.Do(request)
+	}
 	if err != nil {
 		return nil, err
 	}

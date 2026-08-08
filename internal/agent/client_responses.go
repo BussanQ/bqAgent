@@ -15,11 +15,16 @@ import (
 )
 
 type openAIResponseRequest struct {
-	Model  string               `json:"model"`
-	Input  []any                `json:"input"`
-	Tools  []openAIResponseTool `json:"tools,omitempty"`
-	Text   map[string]any       `json:"text,omitempty"`
-	Stream bool                 `json:"stream,omitempty"`
+	Model     string                   `json:"model"`
+	Input     []any                    `json:"input"`
+	Tools     []openAIResponseTool     `json:"tools,omitempty"`
+	Text      map[string]any           `json:"text,omitempty"`
+	Reasoning *openAIResponseReasoning `json:"reasoning,omitempty"`
+	Stream    bool                     `json:"stream,omitempty"`
+}
+
+type openAIResponseReasoning struct {
+	Effort ReasoningEffort `json:"effort"`
 }
 
 type openAIResponseTool struct {
@@ -88,8 +93,8 @@ func (c *Client) createOpenAIResponse(ctx context.Context, model string, message
 	return assistantFromOpenAIResponse(decoded), nil
 }
 
-func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error) {
-	payload, err := buildOpenAIResponseRequest(model, messages, definitions, ChatCompletionOptions{}, true)
+func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error) {
+	payload, err := buildOpenAIResponseRequest(model, messages, definitions, options, true)
 	if err != nil {
 		return AssistantMessage{}, err
 	}
@@ -222,6 +227,9 @@ func buildOpenAIResponseRequest(model string, messages []map[string]any, definit
 	if len(options.ResponseFormat) > 0 {
 		request.Text = map[string]any{"format": options.ResponseFormat}
 	}
+	if options.ReasoningEffort != ReasoningEffortAuto {
+		request.Reasoning = &openAIResponseReasoning{Effort: options.ReasoningEffort}
+	}
 	return request, nil
 }
 
@@ -331,7 +339,12 @@ func (c *Client) doJSONRequest(ctx context.Context, url string, payload any, str
 	if c.apiKey != "" {
 		request.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
-	response, err := c.httpClient.Do(request)
+	var response *http.Response
+	if stream {
+		response, err = c.doStreamingRequest(request)
+	} else {
+		response, err = c.httpClient.Do(request)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -19,6 +19,7 @@ type stubClient struct {
 	optionMessages  [][]map[string]any
 	optionResponses []AssistantMessage
 	optionErrors    []error
+	options         []ChatCompletionOptions
 	definitions     [][]tools.Definition
 }
 
@@ -37,8 +38,9 @@ func (s *stubClient) CreateChatCompletionStream(_ context.Context, _ string, mes
 	return s.CreateChatCompletion(context.Background(), "", messages, nil)
 }
 
-func (s *stubClient) CreateChatCompletionWithOptions(ctx context.Context, _ string, messages []map[string]any, _ []tools.Definition, _ ChatCompletionOptions) (AssistantMessage, error) {
+func (s *stubClient) CreateChatCompletionWithOptions(ctx context.Context, _ string, messages []map[string]any, _ []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
 	s.optionMessages = append(s.optionMessages, cloneMessages(messages))
+	s.options = append(s.options, options)
 	if len(s.optionErrors) > 0 {
 		err := s.optionErrors[0]
 		s.optionErrors = s.optionErrors[1:]
@@ -51,6 +53,11 @@ func (s *stubClient) CreateChatCompletionWithOptions(ctx context.Context, _ stri
 		s.optionResponses = s.optionResponses[1:]
 		return response, nil
 	}
+	return s.CreateChatCompletion(ctx, "", messages, nil)
+}
+
+func (s *stubClient) CreateChatCompletionStreamWithOptions(ctx context.Context, _ string, messages []map[string]any, _ []tools.Definition, options ChatCompletionOptions, _ func(string)) (AssistantMessage, error) {
+	s.options = append(s.options, options)
 	return s.CreateChatCompletion(ctx, "", messages, nil)
 }
 
@@ -83,6 +90,37 @@ type recordingToolEventSink struct {
 
 func (sink *recordingToolEventSink) EmitToolEvent(event ToolEvent) {
 	sink.events = append(sink.events, event)
+}
+
+func TestRunConversationPassesReasoningEffort(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "read-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"README.md"}`}}}},
+		{Content: "done"},
+	}}
+	app := NewWithOptions(client, "", Options{
+		Stream:          true,
+		Context:         ContextConfig{Enabled: false},
+		ReasoningEffort: ReasoningEffortHigh,
+		Functions: map[string]tools.Function{
+			"read_file": func(context.Context, map[string]any) (string, error) { return "contents", nil },
+		},
+	})
+
+	result, _, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "inspect"}}, 4)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q, want done", result)
+	}
+	if len(client.options) != 2 {
+		t.Fatalf("option-aware model calls = %d, want 2", len(client.options))
+	}
+	for index, options := range client.options {
+		if options.ReasoningEffort != ReasoningEffortHigh {
+			t.Fatalf("call %d reasoning effort = %q, want high", index+1, options.ReasoningEffort)
+		}
+	}
 }
 
 func TestRunConversationEmitsFailedToolResultsForInvalidSpecialToolArguments(t *testing.T) {
@@ -177,6 +215,77 @@ func TestRunConversationTruncatedToolBatchEmitsResultWithoutStart(t *testing.T) 
 	}
 	if !strings.Contains(event.Preview, "No side effects occurred") {
 		t.Fatalf("preview = %q, want fail-closed explanation", event.Preview)
+	}
+}
+
+func TestRunConversationRecoversFromEmptyFinalResponse(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{
+			ID:       "write-1",
+			Function: FunctionCall{Name: "write_file", Arguments: `{"path":"index.html","content":"done"}`},
+		}}},
+		{},
+		{Content: "Created index.html and verified the completed tool work."},
+	}}
+	toolRuns := 0
+	app := NewWithOptions(client, "", Options{
+		Context: ContextConfig{Enabled: false},
+		Stream:  true,
+		Functions: map[string]tools.Function{
+			"write_file": func(context.Context, map[string]any) (string, error) {
+				toolRuns++
+				return "Wrote to index.html", nil
+			},
+		},
+	})
+
+	result, _, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "build the page"}}, 6)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if result != "Created index.html and verified the completed tool work." {
+		t.Fatalf("result = %q", result)
+	}
+	if toolRuns != 1 {
+		t.Fatalf("tool runs = %d, want 1", toolRuns)
+	}
+	if len(client.messages) != 3 {
+		t.Fatalf("model requests = %d, want 3", len(client.messages))
+	}
+	recoveryFound := false
+	for _, message := range client.messages[2] {
+		role, _ := message["role"].(string)
+		content, _ := message["content"].(string)
+		if role == "user" && content == emptyFinalRecoveryPrompt {
+			recoveryFound = true
+			break
+		}
+	}
+	if !recoveryFound {
+		t.Fatalf("recovery request missing from third model call: %#v", client.messages[2])
+	}
+}
+
+func TestRunConversationRejectsRepeatedEmptyFinalResponses(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{},
+		{Content: " \n\t"},
+		{Content: ""},
+	}}
+	app := NewWithOptions(client, "", Options{Context: ContextConfig{Enabled: false}, Stream: true})
+
+	result, updated, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "finish the task"}}, 6)
+	if !errors.Is(err, errEmptyFinalResponse) {
+		t.Fatalf("error = %v, want errEmptyFinalResponse", err)
+	}
+	if result != "" {
+		t.Fatalf("result = %q, want empty on failure", result)
+	}
+	if len(client.messages) != maxEmptyFinalRecoveries+1 {
+		t.Fatalf("model requests = %d, want %d", len(client.messages), maxEmptyFinalRecoveries+1)
+	}
+	if len(updated) == 0 {
+		t.Fatal("updated messages should preserve failed responses for retry")
 	}
 }
 

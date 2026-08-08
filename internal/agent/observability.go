@@ -81,7 +81,11 @@ func (c *instrumentedClient) CreateChatCompletionWithOptions(ctx context.Context
 	return message, err
 }
 
-func (c *instrumentedClient) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (message AssistantMessage, err error) {
+func (c *instrumentedClient) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error) {
+	return c.CreateChatCompletionStreamWithOptions(ctx, model, messages, definitions, ChatCompletionOptions{}, onChunk)
+}
+
+func (c *instrumentedClient) CreateChatCompletionStreamWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (message AssistantMessage, err error) {
 	startedAt := time.Now()
 	reporter := startModelProgressReporter(ctx, c.progressWriter, true)
 	defer func() {
@@ -96,6 +100,10 @@ func (c *instrumentedClient) CreateChatCompletionStream(ctx context.Context, mod
 		}
 	}
 
+	if client, ok := c.inner.(chatCompletionStreamOptionsClient); ok {
+		message, err = client.CreateChatCompletionStreamWithOptions(ctx, model, messages, definitions, options, wrappedOnChunk)
+		return message, err
+	}
 	message, err = c.inner.CreateChatCompletionStream(ctx, model, messages, definitions, wrappedOnChunk)
 	return message, err
 }

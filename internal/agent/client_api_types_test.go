@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"bqagent/internal/tools"
 )
@@ -224,6 +226,230 @@ func TestAnthropicClientStreamsTextAndToolCalls(t *testing.T) {
 	}
 	if message.Usage.TotalTokens != 12 {
 		t.Fatalf("usage = %#v", message.Usage)
+	}
+}
+
+func TestStreamingRequestsIgnoreClientTotalTimeout(t *testing.T) {
+	const (
+		clientTimeout = 80 * time.Millisecond
+		waitTimeout   = 2 * time.Second
+	)
+	tests := []struct {
+		name          string
+		apiType       APIType
+		firstEvent    string
+		terminalEvent string
+	}{
+		{
+			name:          "chat completions",
+			apiType:       APITypeOpenAI,
+			firstEvent:    `data: {"choices":[{"delta":{"role":"assistant","content":"partial"}}]}`,
+			terminalEvent: "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]",
+		},
+		{
+			name:          "responses",
+			apiType:       APITypeOpenAIResponse,
+			firstEvent:    `data: {"type":"response.output_text.delta","delta":"partial"}`,
+			terminalEvent: `data: {"type":"response.completed","response":{"status":"completed"}}`,
+		},
+		{
+			name:          "anthropic",
+			apiType:       APITypeAnthropic,
+			firstEvent:    `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`,
+			terminalEvent: `data: {"type":"message_stop"}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			releaseHandler := func() {
+				releaseOnce.Do(func() { close(release) })
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "text/event-stream")
+				flusher, ok := writer.(http.Flusher)
+				if !ok {
+					return
+				}
+				_, _ = fmt.Fprintln(writer, test.firstEvent)
+				flusher.Flush()
+				<-release
+				_, _ = fmt.Fprintln(writer, test.terminalEvent)
+				flusher.Flush()
+			}))
+			defer server.Close()
+			defer releaseHandler()
+
+			httpClient := server.Client()
+			httpClient.Timeout = clientTimeout
+			client := NewClientWithAPIType("", server.URL, test.apiType, httpClient)
+			firstChunk := make(chan string, 1)
+			type streamResult struct {
+				message AssistantMessage
+				err     error
+			}
+			result := make(chan streamResult, 1)
+			go func() {
+				message, err := client.CreateChatCompletionStream(context.Background(), "test", []map[string]any{{"role": "user", "content": "hi"}}, nil, func(chunk string) {
+					select {
+					case firstChunk <- chunk:
+					default:
+					}
+				})
+				result <- streamResult{message: message, err: err}
+			}()
+
+			select {
+			case chunk := <-firstChunk:
+				if chunk != "partial" {
+					t.Fatalf("first chunk = %q, want partial", chunk)
+				}
+			case <-time.After(waitTimeout):
+				t.Fatal("timed out waiting for first stream chunk")
+			}
+			time.Sleep(3 * clientTimeout)
+			releaseHandler()
+
+			select {
+			case got := <-result:
+				if got.err != nil {
+					t.Fatalf("CreateChatCompletionStream: %v", got.err)
+				}
+				if got.message.FinalContent() != "partial" {
+					t.Fatalf("content = %q, want partial", got.message.FinalContent())
+				}
+			case <-time.After(waitTimeout):
+				t.Fatal("timed out waiting for stream completion")
+			}
+			if httpClient.Timeout != clientTimeout {
+				t.Fatalf("original client timeout = %s, want %s", httpClient.Timeout, clientTimeout)
+			}
+		})
+	}
+}
+
+func TestStreamingRequestsHonorContextCancellation(t *testing.T) {
+	const waitTimeout = 2 * time.Second
+	for _, test := range []struct {
+		name       string
+		apiType    APIType
+		firstEvent string
+	}{
+		{name: "chat completions", apiType: APITypeOpenAI, firstEvent: `data: {"choices":[{"delta":{"content":"partial"}}]}`},
+		{name: "responses", apiType: APITypeOpenAIResponse, firstEvent: `data: {"type":"response.output_text.delta","delta":"partial"}`},
+		{name: "anthropic", apiType: APITypeAnthropic, firstEvent: `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			releaseHandler := func() {
+				releaseOnce.Do(func() { close(release) })
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "text/event-stream")
+				flusher, ok := writer.(http.Flusher)
+				if !ok {
+					return
+				}
+				_, _ = fmt.Fprintln(writer, test.firstEvent)
+				flusher.Flush()
+				<-release
+			}))
+			defer server.Close()
+			defer releaseHandler()
+
+			client := NewClientWithAPIType("", server.URL, test.apiType, server.Client())
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			firstChunk := make(chan struct{}, 1)
+			result := make(chan error, 1)
+			go func() {
+				_, err := client.CreateChatCompletionStream(ctx, "test", []map[string]any{{"role": "user", "content": "hi"}}, nil, func(string) {
+					select {
+					case firstChunk <- struct{}{}:
+					default:
+					}
+				})
+				result <- err
+			}()
+
+			select {
+			case <-firstChunk:
+			case <-time.After(waitTimeout):
+				t.Fatal("timed out waiting for first stream chunk")
+			}
+			cancel()
+			select {
+			case err := <-result:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("CreateChatCompletionStream error = %v, want context canceled", err)
+				}
+			case <-time.After(waitTimeout):
+				t.Fatal("streaming request did not honor context cancellation")
+			}
+			releaseHandler()
+		})
+	}
+}
+
+func TestNonStreamingRequestsRetainClientTimeout(t *testing.T) {
+	const (
+		clientTimeout = 80 * time.Millisecond
+		waitTimeout   = 2 * time.Second
+	)
+	for _, test := range []struct {
+		name    string
+		apiType APIType
+	}{
+		{name: "chat completions", apiType: APITypeOpenAI},
+		{name: "responses", apiType: APITypeOpenAIResponse},
+		{name: "anthropic", apiType: APITypeAnthropic},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			var enteredOnce sync.Once
+			var releaseOnce sync.Once
+			releaseHandler := func() {
+				releaseOnce.Do(func() { close(release) })
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				enteredOnce.Do(func() { close(entered) })
+				<-release
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(writer, `{}`)
+			}))
+			defer server.Close()
+			defer releaseHandler()
+
+			httpClient := server.Client()
+			httpClient.Timeout = clientTimeout
+			client := NewClientWithAPIType("", server.URL, test.apiType, httpClient)
+			result := make(chan error, 1)
+			go func() {
+				_, err := client.CreateChatCompletion(context.Background(), "test", []map[string]any{{"role": "user", "content": "hi"}}, nil)
+				result <- err
+			}()
+
+			select {
+			case <-entered:
+			case <-time.After(waitTimeout):
+				t.Fatal("timed out waiting for non-streaming request")
+			}
+			select {
+			case err := <-result:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("CreateChatCompletion error = %v, want context deadline exceeded", err)
+				}
+			case <-time.After(waitTimeout):
+				t.Fatal("non-streaming request did not honor client timeout")
+			}
+			releaseHandler()
+			if httpClient.Timeout != clientTimeout {
+				t.Fatalf("original client timeout = %s, want %s", httpClient.Timeout, clientTimeout)
+			}
+		})
 	}
 }
 
