@@ -49,6 +49,8 @@ func TestWebUIServesIndex(t *testing.T) {
 	page := string(body)
 	for _, expected := range []string{
 		`id="theme-toggle"`,
+		`--bg: #dfe8ee`,
+		`--panel-strong: rgba(232, 240, 244, .96)`,
 		`function renderMarkdown(source)`,
 		`class="table-wrap"`,
 		`class="copy-code"`,
