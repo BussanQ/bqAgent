@@ -37,7 +37,7 @@
     --particle-static: rgba(53, 184, 255, .20);
     --radius: 14px;
     --maxw: 1080px;
-    --workspace-width: clamp(300px, 26vw, 420px);
+    --workspace-width: clamp(240px, 20.8vw, 336px);
   }
 
   @media (prefers-color-scheme: light) {
@@ -1448,9 +1448,19 @@
   var PARTICLE_FRAME_INTERVAL = 1000 / PARTICLE_TARGET_FPS;
   var PARTICLE_LINK_DISTANCE = 100;
   var PARTICLE_MOUSE_RADIUS = 140;
+  var PARTICLE_TRAIL_MAX_POINTS = 8;
+  var PARTICLE_TRAIL_LIFETIME = 360;
+  var PARTICLE_TRAIL_MIN_DISTANCE = 16;
+  var PARTICLE_TRAIL_SAMPLE_INTERVAL = 40;
+  var PARTICLE_PULSE_MAX_COUNT = 3;
+  var PARTICLE_PULSE_LIFETIME = 520;
+  var PARTICLE_PULSE_MAX_RADIUS = 96;
   var particleContext = null;
   var particles = [];
   var particleBuckets = Object.create(null);
+  var particleTrailPoints = [];
+  var particlePulses = [];
+  var particleTrailLast = { x: 0, y: 0, time: 0 };
   var particleWidth = 0;
   var particleHeight = 0;
   var particleDpr = 1;
@@ -1523,6 +1533,7 @@
       particle.y = particle.y / previousHeight * particleHeight;
     });
     syncParticleCount();
+    resetParticleInteractions();
     drawParticleField(0, false);
   }
 
@@ -1592,6 +1603,71 @@
     });
   }
 
+  function resetParticleInteractions() {
+    particleTrailPoints.length = 0;
+    particlePulses.length = 0;
+    particleTrailLast.x = 0;
+    particleTrailLast.y = 0;
+    particleTrailLast.time = 0;
+  }
+
+  function addParticleTrailPoint(x, y, now) {
+    var dx = x - particleTrailLast.x;
+    var dy = y - particleTrailLast.y;
+    var elapsed = now - particleTrailLast.time;
+    if (particleTrailLast.time && dx * dx + dy * dy < PARTICLE_TRAIL_MIN_DISTANCE * PARTICLE_TRAIL_MIN_DISTANCE &&
+        elapsed < PARTICLE_TRAIL_SAMPLE_INTERVAL) return;
+    particleTrailPoints.push({ x: x, y: y, createdAt: now });
+    if (particleTrailPoints.length > PARTICLE_TRAIL_MAX_POINTS) particleTrailPoints.shift();
+    particleTrailLast.x = x;
+    particleTrailLast.y = y;
+    particleTrailLast.time = now;
+  }
+
+  function addParticlePulse(x, y, now) {
+    particlePulses.push({ x: x, y: y, createdAt: now });
+    if (particlePulses.length > PARTICLE_PULSE_MAX_COUNT) particlePulses.shift();
+  }
+
+  function drawParticleInteractionFeedback(now) {
+    particleTrailPoints = particleTrailPoints.filter(function (point) {
+      return now - point.createdAt < PARTICLE_TRAIL_LIFETIME;
+    });
+    for (var index = 1; index < particleTrailPoints.length; index++) {
+      var previous = particleTrailPoints[index - 1];
+      var current = particleTrailPoints[index];
+      var progress = Math.min(1, (now - previous.createdAt) / PARTICLE_TRAIL_LIFETIME);
+      var alpha = Math.pow(1 - progress, 2) * .34;
+      particleContext.beginPath();
+      particleContext.moveTo(previous.x, previous.y);
+      particleContext.lineTo(current.x, current.y);
+      particleContext.strokeStyle = "rgba(" + particlePalette.link + "," + alpha + ")";
+      particleContext.lineWidth = .7 + (1 - progress) * .8;
+      particleContext.stroke();
+    }
+
+    particlePulses = particlePulses.filter(function (pulse) {
+      return now - pulse.createdAt < PARTICLE_PULSE_LIFETIME;
+    });
+    particlePulses.forEach(function (pulse) {
+      var progress = Math.min(1, (now - pulse.createdAt) / PARTICLE_PULSE_LIFETIME);
+      var eased = 1 - Math.pow(1 - progress, 3);
+      var alpha = Math.pow(1 - progress, 2) * .48;
+      var radius = 6 + PARTICLE_PULSE_MAX_RADIUS * eased;
+      particleContext.beginPath();
+      particleContext.arc(pulse.x, pulse.y, radius, 0, Math.PI * 2);
+      particleContext.strokeStyle = "rgba(" + particlePalette.link + "," + alpha + ")";
+      particleContext.lineWidth = 1 + (1 - progress) * 1.4;
+      particleContext.stroke();
+      if (progress < .2) {
+        particleContext.beginPath();
+        particleContext.arc(pulse.x, pulse.y, 2.6 + progress * 16, 0, Math.PI * 2);
+        particleContext.fillStyle = "rgba(" + particlePalette.link + "," + (1 - progress / .2) * .7 + ")";
+        particleContext.fill();
+      }
+    });
+  }
+
   function drawParticleField(dt, animate) {
     if (!particleContext || !particleWidth || !particleHeight) return;
     particleContext.clearRect(0, 0, particleWidth, particleHeight);
@@ -1599,6 +1675,7 @@
     if (animate) {
       buildParticleBuckets();
       drawParticleLinks();
+      drawParticleInteractionFeedback(performance.now());
       particleContext.fillStyle = particlePalette.dot;
     } else {
       particleContext.fillStyle = particlePalette.staticDot;
@@ -1632,6 +1709,7 @@
     if (particleFrame) cancelAnimationFrame(particleFrame);
     particleFrame = 0;
     particleMouse.active = false;
+    resetParticleInteractions();
     if (clear && particleContext) particleContext.clearRect(0, 0, particleWidth, particleHeight);
   }
 
@@ -1665,10 +1743,17 @@
     particleMouse.x = event.clientX;
     particleMouse.y = event.clientY;
     particleMouse.active = true;
+    addParticleTrailPoint(event.clientX, event.clientY, performance.now());
+  }
+
+  function handleParticlePointerDown(event) {
+    if (!particleRunning || event.pointerType !== "mouse" || event.button !== 0) return;
+    addParticlePulse(event.clientX, event.clientY, performance.now());
   }
 
   function clearParticlePointer() {
     particleMouse.active = false;
+    particleTrailLast.time = 0;
   }
 
   function initParticleField() {
@@ -1678,6 +1763,7 @@
     refreshParticlePalette();
     resizeParticleField();
     window.addEventListener("pointermove", handleParticlePointerMove, { passive: true });
+    window.addEventListener("pointerdown", handleParticlePointerDown, { passive: true });
     window.addEventListener("pointerout", function (event) {
       if (!event.relatedTarget) clearParticlePointer();
     });
