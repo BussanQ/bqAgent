@@ -204,6 +204,12 @@ go run ./cmd/agent --server --background
 # equivalent shortcut
 go run ./cmd/agent -d
 
+# start WeChat iLink login through the running server
+go run ./cmd/agent --ilink-login
+
+# check WeChat iLink login status
+go run ./cmd/agent --ilink-status
+
 # resume a previous session
 go run ./cmd/agent --resume <session-id> "continue from the previous result"
 

@@ -204,6 +204,12 @@ go run ./cmd/agent --server --background
 # 等价的快捷方式
 go run ./cmd/agent -d
 
+# 通过运行中的服务发起微信 iLink 登录
+go run ./cmd/agent --ilink-login
+
+# 查询微信 iLink 登录状态
+go run ./cmd/agent --ilink-status
+
 # 恢复之前的会话
 go run ./cmd/agent --resume <session-id> "基于刚才的结果继续"
 
