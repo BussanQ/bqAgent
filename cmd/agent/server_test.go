@@ -77,6 +77,22 @@ func TestRunWithServerBackgroundLaunchesChild(t *testing.T) {
 	}
 }
 
+func TestDaemonShortcutEnablesBackgroundServer(t *testing.T) {
+	options, taskArgs, err := parseCLI([]string{"-d", "--listen", "127.0.0.1:9090"})
+	if err != nil {
+		t.Fatalf("parseCLI returned error: %v", err)
+	}
+	if !options.server || !options.background {
+		t.Fatalf("options = %#v, want server and background enabled", options)
+	}
+	if options.listen != "127.0.0.1:9090" {
+		t.Fatalf("options.listen = %q, want %q", options.listen, "127.0.0.1:9090")
+	}
+	if len(taskArgs) != 0 {
+		t.Fatalf("taskArgs = %#v, want none", taskArgs)
+	}
+}
+
 func TestServerCannotAcceptTask(t *testing.T) {
 	_, _, err := parseCLI([]string{"--server", "hello"})
 	if err == nil {

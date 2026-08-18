@@ -134,8 +134,10 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.SetOutput(io.Discard)
 
 	var options cliOptions
+	var daemon bool
 	fs.BoolVar(&options.plan, "plan", false, "break the task into steps before execution")
 	fs.BoolVar(&options.background, "background", false, "run the task in the background")
+	fs.BoolVar(&daemon, "d", false, "run the HTTP server in the background")
 	fs.BoolVar(&options.chat, "chat", false, "interactive multi-turn conversation mode")
 	fs.BoolVar(&options.server, "server", false, "run a long-lived HTTP server")
 	fs.BoolVar(&options.stream, "stream", false, "stream responses token by token (requires --chat)")
@@ -152,6 +154,10 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, nil, err
+	}
+	if daemon {
+		options.server = true
+		options.background = true
 	}
 	if options.resumeID != "" && options.sessionID != "" {
 		return cliOptions{}, nil, fmt.Errorf("--resume and --session-id cannot be used together")
