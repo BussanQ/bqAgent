@@ -163,9 +163,14 @@ func TestRunLoadsDotEnvFromWorkspaceRoot(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
+	exported := map[string]string{}
 	code := runWithDeps(context.Background(), nil, &stdout, &stderr, []string{"hello"}, func(string) string { return "" }, runDeps{
-		getwd:           func() (string, error) { return root, nil },
-		executable:      func() (string, error) { return "bqagent-test", nil },
+		getwd:      func() (string, error) { return root, nil },
+		executable: func() (string, error) { return "bqagent-test", nil },
+		setenv: func(key, value string) error {
+			exported[key] = value
+			return nil
+		},
 		startBackground: func(string, []string, string, string) error { return nil },
 	})
 	if code != 0 {
@@ -176,5 +181,33 @@ func TestRunLoadsDotEnvFromWorkspaceRoot(t *testing.T) {
 	}
 	if len(seenRequest.Messages) != 2 || seenRequest.Messages[1]["content"] != "hello" {
 		t.Fatalf("messages = %#v, want hello request", seenRequest.Messages)
+	}
+	if exported["OPENAI_BASE_URL"] != server.URL || exported["OPENAI_MODEL"] != "dotenv-model" {
+		t.Fatalf("exported environment = %#v, want dotenv values", exported)
+	}
+}
+
+func TestApplyDotEnvPreservesExistingProcessEnvironment(t *testing.T) {
+	exported := map[string]string{}
+	err := applyDotEnv(func(key string) string {
+		if key == "LLM_MODEL" {
+			return "process-model"
+		}
+		return ""
+	}, func(key, value string) error {
+		exported[key] = value
+		return nil
+	}, map[string]string{
+		"LLM_MODEL":    "dotenv-model",
+		"LLM_BASE_URL": "https://example.test/v1",
+	})
+	if err != nil {
+		t.Fatalf("applyDotEnv returned error: %v", err)
+	}
+	if _, ok := exported["LLM_MODEL"]; ok {
+		t.Fatalf("exported environment = %#v, want existing LLM_MODEL preserved", exported)
+	}
+	if exported["LLM_BASE_URL"] != "https://example.test/v1" {
+		t.Fatalf("exported environment = %#v, want dotenv base URL", exported)
 	}
 }

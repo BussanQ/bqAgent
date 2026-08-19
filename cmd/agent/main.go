@@ -44,6 +44,7 @@ type cliOptions struct {
 type runDeps struct {
 	getwd           func() (string, error)
 	executable      func() (string, error)
+	setenv          func(string, string) error
 	startBackground func(executable string, args []string, dir, outputPath string) error
 }
 
@@ -57,6 +58,7 @@ func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args []
 	return runWithDeps(ctx, stdin, stdout, stderr, args, getenv, runDeps{
 		getwd:           os.Getwd,
 		executable:      os.Executable,
+		setenv:          os.Setenv,
 		startBackground: startBackgroundProcess,
 	})
 }
@@ -90,7 +92,12 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	getenv = appruntime.MergeEnv(getenv, appruntime.LoadDotEnv(ws.Root))
+	dotEnv := appruntime.LoadDotEnv(ws.Root)
+	if err := applyDotEnv(getenv, deps.setenv, dotEnv); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	getenv = appruntime.MergeEnv(getenv, dotEnv)
 
 	if err := ws.EnsureDefaults(); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -127,6 +134,21 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 	}
 
 	return runForeground(ctx, stdout, stderr, getenv, ws, systemPrompt, task, options)
+}
+
+func applyDotEnv(getenv func(string) string, setenv func(string, string) error, values map[string]string) error {
+	if setenv == nil {
+		return nil
+	}
+	for key, value := range values {
+		if getenv != nil && getenv(key) != "" {
+			continue
+		}
+		if err := setenv(key, value); err != nil {
+			return fmt.Errorf("set environment variable %s: %w", key, err)
+		}
+	}
+	return nil
 }
 
 func parseCLI(args []string) (cliOptions, []string, error) {

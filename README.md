@@ -42,7 +42,7 @@ go build -o bqagent ./cmd/agent
 
 ## Environment variables
 
-bqagent reads configuration from the process environment and from a `.env` file in the workspace root. Values already present in the process environment take precedence over `.env`.
+bqagent reads configuration from the process environment and from a `.env` file in the workspace root. Values already present in the process environment take precedence over `.env`. Loaded `.env` values are also exported to the process environment so shell tools and external-agent child processes inherit them.
 
 The workspace `.env` format is recommended:
 
