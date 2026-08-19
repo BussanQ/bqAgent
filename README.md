@@ -158,12 +158,12 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `WEBUI_STAGE_MAX_ITERATIONS` | `0` (disabled) | Optional WebUI iteration budget before a stage checkpoint; enabled only by a positive value. |
 | `WEBUI_STAGE_TIMEOUT` | `0` (disabled) | Optional WebUI stage time budget; enabled only by a positive duration. |
 | `CONTEXT_MANAGEMENT_ENABLED` | `true` | Enables request-time context budgeting. |
-| `CONTEXT_MAX_INPUT_TOKENS` | `24000` | Maximum estimated model input tokens. |
-| `CONTEXT_TARGET_INPUT_TOKENS` | `20000` | Target size after pruning or summarization. |
+| `CONTEXT_MAX_INPUT_TOKENS` | `132000` | Maximum estimated context budget, including the response reserve. |
+| `CONTEXT_TARGET_INPUT_TOKENS` | `128000` | Target size after pruning or summarization. |
 | `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | Tokens reserved for the model response. |
 | `CONTEXT_KEEP_LAST_TURNS` | `6` | Recent turns retained during compaction. |
 | `CONTEXT_SUMMARIZATION_ENABLED` | `true` | Enables summarization of older dialogue. |
-| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `20000` | Estimated input size that triggers summarization. |
+| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `128000` | Estimated input size that triggers summarization. |
 | `CONTEXT_SUMMARY_MODEL` | main model | Optional cheaper model used for summaries. |
 | `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` bounds `messages.jsonl`; `full` keeps append-only audit history. |
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | Retained tail of each `output.log`; `0` disables trimming. |

@@ -125,6 +125,7 @@ type ChannelTurnOptions struct {
 	SaveState    func(ChannelConversationState) error
 	SendReply    func(context.Context, string) error
 	SendProgress func(context.Context, string) error
+	SendFailure  func(context.Context, string) error
 	Stage        agent.StageConfig
 }
 
@@ -133,6 +134,13 @@ func (options ChannelTurnOptions) progressSender() func(context.Context, string)
 		return options.SendProgress
 	}
 	return options.SendReply
+}
+
+func (options ChannelTurnOptions) failureSender() func(context.Context, string) error {
+	if options.SendFailure != nil {
+		return options.SendFailure
+	}
+	return options.SendProgress
 }
 
 type ChannelTurnRunner struct {
@@ -270,16 +278,14 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 		if response.SessionID != "" {
 			state.SessionID = response.SessionID
 		}
-		notifyChannelTurnFailure(options, err)
+		notifyErr := notifyChannelTurnFailure(options, err)
 		if dedupeKey != "" {
 			state.LastCompletedKey = dedupeKey
 			state.PendingKey = ""
 			state.PendingReply = ""
-			return state, options.SaveState(state)
+			return state, errors.Join(err, notifyErr, options.SaveState(state))
 		}
-		// Best-effort persist; the turn error below is the one that matters.
-		_ = options.SaveState(state)
-		return state, err
+		return state, errors.Join(err, notifyErr, options.SaveState(state))
 	}
 
 	state.SessionID = response.SessionID
@@ -303,19 +309,19 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 	return state, options.SaveState(state)
 }
 
-// notifyChannelTurnFailure tells the user a turn failed. It only uses the
-// explicit SendProgress sender: synchronous callers (HTTP chat) already
-// surface the error in their response, and only async channels configure
-// progress delivery. The turn context is usually already expired or canceled
-// at this point, so delivery uses a fresh short-lived context. Cancellation
-// (e.g. shutdown) sends nothing.
-func notifyChannelTurnFailure(options ChannelTurnOptions, turnErr error) {
+// notifyChannelTurnFailure tells the user a turn failed. A channel can provide
+// a dedicated failure sender when progress delivery has different semantics,
+// such as iLink's single-use reply token. Other asynchronous channels reuse
+// their explicit progress sender, while synchronous callers surface the error
+// in their response. Delivery uses a fresh short-lived context because the turn
+// context is usually already expired. Cancellation (e.g. shutdown) sends nothing.
+func notifyChannelTurnFailure(options ChannelTurnOptions, turnErr error) error {
 	if errors.Is(turnErr, context.Canceled) {
-		return
+		return nil
 	}
-	sender := options.SendProgress
+	sender := options.failureSender()
 	if sender == nil {
-		return
+		return nil
 	}
 	reply := channelTurnFailedReply
 	if errors.Is(turnErr, context.DeadlineExceeded) {
@@ -323,7 +329,7 @@ func notifyChannelTurnFailure(options ChannelTurnOptions, turnErr error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	_ = sender(ctx, reply)
+	return sender(ctx, reply)
 }
 
 // channelStateFuncs adapts a channel-specific chat-state store to the

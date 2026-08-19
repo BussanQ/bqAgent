@@ -74,8 +74,18 @@ func TestSummarizationAdoptedIntoWorkingSet(t *testing.T) {
 
 	// Compact once, then continue on the compacted context: only a single summary call
 	// even though both iterations would individually be over the original budget.
-	if len(client.optionMessages) != 1 {
-		t.Fatalf("summary call count = %d, want 1 (compact once, adopt, continue)", len(client.optionMessages))
+	summaryRequests := 0
+	for _, request := range client.optionMessages {
+		if len(request) == 0 {
+			continue
+		}
+		content, _ := request[0]["content"].(string)
+		if strings.HasPrefix(content, "Summarize the earlier conversation") {
+			summaryRequests++
+		}
+	}
+	if summaryRequests != 1 {
+		t.Fatalf("summary call count = %d, want 1 (compact once, adopt, continue)", summaryRequests)
 	}
 
 	// Second model request must be built on the compacted base, not the full history.
@@ -87,6 +97,9 @@ func TestSummarizationAdoptedIntoWorkingSet(t *testing.T) {
 	for _, message := range second {
 		if content, _ := message["content"].(string); strings.Contains(content, EarlierConversationSummaryPrefix) {
 			foundSummary = true
+			if role, _ := message["role"].(string); role != "system" {
+				t.Fatalf("summary role = %q, want system", role)
+			}
 		}
 		if content, _ := message["content"].(string); strings.Contains(content, strings.Repeat("older-user-", 20)) {
 			t.Fatalf("second request still carries full pre-compaction history: %#v", message)

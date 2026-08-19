@@ -362,9 +362,12 @@ func (channel *IlinkChannel) processUpdate(ctx context.Context, tokenState weixi
 		SendReply: func(ctx context.Context, reply string) error {
 			return channel.sendIlinkText(ctx, tokenState, update, update.ContextToken, reply)
 		},
+		SendFailure: func(ctx context.Context, reply string) error {
+			return channel.sendIlinkText(ctx, tokenState, update, update.ContextToken, reply)
+		},
 		// iLink context tokens are single-reply oriented. Sending tool progress
 		// with the same token can consume it and make the final reply fail, so
-		// keep progress internal and reserve the token for SendReply.
+		// keep progress internal and reserve the token for SendReply or SendFailure.
 		SendProgress: func(context.Context, string) error {
 			return nil
 		},

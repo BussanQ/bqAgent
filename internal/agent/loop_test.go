@@ -13,6 +13,16 @@ import (
 	"bqagent/internal/tools"
 )
 
+func TestDefaultContextConfigUses128KCompressionThreshold(t *testing.T) {
+	config := DefaultContextConfig()
+	if config.TargetInputTokens != 128000 || config.SummaryTriggerTokens != 128000 {
+		t.Fatalf("compression thresholds = target %d summary %d, want 128000", config.TargetInputTokens, config.SummaryTriggerTokens)
+	}
+	if config.MaxInputTokens != 132000 || config.ResponseReserveTokens != 4000 {
+		t.Fatalf("context budget = max %d reserve %d, want 132000 and 4000", config.MaxInputTokens, config.ResponseReserveTokens)
+	}
+}
+
 type stubClient struct {
 	messages        [][]map[string]any
 	responses       []AssistantMessage

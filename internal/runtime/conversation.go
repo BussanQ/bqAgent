@@ -45,6 +45,13 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 		}
 		usingWorkingContext := false
 		messages, usingWorkingContext, err = savedSession.LoadResumableMessages()
+		if err == nil && usingWorkingContext {
+			var migrated bool
+			messages, migrated = migrateSyntheticSummaryRoles(messages)
+			if migrated {
+				err = savedSession.SaveWorkingMessages(messages)
+			}
+		}
 		if err == nil && !usingWorkingContext {
 			if checkpoint, checkpointErr := savedSession.LoadCheckpoint(); checkpointErr == nil {
 				if provenance, provenanceErr := savedSession.LoadTranscriptProvenance(); provenanceErr == nil && checkpointCanRestore(checkpoint, systemPrompt, provenance) {
@@ -132,7 +139,7 @@ func restoreCheckpointMessages(messages []map[string]any, checkpoint session.Con
 		}
 	}
 	restored = append(restored, map[string]any{
-		"role":    "assistant",
+		"role":    "system",
 		"content": agent.EarlierConversationSummaryPrefix + checkpoint.Summary,
 	})
 	for _, message := range checkpoint.TailMessages {
@@ -143,6 +150,34 @@ func restoreCheckpointMessages(messages []map[string]any, checkpoint session.Con
 		restored = append(restored, copyMessage)
 	}
 	return restored
+}
+
+// migrateSyntheticSummaryRoles repairs working snapshots written by older
+// versions. Synthetic summaries are context, not assistant replies; keeping
+// them as assistant messages before the first user turn is rejected by
+// providers that require every assistant message to belong to a user turn.
+func migrateSyntheticSummaryRoles(messages []map[string]any) ([]map[string]any, bool) {
+	var migrated []map[string]any
+	for index, message := range messages {
+		role, _ := message["role"].(string)
+		content, _ := message["content"].(string)
+		if role != "assistant" || !strings.HasPrefix(content, agent.EarlierConversationSummaryPrefix) {
+			continue
+		}
+		if migrated == nil {
+			migrated = append([]map[string]any(nil), messages...)
+		}
+		copyMessage := make(map[string]any, len(message))
+		for key, value := range message {
+			copyMessage[key] = value
+		}
+		copyMessage["role"] = "system"
+		migrated[index] = copyMessage
+	}
+	if migrated == nil {
+		return messages, false
+	}
+	return migrated, true
 }
 
 func stablePrompt(prompt string) string {

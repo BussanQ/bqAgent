@@ -220,7 +220,7 @@ func TestIlinkChannelProcessesConversation(t *testing.T) {
 	}
 }
 
-func TestIlinkChannelConsumesFailedTurn(t *testing.T) {
+func TestIlinkChannelNotifiesAndConsumesFailedTurn(t *testing.T) {
 	var llmCount atomic.Int32
 	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		llmCount.Add(1)
@@ -230,6 +230,7 @@ func TestIlinkChannelConsumesFailedTurn(t *testing.T) {
 
 	var updatesCount atomic.Int32
 	var sendCount atomic.Int32
+	sentMessages := make(chan weixin.SendMessageRequest, 1)
 	ilinkServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/ilink/bot/getupdates":
@@ -242,6 +243,11 @@ func TestIlinkChannelConsumesFailedTurn(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"ret":0,"get_updates_buf":"cursor-failed","msgs":[]}`))
 		case "/ilink/bot/sendmessage":
 			sendCount.Add(1)
+			var payload weixin.SendMessageRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("failed to decode sendmessage payload: %v", err)
+			}
+			sentMessages <- payload
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = writer.Write([]byte(`{"ret":0}`))
 		default:
@@ -279,11 +285,18 @@ func TestIlinkChannelConsumesFailedTurn(t *testing.T) {
 	}, "ilink poller cursor to advance after failed turn")
 
 	waitForCondition(t, 2*time.Second, func() bool { return updatesCount.Load() >= 2 }, "poller to continue after failed turn")
+	sent := waitForIlinkSend(t, sentMessages)
+	if got := sent.Msg.ItemList[0].TextItem.Text; got != channelTurnFailedReply {
+		t.Fatalf("failure reply = %q, want %q", got, channelTurnFailedReply)
+	}
+	if sent.Msg.ContextToken != "ctx-failed" {
+		t.Fatalf("failure ContextToken = %q, want ctx-failed", sent.Msg.ContextToken)
+	}
 	if got := llmCount.Load(); got != 1 {
 		t.Fatalf("LLM request count = %d, want 1 (failed update must not replay)", got)
 	}
-	if got := sendCount.Load(); got != 0 {
-		t.Fatalf("sendmessage count = %d, want 0 because iLink reserves its context token for the final reply", got)
+	if got := sendCount.Load(); got != 1 {
+		t.Fatalf("sendmessage count = %d, want one failure reply", got)
 	}
 }
 

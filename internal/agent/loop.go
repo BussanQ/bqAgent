@@ -23,8 +23,9 @@ const (
 	// With auto-compaction the loop continues on a budget-bounded context, so this
 	// is a runaway safety valve, not a task limit. Override with AGENT_MAX_ITERATIONS.
 	DefaultMaxIterations                = 1000
-	DefaultContextMaxInputTokens        = 24000
+	DefaultContextCompressionTokens     = 128000
 	DefaultContextResponseReserveTokens = 4000
+	DefaultContextMaxInputTokens        = DefaultContextCompressionTokens + DefaultContextResponseReserveTokens
 	DefaultContextKeepLastTurns         = 6
 	EarlierConversationSummaryPrefix    = "Summary of earlier conversation:\n"
 	// maxParallelTools caps how many independent tool calls in one assistant turn
@@ -232,10 +233,10 @@ func DefaultContextConfig() ContextConfig {
 		Enabled:               true,
 		MaxInputTokens:        DefaultContextMaxInputTokens,
 		ResponseReserveTokens: DefaultContextResponseReserveTokens,
-		TargetInputTokens:     DefaultContextMaxInputTokens - DefaultContextResponseReserveTokens,
+		TargetInputTokens:     DefaultContextCompressionTokens,
 		KeepLastTurns:         DefaultContextKeepLastTurns,
 		SummarizationEnabled:  true,
-		SummaryTriggerTokens:  DefaultContextMaxInputTokens - DefaultContextResponseReserveTokens,
+		SummaryTriggerTokens:  DefaultContextCompressionTokens,
 	}
 }
 
@@ -1061,7 +1062,7 @@ func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any
 		}
 	}
 	summarized = append(summarized, map[string]any{
-		"role":    "assistant",
+		"role":    "system",
 		"content": EarlierConversationSummaryPrefix + summary,
 	})
 	summarized = append(summarized, tail...)

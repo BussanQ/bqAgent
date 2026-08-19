@@ -184,7 +184,7 @@ func TestPrepareConversationPrefersWorkingContextSnapshot(t *testing.T) {
 	}
 	working := []map[string]any{
 		{"role": "system", "content": "system prompt"},
-		{"role": "assistant", "content": "compact summary"},
+		{"role": "assistant", "content": agent.EarlierConversationSummaryPrefix + "compact summary"},
 	}
 	if err := conversation.Session.SaveWorkingMessages(working); err != nil {
 		t.Fatalf("SaveWorkingMessages returned error: %v", err)
@@ -204,8 +204,15 @@ func TestPrepareConversationPrefersWorkingContextSnapshot(t *testing.T) {
 	if !restored.UsingWorkingContext {
 		t.Fatal("restored conversation did not use working context")
 	}
-	if len(restored.Messages) != 2 || restored.Messages[1]["content"] != "compact summary" {
+	if len(restored.Messages) != 2 || restored.Messages[1]["role"] != "system" || restored.Messages[1]["content"] != agent.EarlierConversationSummaryPrefix+"compact summary" {
 		t.Fatalf("restored messages = %#v", restored.Messages)
+	}
+	persistedWorking, err := restored.Session.LoadWorkingMessages()
+	if err != nil {
+		t.Fatalf("LoadWorkingMessages returned error: %v", err)
+	}
+	if len(persistedWorking) != 2 || persistedWorking[1]["role"] != "system" {
+		t.Fatalf("persisted working messages = %#v, want migrated system summary", persistedWorking)
 	}
 	raw, err := restored.Session.LoadMessages()
 	if err != nil {
@@ -323,6 +330,9 @@ func TestPrepareConversationRestoresFreshProvenanceCheckpoint(t *testing.T) {
 	}
 	if restored.Messages[0]["role"] != "system" {
 		t.Fatalf("first restored role = %#v, want system", restored.Messages[0]["role"])
+	}
+	if restored.Messages[1]["role"] != "system" {
+		t.Fatalf("summary restored role = %#v, want system", restored.Messages[1]["role"])
 	}
 	summary, _ := restored.Messages[1]["content"].(string)
 	if !strings.Contains(summary, "Summary of earlier conversation:\ncheckpoint summary") {

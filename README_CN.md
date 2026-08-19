@@ -158,12 +158,12 @@ LLM_MODEL=claude-sonnet-4-5
 | `WEBUI_STAGE_MAX_ITERATIONS` | `0`（默认禁用） | 可选的 WebUI 阶段 checkpoint 迭代预算；仅正值启用。 |
 | `WEBUI_STAGE_TIMEOUT` | `0`（默认禁用） | 可选的 WebUI 阶段时间预算；仅正 duration 启用。 |
 | `CONTEXT_MANAGEMENT_ENABLED` | `true` | 启用请求时上下文预算管理。 |
-| `CONTEXT_MAX_INPUT_TOKENS` | `24000` | 模型输入 token 估算上限。 |
-| `CONTEXT_TARGET_INPUT_TOKENS` | `20000` | 裁剪或摘要后的目标大小。 |
+| `CONTEXT_MAX_INPUT_TOKENS` | `132000` | 上下文 token 估算总预算，包含回复预留。 |
+| `CONTEXT_TARGET_INPUT_TOKENS` | `128000` | 裁剪或摘要后的目标大小。 |
 | `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | 为模型回复预留的 token。 |
 | `CONTEXT_KEEP_LAST_TURNS` | `6` | 压缩时保留的最近轮次。 |
 | `CONTEXT_SUMMARIZATION_ENABLED` | `true` | 启用旧对话摘要。 |
-| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `20000` | 触发摘要的输入大小。 |
+| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `128000` | 触发摘要的输入大小。 |
 | `CONTEXT_SUMMARY_MODEL` | 主模型 | 可选的低成本摘要模型。 |
 | `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` 限制 `messages.jsonl`；`full` 保留 append-only 审计历史。 |
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | 每个 `output.log` 保留的尾部大小；`0` 禁用裁剪。 |
