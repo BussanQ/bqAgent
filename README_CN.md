@@ -230,7 +230,7 @@ bqagent 会从当前目录向上查找，直到命中以下任一工作区标记
 
 找到后就把它当作 workspace root。相对路径工具和 shell 命令都会以这个目录为基准执行。
 
-主配置固定使用 `~/.agent/`，启动时会在这里补齐默认文件。工作区中的 `.agent/` 是可选的次级配置层，不会在切换工作区时自动创建；存在时，其 `AGENT.md`、`SOUL.md`、`USER.md`、memory 内容和 `mcp.json` 会在全局配置之后合并加载，同名 MCP server 以工作区配置为准。WebUI 侧栏中的创建按钮只会生成 `.agent/memory/`、`mcp.json`、`AGENT.md`、`SOUL.md` 和 `USER.md`。
+主配置固定使用 `~/.agent/`，启动时会在这里补齐默认文件。工作区中的 `.agent/` 是可选的次级配置层，不会在切换工作区时自动创建；存在时，其 `AGENT.md`、`SOUL.md`、`USER.md`、memory 内容和 `mcp.json` 会在全局配置之后合并加载，同名 MCP server 以工作区配置为准。WebUI 侧栏中的创建按钮只会生成 `.agent/memory/`、`mcp.json`、`AGENT.md`、`SOUL.md` 和 `USER.md`。除此之外，工作区 `.agent/memory/` 只会在发现已有 Markdown memory 需要迁移或首次显式写入 memory 时按需创建；对空 memory 的只读查询不会创建目录。
 
 ```text
 project/

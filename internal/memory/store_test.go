@@ -51,3 +51,49 @@ func TestLegacyMigrationIsIdempotent(t *testing.T) {
 		t.Fatalf("before=%d after=%d", len(before), len(after))
 	}
 }
+
+func TestMigrateWithoutLegacyDataDoesNotCreateMemoryDirectory(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".agent", "memory")
+	store := NewStore(dir,
+		filepath.Join(dir, "MEMORY.md"),
+		filepath.Join(dir, "2026-08-21.md"),
+	)
+
+	if err := store.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".agent")); !os.IsNotExist(err) {
+		t.Fatalf("migration without legacy data created .agent: %v", err)
+	}
+}
+
+func TestSearchEmptyStoreDoesNotCreateMemoryDirectory(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".agent", "memory")
+	store := NewStore(dir)
+
+	results, err := store.Search("Go project", nil, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("results=%+v, want empty", results)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".agent")); !os.IsNotExist(err) {
+		t.Fatalf("searching an empty store created .agent: %v", err)
+	}
+}
+
+func TestAddCreatesMemoryDirectoryOnFirstWrite(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".agent", "memory")
+	store := NewStore(dir)
+
+	if _, err := store.Add(KindProjectFact, "项目使用 Go", "run-1", .9, "normal", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "entries.jsonl")); err != nil {
+		t.Fatalf("first memory write did not initialize the store: %v", err)
+	}
+}

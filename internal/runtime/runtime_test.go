@@ -1,11 +1,30 @@
 package runtime
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/session"
 )
+
+func TestFactoryBuildDoesNotInitializeUnusedWorkspaceMemory(t *testing.T) {
+	root := t.TempDir()
+	runtime := Factory{
+		Config:        Config{},
+		WorkspaceRoot: root,
+		MemoryDir:     filepath.Join(root, ".agent", "memory"),
+		Getenv:        func(string) string { return "" },
+	}.Build(false)
+
+	if runtime.Memory == nil {
+		t.Fatal("runtime memory store is nil")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".agent")); !os.IsNotExist(err) {
+		t.Fatalf("building a runtime initialized workspace .agent: %v", err)
+	}
+}
 
 func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	config := ConfigFromEnv(func(string) string { return "" })

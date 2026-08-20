@@ -318,6 +318,18 @@ func (s *Store) maybeMaintain() error {
 	if err == nil && time.Since(info.ModTime()) < 7*24*time.Hour {
 		return nil
 	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if os.IsNotExist(err) {
+		// A read against a workspace that has never used structured memory must
+		// remain read-only. The directory is created later by an actual write.
+		if _, entriesErr := os.Stat(s.EntriesPath()); os.IsNotExist(entriesErr) {
+			return nil
+		} else if entriesErr != nil {
+			return entriesErr
+		}
+	}
 	entries, err := s.Active()
 	if err != nil {
 		return err
@@ -354,17 +366,24 @@ func (s *Store) Migrate() error {
 	if _, err := os.Stat(marker); err == nil {
 		return nil
 	}
+	foundLegacyData := false
 	for _, path := range s.legacy {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
+		foundLegacyData = true
 		for _, block := range splitLegacy(string(content)) {
 			if len(block) > MaxContentSize {
 				block = block[:MaxContentSize]
 			}
 			_, _ = s.Add(KindLesson, block, "legacy:"+path, .5, "normal", nil)
 		}
+	}
+	if !foundLegacyData {
+		// Merely constructing a runtime (for example while switching the WebUI
+		// workspace) must not initialize an otherwise unused local .agent tree.
+		return nil
 	}
 	return writeJSONAtomic(marker, map[string]any{"version": 1, "completed_at": time.Now().UTC()})
 }
