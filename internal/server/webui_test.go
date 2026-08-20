@@ -49,8 +49,8 @@ func TestWebUIServesIndex(t *testing.T) {
 	page := string(body)
 	for _, expected := range []string{
 		`id="theme-toggle"`,
-		`--bg: #f7f7f7`,
-		`--panel-strong: rgba(255, 255, 255, .97)`,
+		`--bg: #fff`,
+		`--panel-strong: #fff`,
 		`--text: #0a0a0a`,
 		`--signal: #2563eb`,
 		`--line: rgba(0, 0, 0, .12)`,
@@ -145,23 +145,44 @@ func TestWebUIServesIndex(t *testing.T) {
 	}
 }
 
-func TestWebUILightThemeUsesNeutralPalette(t *testing.T) {
+func TestWebUILightThemeUsesWhiteSurfaces(t *testing.T) {
 	page := string(webUIIndex)
 	for _, expected := range []string{
-		`--bg: #f7f7f7`,
-		`--panel-strong: rgba(255, 255, 255, .97)`,
+		`--bg: #fff`,
+		`--bg-soft: #fff`,
+		`--panel: #fff`,
+		`--panel-strong: #fff`,
+		`--header-bg: #fff`,
+		`--footer-bg: #fff`,
+		`--code-bg: #fff`,
+		`--quote-bg: #fff`,
+		`--table-head: #fff`,
+		`--surface-subtle: #fff`,
+		`--surface-hover: #fff`,
+		`--surface-active: #fff`,
 		`--line: rgba(0, 0, 0, .12)`,
 		`--text: #0a0a0a`,
 		`--signal: #2563eb`,
-		`--ambient-vignette: .035`,
+		`--ambient-vignette: 0`,
+		`--grid-opacity: 0`,
+		`--scan-opacity: 0`,
 	} {
 		if count := strings.Count(page, expected); count != 2 {
 			t.Fatalf("light theme token %q count = %d, want automatic and explicit definitions", expected, count)
 		}
 	}
-	for _, obsolete := range []string{"#dfe8ee", "#d3dfe7", "#102b3b", "23, 111, 158"} {
+	for _, expected := range []string{
+		`:root[data-theme="light"] body { background: #fff; }`,
+		`:root[data-theme="light"] #particle-field,`,
+		`:root[data-theme="light"] .bubble,`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("light theme missing white-surface rule %q", expected)
+		}
+	}
+	for _, obsolete := range []string{"#f7f7f7", "#ededed", "#f4f4f5", "rgba(255, 255, 255, .84)", "rgba(255, 255, 255, .97)"} {
 		if strings.Contains(page, obsolete) {
-			t.Fatalf("light theme still contains blue-tinted legacy token %q", obsolete)
+			t.Fatalf("light theme still contains non-white legacy surface %q", obsolete)
 		}
 	}
 }
