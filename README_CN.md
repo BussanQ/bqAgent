@@ -233,6 +233,15 @@ bqagent 会从当前目录向上查找，直到命中以下任一工作区标记
 主配置固定使用 `~/.agent/`，启动时会在这里补齐默认文件。工作区中的 `.agent/` 是可选的次级配置层，不会在切换工作区时自动创建；存在时，其 `AGENT.md`、`SOUL.md`、`USER.md`、memory 内容和 `mcp.json` 会在全局配置之后合并加载，同名 MCP server 以工作区配置为准。WebUI 侧栏中的创建按钮只会生成 `.agent/memory/`、`mcp.json`、`AGENT.md`、`SOUL.md` 和 `USER.md`。除此之外，工作区 `.agent/memory/` 只会在发现已有 Markdown memory 需要迁移或首次显式写入 memory 时按需创建；对空 memory 的只读查询不会创建目录。
 
 ```text
+~/.agent/
+└─ sessions/
+   └─ <session-id>/
+      ├─ meta.json
+      ├─ messages.jsonl
+      ├─ working_messages.jsonl
+      ├─ context_checkpoint.json
+      └─ output.log
+
 project/
 ├─ .agent/
 │  ├─ AGENT.md
@@ -247,12 +256,6 @@ project/
 │  ├─ skills/
 │  │  └─ <skill>/
 │  │     └─ SKILL.md
-│  ├─ sessions/
-│  │  └─ <session-id>/
-│  │     ├─ meta.json
-│  │     ├─ messages.jsonl
-│  │     ├─ context_checkpoint.json
-│  │     └─ output.log
 │  └─ mcp.json
 ├─ workspace/  # 兼容旧布局
 │  ├─ AGENT.md
@@ -290,13 +293,13 @@ project/
   - system prompt 只索引规范名称、frontmatter `description` 和工作区相对路径
   - 当 Skill 与任务相关时，模型通过 `read_file` 按需读取完整 `SKILL.md`
   - 显式 `/skill <名称或别名> [参数]` 及消息开头的 Skill ID/alias 都进入同一个主会话循环
-- `.agent/sessions/<session-id>/messages.jsonl`
+- `~/.agent/sessions/<session-id>/messages.jsonl`
   - 当前执行轮的 journal；compact 模式会在每轮结束后将其收敛为 bounded snapshot
-- `.agent/sessions/<session-id>/working_messages.jsonl`
+- `~/.agent/sessions/<session-id>/working_messages.jsonl`
   - 正常恢复使用的稳定 bounded snapshot
-- `.agent/sessions/<session-id>/context_checkpoint.json`
+- `~/.agent/sessions/<session-id>/context_checkpoint.json`
   - 保存“摘要 + 最近 tail”的紧凑 checkpoint，用于恢复时重建工作上下文
-- `.agent/sessions/<session-id>/output.log`
+- `~/.agent/sessions/<session-id>/output.log`
   - 人类可读的执行日志
 - `.agent/mcp.json`
   - MCP 服务器配置（`mcpServers` 映射）。这里配置的 **Streamable HTTP** 服务器会在启动时连接，
@@ -342,7 +345,7 @@ aliases:
 
 ## 会话与后台模式
 
-`--chat` 启动交互式多轮对话模式。在终端中逐条输入消息，智能体会在整个会话过程中持续接续上下文。输入 `/exit` 或按 Ctrl-D（EOF）结束会话。对话会自动持久化到 `.agent/sessions/` 目录下。配置 `LLM_MODELS` 后，可用 `/model` 查看模型列表、`/model <名称或别名>` 切换当前会话模型、`/model default` 恢复默认模型；选择会写入 session 的 `meta.json` 并在重启后保留。
+`--chat` 启动交互式多轮对话模式。在终端中逐条输入消息，智能体会在整个会话过程中持续接续上下文。输入 `/exit` 或按 Ctrl-D（EOF）结束会话。对话会自动持久化到全局 `~/.agent/sessions/` 目录下；`meta.json` 保留所属工作区，恢复时会校验工作区边界。配置 `LLM_MODELS` 后，可用 `/model` 查看模型列表、`/model <名称或别名>` 切换当前会话模型、`/model default` 恢复默认模型；选择会写入 session 的 `meta.json` 并在重启后保留。
 
 长对话现在会在每次请求模型前做上下文管理：
 
@@ -353,10 +356,10 @@ aliases:
 
 `--background` 会启动一个”最小后台会话”：通过同一二进制拉起子进程，并把输出写入：
 
-- `.agent/sessions/<session-id>/meta.json`
-- `.agent/sessions/<session-id>/messages.jsonl`
-- `.agent/sessions/<session-id>/context_checkpoint.json`（当已生成摘要 checkpoint 时）
-- `.agent/sessions/<session-id>/output.log`
+- `~/.agent/sessions/<session-id>/meta.json`
+- `~/.agent/sessions/<session-id>/messages.jsonl`
+- `~/.agent/sessions/<session-id>/context_checkpoint.json`（当已生成摘要 checkpoint 时）
+- `~/.agent/sessions/<session-id>/output.log`
 
 命令会立即返回 session ID、session 目录和日志路径。
 

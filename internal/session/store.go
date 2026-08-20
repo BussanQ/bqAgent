@@ -44,6 +44,7 @@ type Meta struct {
 
 type Store struct {
 	workspaceRoot string
+	agentDir      string
 	options       Options
 }
 
@@ -58,6 +59,9 @@ const (
 type Options struct {
 	TranscriptMode TranscriptMode
 	OutputMaxBytes int64
+	// AgentDir controls where the shared sessions directory is stored. An empty
+	// value preserves the legacy workspace-local <workspace>/.agent location.
+	AgentDir string
 }
 
 func DefaultOptions() Options {
@@ -110,7 +114,11 @@ func NewStore(workspaceRoot string, configured ...Options) *Store {
 	if len(configured) > 0 {
 		options = NormalizeOptions(configured[0])
 	}
-	return &Store{workspaceRoot: workspaceRoot, options: options}
+	agentDir := strings.TrimSpace(options.AgentDir)
+	if agentDir == "" {
+		agentDir = filepath.Join(workspaceRoot, ".agent")
+	}
+	return &Store{workspaceRoot: filepath.Clean(workspaceRoot), agentDir: filepath.Clean(agentDir), options: options}
 }
 
 type CreateOptions struct {
@@ -181,9 +189,13 @@ func (s *Store) Open(id string) (*Session, error) {
 	meta.ID = canonicalID
 	if meta.WorkspaceRoot == "" {
 		meta.WorkspaceRoot = s.workspaceRoot
+	} else if filepath.Clean(meta.WorkspaceRoot) != s.workspaceRoot {
+		return nil, fmt.Errorf("%w: session %q belongs to %q, current workspace is %q", ErrWorkspaceMismatch, canonicalID, meta.WorkspaceRoot, s.workspaceRoot)
 	}
 	return &Session{store: s, meta: meta, dir: dir}, nil
 }
+
+var ErrWorkspaceMismatch = errors.New("session belongs to another workspace")
 
 // CanonicalID trims an externally supplied session ID and verifies it is one
 // safe filesystem path component.
@@ -200,7 +212,9 @@ func (s *Store) sessionDir(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return safepath.Resolve(s.workspaceRoot, filepath.Join(".agent", "sessions", id))
+	// Resolve from the agent directory's existing parent so first use can create
+	// ~/.agent/sessions without weakening symlink containment checks.
+	return safepath.Resolve(filepath.Dir(s.agentDir), filepath.Join(filepath.Base(s.agentDir), "sessions", id))
 }
 
 func (session *Session) ID() string {
@@ -446,7 +460,7 @@ func (s *Store) MaintainExistingSessions() []error {
 	if s == nil || s.options.TranscriptMode != TranscriptModeCompact {
 		return nil
 	}
-	root := filepath.Join(s.workspaceRoot, ".agent", "sessions")
+	root := filepath.Join(s.agentDir, "sessions")
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
 		return nil
@@ -461,6 +475,9 @@ func (s *Store) MaintainExistingSessions() []error {
 		}
 		saved, openErr := s.Open(entry.Name())
 		if openErr != nil {
+			if errors.Is(openErr, ErrWorkspaceMismatch) {
+				continue
+			}
 			errorsFound = append(errorsFound, fmt.Errorf("session %s: %w", entry.Name(), openErr))
 			continue
 		}

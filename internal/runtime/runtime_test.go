@@ -11,15 +11,20 @@ import (
 
 func TestFactoryBuildDoesNotInitializeUnusedWorkspaceMemory(t *testing.T) {
 	root := t.TempDir()
+	agentDir := filepath.Join(t.TempDir(), ".agent")
 	runtime := Factory{
 		Config:        Config{},
 		WorkspaceRoot: root,
+		AgentDir:      agentDir,
 		MemoryDir:     filepath.Join(root, ".agent", "memory"),
 		Getenv:        func(string) string { return "" },
 	}.Build(false)
 
 	if runtime.Memory == nil {
 		t.Fatal("runtime memory store is nil")
+	}
+	if runtime.SessionOptions.AgentDir != agentDir {
+		t.Fatalf("session agent dir = %q, want %q", runtime.SessionOptions.AgentDir, agentDir)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".agent")); !os.IsNotExist(err) {
 		t.Fatalf("building a runtime initialized workspace .agent: %v", err)

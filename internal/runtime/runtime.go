@@ -241,6 +241,7 @@ func (factory Factory) Build(includePlan bool) Runtime {
 		SessionOptions: session.Options{
 			TranscriptMode: factory.Config.SessionTranscriptMode,
 			OutputMaxBytes: factory.Config.SessionOutputMaxBytes,
+			AgentDir:       factory.AgentDir,
 		},
 		WorkspaceRoot: factory.WorkspaceRoot,
 		Context: agent.ContextConfig{

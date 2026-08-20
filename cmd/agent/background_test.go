@@ -11,6 +11,7 @@ import (
 
 func TestRunWithBackgroundCreatesSessionAndLaunchesChild(t *testing.T) {
 	root := t.TempDir()
+	home := t.TempDir()
 	var launched struct {
 		executable string
 		args       []string
@@ -20,7 +21,13 @@ func TestRunWithBackgroundCreatesSessionAndLaunchesChild(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runWithDeps(context.Background(), nil, &stdout, &stderr, []string{"--background", "summarize", "README"}, func(string) string { return "" }, runDeps{
+	getenv := func(key string) string {
+		if key == "HOME" {
+			return home
+		}
+		return ""
+	}
+	code := runWithDeps(context.Background(), nil, &stdout, &stderr, []string{"--background", "summarize", "README"}, getenv, runDeps{
 		getwd:      func() (string, error) { return root, nil },
 		executable: func() (string, error) { return "bqagent-test", nil },
 		startBackground: func(executable string, args []string, dir, outputPath string) error {
@@ -50,15 +57,19 @@ func TestRunWithBackgroundCreatesSessionAndLaunchesChild(t *testing.T) {
 		t.Fatalf("stdout = %q, want session_id output", stdout.String())
 	}
 
-	entries, err := os.ReadDir(filepath.Join(root, ".agent", "sessions"))
+	sessionsDir := filepath.Join(home, ".agent", "sessions")
+	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		t.Fatalf("failed to read sessions dir: %v", err)
 	}
 	if len(entries) != 1 {
 		t.Fatalf("sessions dir contains %d entries, want 1", len(entries))
 	}
-	if launched.outputPath != filepath.Join(root, ".agent", "sessions", entries[0].Name(), "output.log") {
+	if launched.outputPath != filepath.Join(sessionsDir, entries[0].Name(), "output.log") {
 		t.Fatalf("output path = %q, want session output path", launched.outputPath)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".agent", "sessions")); !os.IsNotExist(err) {
+		t.Fatalf("background session created workspace-local sessions: %v", err)
 	}
 }
 

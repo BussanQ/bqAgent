@@ -163,10 +163,14 @@ func NewService(options ServiceOptions) *Service {
 	if maxTurns <= 0 {
 		maxTurns = agent.DefaultMaxIterations
 	}
-	store := session.NewStore(options.WorkspaceRoot)
+	sessionOptions := session.DefaultOptions()
 	if options.SessionOptions != nil {
-		store = session.NewStore(options.WorkspaceRoot, *options.SessionOptions)
+		sessionOptions = *options.SessionOptions
 	}
+	if strings.TrimSpace(options.AgentDir) != "" {
+		sessionOptions.AgentDir = options.AgentDir
+	}
+	store := session.NewStore(options.WorkspaceRoot, sessionOptions)
 	for _, maintenanceErr := range store.MaintainExistingSessions() {
 		log.Printf("session maintenance: %v", maintenanceErr)
 	}

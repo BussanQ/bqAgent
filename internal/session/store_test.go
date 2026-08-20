@@ -54,6 +54,50 @@ func TestSessionStorePersistsMessagesAndStatus(t *testing.T) {
 	}
 }
 
+func TestSessionStoreUsesConfiguredGlobalAgentDirectory(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	options := DefaultOptions()
+	options.AgentDir = agentDir
+	store := NewStore(workspaceRoot, options)
+
+	savedSession, err := store.Create(CreateOptions{Task: "global session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDir := filepath.Join(agentDir, "sessions", savedSession.ID())
+	if savedSession.Dir() != wantDir {
+		t.Fatalf("session dir = %q, want %q", savedSession.Dir(), wantDir)
+	}
+	if savedSession.Meta().WorkspaceRoot != workspaceRoot {
+		t.Fatalf("workspace root = %q, want %q", savedSession.Meta().WorkspaceRoot, workspaceRoot)
+	}
+	if _, err := os.Stat(filepath.Join(workspaceRoot, ".agent")); !os.IsNotExist(err) {
+		t.Fatalf("global session created workspace .agent: %v", err)
+	}
+}
+
+func TestGlobalSessionStoreRejectsAnotherWorkspaceSession(t *testing.T) {
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	firstOptions := DefaultOptions()
+	firstOptions.AgentDir = agentDir
+	first := NewStore(t.TempDir(), firstOptions)
+	savedSession, err := first.Create(CreateOptions{Task: "first workspace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secondOptions := DefaultOptions()
+	secondOptions.AgentDir = agentDir
+	second := NewStore(t.TempDir(), secondOptions)
+	if _, err := second.Open(savedSession.ID()); !errors.Is(err, ErrWorkspaceMismatch) {
+		t.Fatalf("Open error = %v, want workspace mismatch", err)
+	}
+	if maintenanceErrors := second.MaintainExistingSessions(); len(maintenanceErrors) != 0 {
+		t.Fatalf("maintenance errors = %v, want foreign sessions skipped", maintenanceErrors)
+	}
+}
+
 func TestSessionCurrentModelPersists(t *testing.T) {
 	store := NewStore(t.TempDir())
 	savedSession, err := store.Create(CreateOptions{Task: "switch model", Chat: true})

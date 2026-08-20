@@ -233,27 +233,30 @@ Relative tool paths and shell commands run from that resolved workspace root.
 Primary configuration is fixed at `~/.agent/`, where missing defaults are initialized at startup. A workspace `.agent/` is an optional secondary layer and is not created when switching workspaces. When present, its `AGENT.md`, `SOUL.md`, `USER.md`, memory content, and `mcp.json` are merged after the global configuration; same-named MCP servers use the workspace definition. The WebUI create button generates only `.agent/memory/`, `mcp.json`, `AGENT.md`, `SOUL.md`, and `USER.md`. Otherwise, workspace `.agent/memory/` is created lazily only when existing Markdown memory must be migrated or memory is explicitly written for the first time; read-only queries against an empty memory store do not create it.
 
 ```text
+~/.agent/
+└─ sessions/
+   └─ <session-id>/
+      ├─ meta.json
+      ├─ messages.jsonl
+      ├─ working_messages.jsonl
+      ├─ context_checkpoint.json
+      └─ output.log
+
 project/
-└─ .agent/
-   ├─ AGENT.md
-   ├─ SOUL.md
-   ├─ TOOLS.md
-   ├─ USER.md
-   ├─ memory/
-   │  ├─ MEMORY.md
-   │  └─ YYYY-MM-DD.md
-   ├─ rules/
-   │  └─ *.md
-   ├─ skills/
-   │  └─ <skill>/
-   │     └─ SKILL.md
-   ├─ sessions/
-   │  └─ <session-id>/
-   │     ├─ meta.json
-   │     ├─ messages.jsonl
-   │     ├─ context_checkpoint.json
-   │     └─ output.log
-   └─ mcp.json
+├─ .agent/
+│  ├─ AGENT.md
+│  ├─ SOUL.md
+│  ├─ TOOLS.md
+│  ├─ USER.md
+│  ├─ memory/
+│  │  ├─ MEMORY.md
+│  │  └─ YYYY-MM-DD.md
+│  ├─ rules/
+│  │  └─ *.md
+│  ├─ skills/
+│  │  └─ <skill>/
+│  │     └─ SKILL.md
+│  └─ mcp.json
 ├─ workspace/  # legacy compatible layout
 │  ├─ AGENT.md
 │  ├─ SOUL.md
@@ -290,13 +293,13 @@ project/
   - only the canonical name, frontmatter `description`, and workspace-relative path are indexed in the system prompt
   - when a skill is relevant, the model reads the complete `SKILL.md` on demand with `read_file`
   - explicit `/skill <name-or-alias> [args]` and leading skill IDs/aliases route through the same main conversation loop
-- `.agent/sessions/<session-id>/messages.jsonl`
+- `~/.agent/sessions/<session-id>/messages.jsonl`
   - current-turn journal; compact mode converges it to the bounded snapshot after each turn
-- `.agent/sessions/<session-id>/working_messages.jsonl`
+- `~/.agent/sessions/<session-id>/working_messages.jsonl`
   - stable bounded snapshot used for normal resume
-- `.agent/sessions/<session-id>/context_checkpoint.json`
+- `~/.agent/sessions/<session-id>/context_checkpoint.json`
   - compact checkpoint with summary plus recent tail for faster resume context reconstruction
-- `.agent/sessions/<session-id>/output.log`
+- `~/.agent/sessions/<session-id>/output.log`
   - human-readable execution log
 - `.agent/mcp.json`
   - MCP server config (`mcpServers` map). **Streamable HTTP** servers listed here are connected at
@@ -343,7 +346,7 @@ The discovery prompt does not include the skill body or aliases. The model first
 
 ## Sessions and background mode
 
-`--chat` starts an interactive multi-turn conversation in the terminal. Type your messages one at a time; the agent keeps the conversation going across turns. Type `/exit` or press Ctrl-D (EOF) to end the session. Chat sessions are automatically persisted under `.agent/sessions/`. With `LLM_MODELS` configured, use `/model` to list models, `/model <name-or-alias>` to switch the current session, and `/model default` to restore the default. The selection is stored in the session `meta.json` and survives restarts.
+`--chat` starts an interactive multi-turn conversation in the terminal. Type your messages one at a time; the agent keeps the conversation going across turns. Type `/exit` or press Ctrl-D (EOF) to end the session. Chat sessions are automatically persisted under the global `~/.agent/sessions/` directory; `meta.json` retains the owning workspace and resume validates that boundary. With `LLM_MODELS` configured, use `/model` to list models, `/model <name-or-alias>` to switch the current session, and `/model default` to restore the default. The selection is stored in the session `meta.json` and survives restarts.
 
 Long conversations now use request-time context management before each model call:
 
@@ -354,10 +357,10 @@ Long conversations now use request-time context management before each model cal
 
 `--background` starts a minimal background session by launching the same binary as a child process and writing output to:
 
-- `.agent/sessions/<session-id>/meta.json`
-- `.agent/sessions/<session-id>/messages.jsonl`
-- `.agent/sessions/<session-id>/context_checkpoint.json` (when a summary checkpoint has been created)
-- `.agent/sessions/<session-id>/output.log`
+- `~/.agent/sessions/<session-id>/meta.json`
+- `~/.agent/sessions/<session-id>/messages.jsonl`
+- `~/.agent/sessions/<session-id>/context_checkpoint.json` (when a summary checkpoint has been created)
+- `~/.agent/sessions/<session-id>/output.log`
 
 The command immediately prints the session ID, session directory, and log path.
 

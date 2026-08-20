@@ -70,7 +70,7 @@ WebUI turns may set `ReasoningEffort` to `low`, `medium`, or `high`; the empty v
 
 ### Sessions — `internal/session`
 
-Each session is a directory under `.agent/sessions/<id>/` with `meta.json` (status: created/running/completed/failed), `messages.jsonl`, bounded `working_messages.jsonl`, `context_checkpoint.json`, and `output.log`. `SESSION_TRANSCRIPT_MODE` defaults to `compact`: completed turns atomically rewrite the transcript to the bounded working snapshot, while `full` preserves append-only audit history. Recovery uses a newer transcript after an interrupted turn, otherwise it prefers the working snapshot. Server startup compacts eligible legacy sessions in compact mode, and `SESSION_OUTPUT_MAX_BYTES` caps retained session output at 1 MiB by default.
+Each session is a directory under the global `~/.agent/sessions/<id>/` with `meta.json` (including the owning workspace and status: created/running/completed/failed), `messages.jsonl`, bounded `working_messages.jsonl`, `context_checkpoint.json`, and `output.log`. Resume validates the stored workspace boundary. `SESSION_TRANSCRIPT_MODE` defaults to `compact`: completed turns atomically rewrite the transcript to the bounded working snapshot, while `full` preserves append-only audit history. Recovery uses a newer transcript after an interrupted turn, otherwise it prefers the working snapshot. Server startup compacts eligible sessions for its workspace in compact mode, and `SESSION_OUTPUT_MAX_BYTES` caps retained session output at 1 MiB by default.
 
 ### Server & channels — `internal/server`
 
