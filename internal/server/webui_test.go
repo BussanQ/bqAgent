@@ -49,11 +49,11 @@ func TestWebUIServesIndex(t *testing.T) {
 	page := string(body)
 	for _, expected := range []string{
 		`id="theme-toggle"`,
-		`--bg: #fff`,
-		`--panel-strong: #fff`,
-		`--text: #0a0a0a`,
-		`--signal: #2563eb`,
-		`--line: rgba(0, 0, 0, .12)`,
+		`--bg: #e6ecf5`,
+		`--panel-strong: rgba(255, 255, 255, .88)`,
+		`--text: #17222f`,
+		`--signal: #2f6feb`,
+		`--line: rgba(23, 51, 89, .13)`,
 		`function renderMarkdown(source)`,
 		`class="table-wrap"`,
 		`class="copy-code"`,
@@ -145,44 +145,57 @@ func TestWebUIServesIndex(t *testing.T) {
 	}
 }
 
-func TestWebUILightThemeUsesWhiteSurfaces(t *testing.T) {
+func TestWebUILightThemeUsesSoftSurfacesAndVisibleParticles(t *testing.T) {
 	page := string(webUIIndex)
 	for _, expected := range []string{
-		`--bg: #fff`,
-		`--bg-soft: #fff`,
-		`--panel: #fff`,
-		`--panel-strong: #fff`,
-		`--header-bg: #fff`,
-		`--footer-bg: #fff`,
-		`--code-bg: #fff`,
-		`--quote-bg: #fff`,
-		`--table-head: #fff`,
-		`--surface-subtle: #fff`,
-		`--surface-hover: #fff`,
-		`--surface-active: #fff`,
-		`--line: rgba(0, 0, 0, .12)`,
-		`--text: #0a0a0a`,
-		`--signal: #2563eb`,
-		`--ambient-vignette: 0`,
-		`--grid-opacity: 0`,
-		`--scan-opacity: 0`,
+		`--bg: #e6ecf5`,
+		`--bg-soft: #f2f5fa`,
+		`--panel: rgba(255, 255, 255, .70)`,
+		`--panel-strong: rgba(255, 255, 255, .88)`,
+		`--header-bg: rgba(240, 244, 250, .80)`,
+		`--footer-bg: rgba(230, 236, 245, .94)`,
+		`--code-bg: #f3f6fc`,
+		`--bubble-user: rgba(224, 234, 251, .92)`,
+		`--quote-bg: rgba(47, 111, 235, .07)`,
+		`--table-head: rgba(47, 111, 235, .08)`,
+		`--surface-subtle: rgba(47, 111, 235, .05)`,
+		`--surface-hover: rgba(47, 111, 235, .09)`,
+		`--surface-active: rgba(47, 111, 235, .13)`,
+		`--line: rgba(23, 51, 89, .13)`,
+		`--text: #17222f`,
+		`--signal: #2f6feb`,
+		`--particle-dot: rgba(38, 74, 128, .52)`,
+		`--particle-static: rgba(38, 74, 128, .26)`,
+		`--particle-strength: 1.7`,
+		`--vignette-rgb: 33, 56, 92`,
+		`--ambient-vignette: .09`,
+		`--grid-opacity: .05`,
+		`--scan-opacity: .012`,
 	} {
 		if count := strings.Count(page, expected); count != 2 {
 			t.Fatalf("light theme token %q count = %d, want automatic and explicit definitions", expected, count)
 		}
 	}
 	for _, expected := range []string{
-		`:root[data-theme="light"] body { background: #fff; }`,
-		`:root[data-theme="light"] #particle-field,`,
-		`:root[data-theme="light"] .bubble,`,
+		`--particle-strength: 1;`,
+		`rgba(var(--vignette-rgb), var(--ambient-vignette))`,
+		`function particleAlpha(base)`,
+		`particlePalette.strength`,
 	} {
 		if !strings.Contains(page, expected) {
-			t.Fatalf("light theme missing white-surface rule %q", expected)
+			t.Fatalf("page missing theme-aware particle rule %q", expected)
 		}
 	}
-	for _, obsolete := range []string{"#f7f7f7", "#ededed", "#f4f4f5", "rgba(255, 255, 255, .84)", "rgba(255, 255, 255, .97)"} {
+	for _, obsolete := range []string{
+		`--particle-dot: transparent`,
+		`--particle-static: transparent`,
+		`--shadow: none`,
+		`isLightTheme`,
+		`:root[data-theme="light"] body { background: #fff; }`,
+		`:root[data-theme="light"] #particle-field,`,
+	} {
 		if strings.Contains(page, obsolete) {
-			t.Fatalf("light theme still contains non-white legacy surface %q", obsolete)
+			t.Fatalf("light theme still flattens the page with %q", obsolete)
 		}
 	}
 }
