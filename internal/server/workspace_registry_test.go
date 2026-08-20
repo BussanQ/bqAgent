@@ -115,8 +115,8 @@ func TestWebUIWorkspaceRegistryOpensExactRootAndCachesService(t *testing.T) {
 	if err != nil || service.workspaceRoot != selectedCanonical {
 		t.Fatalf("resolved service root = %q, err=%v", service.workspaceRoot, err)
 	}
-	if _, err := os.Stat(filepath.Join(selectedRoot, ".agent", "AGENT.md")); err != nil {
-		t.Fatalf("selected workspace was not initialized: %v", err)
+	if _, err := os.Stat(filepath.Join(selectedRoot, ".agent")); !os.IsNotExist(err) {
+		t.Fatalf("opening a workspace unexpectedly initialized .agent: %v", err)
 	}
 	if err := registry.Close(); err != nil {
 		t.Fatal(err)
@@ -230,6 +230,28 @@ func TestWebUIWorkspaceSelectionRoutesFileExplorer(t *testing.T) {
 	var selected WorkspaceInfo
 	if err := json.NewDecoder(response.Body).Decode(&selected); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(selectedRoot, ".agent")); !os.IsNotExist(err) {
+		t.Fatalf("switching workspace unexpectedly created .agent: %v", err)
+	}
+	createResponse, err := http.Post(apiServer.URL+"/api/v1/webui/workspace/config?workspace_id="+selected.ID, "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer createResponse.Body.Close()
+	if createResponse.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(createResponse.Body)
+		t.Fatalf("create workspace config status=%d body=%s", createResponse.StatusCode, body)
+	}
+	for _, path := range []string{"memory", "mcp.json", "AGENT.md", "SOUL.md", "USER.md"} {
+		if _, err := os.Stat(filepath.Join(selectedRoot, ".agent", path)); err != nil {
+			t.Fatalf("workspace config missing %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{"TOOLS.md", filepath.Join("memory", "MEMORY.md"), "rules", "skills"} {
+		if _, err := os.Stat(filepath.Join(selectedRoot, ".agent", path)); !os.IsNotExist(err) {
+			t.Fatalf("workspace config unexpectedly created %s: %v", path, err)
+		}
 	}
 	var listing webUIWorkspaceListResponse
 	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/workspace?workspace_id="+selected.ID, &listing)

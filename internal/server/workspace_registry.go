@@ -12,8 +12,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-
-	"bqagent/internal/workspace"
 )
 
 type WorkspaceFactory func(context.Context, string) (*Service, io.Closer, error)
@@ -235,10 +233,6 @@ func (registry *WorkspaceRegistry) Open(ctx context.Context, rootID, relative st
 	build := func() (*workspaceRegistryEntry, error) {
 		if registry.factory == nil {
 			return nil, fmt.Errorf("workspace service factory is unavailable")
-		}
-		ws := &workspace.Workspace{Root: canonical}
-		if err := ws.EnsureDefaults(); err != nil {
-			return nil, fmt.Errorf("initialize workspace: %w", err)
 		}
 		service, closer, err := registry.factory(ctx, canonical)
 		if err != nil {

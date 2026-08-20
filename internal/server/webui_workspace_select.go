@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"bqagent/internal/workspace"
 )
 
 type webUIWorkspacesResponse struct {
@@ -33,6 +35,36 @@ type webUIWorkspaceDirectoryResponse struct {
 type webUIWorkspaceOpenRequest struct {
 	RootID string `json:"root_id"`
 	Path   string `json:"path"`
+}
+
+type webUIWorkspaceConfigResponse struct {
+	Path    string   `json:"path"`
+	Created bool     `json:"created"`
+	Files   []string `json:"files"`
+}
+
+func (channel *WebUIChannel) handleWorkspaceConfigCreate(writer http.ResponseWriter, request *http.Request) {
+	writer.Header().Set("Cache-Control", "no-store")
+	if request.Method != http.MethodPost {
+		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
+		return
+	}
+	service, _, err := channel.resolveService(request.URL.Query().Get("workspace_id"))
+	if err != nil {
+		writeError(writer, http.StatusNotFound, chatResponse{Error: "workspace not found"})
+		return
+	}
+	ws := &workspace.Workspace{Root: service.workspaceRoot}
+	created := !ws.HasLocalAgentConfig()
+	if err := ws.EnsureLocalConfig(); err != nil {
+		writeWebUIWorkspaceError(writer, webUIWorkspaceFileError("create workspace agent config", err))
+		return
+	}
+	writeJSON(writer, http.StatusOK, webUIWorkspaceConfigResponse{
+		Path:    ws.LocalAgentDir(),
+		Created: created,
+		Files:   []string{"memory/", "mcp.json", "AGENT.md", "SOUL.md", "USER.md"},
+	})
 }
 
 func (channel *WebUIChannel) handleWorkspaces(writer http.ResponseWriter, request *http.Request) {

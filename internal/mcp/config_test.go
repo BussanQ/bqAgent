@@ -16,6 +16,26 @@ func TestLoadConfigMissingFileIsEmpty(t *testing.T) {
 	}
 }
 
+func TestLoadMergedConfigLetsWorkspaceOverrideGlobalServer(t *testing.T) {
+	root := t.TempDir()
+	globalPath := filepath.Join(root, "global.json")
+	workspacePath := filepath.Join(root, "workspace.json")
+	if err := os.WriteFile(globalPath, []byte(`{"mcpServers":{"shared":{"url":"https://global.test/mcp"},"global":{"url":"https://global-only.test/mcp"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workspacePath, []byte(`{"mcpServers":{"shared":{"url":"https://workspace.test/mcp"},"workspace":{"url":"https://workspace-only.test/mcp"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadMergedConfig([]string{globalPath, workspacePath}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Servers) != 3 || cfg.Servers["shared"].URL != "https://workspace.test/mcp" {
+		t.Fatalf("merged config = %#v", cfg.Servers)
+	}
+}
+
 func TestEnabledServersExpandsOnlyAllowedHeaderEnvironment(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "mcp.json")

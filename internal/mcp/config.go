@@ -184,3 +184,19 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 	}
 	return cfg, nil
 }
+
+// LoadMergedConfig loads configuration layers in order. Servers from a later
+// layer replace servers with the same name from an earlier layer.
+func LoadMergedConfig(paths []string, getenv func(string) string) (Config, error) {
+	merged := Config{Servers: make(map[string]ServerConfig)}
+	for _, path := range paths {
+		cfg, err := LoadConfig(path, getenv)
+		if err != nil {
+			return Config{}, err
+		}
+		for name, server := range cfg.Servers {
+			merged.Servers[name] = server
+		}
+	}
+	return merged, nil
+}

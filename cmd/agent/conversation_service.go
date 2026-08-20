@@ -16,12 +16,13 @@ import (
 
 func newConversationService(ctx context.Context, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, includePlan bool, statusWriter io.Writer) (*appserver.Service, *extagent.Broker) {
 	runtime := appruntime.Factory{
-		Config:        appruntime.ConfigFromEnv(getenv),
-		WorkspaceRoot: ws.Root,
-		MemoryDir:     ws.WorkspaceMemoryDir(),
-		Getenv:        getenv,
-		MCPConfigPath: ws.MCPConfigPath(),
-		LogWriter:     statusWriter,
+		Config:         appruntime.ConfigFromEnv(getenv),
+		WorkspaceRoot:  ws.Root,
+		AgentDir:       ws.AgentDir(),
+		MemoryDir:      ws.WorkspaceMemoryDir(),
+		Getenv:         getenv,
+		MCPConfigPaths: ws.MCPConfigPaths(),
+		LogWriter:      statusWriter,
 	}.Build(includePlan)
 
 	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
@@ -48,6 +49,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 
 	service := appserver.NewService(appserver.ServiceOptions{
 		WorkspaceRoot:   ws.Root,
+		AgentDir:        ws.AgentDir(),
 		Client:          runtime.Client,
 		APIType:         runtime.APIType,
 		Model:           runtime.Model,

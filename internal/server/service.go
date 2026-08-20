@@ -26,6 +26,7 @@ import (
 
 type ServiceOptions struct {
 	WorkspaceRoot       string
+	AgentDir            string
 	Client              agent.ChatCompletionClient
 	APIType             agent.APIType
 	Model               string
@@ -48,6 +49,7 @@ type ServiceOptions struct {
 type Service struct {
 	store               *session.Store
 	workspaceRoot       string
+	agentDir            string
 	client              agent.ChatCompletionClient
 	apiType             agent.APIType
 	model               string
@@ -171,6 +173,7 @@ func NewService(options ServiceOptions) *Service {
 	service := &Service{
 		store:               store,
 		workspaceRoot:       options.WorkspaceRoot,
+		agentDir:            options.AgentDir,
 		client:              options.Client,
 		apiType:             agent.NormalizeAPIType(string(options.APIType)),
 		model:               agent.EffectiveModel(options.Model),
@@ -908,7 +911,7 @@ func (service *Service) rewriteSkillInvocation(message string) (string, *skillIn
 		return message, nil, nil
 	}
 
-	ws := &workspace.Workspace{Root: service.workspaceRoot}
+	ws := &workspace.Workspace{Root: service.workspaceRoot, GlobalAgentDir: service.agentDir}
 	var skill workspace.Skill
 	var args string
 	if token == "/skill" {

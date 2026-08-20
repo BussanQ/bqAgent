@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -92,6 +93,14 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	// Resolve the global config from the injected process environment as well,
+	// so embedded/test callers do not accidentally read or mutate the host user's
+	// real ~/.agent when they provide an isolated environment.
+	if agentDir := globalAgentDirFromEnv(getenv); agentDir != "" {
+		ws.GlobalAgentDir = agentDir
+	} else {
+		ws.GlobalAgentDir = ""
+	}
 	dotEnv := loadWorkspaceDotEnv(getenv, ws.Root, options.subagentRun != "")
 	if err := applyDotEnv(getenv, deps.setenv, dotEnv); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -134,6 +143,20 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 	}
 
 	return runForeground(ctx, stdout, stderr, getenv, ws, systemPrompt, task, options)
+}
+
+func globalAgentDirFromEnv(getenv func(string) string) string {
+	if getenv == nil {
+		return ""
+	}
+	home := strings.TrimSpace(getenv("HOME"))
+	if home == "" {
+		home = strings.TrimSpace(getenv("USERPROFILE"))
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".agent")
 }
 
 func loadWorkspaceDotEnv(getenv func(string) string, root string, subagentWorker bool) map[string]string {
@@ -359,12 +382,13 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	}
 
 	runtime := appruntime.Factory{
-		Config:        llmConfig,
-		WorkspaceRoot: ws.Root,
-		MemoryDir:     ws.WorkspaceMemoryDir(),
-		Getenv:        getenv,
-		MCPConfigPath: ws.MCPConfigPath(),
-		LogWriter:     stderr,
+		Config:         llmConfig,
+		WorkspaceRoot:  ws.Root,
+		AgentDir:       ws.AgentDir(),
+		MemoryDir:      ws.WorkspaceMemoryDir(),
+		Getenv:         getenv,
+		MCPConfigPaths: ws.MCPConfigPaths(),
+		LogWriter:      stderr,
 	}.Build(true)
 	var runRecorder *apptrace.Recorder
 	if runtime.RunTraceEnabled {

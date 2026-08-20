@@ -116,6 +116,7 @@ func TestWebUIServesIndex(t *testing.T) {
 		`id="workspace-preview-view"`,
 		`id="workspace-preview-attach"`,
 		`id="workspace-select"`,
+		`id="workspace-create-agent"`,
 		`id="workspace-picker-backdrop"`,
 		`id="workspace-picker-root"`,
 		`id="workspace-picker-confirm"`,
@@ -130,6 +131,7 @@ func TestWebUIServesIndex(t *testing.T) {
 		`/api/v1/webui/workspace/preview?path=`,
 		`/api/v1/webui/workspaces/directories?root_id=`,
 		`/api/v1/webui/workspaces/open`,
+		`/api/v1/webui/workspace/config`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("served page missing WebUI feature %q", expected)

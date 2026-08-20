@@ -48,12 +48,15 @@ type Config struct {
 type Factory struct {
 	Config        Config
 	WorkspaceRoot string
+	AgentDir      string
 	MemoryDir     string
 	// Getenv resolves environment variables for MCP config ${VAR} expansion.
 	// Nil falls back to os.Getenv inside the MCP loader.
 	Getenv func(string) string
 	// MCPConfigPath points at .agent/mcp.json. Empty disables MCP discovery.
 	MCPConfigPath string
+	// MCPConfigPaths are loaded in order; later files override same-named servers.
+	MCPConfigPaths []string
 	// LogWriter receives best-effort MCP discovery warnings. Nil discards them.
 	LogWriter io.Writer
 }
@@ -213,6 +216,7 @@ func (factory Factory) Build(includePlan bool) Runtime {
 
 	catalog := tools.NewCatalog(tools.Options{
 		WorkspaceRoot:      factory.WorkspaceRoot,
+		AgentDir:           factory.AgentDir,
 		BashOutputMaxBytes: factory.Config.BashOutputMaxBytes,
 		ReadFileMaxBytes:   factory.Config.ReadFileMaxBytes,
 		IncludePlan:        includePlan,
@@ -257,7 +261,11 @@ func (factory Factory) Build(includePlan bool) Runtime {
 // connects to each to discover its tools. It is best-effort: a missing config
 // or an unreachable server yields no tools and never aborts startup.
 func (factory Factory) discoverMCPTools() ([]tools.Definition, map[string]tools.Function) {
-	cfg, err := mcp.LoadConfig(factory.MCPConfigPath, factory.Getenv)
+	paths := append([]string(nil), factory.MCPConfigPaths...)
+	if len(paths) == 0 && strings.TrimSpace(factory.MCPConfigPath) != "" {
+		paths = append(paths, factory.MCPConfigPath)
+	}
+	cfg, err := mcp.LoadMergedConfig(paths, factory.Getenv)
 	if err != nil {
 		factory.logf("[MCP] failed to load config: %v\n", err)
 		return nil, nil

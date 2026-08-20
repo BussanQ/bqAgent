@@ -115,6 +115,21 @@ func ReadFileFromRootWithMaxBytes(root string, maxBytes int64) Function {
 	}
 }
 
+// ReadFileFromWorkspaceAndAgent keeps normal paths scoped to the workspace,
+// while routing .agent/* reads to the configured global agent directory.
+func ReadFileFromWorkspaceAndAgent(workspaceRoot, agentDir string, maxBytes int64) Function {
+	workspaceReader := ReadFileFromRootWithMaxBytes(workspaceRoot, maxBytes)
+	agentReader := ReadFileFromRootWithMaxBytes(filepath.Dir(agentDir), maxBytes)
+	return func(ctx context.Context, args map[string]any) (string, error) {
+		path, _ := args["path"].(string)
+		clean := filepath.Clean(strings.TrimSpace(path))
+		if strings.TrimSpace(agentDir) != "" && (clean == ".agent" || strings.HasPrefix(clean, ".agent"+string(filepath.Separator))) {
+			return agentReader(ctx, args)
+		}
+		return workspaceReader(ctx, args)
+	}
+}
+
 // optionalPositiveInt reads an optional non-negative integer argument. It
 // accepts strings and float64 values decoded from JSON. Missing or empty values
 // return 0; non-integral or negative values are errors.

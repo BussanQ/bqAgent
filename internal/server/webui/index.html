@@ -1417,6 +1417,9 @@
           <button class="workspace-tool" id="workspace-select" type="button" title="选择工作区" aria-label="选择工作区" aria-expanded="false" aria-controls="workspace-picker-backdrop">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M3.5 7h6l2 2h9v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2zM12 12v5m-2.5-2.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
+          <button class="workspace-tool" id="workspace-create-agent" type="button" title="在工作目录创建 .agent 配置" aria-label="在工作目录创建 .agent 配置">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M4 5.5h6l2 2h8v11H4zM12 10.5v5m-2.5-2.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <button class="workspace-tool" id="workspace-refresh" type="button" title="刷新文件树" aria-label="刷新文件树">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M19 8a7.5 7.5 0 1 0 .4 7M19 4v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
@@ -1575,6 +1578,7 @@
   var workspaceTree = document.getElementById("workspace-tree");
   var workspaceRefresh = document.getElementById("workspace-refresh");
   var workspaceSelect = document.getElementById("workspace-select");
+  var workspaceCreateAgent = document.getElementById("workspace-create-agent");
   var workspaceCurrentName = document.getElementById("workspace-current-name");
   var workspaceCurrentPath = document.getElementById("workspace-current-path");
   var workspacePreviewView = document.getElementById("workspace-preview-view");
@@ -2049,6 +2053,7 @@
     input.disabled = false;
     sendBtn.disabled = false;
     workspaceSelect.disabled = false;
+    workspaceCreateAgent.disabled = false;
     try {
       localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ root_id: info.root_id, path: info.relative_path || "" }));
     } catch (_) {}
@@ -2090,6 +2095,22 @@
     }
     try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
     applyWorkspace(selected, false);
+  }
+
+  async function createWorkspaceAgentConfig() {
+    if (busy || !currentWorkspace) return;
+    workspaceCreateAgent.disabled = true;
+    try {
+      var result = await workspaceFetchJSON(workspaceScopedURL("/api/v1/webui/workspace/config"), { method: "POST", headers: { "Accept": "application/json" } });
+      statusEl.textContent = result.created ? "已创建工作区 .agent 配置" : "工作区 .agent 配置已存在";
+      statusEl.classList.remove("error", "busy");
+      refreshWorkspaceTree();
+    } catch (error) {
+      statusEl.textContent = "创建 .agent 失败：" + (error && error.message ? error.message : error);
+      statusEl.classList.add("error");
+    } finally {
+      workspaceCreateAgent.disabled = false;
+    }
   }
 
   async function loadRuntimeModel() {
@@ -3293,6 +3314,7 @@
     reasoningEffortToggle.disabled = on;
     reasoningEffortRange.disabled = on;
     workspaceSelect.disabled = on || !workspaceReady;
+    workspaceCreateAgent.disabled = on || !workspaceReady;
     if (on) {
       setAttachmentMenu(false);
       setReasoningEffortMenu(false);
@@ -3659,6 +3681,7 @@
   });
   newChatBtn.addEventListener("click", newChat);
   workspaceSelect.addEventListener("click", openWorkspacePicker);
+  workspaceCreateAgent.addEventListener("click", createWorkspaceAgentConfig);
   workspaceToggle.addEventListener("click", function () {
     setWorkspaceSidebarOpen(workspaceToggle.getAttribute("aria-expanded") !== "true", true);
   });
@@ -3795,6 +3818,7 @@
   input.disabled = true;
   sendBtn.disabled = true;
   workspaceSelect.disabled = true;
+  workspaceCreateAgent.disabled = true;
   initParticleField();
   initializeWorkspaceSelection().catch(function (error) {
     statusEl.textContent = "工作区初始化失败";

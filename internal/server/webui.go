@@ -150,6 +150,7 @@ func (channel *WebUIChannel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", channel.handleIndex)
 	mux.HandleFunc("/api/v1/webui/chat", channel.handleStreamChat)
 	mux.HandleFunc("/api/v1/webui/workspace", channel.handleWorkspaceList)
+	mux.HandleFunc("/api/v1/webui/workspace/config", channel.handleWorkspaceConfigCreate)
 	mux.HandleFunc("/api/v1/webui/workspace/preview", channel.handleWorkspacePreview)
 	mux.HandleFunc("/api/v1/webui/workspaces", channel.handleWorkspaces)
 	mux.HandleFunc("/api/v1/webui/workspaces/directories", channel.handleWorkspaceDirectories)

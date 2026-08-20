@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -24,7 +25,20 @@ const (
 )
 
 type Workspace struct {
-	Root string
+	Root           string
+	GlobalAgentDir string
+}
+
+// New returns a workspace whose primary agent configuration lives in
+// ~/.agent. Tests and compatibility callers that construct Workspace literals
+// without GlobalAgentDir continue to use <workspace>/.agent as a self-contained
+// configuration root.
+func New(root string) (*Workspace, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	return &Workspace{Root: filepath.Clean(root), GlobalAgentDir: filepath.Join(home, agentDirName)}, nil
 }
 
 func Discover(start string) (*Workspace, error) {
@@ -41,20 +55,33 @@ func Discover(start string) (*Workspace, error) {
 		root = filepath.Dir(root)
 	}
 
+	globalAgentDir := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		globalAgentDir = filepath.Clean(filepath.Join(home, agentDirName))
+	}
 	for {
-		if fileExists(filepath.Join(root, agentDirName)) || fileExists(filepath.Join(root, ".git")) || fileExists(filepath.Join(root, "go.mod")) {
-			return &Workspace{Root: root}, nil
+		localAgentDir := filepath.Clean(filepath.Join(root, agentDirName))
+		hasLocalAgentMarker := localAgentDir != globalAgentDir && fileExists(localAgentDir)
+		if hasLocalAgentMarker || fileExists(filepath.Join(root, ".git")) || fileExists(filepath.Join(root, "go.mod")) {
+			return New(root)
 		}
 
 		parent := filepath.Dir(root)
 		if parent == root {
-			return &Workspace{Root: filepath.Clean(start)}, nil
+			return New(filepath.Clean(start))
 		}
 		root = parent
 	}
 }
 
 func (w *Workspace) AgentDir() string {
+	if w != nil && strings.TrimSpace(w.GlobalAgentDir) != "" {
+		return filepath.Clean(w.GlobalAgentDir)
+	}
+	return filepath.Join(w.Root, agentDirName)
+}
+
+func (w *Workspace) LocalAgentDir() string {
 	return filepath.Join(w.Root, agentDirName)
 }
 
@@ -84,6 +111,10 @@ func (w *Workspace) WorkspaceUserPath() string {
 
 func (w *Workspace) WorkspaceMemoryDir() string {
 	return filepath.Join(w.ContextDir(), memoryDirName)
+}
+
+func (w *Workspace) LocalMemoryDir() string {
+	return filepath.Join(w.LocalAgentDir(), memoryDirName)
 }
 
 func (w *Workspace) LegacyWorkspaceMemoryDir() string {
@@ -133,6 +164,18 @@ func (w *Workspace) MCPConfigPath() string {
 	return filepath.Join(w.AgentDir(), mcpConfigFileName)
 }
 
+func (w *Workspace) LocalMCPConfigPath() string {
+	return filepath.Join(w.LocalAgentDir(), mcpConfigFileName)
+}
+
+func (w *Workspace) MCPConfigPaths() []string {
+	paths := []string{w.MCPConfigPath()}
+	if local := w.LocalMCPConfigPath(); filepath.Clean(local) != filepath.Clean(paths[0]) {
+		paths = append(paths, local)
+	}
+	return paths
+}
+
 func (w *Workspace) ResolvePath(path string) string {
 	if w == nil || path == "" || filepath.IsAbs(path) {
 		return path
@@ -159,6 +202,26 @@ func fileExists(path string) bool {
 
 func (w *Workspace) hasPrimaryContext() bool {
 	return fileExists(w.ContextDir())
+}
+
+func (w *Workspace) HasLocalAgentConfig() bool {
+	return fileExists(w.LocalAgentDir())
+}
+
+func (w *Workspace) primaryConfigLayer() *Workspace {
+	if w == nil || strings.TrimSpace(w.GlobalAgentDir) == "" {
+		return w
+	}
+	agentDir := filepath.Clean(w.GlobalAgentDir)
+	return &Workspace{Root: filepath.Dir(agentDir)}
+}
+
+func (w *Workspace) hasDistinctLocalConfig() bool {
+	return w.hasDistinctConfigRoot() && w.HasLocalAgentConfig()
+}
+
+func (w *Workspace) hasDistinctConfigRoot() bool {
+	return w != nil && strings.TrimSpace(w.GlobalAgentDir) != "" && filepath.Clean(w.AgentDir()) != filepath.Clean(w.LocalAgentDir())
 }
 
 func (w *Workspace) hasLegacyContext() bool {

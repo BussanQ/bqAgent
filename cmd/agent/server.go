@@ -70,7 +70,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 			appserver.SplitWorkspaceRoots(getenv("WEBUI_WORKSPACE_ROOTS")),
 		),
 		Factory: func(factoryContext context.Context, root string) (*appserver.Service, io.Closer, error) {
-			selected := &workspace.Workspace{Root: root}
+			selected := &workspace.Workspace{Root: root, GlobalAgentDir: ws.AgentDir()}
 			prompt, promptErr := selected.BuildSystemPrompt(agent.DefaultSystemPrompt)
 			if promptErr != nil {
 				return nil, nil, promptErr

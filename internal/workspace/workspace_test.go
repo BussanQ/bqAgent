@@ -10,6 +10,8 @@ import (
 
 func TestDiscoverFindsNearestWorkspaceMarker(t *testing.T) {
 	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	nested := filepath.Join(root, "a", "b", "c")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatalf("failed to create nested directory: %v", err)
@@ -24,6 +26,99 @@ func TestDiscoverFindsNearestWorkspaceMarker(t *testing.T) {
 	}
 	if ws.Root != root {
 		t.Fatalf("workspace root = %q, want %q", ws.Root, root)
+	}
+	if ws.AgentDir() != filepath.Join(home, ".agent") {
+		t.Fatalf("agent dir = %q, want global home config", ws.AgentDir())
+	}
+}
+
+func TestDiscoverDoesNotTreatGlobalAgentDirectoryAsWorkspaceMarker(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	start := filepath.Join(home, "scratch", "nested")
+	if err := os.MkdirAll(filepath.Join(home, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(start, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := Discover(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.Root != start {
+		t.Fatalf("workspace root = %q, want starting directory %q", ws.Root, start)
+	}
+}
+
+func TestBuildSystemPromptMergesGlobalAndLocalContext(t *testing.T) {
+	root := t.TempDir()
+	globalAgent := filepath.Join(t.TempDir(), ".agent")
+	for _, dir := range []string{globalAgent, filepath.Join(root, ".agent"), filepath.Join(globalAgent, "memory"), filepath.Join(root, ".agent", "memory")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		filepath.Join(globalAgent, "AGENT.md"):               "global instructions",
+		filepath.Join(globalAgent, "USER.md"):                "global user",
+		filepath.Join(globalAgent, "memory", "MEMORY.md"):    "global memory",
+		filepath.Join(root, ".agent", "AGENT.md"):            "workspace instructions",
+		filepath.Join(root, ".agent", "USER.md"):             "workspace user",
+		filepath.Join(root, ".agent", "memory", "MEMORY.md"): "workspace memory",
+	}
+	for path, content := range files {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	prompt, err := (&Workspace{Root: root, GlobalAgentDir: globalAgent}).BuildSystemPrompt("base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# Global Context", "global instructions", "global user", "# Workspace Context", "workspace instructions", "workspace user", "global memory", "workspace memory"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q: %s", want, prompt)
+		}
+	}
+	if strings.Index(prompt, "global instructions") > strings.Index(prompt, "workspace instructions") {
+		t.Fatalf("workspace context must load after global context: %s", prompt)
+	}
+}
+
+func TestEnsureLocalConfigCreatesOnlyWorkspaceOverlayFiles(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root, GlobalAgentDir: filepath.Join(t.TempDir(), ".agent")}
+	if err := ws.EnsureLocalConfig(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"memory", "mcp.json", "AGENT.md", "SOUL.md", "USER.md"} {
+		if _, err := os.Stat(filepath.Join(root, ".agent", path)); err != nil {
+			t.Fatalf("expected %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{"TOOLS.md", filepath.Join("memory", "MEMORY.md"), "rules", "skills"} {
+		if _, err := os.Stat(filepath.Join(root, ".agent", path)); !os.IsNotExist(err) {
+			t.Fatalf("unexpected workspace overlay path %s: %v", path, err)
+		}
+	}
+}
+
+func TestEnsureDefaultsInitializesGlobalAgentDirectoryOnly(t *testing.T) {
+	root := t.TempDir()
+	globalAgent := filepath.Join(t.TempDir(), ".agent")
+	ws := &Workspace{Root: root, GlobalAgentDir: globalAgent}
+	if err := ws.EnsureDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"AGENT.md", "SOUL.md", "TOOLS.md", "USER.md", "mcp.json", filepath.Join("memory", "MEMORY.md")} {
+		if _, err := os.Stat(filepath.Join(globalAgent, path)); err != nil {
+			t.Fatalf("global defaults missing %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".agent")); !os.IsNotExist(err) {
+		t.Fatalf("global initialization unexpectedly wrote workspace .agent: %v", err)
 	}
 }
 

@@ -153,6 +153,27 @@ func TestCatalogInjectsToolOutputLimits(t *testing.T) {
 	}
 }
 
+func TestCatalogReadsDotAgentPathsFromGlobalAgentDirectory(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	home := t.TempDir()
+	agentDir := filepath.Join(home, ".agent")
+	skillDir := filepath.Join(agentDir, "skills", "demo")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("global skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog := NewCatalog(Options{WorkspaceRoot: workspaceRoot, AgentDir: agentDir})
+	content, err := catalog.Registry()["read_file"](context.Background(), map[string]any{"path": ".agent/skills/demo/SKILL.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "global skill" {
+		t.Fatalf("read_file = %q, want global skill", content)
+	}
+}
+
 func TestExecuteBashReturnsErrorAndOutputOnNonZeroExit(t *testing.T) {
 	command := "printf sentinel; exit 7"
 	if runtime.GOOS == "windows" {

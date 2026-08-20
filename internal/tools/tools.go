@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	appmemory "bqagent/internal/memory"
@@ -62,6 +63,7 @@ type Function func(ctx context.Context, args map[string]any) (string, error)
 
 type Options struct {
 	WorkspaceRoot      string
+	AgentDir           string
 	BashOutputMaxBytes int64
 	ReadFileMaxBytes   int64
 	IncludePlan        bool
@@ -101,9 +103,13 @@ func RegistryWithOptions(options Options) map[string]Function {
 	if todoStore == nil {
 		todoStore = NewTodoStore()
 	}
+	skillRoot := options.WorkspaceRoot
+	if strings.TrimSpace(options.AgentDir) != "" {
+		skillRoot = filepath.Dir(options.AgentDir)
+	}
 	registry := map[string]Function{
 		"execute_bash":  ExecuteBashInDirWithMaxOutput(options.WorkspaceRoot, options.BashOutputMaxBytes),
-		"read_file":     ReadFileFromRootWithMaxBytes(options.WorkspaceRoot, options.ReadFileMaxBytes),
+		"read_file":     ReadFileFromWorkspaceAndAgent(options.WorkspaceRoot, options.AgentDir, options.ReadFileMaxBytes),
 		"write_file":    WriteFileToRoot(options.WorkspaceRoot),
 		"edit_file":     EditFileInRoot(options.WorkspaceRoot),
 		"grep":          GrepInRoot(options.WorkspaceRoot),
@@ -111,7 +117,7 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"todo_write":    TodoWriteWithStore(todoStore),
 		"web_search":    WebSearchWithProviderConfig(searchProvider, searchAPIKey, searchBaseURL),
 		"web_fetch":     WebFetch,
-		"install_skill": InstallSkillToRoot(options.WorkspaceRoot),
+		"install_skill": InstallSkillToRoot(skillRoot),
 		"mem_save":      MemSaveInDir(options.MemoryDir),
 		"mem_get":       MemGetInDir(options.MemoryDir),
 	}

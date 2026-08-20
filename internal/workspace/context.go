@@ -29,7 +29,8 @@ const memoryTailLines = 50
 var nowFunc = time.Now
 
 func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
-	root, err := w.openRoot()
+	primary := w.primaryConfigLayer()
+	root, err := primary.openRoot()
 	if err != nil {
 		return "", err
 	}
@@ -37,15 +38,18 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 
 	parts := []string{strings.TrimSpace(base), w.workspaceSection()}
 
-	workspaceDocs, err := w.loadWorkspaceDocuments(root)
+	workspaceDocs, err := primary.loadWorkspaceDocuments(root)
 	if err != nil {
 		return "", err
 	}
 	if workspaceDocs != "" {
+		if w.hasDistinctConfigRoot() {
+			workspaceDocs = "# Global Context\n\n" + strings.TrimPrefix(workspaceDocs, "# Workspace Context\n\n")
+		}
 		parts = append(parts, workspaceDocs)
 	}
 
-	rules, err := w.loadRules(root)
+	rules, err := primary.loadRules(root)
 	if err != nil {
 		return "", err
 	}
@@ -53,7 +57,7 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 		parts = append(parts, rules)
 	}
 
-	skills, err := w.loadSkillsSection(root)
+	skills, err := primary.loadSkillsSection(root)
 	if err != nil {
 		return "", err
 	}
@@ -61,7 +65,7 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 		parts = append(parts, skills)
 	}
 
-	memory, err := w.loadMemoryContext(root, memoryTailLines)
+	memory, err := primary.loadMemoryContext(root, memoryTailLines)
 	if err != nil {
 		return "", err
 	}
@@ -69,10 +73,39 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 		parts = append(parts, "# Memory\n"+memory)
 	}
 
+	if w.hasDistinctLocalConfig() {
+		local := &Workspace{Root: w.Root}
+		localRoot, openErr := local.openRoot()
+		if openErr != nil {
+			return "", openErr
+		}
+		localDocs, loadErr := local.loadWorkspaceDocuments(localRoot)
+		localMemory := ""
+		if loadErr == nil {
+			localMemory, loadErr = local.loadMemoryContext(localRoot, memoryTailLines)
+		}
+		closeErr := localRoot.Close()
+		if loadErr != nil {
+			return "", loadErr
+		}
+		if closeErr != nil {
+			return "", closeErr
+		}
+		if localDocs != "" {
+			parts = append(parts, "# Workspace Context\n\n"+strings.TrimPrefix(localDocs, "# Workspace Context\n\n"))
+		}
+		if localMemory != "" {
+			parts = append(parts, "# Workspace Memory\n"+localMemory)
+		}
+	}
+
 	return strings.Join(nonEmpty(parts), "\n\n"), nil
 }
 
 func (w *Workspace) AppendMemory(task, result string) error {
+	if primary := w.primaryConfigLayer(); primary.Root != w.Root {
+		return primary.AppendMemory(task, result)
+	}
 	task = strings.TrimSpace(task)
 	result = strings.TrimSpace(result)
 	if task == "" && result == "" {
@@ -113,16 +146,18 @@ func (w *Workspace) workspaceSection() string {
 	lines := []string{
 		"# Workspace",
 		"Root: " + w.Root,
-		"Primary context directory: .agent/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
+		"Global agent directory: " + w.AgentDir(),
+		"Primary context: ~/.agent/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
+		"Optional workspace context: .agent/{AGENT.md, SOUL.md, USER.md} (merged after global context)",
 		"Legacy compatible context directory: workspace/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
-		"Workspace long-term memory: .agent/memory/MEMORY.md",
-		"Workspace daily memory: .agent/memory/YYYY-MM-DD.md (loads today and yesterday; new session notes append to today)",
+		"Global long-term memory: ~/.agent/memory/MEMORY.md",
+		"Global daily memory: ~/.agent/memory/YYYY-MM-DD.md (loads today and yesterday; new session notes append to today)",
 		"Legacy compatible memory directory: workspace/memory/{MEMORY.md, YYYY-MM-DD.md}",
 		"Legacy memory file: agent_memory.md",
-		"Rules directory: .agent/rules/*.md",
-		"Skills directory: .agent/skills/*/SKILL.md",
+		"Global rules directory: ~/.agent/rules/*.md",
+		"Global skills directory: ~/.agent/skills/*/SKILL.md",
 		"Sessions directory: .agent/sessions/",
-		"MCP config: .agent/mcp.json (Streamable HTTP MCP servers listed here are connected at startup; their tools appear as mcp__<server>__<tool>)",
+		"MCP config: ~/.agent/mcp.json merged with optional workspace .agent/mcp.json",
 	}
 	return strings.Join(lines, "\n")
 }
@@ -193,12 +228,13 @@ func (w *Workspace) loadRules(root *os.Root) (string, error) {
 }
 
 func (w *Workspace) LoadSkills() ([]Skill, error) {
-	root, err := w.openRoot()
+	primary := w.primaryConfigLayer()
+	root, err := primary.openRoot()
 	if err != nil {
 		return nil, err
 	}
 	defer root.Close()
-	return w.loadSkills(root)
+	return primary.loadSkills(root)
 }
 
 func (w *Workspace) loadSkills(root *os.Root) ([]Skill, error) {
