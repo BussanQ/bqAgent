@@ -187,6 +187,31 @@ func TestRunLoadsDotEnvFromWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestLoadWorkspaceDotEnvCanBeSkippedForSubagentWorker(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("SELECTED_ONLY=value\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	values := loadWorkspaceDotEnv(func(key string) string {
+		if key == "BQAGENT_SKIP_WORKSPACE_DOTENV" {
+			return "1"
+		}
+		return ""
+	}, root, true)
+	if len(values) != 0 {
+		t.Fatalf("loadWorkspaceDotEnv returned %#v, want empty when skipped", values)
+	}
+	values = loadWorkspaceDotEnv(func(key string) string {
+		if key == "BQAGENT_SKIP_WORKSPACE_DOTENV" {
+			return "1"
+		}
+		return ""
+	}, root, false)
+	if values["SELECTED_ONLY"] != "value" {
+		t.Fatalf("loadWorkspaceDotEnv returned %#v, want workspace value", values)
+	}
+}
+
 func TestApplyDotEnvPreservesExistingProcessEnvironment(t *testing.T) {
 	exported := map[string]string{}
 	err := applyDotEnv(func(key string) string {

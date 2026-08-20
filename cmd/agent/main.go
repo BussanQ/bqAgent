@@ -92,7 +92,7 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	dotEnv := appruntime.LoadDotEnv(ws.Root)
+	dotEnv := loadWorkspaceDotEnv(getenv, ws.Root, options.subagentRun != "")
 	if err := applyDotEnv(getenv, deps.setenv, dotEnv); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -134,6 +134,13 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 	}
 
 	return runForeground(ctx, stdout, stderr, getenv, ws, systemPrompt, task, options)
+}
+
+func loadWorkspaceDotEnv(getenv func(string) string, root string, subagentWorker bool) map[string]string {
+	if subagentWorker && getenv != nil && envEnabledStrict(getenv("BQAGENT_SKIP_WORKSPACE_DOTENV")) {
+		return map[string]string{}
+	}
+	return appruntime.LoadDotEnv(root)
 }
 
 func applyDotEnv(getenv func(string) string, setenv func(string, string) error, values map[string]string) error {

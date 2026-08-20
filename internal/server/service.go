@@ -77,8 +77,11 @@ type FileAttachment struct {
 }
 
 type TurnRequest struct {
-	SessionID string `json:"session_id"`
-	Message   string `json:"message"`
+	// WorkspaceID routes WebUI control requests to a workspace-specific service.
+	// A Service itself ignores this field after routing.
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	SessionID   string `json:"session_id"`
+	Message     string `json:"message"`
 	// TurnID identifies one in-flight conversation turn. Any caller/channel can
 	// provide it and later cancel the whole turn through Service.StopTurn.
 	TurnID string `json:"turn_id,omitempty"`

@@ -78,6 +78,11 @@ func (channel *WebUIChannel) handleWorkspaceList(writer http.ResponseWriter, req
 		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "service is unavailable"})
 		return
 	}
+	service, _, err := channel.resolveService(request.URL.Query().Get("workspace_id"))
+	if err != nil {
+		writeError(writer, http.StatusNotFound, chatResponse{Error: "workspace not found"})
+		return
+	}
 
 	relative, err := normalizeWebUIWorkspacePath(request.URL.Query().Get("path"))
 	if err != nil {
@@ -90,7 +95,7 @@ func (channel *WebUIChannel) handleWorkspaceList(writer http.ResponseWriter, req
 		return
 	}
 
-	root, err := openWebUIWorkspaceRoot(channel.service.workspaceRoot)
+	root, err := openWebUIWorkspaceRoot(service.workspaceRoot)
 	if err != nil {
 		writeWebUIWorkspaceError(writer, err)
 		return
@@ -194,6 +199,11 @@ func (channel *WebUIChannel) handleWorkspacePreview(writer http.ResponseWriter, 
 		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "service is unavailable"})
 		return
 	}
+	service, _, err := channel.resolveService(request.URL.Query().Get("workspace_id"))
+	if err != nil {
+		writeError(writer, http.StatusNotFound, chatResponse{Error: "workspace not found"})
+		return
+	}
 
 	relative, err := normalizeWebUIWorkspacePath(request.URL.Query().Get("path"))
 	if err != nil {
@@ -205,7 +215,7 @@ func (channel *WebUIChannel) handleWorkspacePreview(writer http.ResponseWriter, 
 		return
 	}
 
-	root, err := openWebUIWorkspaceRoot(channel.service.workspaceRoot)
+	root, err := openWebUIWorkspaceRoot(service.workspaceRoot)
 	if err != nil {
 		writeWebUIWorkspaceError(writer, err)
 		return

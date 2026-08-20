@@ -14,6 +14,7 @@ import (
 	_ "image/png"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ const (
 )
 
 type webUIChatRequest struct {
+	WorkspaceID     string              `json:"workspace_id,omitempty"`
 	SessionID       string              `json:"session_id"`
 	TurnID          string              `json:"turn_id"`
 	Message         string              `json:"message"`
@@ -47,12 +49,13 @@ type webUIChatRequest struct {
 }
 
 type webUIDoneEvent struct {
-	SessionID  string             `json:"session_id"`
-	RunID      string             `json:"run_id,omitempty"`
-	Reply      string             `json:"reply"`
-	APIType    string             `json:"api_type"`
-	Model      string             `json:"model"`
-	Generation *GenerationMetrics `json:"generation,omitempty"`
+	WorkspaceID string             `json:"workspace_id,omitempty"`
+	SessionID   string             `json:"session_id"`
+	RunID       string             `json:"run_id,omitempty"`
+	Reply       string             `json:"reply"`
+	APIType     string             `json:"api_type"`
+	Model       string             `json:"model"`
+	Generation  *GenerationMetrics `json:"generation,omitempty"`
 }
 
 type webUIImagePayload struct {
@@ -116,15 +119,20 @@ var webUIIndex []byte
 
 // WebUIChannel serves a self-contained browser chat page at "/" and streams
 // assistant replies token-by-token over Server-Sent Events. It reuses the
-// shared Service turn machinery (sessions, per-session locking, memory), so the
-// only state it owns is whether it is enabled.
+// shared Service turn machinery and can resolve a workspace-specific Service
+// when a registry is configured.
 type WebUIChannel struct {
-	service *Service
-	enabled bool
+	service    *Service
+	workspaces *WorkspaceRegistry
+	enabled    bool
 }
 
 func NewWebUIChannel(service *Service, enabled bool) *WebUIChannel {
 	return &WebUIChannel{service: service, enabled: enabled}
+}
+
+func NewWebUIChannelWithWorkspaces(service *Service, workspaces *WorkspaceRegistry, enabled bool) *WebUIChannel {
+	return &WebUIChannel{service: service, workspaces: workspaces, enabled: enabled}
 }
 
 func (channel *WebUIChannel) Name() string {
@@ -143,6 +151,22 @@ func (channel *WebUIChannel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/webui/chat", channel.handleStreamChat)
 	mux.HandleFunc("/api/v1/webui/workspace", channel.handleWorkspaceList)
 	mux.HandleFunc("/api/v1/webui/workspace/preview", channel.handleWorkspacePreview)
+	mux.HandleFunc("/api/v1/webui/workspaces", channel.handleWorkspaces)
+	mux.HandleFunc("/api/v1/webui/workspaces/directories", channel.handleWorkspaceDirectories)
+	mux.HandleFunc("/api/v1/webui/workspaces/open", channel.handleWorkspaceOpen)
+}
+
+func (channel *WebUIChannel) resolveService(workspaceID string) (*Service, WorkspaceInfo, error) {
+	if channel == nil || channel.service == nil {
+		return nil, WorkspaceInfo{}, fmt.Errorf("service is unavailable")
+	}
+	if channel.workspaces == nil {
+		if strings.TrimSpace(workspaceID) != "" {
+			return nil, WorkspaceInfo{}, os.ErrNotExist
+		}
+		return channel.service, WorkspaceInfo{}, nil
+	}
+	return channel.workspaces.Resolve(workspaceID)
 }
 
 // Start has no work to do: the web UI is purely request-driven.
@@ -230,6 +254,7 @@ func decodeWebUIChatRequest(writer http.ResponseWriter, request *http.Request) (
 		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("message, images, or files are required")}
 	}
 	return TurnRequest{
+		WorkspaceID:     strings.TrimSpace(payload.WorkspaceID),
 		SessionID:       strings.TrimSpace(payload.SessionID),
 		TurnID:          strings.TrimSpace(payload.TurnID),
 		Message:         payload.Message,
@@ -332,6 +357,11 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		writeError(writer, status, chatResponse{Error: err.Error()})
 		return
 	}
+	service, workspaceInfo, err := channel.resolveService(turnRequest.WorkspaceID)
+	if err != nil {
+		writeError(writer, http.StatusNotFound, chatResponse{Error: "workspace not found"})
+		return
+	}
 	writer.Header().Set("Content-Type", "text/event-stream")
 	writer.Header().Set("Cache-Control", "no-cache")
 	writer.Header().Set("Connection", "keep-alive")
@@ -343,7 +373,7 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	stream := &sseStream{writer: writer, flusher: flusher}
 	// WebUI follows the browser request lifetime and the service-wide runaway
 	// valve; the tighter channel budgets are reserved for message delivery paths.
-	response, err := channel.service.HandleTurnWithOptions(request.Context(), TurnRequest{
+	response, err := service.HandleTurnWithOptions(request.Context(), TurnRequest{
 		SessionID:       turnRequest.SessionID,
 		Message:         turnRequest.Message,
 		TurnID:          turnRequest.TurnID,
@@ -373,12 +403,13 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	}
 
 	writeSSEEvent(writer, flusher, "done", webUIDoneEvent{
-		SessionID:  response.SessionID,
-		RunID:      response.RunID,
-		Reply:      sanitizeChannelReply(response.Reply),
-		APIType:    string(channel.service.apiType),
-		Model:      response.Model,
-		Generation: response.Generation,
+		WorkspaceID: workspaceInfo.ID,
+		SessionID:   response.SessionID,
+		RunID:       response.RunID,
+		Reply:       sanitizeChannelReply(response.Reply),
+		APIType:     string(service.apiType),
+		Model:       response.Model,
+		Generation:  response.Generation,
 	})
 }
 

@@ -157,6 +157,7 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `CHANNEL_STAGE_TIMEOUT` | `90s` | QQ/iLink stage time budget. |
 | `WEBUI_STAGE_MAX_ITERATIONS` | `0` (disabled) | Optional WebUI iteration budget before a stage checkpoint; enabled only by a positive value. |
 | `WEBUI_STAGE_TIMEOUT` | `0` (disabled) | Optional WebUI stage time budget; enabled only by a positive duration. |
+| `WEBUI_WORKSPACE_ROOTS` | — | Additional server-side roots the WebUI may browse and select, separated with the OS path-list separator (`:` on Unix/macOS, `;` on Windows). The user home and startup workspace are always allowed. |
 | `CONTEXT_MANAGEMENT_ENABLED` | `true` | Enables request-time context budgeting. |
 | `CONTEXT_MAX_INPUT_TOKENS` | `132000` | Maximum estimated context budget, including the response reserve. |
 | `CONTEXT_TARGET_INPUT_TOKENS` | `128000` | Target size after pruning or summarization. |
@@ -371,11 +372,13 @@ The command immediately prints the session ID, session directory, and log path.
 - `POST /api/v1/webui/chat`
 - `GET /api/v1/webui/workspace` (paginated workspace directory listing)
 - `GET /api/v1/webui/workspace/preview` (read-only workspace file preview)
+- `GET /api/v1/webui/workspaces`, `GET /api/v1/webui/workspaces/directories`, and `POST /api/v1/webui/workspaces/open` (server-local workspace selection)
 - `POST /api/v1/chat/stop`
 - `POST /api/v1/serverchan/chat`
 - `POST /api/v1/serverchan/bot/webhook`
 
 `/api/v1/chat` continues conversations by `session_id`.
+WebUI chat, explorer, preview, status, stop, and trace requests carry a `workspace_id`; omitting it remains backward compatible and selects the startup workspace.
 
 `GET /api/v1/status` returns the effective built-in LLM runtime identity, for
 example `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`.
@@ -386,7 +389,7 @@ identity under the bqagent title when the endpoint is available.
 
 The composer also provides a reasoning-effort selector with **Auto**, **Low**, **Medium**, and **High**. Auto is the default and omits the upstream effort setting, preserving the provider or model default. The preference is stored in browser `localStorage` and sent explicitly with each WebUI turn; it is not written into session metadata. Non-auto values map to `reasoning_effort` for OpenAI Chat Completions, `reasoning.effort` for OpenAI Responses, and adaptive `thinking` plus `output_config.effort` for Anthropic Messages.
 
-The workspace button opens a desktop sidebar or mobile drawer. Directories load lazily in pages; selecting a regular file switches the sidebar in place to a read-only preview, and the back button restores the previous tree position. UTF-8 text previews include up to the first 512 KiB, while PNG, JPEG, GIF, and WebP previews are limited to 3 MiB; other binary files show metadata only. The tree refreshes after every completed chat turn and also has a manual refresh button. Changes made by an external program while the UI is idle require a manual refresh. Everything except a `.git` component is visible—including `.env`, `.agent`, and `.gitignore`-excluded content—so do not expose the WebUI to untrusted users. Symbolic links are listed but cannot be expanded, previewed, or attached from the explorer.
+The workspace button opens a desktop sidebar or mobile drawer. The directory picker in the sidebar title browses the bqagent host's user home, startup workspace, and roots added through `WEBUI_WORKSPACE_ROOTS`. A confirmed directory becomes the exact workspace root and receives the default `.agent` files the first time it is opened. Each browser remembers its selected workspace and keeps a separate `session_id` per workspace; QQ, WeChat, and other channels remain on the startup workspace. Switching does not reload the selected directory's `.env`: model and process configuration remain fixed at server startup. Directories load lazily in pages; selecting a regular file switches the sidebar in place to a read-only preview, and the back button restores the previous tree position. UTF-8 text previews include up to the first 512 KiB, while PNG, JPEG, GIF, and WebP previews are limited to 3 MiB; other binary files show metadata only. The tree refreshes after every completed chat turn and also has a manual refresh button. Changes made by an external program while the UI is idle require a manual refresh. Everything except a `.git` component is visible—including `.env`, `.agent`, and `.gitignore`-excluded content—so do not expose the WebUI to untrusted users. Symbolic links are listed but cannot be expanded, previewed, selected as a workspace, or attached from the explorer. Allowing the user home as a selection root means the WebUI can make any ordinary directory beneath it an Agent tool boundary; never expose an unauthenticated WebUI to untrusted users.
 
 The “+” button in the WebUI composer can upload browser-local files or reference paths inside the server workspace. A turn accepts up to 5 files, 2 MiB each and 6 MiB total. Uploads are stored under `.agent/uploads/<session-id>/` without overwriting same-name files. UTF-8 text is inlined into the turn context up to 64 KiB per file, with a truncation note and the full `read_file`-accessible path; binary files contribute path metadata only. Server paths must remain inside the workspace and cannot escape through `..` components or symbolic links.
 

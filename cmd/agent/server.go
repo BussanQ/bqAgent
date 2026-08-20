@@ -61,6 +61,29 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 	configureServerChannelLimits(stderr, getenv)
 
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, stdout)
+	workspaceRegistry, err := appserver.NewWorkspaceRegistry(appserver.WorkspaceRegistryOptions{
+		DefaultRoot:    ws.Root,
+		DefaultService: service,
+		DefaultCloser:  externalBroker,
+		AllowedRoots: appserver.DefaultWorkspaceAllowedRoots(
+			ws.Root,
+			appserver.SplitWorkspaceRoots(getenv("WEBUI_WORKSPACE_ROOTS")),
+		),
+		Factory: func(factoryContext context.Context, root string) (*appserver.Service, io.Closer, error) {
+			selected := &workspace.Workspace{Root: root}
+			prompt, promptErr := selected.BuildSystemPrompt(agent.DefaultSystemPrompt)
+			if promptErr != nil {
+				return nil, nil, promptErr
+			}
+			selectedService, broker := newConversationService(factoryContext, getenv, selected, prompt, options.plan, stdout)
+			return selectedService, broker, nil
+		},
+	})
+	if err != nil {
+		_ = externalBroker.Close()
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 
 	botProcessor := appserver.NewBotWebhookProcessor(
 		service,
@@ -70,7 +93,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 	)
 	channels := []appserver.Channel{
 		appserver.NewServerChanChannel(service, serverchanclient.NewClient(nil), botProcessor),
-		appserver.NewWebUIChannel(service, envEnabled(getenv("WEBUI_ENABLED"))),
+		appserver.NewWebUIChannelWithWorkspaces(service, workspaceRegistry, envEnabled(getenv("WEBUI_ENABLED"))),
 	}
 	if qqBotEnabled(getenv) {
 		tokenClient := qq.NewTokenClient(getenv("QQ_BOT_APP_ID"), getenv("QQ_BOT_CLIENT_SECRET"), getenv("QQ_BOT_TOKEN_BASE_URL"), nil)
@@ -105,8 +128,9 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 	server := &http.Server{
 		Addr: options.listen,
 		Handler: appserver.NewHandler(appserver.HandlerOptions{
-			Service:  service,
-			Channels: channels,
+			Service:    service,
+			Workspaces: workspaceRegistry,
+			Channels:   channels,
 		}),
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
@@ -117,7 +141,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 
 	select {
 	case err := <-serveResult:
-		_ = externalBroker.Close()
+		_ = workspaceRegistry.Close()
 		if err != nil && err != http.ErrServerClosed {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -134,7 +158,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 		// Channel turn runners own their keyed locks; closing the broker only after
 		// they have drained avoids racing a live ACP request or resurrecting its
 		// client during shutdown.
-		_ = externalBroker.Close()
+		_ = workspaceRegistry.Close()
 		if shutdownErr != nil && shutdownErr != context.DeadlineExceeded {
 			fmt.Fprintf(stderr, "server shutdown: %v\n", shutdownErr)
 		}

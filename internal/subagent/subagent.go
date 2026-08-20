@@ -560,6 +560,10 @@ func (m *Manager) launchWorker(executable, id string) {
 	defer logFile.Close()
 	cmd := exec.Command(executable, "--subagent-run", id, "--subagent-lease", task.LeaseID)
 	cmd.Dir = m.workspaceRoot
+	// The long-lived parent already exported its startup workspace environment.
+	// A worker for a WebUI-selected workspace must not merge that directory's
+	// .env and silently change the server-fixed runtime configuration.
+	cmd.Env = workerEnvironment()
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	configureWorkerProcess(cmd)
 	if err := cmd.Start(); err != nil {
@@ -577,6 +581,10 @@ func (m *Manager) launchWorker(executable, id string) {
 		return
 	}
 	m.interruptLaunch(id, task.LeaseID, fmt.Errorf("subagent worker exited: %w", err))
+}
+
+func workerEnvironment() []string {
+	return append(os.Environ(), "BQAGENT_SKIP_WORKSPACE_DOTENV=1")
 }
 
 // RunPersisted accepts the parent lifecycle context and the lease issued by the

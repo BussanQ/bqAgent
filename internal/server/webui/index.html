@@ -35,6 +35,12 @@
     --particle-dot: #dff7ff;
     --particle-link: 91, 199, 255;
     --particle-static: rgba(53, 184, 255, .20);
+    --ambient-primary: .12;
+    --ambient-secondary: .08;
+    --ambient-tertiary: .04;
+    --ambient-vignette: .55;
+    --grid-opacity: .06;
+    --scan-opacity: .02;
     --radius: 14px;
     --maxw: 1080px;
     --workspace-width: clamp(240px, 20.8vw, 336px);
@@ -43,65 +49,77 @@
   @media (prefers-color-scheme: light) {
     :root:not([data-theme]) {
       color-scheme: light;
-      --bg: #dfe8ee;
-      --bg-soft: #d3dfe7;
-      --panel: rgba(226, 236, 242, .86);
-      --panel-strong: rgba(232, 240, 244, .96);
-      --header-bg: rgba(218, 230, 237, .91);
-      --footer-bg: rgba(212, 225, 233, .97);
-      --footer-mid: rgba(212, 225, 233, .72);
-      --line: rgba(18, 105, 148, .20);
-      --line-strong: rgba(18, 105, 148, .42);
-      --text: #102b3b;
-      --text-soft: #3e6072;
-      --text-muted: #6a8493;
-      --signal: #176f9e;
-      --stream: #267f9b;
-      --signal-rgb: 23, 111, 158;
-      --stream-rgb: 38, 127, 155;
-      --progress: #966019;
-      --progress-rgb: 150, 96, 25;
-      --danger: #b73550;
-      --danger-rgb: 183, 53, 80;
-      --shadow: 0 22px 70px rgba(25, 58, 77, .18);
-      --code-bg: #d4e1e8;
-      --quote-bg: rgba(23, 111, 158, .07);
-      --table-head: rgba(23, 111, 158, .10);
-      --particle-dot: #2b779d;
-      --particle-link: 23, 111, 158;
-      --particle-static: rgba(23, 111, 158, .13);
+      --bg: #f7f7f7;
+      --bg-soft: #ededed;
+      --panel: rgba(255, 255, 255, .84);
+      --panel-strong: rgba(255, 255, 255, .97);
+      --header-bg: rgba(255, 255, 255, .93);
+      --footer-bg: rgba(247, 247, 247, .98);
+      --footer-mid: rgba(247, 247, 247, .76);
+      --line: rgba(0, 0, 0, .12);
+      --line-strong: rgba(0, 0, 0, .24);
+      --text: #0a0a0a;
+      --text-soft: #3f3f46;
+      --text-muted: #71717a;
+      --signal: #2563eb;
+      --stream: #1d4ed8;
+      --signal-rgb: 37, 99, 235;
+      --stream-rgb: 29, 78, 216;
+      --progress: #a16207;
+      --progress-rgb: 161, 98, 7;
+      --danger: #dc2626;
+      --danger-rgb: 220, 38, 38;
+      --shadow: 0 22px 70px rgba(0, 0, 0, .13);
+      --code-bg: #f4f4f5;
+      --quote-bg: rgba(37, 99, 235, .05);
+      --table-head: rgba(37, 99, 235, .07);
+      --particle-dot: #2563eb;
+      --particle-link: 37, 99, 235;
+      --particle-static: rgba(37, 99, 235, .11);
+      --ambient-primary: .035;
+      --ambient-secondary: .02;
+      --ambient-tertiary: .015;
+      --ambient-vignette: .035;
+      --grid-opacity: .025;
+      --scan-opacity: .01;
     }
   }
 
   :root[data-theme="light"] {
     color-scheme: light;
-    --bg: #dfe8ee;
-    --bg-soft: #d3dfe7;
-    --panel: rgba(226, 236, 242, .86);
-    --panel-strong: rgba(232, 240, 244, .96);
-    --header-bg: rgba(218, 230, 237, .91);
-    --footer-bg: rgba(212, 225, 233, .97);
-    --footer-mid: rgba(212, 225, 233, .72);
-    --line: rgba(18, 105, 148, .20);
-    --line-strong: rgba(18, 105, 148, .42);
-    --text: #102b3b;
-    --text-soft: #3e6072;
-    --text-muted: #6a8493;
-    --signal: #176f9e;
-    --stream: #267f9b;
-    --signal-rgb: 23, 111, 158;
-    --stream-rgb: 38, 127, 155;
-    --progress: #966019;
-    --progress-rgb: 150, 96, 25;
-    --danger: #b73550;
-    --danger-rgb: 183, 53, 80;
-    --shadow: 0 22px 70px rgba(25, 58, 77, .18);
-    --code-bg: #d4e1e8;
-    --quote-bg: rgba(23, 111, 158, .07);
-    --table-head: rgba(23, 111, 158, .10);
-    --particle-dot: #2b779d;
-    --particle-link: 23, 111, 158;
-    --particle-static: rgba(23, 111, 158, .13);
+    --bg: #f7f7f7;
+    --bg-soft: #ededed;
+    --panel: rgba(255, 255, 255, .84);
+    --panel-strong: rgba(255, 255, 255, .97);
+    --header-bg: rgba(255, 255, 255, .93);
+    --footer-bg: rgba(247, 247, 247, .98);
+    --footer-mid: rgba(247, 247, 247, .76);
+    --line: rgba(0, 0, 0, .12);
+    --line-strong: rgba(0, 0, 0, .24);
+    --text: #0a0a0a;
+    --text-soft: #3f3f46;
+    --text-muted: #71717a;
+    --signal: #2563eb;
+    --stream: #1d4ed8;
+    --signal-rgb: 37, 99, 235;
+    --stream-rgb: 29, 78, 216;
+    --progress: #a16207;
+    --progress-rgb: 161, 98, 7;
+    --danger: #dc2626;
+    --danger-rgb: 220, 38, 38;
+    --shadow: 0 22px 70px rgba(0, 0, 0, .13);
+    --code-bg: #f4f4f5;
+    --quote-bg: rgba(37, 99, 235, .05);
+    --table-head: rgba(37, 99, 235, .07);
+    --particle-dot: #2563eb;
+    --particle-link: 37, 99, 235;
+    --particle-static: rgba(37, 99, 235, .11);
+    --ambient-primary: .035;
+    --ambient-secondary: .02;
+    --ambient-tertiary: .015;
+    --ambient-vignette: .035;
+    --grid-opacity: .025;
+    --scan-opacity: .01;
   }
 
   * { box-sizing: border-box; }
@@ -109,10 +127,10 @@
   body {
     min-width: 320px;
     background:
-      radial-gradient(circle at 12% -8%, rgba(var(--signal-rgb),.12), transparent 30%),
-      radial-gradient(circle at 88% 10%, rgba(var(--stream-rgb),.08), transparent 26%),
-      radial-gradient(ellipse at 50% 0%, rgba(var(--signal-rgb),.04), transparent 55%),
-      radial-gradient(circle at 50% 50%, transparent 60%, rgba(0, 0, 0, .55) 100%),
+      radial-gradient(circle at 12% -8%, rgba(var(--signal-rgb), var(--ambient-primary)), transparent 30%),
+      radial-gradient(circle at 88% 10%, rgba(var(--stream-rgb), var(--ambient-secondary)), transparent 26%),
+      radial-gradient(ellipse at 50% 0%, rgba(var(--signal-rgb), var(--ambient-tertiary)), transparent 55%),
+      radial-gradient(circle at 50% 50%, transparent 60%, rgba(0, 0, 0, var(--ambient-vignette)) 100%),
       linear-gradient(135deg, var(--bg), var(--bg-soft) 52%, var(--bg));
     color: var(--text);
     font: 15px/1.62 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
@@ -128,8 +146,8 @@
     inset: 0;
     pointer-events: none;
     background-image:
-      linear-gradient(rgba(var(--signal-rgb),.06) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(var(--signal-rgb),.06) 1px, transparent 1px);
+      linear-gradient(rgba(var(--signal-rgb), var(--grid-opacity)) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(var(--signal-rgb), var(--grid-opacity)) 1px, transparent 1px);
     background-size: 32px 32px;
     mask-image: linear-gradient(to bottom, rgba(0, 0, 0, .55), transparent 72%);
   }
@@ -140,7 +158,7 @@
     inset: 0;
     pointer-events: none;
     background:
-      linear-gradient(rgba(var(--signal-rgb),.02) 50%, transparent 50%);
+      linear-gradient(rgba(var(--signal-rgb), var(--scan-opacity)) 50%, transparent 50%);
     background-size: 100% 4px;
     opacity: .55;
   }
@@ -563,6 +581,85 @@
     font-weight: 750;
   }
   .workspace-attach:disabled { color: var(--text-muted); background: var(--panel); }
+  .workspace-picker-backdrop {
+    position: fixed;
+    z-index: 80;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, .56);
+    backdrop-filter: blur(8px);
+  }
+  .workspace-picker-backdrop[hidden] { display: none; }
+  .workspace-picker {
+    width: min(620px, 100%);
+    max-height: min(720px, calc(100vh - 40px));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--line-strong);
+    border-radius: 16px;
+    background: var(--panel-strong);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, .42);
+  }
+  .workspace-picker-header,
+  .workspace-picker-footer {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+  .workspace-picker-header { border-bottom: 1px solid var(--line); }
+  .workspace-picker-header strong { flex: 1 1 auto; font-size: 14px; }
+  .workspace-picker-footer { justify-content: flex-end; border-top: 1px solid var(--line); }
+  .workspace-picker-body { min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; }
+  .workspace-picker-root {
+    width: 100%;
+    min-height: 38px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    color: var(--text);
+    background: var(--panel);
+  }
+  .workspace-picker-path { display: flex; align-items: center; gap: 8px; }
+  .workspace-picker-path code {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    color: var(--text-soft);
+    font: 11px/1.4 ui-monospace, "SFMono-Regular", Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .workspace-picker-list {
+    min-height: 220px;
+    max-height: 430px;
+    overflow: auto;
+    padding: 5px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(var(--signal-rgb), .025);
+  }
+  .workspace-picker-row {
+    width: 100%;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 9px;
+    border-color: transparent;
+    border-radius: 8px;
+    color: var(--text-soft);
+    background: transparent;
+    box-shadow: none;
+    text-align: left;
+  }
+  .workspace-picker-row:hover { transform: none; background: rgba(var(--signal-rgb), .07); box-shadow: none; }
+  .workspace-picker-state { padding: 24px 12px; color: var(--text-muted); text-align: center; }
+  .workspace-picker-select { color: var(--bg); background: var(--signal); }
 
   main {
     position: relative;
@@ -1245,9 +1342,12 @@
       <section class="workspace-view" id="workspace-tree-view">
         <div class="workspace-toolbar">
           <div class="workspace-heading">
-            <strong>工作区</strong>
-            <span>文件浏览器</span>
+            <strong id="workspace-current-name">工作区</strong>
+            <span id="workspace-current-path">文件浏览器</span>
           </div>
+          <button class="workspace-tool" id="workspace-select" type="button" title="选择工作区" aria-label="选择工作区" aria-expanded="false" aria-controls="workspace-picker-backdrop">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M3.5 7h6l2 2h9v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2zM12 12v5m-2.5-2.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <button class="workspace-tool" id="workspace-refresh" type="button" title="刷新文件树" aria-label="刷新文件树">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M19 8a7.5 7.5 0 1 0 .4 7M19 4v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
@@ -1358,10 +1458,35 @@
     </div>
   </div>
 
+  <div class="workspace-picker-backdrop" id="workspace-picker-backdrop" hidden>
+    <section class="workspace-picker" role="dialog" aria-modal="true" aria-labelledby="workspace-picker-title">
+      <div class="workspace-picker-header">
+        <strong id="workspace-picker-title">选择服务端工作区</strong>
+        <button class="workspace-tool" id="workspace-picker-close" type="button" aria-label="关闭工作区选择器">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="workspace-picker-body">
+        <select class="workspace-picker-root" id="workspace-picker-root" aria-label="允许访问的根目录"></select>
+        <div class="workspace-picker-path">
+          <button class="workspace-tool" id="workspace-picker-up" type="button" title="上级目录" aria-label="上级目录">↑</button>
+          <code id="workspace-picker-path"></code>
+        </div>
+        <div class="workspace-picker-list" id="workspace-picker-list" role="listbox" aria-label="目录列表"></div>
+      </div>
+      <div class="workspace-picker-footer">
+        <button type="button" id="workspace-picker-cancel">取消</button>
+        <button class="workspace-picker-select" type="button" id="workspace-picker-confirm">选择当前目录</button>
+      </div>
+    </section>
+  </div>
+
 <script>
 (function () {
   "use strict";
   var SESSION_KEY = "bqagent.webui.session";
+  var WORKSPACE_KEY = "bqagent.webui.workspace";
+  var WORKSPACE_SESSIONS_KEY = "bqagent.webui.workspace-sessions";
   var THEME_KEY = "bqagent.webui.theme";
   var WORKSPACE_SIDEBAR_KEY = "bqagent.webui.workspace-sidebar";
   var REASONING_EFFORT_KEY = "bqagent.webui.reasoning-effort";
@@ -1380,6 +1505,9 @@
   var workspaceTreeStatus = document.getElementById("workspace-tree-status");
   var workspaceTree = document.getElementById("workspace-tree");
   var workspaceRefresh = document.getElementById("workspace-refresh");
+  var workspaceSelect = document.getElementById("workspace-select");
+  var workspaceCurrentName = document.getElementById("workspace-current-name");
+  var workspaceCurrentPath = document.getElementById("workspace-current-path");
   var workspacePreviewView = document.getElementById("workspace-preview-view");
   var workspacePreviewBack = document.getElementById("workspace-preview-back");
   var workspacePreviewClose = document.getElementById("workspace-preview-close");
@@ -1390,6 +1518,14 @@
   var workspacePreviewMeta = document.getElementById("workspace-preview-meta");
   var workspacePreviewContent = document.getElementById("workspace-preview-content");
   var workspacePreviewAttach = document.getElementById("workspace-preview-attach");
+  var workspacePickerBackdrop = document.getElementById("workspace-picker-backdrop");
+  var workspacePickerClose = document.getElementById("workspace-picker-close");
+  var workspacePickerRoot = document.getElementById("workspace-picker-root");
+  var workspacePickerUp = document.getElementById("workspace-picker-up");
+  var workspacePickerPath = document.getElementById("workspace-picker-path");
+  var workspacePickerList = document.getElementById("workspace-picker-list");
+  var workspacePickerCancel = document.getElementById("workspace-picker-cancel");
+  var workspacePickerConfirm = document.getElementById("workspace-picker-confirm");
   var input = document.getElementById("input");
   var attachmentTray = document.getElementById("attachment-tray");
   var attachmentError = document.getElementById("attachment-error");
@@ -1414,7 +1550,14 @@
   var statusEl = document.getElementById("status");
   var runtimeModelEl = document.getElementById("runtime-model");
   var runtimeModelLoadID = 0;
-  var sessionId = localStorage.getItem(SESSION_KEY) || "";
+  var sessionId = "";
+  var currentWorkspace = null;
+  var workspaceRoots = [];
+  var workspaceSessions = Object.create(null);
+  var pickerRootID = "";
+  var pickerPath = "";
+  var pickerNextOffset = null;
+  var workspaceReady = false;
   var reasoningEffort = "auto";
   var busy = false;
   var currentTurnId = "";
@@ -1781,11 +1924,103 @@
     runtimeModelEl.title = "Current runtime model";
   }
 
+  function readJSONStorage(key, fallback) {
+    try {
+      var raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function persistWorkspaceSessions() {
+    try { localStorage.setItem(WORKSPACE_SESSIONS_KEY, JSON.stringify(workspaceSessions)); } catch (_) {}
+  }
+
+  function setCurrentWorkspaceSession(value) {
+    sessionId = value || "";
+    if (!currentWorkspace || !currentWorkspace.id) return;
+    if (sessionId) workspaceSessions[currentWorkspace.id] = sessionId;
+    else delete workspaceSessions[currentWorkspace.id];
+    persistWorkspaceSessions();
+  }
+
+  function workspaceScopedURL(url) {
+    if (!currentWorkspace || !currentWorkspace.id) return url;
+    return url + (url.indexOf("?") >= 0 ? "&" : "?") + "workspace_id=" + encodeURIComponent(currentWorkspace.id);
+  }
+
+  function resetWorkspaceExplorer() {
+    workspacePreviewRequestID++;
+    workspaceDirectories = Object.create(null);
+    workspaceExpanded = Object.create(null);
+    workspaceExpanded[""] = true;
+    workspaceTreeScrollTop = 0;
+    workspaceCurrentPreview = null;
+    workspacePreviewView.hidden = true;
+    workspaceTreeView.hidden = false;
+    renderWorkspaceTree();
+  }
+
+  function applyWorkspace(info, switching) {
+    if (!info || !info.id) return;
+    var changed = !currentWorkspace || currentWorkspace.id !== info.id;
+    currentWorkspace = info;
+    workspaceCurrentName.textContent = info.name || "工作区";
+    workspaceCurrentPath.textContent = info.path || "";
+    workspaceCurrentPath.title = info.path || "";
+    sessionId = workspaceSessions[info.id] || "";
+    workspaceReady = true;
+    input.disabled = false;
+    sendBtn.disabled = false;
+    workspaceSelect.disabled = false;
+    try {
+      localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ root_id: info.root_id, path: info.relative_path || "" }));
+    } catch (_) {}
+    if (switching && changed) {
+      clearPendingAttachments();
+      setAttachmentMenu(false);
+      thread.innerHTML = emptyMarkup();
+      statusEl.textContent = sessionId ? "已切换 · 继续上次会话" : "已切换工作区";
+      statusEl.classList.remove("error", "busy");
+    }
+    resetWorkspaceExplorer();
+    loadWorkspaceDirectory("", false, false);
+    loadRuntimeModel();
+  }
+
+  async function initializeWorkspaceSelection() {
+    var storedSessions = readJSONStorage(WORKSPACE_SESSIONS_KEY, null);
+    workspaceSessions = storedSessions && typeof storedSessions === "object" && !Array.isArray(storedSessions) ? storedSessions : Object.create(null);
+    var response = await workspaceFetchJSON("/api/v1/webui/workspaces");
+    workspaceRoots = response && Array.isArray(response.roots) ? response.roots : [];
+    var selected = response.default;
+    var saved = readJSONStorage(WORKSPACE_KEY, null);
+    if (saved && saved.root_id) {
+      try {
+        selected = await workspaceFetchJSON("/api/v1/webui/workspaces/open", {
+          method: "POST",
+          headers: { "Accept": "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({ root_id: saved.root_id, path: saved.path || "" })
+        });
+      } catch (_) {
+        selected = response.default;
+      }
+    }
+    var legacySession = "";
+    try { legacySession = localStorage.getItem(SESSION_KEY) || ""; } catch (_) {}
+    if (legacySession && selected && selected.id === response.default.id && !workspaceSessions[selected.id]) {
+      workspaceSessions[selected.id] = legacySession;
+      persistWorkspaceSessions();
+    }
+    try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
+    applyWorkspace(selected, false);
+  }
+
   async function loadRuntimeModel() {
     var loadID = ++runtimeModelLoadID;
     try {
-      var url = "/api/v1/status";
-      if (sessionId) url += "?session_id=" + encodeURIComponent(sessionId);
+      var url = workspaceScopedURL("/api/v1/status" + (sessionId ? "?session_id=" + encodeURIComponent(sessionId) : ""));
       var response = await fetch(url, { headers: { "Accept": "application/json" } });
       if (!response.ok) return;
       var payload = await response.json();
@@ -1839,8 +2074,10 @@
     return workspaceDirectories[directoryPath];
   }
 
-  async function workspaceFetchJSON(url) {
-    var response = await fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" });
+  async function workspaceFetchJSON(url, options) {
+    options = options || { headers: { "Accept": "application/json" } };
+    options.cache = "no-store";
+    var response = await fetch(url, options);
     if (!response.ok) {
       var message = "HTTP " + response.status;
       try {
@@ -1853,7 +2090,7 @@
   }
 
   async function requestWorkspaceDirectoryPage(directoryPath, offset) {
-    var url = "/api/v1/webui/workspace?path=" + encodeURIComponent(directoryPath) + "&offset=" + offset;
+    var url = workspaceScopedURL("/api/v1/webui/workspace?path=" + encodeURIComponent(directoryPath) + "&offset=" + offset);
     var payload = await workspaceFetchJSON(url);
     return {
       entries: payload && Array.isArray(payload.entries) ? payload.entries : [],
@@ -2131,7 +2368,7 @@
     workspaceCurrentPreview.payload = null;
     updateWorkspacePreviewAttachState();
     try {
-      var payload = await workspaceFetchJSON("/api/v1/webui/workspace/preview?path=" + encodeURIComponent(currentPath));
+      var payload = await workspaceFetchJSON(workspaceScopedURL("/api/v1/webui/workspace/preview?path=" + encodeURIComponent(currentPath)));
       if (requestID !== workspacePreviewRequestID || !workspaceCurrentPreview || workspaceCurrentPreview.path !== currentPath) return;
       renderWorkspacePreview(payload);
     } catch (error) {
@@ -2157,11 +2394,103 @@
     loadWorkspacePreview();
   }
 
+  function closeWorkspacePicker() {
+    workspacePickerBackdrop.hidden = true;
+    workspaceSelect.setAttribute("aria-expanded", "false");
+    workspaceSelect.focus();
+  }
+
+  function renderWorkspacePickerState(message, error) {
+    workspacePickerList.textContent = "";
+    var state = document.createElement("div");
+    state.className = "workspace-picker-state" + (error ? " error" : "");
+    state.textContent = message;
+    workspacePickerList.appendChild(state);
+  }
+
+  async function loadWorkspacePickerDirectories(append) {
+    if (!pickerRootID) return;
+    if (!append) {
+      pickerNextOffset = 0;
+      renderWorkspacePickerState("正在读取目录…", false);
+    }
+    var offset = append && typeof pickerNextOffset === "number" ? pickerNextOffset : 0;
+    try {
+      var payload = await workspaceFetchJSON("/api/v1/webui/workspaces/directories?root_id=" + encodeURIComponent(pickerRootID) + "&path=" + encodeURIComponent(pickerPath) + "&offset=" + offset);
+      if (!append) workspacePickerList.textContent = "";
+      pickerPath = payload.path || "";
+      pickerNextOffset = typeof payload.next_offset === "number" ? payload.next_offset : null;
+      workspacePickerPath.textContent = payload.absolute_path || (payload.root && payload.root.path ? payload.root.path : "");
+      workspacePickerUp.disabled = !pickerPath;
+      var directories = payload && Array.isArray(payload.directories) ? payload.directories : [];
+      directories.forEach(function (directory) {
+        var row = document.createElement("button");
+        row.type = "button";
+        row.className = "workspace-picker-row";
+        row.innerHTML = '<span class="workspace-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>';
+        var label = document.createElement("span");
+        label.textContent = directory.name;
+        row.appendChild(label);
+        row.addEventListener("click", function () {
+          pickerPath = directory.path;
+          loadWorkspacePickerDirectories(false);
+        });
+        workspacePickerList.appendChild(row);
+      });
+      if (!directories.length && !append && pickerNextOffset === null) renderWorkspacePickerState("当前目录没有子目录", false);
+      if (typeof pickerNextOffset === "number") {
+        var more = document.createElement("button");
+        more.type = "button";
+        more.className = "workspace-picker-row";
+        more.textContent = "加载更多";
+        more.addEventListener("click", function () { loadWorkspacePickerDirectories(true); });
+        workspacePickerList.appendChild(more);
+      }
+    } catch (error) {
+      renderWorkspacePickerState("读取失败：" + (error && error.message ? error.message : error), true);
+    }
+  }
+
+  function openWorkspacePicker() {
+    if (busy || !workspaceRoots.length) return;
+    workspacePickerRoot.textContent = "";
+    workspaceRoots.forEach(function (root) {
+      var option = document.createElement("option");
+      option.value = root.id;
+      option.textContent = root.name + " — " + root.path;
+      workspacePickerRoot.appendChild(option);
+    });
+    pickerRootID = currentWorkspace && currentWorkspace.root_id ? currentWorkspace.root_id : workspaceRoots[0].id;
+    pickerPath = currentWorkspace && currentWorkspace.root_id === pickerRootID ? (currentWorkspace.relative_path || "") : "";
+    workspacePickerRoot.value = pickerRootID;
+    workspacePickerBackdrop.hidden = false;
+    workspaceSelect.setAttribute("aria-expanded", "true");
+    loadWorkspacePickerDirectories(false);
+    workspacePickerRoot.focus();
+  }
+
+  async function confirmWorkspacePicker() {
+    if (busy || !pickerRootID) return;
+    workspacePickerConfirm.disabled = true;
+    try {
+      var info = await workspaceFetchJSON("/api/v1/webui/workspaces/open", {
+        method: "POST",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ root_id: pickerRootID, path: pickerPath })
+      });
+      closeWorkspacePicker();
+      applyWorkspace(info, true);
+      input.focus();
+    } catch (error) {
+      renderWorkspacePickerState("打开失败：" + (error && error.message ? error.message : error), true);
+    } finally {
+      workspacePickerConfirm.disabled = false;
+    }
+  }
+
   function initializeWorkspaceExplorer() {
     syncWorkspaceSidebarForViewport();
     listenMediaQuery(workspaceDesktopQuery, syncWorkspaceSidebarForViewport);
-    renderWorkspaceTree();
-    loadWorkspaceDirectory("", false, false);
   }
 
   function scrollToBottom() {
@@ -2877,17 +3206,18 @@
 
   function setBusy(on) {
     busy = on;
-    sendBtn.disabled = false;
+    sendBtn.disabled = !workspaceReady;
     sendBtn.classList.toggle("stop", on);
     sendBtn.title = on ? "停止生成" : "发送";
     sendBtn.setAttribute("aria-label", on ? "停止生成" : "发送");
-    input.disabled = on;
+    input.disabled = on || !workspaceReady;
     addAttachmentBtn.disabled = on;
     uploadFileBtn.disabled = on;
     serverFilePath.disabled = on;
     addServerPathBtn.disabled = on;
     reasoningEffortToggle.disabled = on;
     reasoningEffortRange.disabled = on;
+    workspaceSelect.disabled = on || !workspaceReady;
     if (on) {
       setAttachmentMenu(false);
       setReasoningEffortMenu(false);
@@ -2996,7 +3326,7 @@
       btn.title = rating === "up" ? "有帮助" : "没有帮助";
       btn.onclick = async function() {
         try {
-          await fetch("/api/v1/runs/" + encodeURIComponent(runId) + "/feedback", {
+          await fetch(workspaceScopedURL("/api/v1/runs/" + encodeURIComponent(runId) + "/feedback"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ rating: rating })
@@ -3038,7 +3368,7 @@
       var response = await fetch("/api/v1/chat/stop", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ turn_id: currentTurnId })
+        body: JSON.stringify({ turn_id: currentTurnId, workspace_id: currentWorkspace ? currentWorkspace.id : "" })
       });
       if (!response.ok) throw new Error("HTTP " + response.status);
       var result = await response.json();
@@ -3049,7 +3379,7 @@
   }
 
   async function send() {
-    if (busy || preparingSend) return;
+    if (!workspaceReady || busy || preparingSend) return;
     preparingSend = true;
     try {
       await Promise.all(pendingImageReads.concat(pendingFileReads));
@@ -3097,6 +3427,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          workspace_id: currentWorkspace ? currentWorkspace.id : "",
           message: text,
           images: sentImages,
           files: sentFiles,
@@ -3134,8 +3465,7 @@
             clearStreamingState(bubble);
             var done = JSON.parse(evt.data);
             if (done.session_id) {
-              sessionId = done.session_id;
-              localStorage.setItem(SESSION_KEY, sessionId);
+              setCurrentWorkspaceSession(done.session_id);
             }
             if (done.model) {
               runtimeModelLoadID++;
@@ -3237,8 +3567,7 @@
 
   function newChat() {
     if (busy) return;
-    sessionId = "";
-    localStorage.removeItem(SESSION_KEY);
+    setCurrentWorkspaceSession("");
     clearPendingAttachments();
     setAttachmentMenu(false);
     setReasoningEffortMenu(false);
@@ -3253,6 +3582,7 @@
     if (busy) stopCurrentTurn(); else send();
   });
   newChatBtn.addEventListener("click", newChat);
+  workspaceSelect.addEventListener("click", openWorkspacePicker);
   workspaceToggle.addEventListener("click", function () {
     setWorkspaceSidebarOpen(workspaceToggle.getAttribute("aria-expanded") !== "true", true);
   });
@@ -3266,6 +3596,24 @@
     if (!workspaceCurrentPreview || !workspaceCurrentPreview.payload) return;
     addWorkspacePath(workspaceCurrentPreview.path, workspaceCurrentPreview.payload.size);
     updateWorkspacePreviewAttachState();
+  });
+  workspacePickerClose.addEventListener("click", closeWorkspacePicker);
+  workspacePickerCancel.addEventListener("click", closeWorkspacePicker);
+  workspacePickerConfirm.addEventListener("click", confirmWorkspacePicker);
+  workspacePickerBackdrop.addEventListener("click", function (event) {
+    if (event.target === workspacePickerBackdrop) closeWorkspacePicker();
+  });
+  workspacePickerRoot.addEventListener("change", function () {
+    pickerRootID = workspacePickerRoot.value;
+    pickerPath = "";
+    loadWorkspacePickerDirectories(false);
+  });
+  workspacePickerUp.addEventListener("click", function () {
+    if (!pickerPath) return;
+    var parts = pickerPath.split("/");
+    parts.pop();
+    pickerPath = parts.join("/");
+    loadWorkspacePickerDirectories(false);
   });
   addAttachmentBtn.addEventListener("click", function () {
     setAttachmentMenu(attachmentMenu.hidden);
@@ -3306,6 +3654,8 @@
     } else if (event.key === "Escape" && !reasoningEffortMenu.hidden) {
       setReasoningEffortMenu(false);
       reasoningEffortToggle.focus();
+    } else if (event.key === "Escape" && !workspacePickerBackdrop.hidden) {
+      closeWorkspacePicker();
     } else if (event.key === "Escape" && !isWorkspaceDesktop() && workspaceToggle.getAttribute("aria-expanded") === "true") {
       setWorkspaceSidebarOpen(false, false);
       workspaceToggle.focus();
@@ -3366,8 +3716,16 @@
   setTheme(localStorage.getItem(THEME_KEY) ||
     (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
   initializeWorkspaceExplorer();
+  input.disabled = true;
+  sendBtn.disabled = true;
+  workspaceSelect.disabled = true;
   initParticleField();
-  loadRuntimeModel();
+  initializeWorkspaceSelection().catch(function (error) {
+    statusEl.textContent = "工作区初始化失败";
+    statusEl.classList.add("error");
+    workspaceTreeStatus.textContent = error && error.message ? error.message : String(error);
+    workspaceTreeStatus.classList.add("error");
+  });
   autoGrow();
 })();
 </script>

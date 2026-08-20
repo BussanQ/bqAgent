@@ -49,8 +49,11 @@ func TestWebUIServesIndex(t *testing.T) {
 	page := string(body)
 	for _, expected := range []string{
 		`id="theme-toggle"`,
-		`--bg: #dfe8ee`,
-		`--panel-strong: rgba(232, 240, 244, .96)`,
+		`--bg: #f7f7f7`,
+		`--panel-strong: rgba(255, 255, 255, .97)`,
+		`--text: #0a0a0a`,
+		`--signal: #2563eb`,
+		`--line: rgba(0, 0, 0, .12)`,
 		`function renderMarkdown(source)`,
 		`class="table-wrap"`,
 		`class="copy-code"`,
@@ -112,11 +115,21 @@ func TestWebUIServesIndex(t *testing.T) {
 		`id="workspace-tree"`,
 		`id="workspace-preview-view"`,
 		`id="workspace-preview-attach"`,
+		`id="workspace-select"`,
+		`id="workspace-picker-backdrop"`,
+		`id="workspace-picker-root"`,
+		`id="workspace-picker-confirm"`,
+		`bqagent.webui.workspace-sessions`,
+		`function initializeWorkspaceSelection()`,
+		`function applyWorkspace(info, switching)`,
+		`workspace_id: currentWorkspace ? currentWorkspace.id : ""`,
 		`function renderWorkspaceTree()`,
 		`function loadWorkspacePreview()`,
 		`function addWorkspacePath(value, size)`,
 		`/api/v1/webui/workspace?path=`,
 		`/api/v1/webui/workspace/preview?path=`,
+		`/api/v1/webui/workspaces/directories?root_id=`,
+		`/api/v1/webui/workspaces/open`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("served page missing WebUI feature %q", expected)
@@ -128,6 +141,27 @@ func TestWebUIServesIndex(t *testing.T) {
 	for _, obsolete := range []string{"ambient-particles", "ambient-particle", "cursor-stars", "ambientDrift", "done.reply || streamed"} {
 		if strings.Contains(page, obsolete) {
 			t.Fatalf("served page still contains obsolete particle implementation %q", obsolete)
+		}
+	}
+}
+
+func TestWebUILightThemeUsesNeutralPalette(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`--bg: #f7f7f7`,
+		`--panel-strong: rgba(255, 255, 255, .97)`,
+		`--line: rgba(0, 0, 0, .12)`,
+		`--text: #0a0a0a`,
+		`--signal: #2563eb`,
+		`--ambient-vignette: .035`,
+	} {
+		if count := strings.Count(page, expected); count != 2 {
+			t.Fatalf("light theme token %q count = %d, want automatic and explicit definitions", expected, count)
+		}
+	}
+	for _, obsolete := range []string{"#dfe8ee", "#d3dfe7", "#102b3b", "23, 111, 158"} {
+		if strings.Contains(page, obsolete) {
+			t.Fatalf("light theme still contains blue-tinted legacy token %q", obsolete)
 		}
 	}
 }

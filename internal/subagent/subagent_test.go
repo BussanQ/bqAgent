@@ -13,6 +13,19 @@ import (
 	"bqagent/internal/extagent"
 )
 
+func TestWorkerEnvironmentSkipsWorkspaceDotEnv(t *testing.T) {
+	found := false
+	for _, entry := range workerEnvironment() {
+		if entry == "BQAGENT_SKIP_WORKSPACE_DOTENV=1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("worker environment does not disable workspace .env loading")
+	}
+}
+
 type fakeACP struct{}
 
 type canceledACP struct{}

@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -16,12 +18,14 @@ const (
 )
 
 type HandlerOptions struct {
-	Service  *Service
-	Channels []Channel
+	Service    *Service
+	Workspaces *WorkspaceRegistry
+	Channels   []Channel
 }
 
 type handler struct {
-	service *Service
+	service    *Service
+	workspaces *WorkspaceRegistry
 }
 
 type chatResponse struct {
@@ -38,7 +42,7 @@ type statusResponse struct {
 }
 
 func NewHandler(options HandlerOptions) http.Handler {
-	handler := &handler{service: options.Service}
+	handler := &handler{service: options.Service, workspaces: options.Workspaces}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handler.handleHealth)
 	mux.HandleFunc("/api/v1/status", handler.handleStatus)
@@ -52,6 +56,17 @@ func NewHandler(options HandlerOptions) http.Handler {
 		channel.RegisterRoutes(mux)
 	}
 	return withRequestLogging(mux)
+}
+
+func (handler *handler) serviceForWorkspace(workspaceID string) (*Service, error) {
+	if handler == nil || handler.service == nil {
+		return nil, fmt.Errorf("service is unavailable")
+	}
+	if handler.workspaces == nil || strings.TrimSpace(workspaceID) == "" {
+		return handler.service, nil
+	}
+	service, _, err := handler.workspaces.Resolve(workspaceID)
+	return service, err
 }
 
 type responseRecorder struct {
@@ -101,12 +116,17 @@ func (handler *handler) handleStatus(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
 		return
 	}
-	if handler.service == nil {
-		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "service is unavailable"})
+	service, err := handler.serviceForWorkspace(request.URL.Query().Get("workspace_id"))
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, os.ErrNotExist) {
+			status = http.StatusNotFound
+		}
+		writeError(writer, status, chatResponse{Error: err.Error()})
 		return
 	}
 	sessionID := request.URL.Query().Get("session_id")
-	writeJSON(writer, http.StatusOK, statusResponse{Status: "ok", LLM: handler.service.RuntimeLLMInfoForSession(sessionID)})
+	writeJSON(writer, http.StatusOK, statusResponse{Status: "ok", LLM: service.RuntimeLLMInfoForSession(sessionID)})
 }
 
 func (handler *handler) handleChat(writer http.ResponseWriter, request *http.Request) {
@@ -152,15 +172,25 @@ func (handler *handler) handleStopTurn(writer http.ResponseWriter, request *http
 		writeError(writer, http.StatusBadRequest, chatResponse{Error: "valid turn_id is required"})
 		return
 	}
-	if handler.service == nil {
-		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "service is unavailable"})
+	service, err := handler.serviceForWorkspace(values["workspace_id"])
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, os.ErrNotExist) {
+			status = http.StatusNotFound
+		}
+		writeError(writer, status, chatResponse{Error: err.Error()})
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]bool{"stopped": handler.service.StopTurn(turnID)})
+	writeJSON(writer, http.StatusOK, map[string]bool{"stopped": service.StopTurn(turnID)})
 }
 
 func (handler *handler) handleRun(writer http.ResponseWriter, request *http.Request) {
-	if handler.service == nil || handler.service.traceStore == nil {
+	service, err := handler.serviceForWorkspace(request.URL.Query().Get("workspace_id"))
+	if errors.Is(err, os.ErrNotExist) {
+		writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
+		return
+	}
+	if err != nil || service.traceStore == nil {
 		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: "trace store unavailable"})
 		return
 	}
@@ -172,7 +202,7 @@ func (handler *handler) handleRun(writer http.ResponseWriter, request *http.Requ
 	}
 	runID := parts[0]
 	if request.Method == http.MethodGet && len(parts) == 1 {
-		meta, err := handler.service.traceStore.Load(runID)
+		meta, err := service.traceStore.Load(runID)
 		if err != nil {
 			writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
 			return
@@ -186,7 +216,7 @@ func (handler *handler) handleRun(writer http.ResponseWriter, request *http.Requ
 			writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
 			return
 		}
-		feedback, err := handler.service.traceStore.AddFeedback(runID, values["rating"], values["comment"], "http")
+		feedback, err := service.traceStore.AddFeedback(runID, values["rating"], values["comment"], "http")
 		if err != nil {
 			writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
 			return

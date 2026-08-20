@@ -157,6 +157,7 @@ LLM_MODEL=claude-sonnet-4-5
 | `CHANNEL_STAGE_TIMEOUT` | `90s` | QQ/iLink 阶段时间预算。 |
 | `WEBUI_STAGE_MAX_ITERATIONS` | `0`（默认禁用） | 可选的 WebUI 阶段 checkpoint 迭代预算；仅正值启用。 |
 | `WEBUI_STAGE_TIMEOUT` | `0`（默认禁用） | 可选的 WebUI 阶段时间预算；仅正 duration 启用。 |
+| `WEBUI_WORKSPACE_ROOTS` | — | WebUI 可额外浏览和选择的服务端目录根列表，使用操作系统路径列表分隔符（Unix/macOS 为 `:`，Windows 为 `;`）；用户主目录和启动工作区始终允许。 |
 | `CONTEXT_MANAGEMENT_ENABLED` | `true` | 启用请求时上下文预算管理。 |
 | `CONTEXT_MAX_INPUT_TOKENS` | `132000` | 上下文 token 估算总预算，包含回复预留。 |
 | `CONTEXT_TARGET_INPUT_TOKENS` | `128000` | 裁剪或摘要后的目标大小。 |
@@ -370,11 +371,13 @@ aliases:
 - `POST /api/v1/webui/chat`
 - `GET /api/v1/webui/workspace`（分页列出工作区目录）
 - `GET /api/v1/webui/workspace/preview`（只读预览工作区文件）
+- `GET /api/v1/webui/workspaces`、`GET /api/v1/webui/workspaces/directories`、`POST /api/v1/webui/workspaces/open`（选择服务端本地工作区）
 - `POST /api/v1/chat/stop`
 - `POST /api/v1/serverchan/chat`
 - `POST /api/v1/serverchan/bot/webhook`
 
 其中 `/api/v1/chat` 用于基于 `session_id` 的接口对话。
+WebUI 的聊天、文件树、预览、状态、停止和 Trace 请求会携带 `workspace_id`；省略该字段时保持兼容并使用启动工作区。
 
 `GET /api/v1/status` 返回内置 LLM 的有效运行时身份，例如 `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`。该接口不会暴露 API Key 或供应商端点 URL；WebUI 会在 bqagent 标题下展示这项信息。
 
@@ -382,7 +385,7 @@ aliases:
 
 输入区还提供“推理强度”选择器，包含**自动、低、中、高**四档。默认“自动”不会向上游发送 effort 参数，因此保持模型或供应商的默认行为；选择会保存在浏览器 `localStorage` 中，并随每次 WebUI 请求显式发送，但不会写入 session 元数据。非自动档位在 OpenAI Chat Completions 中映射为 `reasoning_effort`，在 OpenAI Responses 中映射为 `reasoning.effort`，在 Anthropic Messages 中映射为 adaptive `thinking` 与 `output_config.effort`。
 
-WebUI 的工作区按钮会打开桌面侧栏或移动端抽屉。目录按需分页加载；点击普通文件后，侧栏原位切换到只读预览，再通过返回按钮恢复原文件树位置。UTF-8 文本最多预览前 512 KiB，PNG、JPEG、GIF 和 WebP 图片最多预览 3 MiB，其他二进制文件只显示元信息。文件树在每轮对话结束后自动刷新，也可手动刷新；外部程序在空闲期间产生的改动需要手动刷新才能显示。除任意层级的 `.git` 外，包括 `.env`、`.agent` 和被 `.gitignore` 忽略的内容都会显示，因此不要把 WebUI 暴露给不受信任的访问者。符号链接会显示，但不能展开、预览或从文件树加入附件。
+WebUI 的工作区按钮会打开桌面侧栏或移动端抽屉。侧栏标题中的目录选择按钮可以在运行 bqagent 的机器上浏览用户主目录、启动工作区以及 `WEBUI_WORKSPACE_ROOTS` 追加的允许根目录；确认后的目录会被直接作为工作区根并在首次打开时初始化 `.agent` 默认文件。每个浏览器分别保存当前工作区，每个工作区分别保存 `session_id`，QQ、微信等其他通道仍固定使用启动工作区。切换期间不会重新加载新目录的 `.env`，模型和进程环境继续使用服务启动时的配置。目录按需分页加载；点击普通文件后，侧栏原位切换到只读预览，再通过返回按钮恢复原文件树位置。UTF-8 文本最多预览前 512 KiB，PNG、JPEG、GIF 和 WebP 图片最多预览 3 MiB，其他二进制文件只显示元信息。文件树在每轮对话结束后自动刷新，也可手动刷新；外部程序在空闲期间产生的改动需要手动刷新才能显示。除任意层级的 `.git` 外，包括 `.env`、`.agent` 和被 `.gitignore` 忽略的内容都会显示，因此不要把 WebUI 暴露给不受信任的访问者。符号链接会显示，但不能展开、预览、选择为工作区或从文件树加入附件。允许选择用户主目录意味着 WebUI 能把其中任意普通目录作为 Agent 工具边界，切勿将未认证的 WebUI 暴露给不受信任的访问者。
 
 WebUI 输入区的 “+” 按钮支持上传浏览器本地文件，或引用运行 bqagent 的服务端 workspace 内路径。每轮最多 5 个文件，单文件最多 2 MiB、合计最多 6 MiB；上传文件保存在 `.agent/uploads/<session-id>/`，同名文件不会覆盖。UTF-8 文本会内联到当轮上下文（每个文件最多 64 KiB，超出时截断并保留可供 `read_file` 使用的完整路径）；二进制文件只注入路径说明。服务端路径必须位于 workspace 内，并通过根目录约束读取，不能借助 `..` 或符号链接逃逸。
 
