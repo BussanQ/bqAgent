@@ -1,10 +1,29 @@
 package server
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"bqagent/internal/session"
 )
+
+func TestNewServiceStoresSessionsInGlobalAgentDirectory(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	service := NewService(ServiceOptions{WorkspaceRoot: workspaceRoot, AgentDir: agentDir})
+
+	savedSession, err := service.store.Create(session.CreateOptions{Task: "global session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if savedSession.Dir() != filepath.Join(agentDir, "sessions", savedSession.ID()) {
+		t.Fatalf("session dir = %q, want global agent directory", savedSession.Dir())
+	}
+	if _, err := os.Stat(filepath.Join(workspaceRoot, ".agent")); !os.IsNotExist(err) {
+		t.Fatalf("service created workspace .agent: %v", err)
+	}
+}
 
 func TestNewServiceMaintainsExistingCompactSessions(t *testing.T) {
 	root := t.TempDir()

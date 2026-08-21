@@ -283,7 +283,9 @@ func runInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace.Works
 		return 1
 	}
 
-	store := session.NewStore(ws.Root)
+	sessionOptions := session.DefaultOptions()
+	sessionOptions.AgentDir = ws.AgentDir()
+	store := session.NewStore(ws.Root, sessionOptions)
 	sessionID := effectiveSessionID(options)
 	var (
 		savedSession *session.Session
@@ -353,7 +355,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		if sessionID == "" {
 			createOptions = &session.CreateOptions{Task: task, Planned: options.plan, Background: options.sessionRun}
 		}
-		sessionOptions := session.Options{TranscriptMode: llmConfig.SessionTranscriptMode, OutputMaxBytes: llmConfig.SessionOutputMaxBytes}
+		sessionOptions := session.Options{TranscriptMode: llmConfig.SessionTranscriptMode, OutputMaxBytes: llmConfig.SessionOutputMaxBytes, AgentDir: ws.AgentDir()}
 		conversation, err = appruntime.PrepareConversation(session.NewStore(ws.Root, sessionOptions), sessionID, createOptions, systemPrompt)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
