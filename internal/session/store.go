@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -193,6 +194,40 @@ func (s *Store) Open(id string) (*Session, error) {
 		return nil, fmt.Errorf("%w: session %q belongs to %q, current workspace is %q", ErrWorkspaceMismatch, canonicalID, meta.WorkspaceRoot, s.workspaceRoot)
 	}
 	return &Session{store: s, meta: meta, dir: dir}, nil
+}
+
+// List returns sessions belonging to this store's workspace, newest first.
+// Invalid entries and sessions owned by another workspace are ignored.
+func (s *Store) List(limit int) ([]Meta, error) {
+	root := filepath.Join(s.agentDir, "sessions")
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return []Meta{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	metas := make([]Meta, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		saved, openErr := s.Open(entry.Name())
+		if openErr != nil {
+			if errors.Is(openErr, ErrWorkspaceMismatch) {
+				continue
+			}
+			continue
+		}
+		if saved.meta.Chat {
+			metas = append(metas, saved.meta)
+		}
+	}
+	sort.Slice(metas, func(left, right int) bool { return metas[left].UpdatedAt.After(metas[right].UpdatedAt) })
+	if limit > 0 && len(metas) > limit {
+		metas = metas[:limit]
+	}
+	return metas, nil
 }
 
 var ErrWorkspaceMismatch = errors.New("session belongs to another workspace")

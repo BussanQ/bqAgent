@@ -9,7 +9,10 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
+
+	"bqagent/internal/providerconfig"
 )
 
 const (
@@ -26,6 +29,8 @@ type HandlerOptions struct {
 type handler struct {
 	service    *Service
 	workspaces *WorkspaceRegistry
+	providers  *providerconfig.Store
+	providerMu sync.Mutex
 }
 
 type chatResponse struct {
@@ -43,9 +48,18 @@ type statusResponse struct {
 
 func NewHandler(options HandlerOptions) http.Handler {
 	handler := &handler{service: options.Service, workspaces: options.Workspaces}
+	if options.Service != nil && strings.TrimSpace(options.Service.agentDir) != "" {
+		handler.providers = providerconfig.NewStore(options.Service.agentDir)
+		handler.applySavedProvider(options.Service)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handler.handleHealth)
 	mux.HandleFunc("/api/v1/status", handler.handleStatus)
+	mux.HandleFunc("/api/v1/webui/providers", handler.handleProviders)
+	mux.HandleFunc("/api/v1/webui/provider-selection", handler.handleProviderSelection)
+	mux.HandleFunc("/api/v1/webui/provider-models", handler.handleProviderModels)
+	mux.HandleFunc("/api/v1/webui/conversations", handler.handleConversations)
+	mux.HandleFunc("/api/v1/webui/conversations/", handler.handleConversationHistory)
 	mux.HandleFunc("/api/v1/chat", handler.handleChat)
 	mux.HandleFunc("/api/v1/chat/stop", handler.handleStopTurn)
 	mux.HandleFunc("/api/v1/runs/", handler.handleRun)

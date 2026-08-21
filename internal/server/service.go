@@ -57,6 +57,8 @@ type Service struct {
 	systemPrompt        string
 	systemPromptBuilder func() (string, error)
 	planner             *agent.Planner
+	plannerEnabled      bool
+	providerID          string
 	toolDefinitions     []tools.Definition
 	functions           map[string]tools.Function
 	maxTurns            int
@@ -185,6 +187,7 @@ func NewService(options ServiceOptions) *Service {
 		systemPrompt:        options.SystemPrompt,
 		systemPromptBuilder: options.SystemPromptBuilder,
 		planner:             options.Planner,
+		plannerEnabled:      options.Planner != nil,
 		toolDefinitions:     append(append([]tools.Definition{}, options.ToolDefinitions...), subagentToolDefinitions(options.Subagents != nil)...),
 		functions:           cloneFunctions(options.Functions),
 		maxTurns:            maxTurns,
@@ -202,6 +205,21 @@ func NewService(options ServiceOptions) *Service {
 		service.traceStore = apptrace.NewStore(options.WorkspaceRoot)
 	}
 	return service
+}
+
+func (service *Service) ConfigureLLM(providerID string, apiType agent.APIType, apiKey, baseURL, model string, models []string) {
+	if service == nil {
+		return
+	}
+	apiType = agent.NormalizeAPIType(string(apiType))
+	service.providerID = strings.TrimSpace(providerID)
+	service.apiType = apiType
+	service.client = agent.NewClientWithAPIType(apiKey, baseURL, apiType, nil)
+	service.model = agent.EffectiveModel(model)
+	service.models = parseConfiguredModels(models)
+	if service.plannerEnabled {
+		service.planner = agent.NewPlanner(service.client, service.model)
+	}
 }
 
 func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (TurnResponse, error) {
@@ -1026,15 +1044,16 @@ func (service *Service) currentSystemPrompt(query string, model string) (string,
 }
 
 type RuntimeLLMInfo struct {
-	APIType agent.APIType `json:"api_type"`
-	Model   string        `json:"model"`
+	ProviderID string        `json:"provider_id,omitempty"`
+	APIType    agent.APIType `json:"api_type"`
+	Model      string        `json:"model"`
 }
 
 func (service *Service) RuntimeLLMInfo() RuntimeLLMInfo {
 	if service == nil {
 		return RuntimeLLMInfo{}
 	}
-	return RuntimeLLMInfo{APIType: service.apiType, Model: service.model}
+	return RuntimeLLMInfo{ProviderID: service.providerID, APIType: service.apiType, Model: service.model}
 }
 
 func (service *Service) RuntimeLLMInfoForSession(sessionID string) RuntimeLLMInfo {

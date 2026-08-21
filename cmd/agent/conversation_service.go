@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
 	appmemory "bqagent/internal/memory"
+	"bqagent/internal/providerconfig"
 	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
 	"bqagent/internal/subagent"
@@ -16,7 +18,7 @@ import (
 
 func newConversationService(ctx context.Context, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, includePlan bool, statusWriter io.Writer) (*appserver.Service, *extagent.Broker) {
 	runtime := appruntime.Factory{
-		Config:         appruntime.ConfigFromEnv(getenv),
+		Config:         runtimeConfigFromSources(getenv, ws.AgentDir()),
 		WorkspaceRoot:  ws.Root,
 		AgentDir:       ws.AgentDir(),
 		MemoryDir:      ws.WorkspaceMemoryDir(),
@@ -71,4 +73,29 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		MemoryStore:     runtime.Memory,
 	})
 	return service, externalBroker
+}
+
+func runtimeConfigFromSources(getenv func(string) string, agentDir string) appruntime.Config {
+	config := appruntime.ConfigFromEnv(getenv)
+	store := providerconfig.NewStore(agentDir)
+	saved, err := store.Load()
+	if err != nil || strings.TrimSpace(saved.ActiveProvider) == "" {
+		return config
+	}
+	for _, provider := range saved.Providers {
+		if provider.ID != saved.ActiveProvider {
+			continue
+		}
+		apiKey, decryptErr := store.DecryptAPIKey(provider.APIKey)
+		if decryptErr != nil {
+			return config
+		}
+		config.APIType = agent.NormalizeAPIType(provider.APIType)
+		config.APIKey = apiKey
+		config.BaseURL = provider.BaseURL
+		config.Model = provider.DefaultModel
+		config.Models = append([]string(nil), provider.Models...)
+		return config
+	}
+	return config
 }

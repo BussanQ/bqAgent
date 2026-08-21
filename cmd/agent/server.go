@@ -14,7 +14,6 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/qq"
-	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
 	serverchanclient "bqagent/internal/serverchan"
 	"bqagent/internal/weixin"
@@ -48,7 +47,7 @@ func runServerInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace
 }
 
 func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, options cliOptions) int {
-	llmConfig := appruntime.ConfigFromEnv(getenv)
+	llmConfig := runtimeConfigFromSources(getenv, ws.AgentDir())
 	if strings.TrimSpace(llmConfig.APIKey) == "" {
 		if llmConfig.APIType == agent.APITypeAnthropic {
 			fmt.Fprintln(stderr, "ANTHROPIC_API_KEY or LLM_API_KEY is required for server mode")

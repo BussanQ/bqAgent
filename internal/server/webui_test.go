@@ -54,6 +54,8 @@ func TestWebUIServesIndex(t *testing.T) {
 		`--text: #17222f`,
 		`--signal: #2f6feb`,
 		`--line: rgba(23, 51, 89, .13)`,
+		`--select-bg: #0a1b32`,
+		`.model-controls select option`,
 		`function renderMarkdown(source)`,
 		`class="table-wrap"`,
 		`class="copy-code"`,
@@ -63,10 +65,19 @@ func TestWebUIServesIndex(t *testing.T) {
 		`addMessageMeta(bubble, done.generation)`,
 		`/api/v1/chat/stop`,
 		`/api/v1/status`,
-		`id="runtime-model"`,
+		`id="model-select"`,
+		`id="provider-settings-backdrop"`,
+		`class="global-settings" id="provider-settings-trigger"`,
+		`id="provider-fetch-models"`,
+		`/api/v1/webui/provider-models`,
+		`id="conversation-sidebar"`,
+		`id="conversation-list"`,
+		`/api/v1/webui/conversations`,
+		`function openConversation(id)`,
 		`loadRuntimeModel()`,
 		`"?session_id=" + encodeURIComponent(sessionId)`,
-		`updateRuntimeModel(done.api_type, done.model)`,
+		`updateRuntimeModel(done.api_type, done.model, providerSettingsState.active_provider)`,
+		`document.createElement("optgroup")`,
 		`var finalReply = typeof done.reply === "string" ? done.reply : "";`,
 		`服务端未返回有效回复`,
 		`响应在完成事件到达前中断`,
@@ -178,6 +189,162 @@ func TestWebUICreateAgentUsesDistinctAgentIcon(t *testing.T) {
 	}
 	if !strings.Contains(page, agentIcon) {
 		t.Fatal("create .agent action is missing its distinct agent icon")
+	}
+}
+
+func TestWebUIProviderSettingsEncryptKeyAndApplySelection(t *testing.T) {
+	root := t.TempDir()
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	service := NewService(ServiceOptions{WorkspaceRoot: root, AgentDir: agentDir, Model: "environment-model"})
+	apiServer := httptest.NewServer(NewHandler(HandlerOptions{Service: service}))
+	defer apiServer.Close()
+
+	body := `{"active_provider":"deepseek","providers":[{"id":"deepseek","name":"DeepSeek","api_type":"openai","base_url":"https://api.deepseek.example/v1","api_key":"secret-token","models":["deepseek-chat","deepseek-reasoner"],"default_model":"deepseek-chat"}]}`
+	request, err := http.NewRequest(http.MethodPut, apiServer.URL+"/api/v1/webui/providers", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(response.Body)
+		t.Fatalf("PUT providers status = %d, body = %s", response.StatusCode, data)
+	}
+	raw, err := os.ReadFile(filepath.Join(agentDir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "secret-token") {
+		t.Fatal("config.json contains plaintext API key")
+	}
+
+	var settings struct {
+		Providers []struct {
+			APIKeyConfigured bool   `json:"api_key_configured"`
+			APIKey           string `json:"api_key"`
+		} `json:"providers"`
+	}
+	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/providers", &settings)
+	if len(settings.Providers) != 1 || !settings.Providers[0].APIKeyConfigured || settings.Providers[0].APIKey != "" {
+		t.Fatalf("provider response exposed or omitted key state: %#v", settings.Providers)
+	}
+
+	selection := `{"provider_id":"deepseek","model":"deepseek-reasoner"}`
+	response, err = http.Post(apiServer.URL+"/api/v1/webui/provider-selection", "application/json", strings.NewReader(selection))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(response.Body)
+		t.Fatalf("POST provider selection status = %d, body = %s", response.StatusCode, data)
+	}
+	info := service.RuntimeLLMInfo()
+	if info.ProviderID != "deepseek" || info.Model != "deepseek-reasoner" {
+		t.Fatalf("runtime info = %#v", info)
+	}
+}
+
+func TestWebUIProviderModelsUsesSavedEncryptedKey(t *testing.T) {
+	var authorization string
+	providerServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		authorization = request.Header.Get("Authorization")
+		writeJSON(writer, http.StatusOK, map[string]any{"data": []map[string]string{{"id": "model-z"}, {"id": "model-a"}}})
+	}))
+	defer providerServer.Close()
+
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir})
+	apiServer := httptest.NewServer(NewHandler(HandlerOptions{Service: service}))
+	defer apiServer.Close()
+	settings := fmt.Sprintf(`{"active_provider":"custom","providers":[{"id":"custom","name":"Custom","api_type":"openai","base_url":%q,"api_key":"saved-secret","models":["old-model"],"default_model":"old-model"}]}`, providerServer.URL)
+	request, err := http.NewRequest(http.MethodPut, apiServer.URL+"/api/v1/webui/providers", strings.NewReader(settings))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("save provider status = %d", response.StatusCode)
+	}
+
+	response, err = http.Post(apiServer.URL+"/api/v1/webui/provider-models", "application/json", strings.NewReader(`{"provider_id":"custom","api_type":"anthropic","base_url":"http://127.0.0.1:1","api_key":""}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(response.Body)
+		t.Fatalf("discover models status = %d, body = %s", response.StatusCode, data)
+	}
+	var payload struct {
+		Models []string `json:"models"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if authorization != "Bearer saved-secret" {
+		t.Fatalf("Authorization = %q", authorization)
+	}
+	if fmt.Sprint(payload.Models) != "[model-a model-z]" {
+		t.Fatalf("models = %#v", payload.Models)
+	}
+}
+
+func TestWebUIConversationListAndHistory(t *testing.T) {
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	root := t.TempDir()
+	service := NewService(ServiceOptions{WorkspaceRoot: root, AgentDir: agentDir})
+	saved, err := service.store.Create(session.CreateOptions{Task: "梳理项目结构", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saved.RecordMessages(
+		map[string]any{"role": "user", "content": "请介绍项目"},
+		map[string]any{"role": "assistant", "content": "这是项目说明。"},
+		map[string]any{"role": "tool", "content": "private tool output"},
+		map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "查看图片"}, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,AA=="}}}},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := saved.MarkCompleted(); err != nil {
+		t.Fatal(err)
+	}
+	other := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir})
+	if _, err := other.store.Create(session.CreateOptions{Task: "其他工作区", Chat: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	apiServer := httptest.NewServer(NewHandler(HandlerOptions{Service: service}))
+	defer apiServer.Close()
+	var list struct {
+		Conversations []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"conversations"`
+	}
+	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/conversations", &list)
+	if len(list.Conversations) != 1 || list.Conversations[0].ID != saved.ID() || list.Conversations[0].Title != "梳理项目结构" {
+		t.Fatalf("conversation list = %#v", list.Conversations)
+	}
+	var history struct {
+		ID       string `json:"id"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/conversations/"+saved.ID(), &history)
+	if history.ID != saved.ID() || len(history.Messages) != 3 || history.Messages[0].Content != "请介绍项目" || history.Messages[1].Content != "这是项目说明。" || history.Messages[2].Content != "查看图片\n[图片]" {
+		t.Fatalf("conversation history = %#v", history)
 	}
 }
 
