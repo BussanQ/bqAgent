@@ -147,6 +147,40 @@ func TestWebUIServesIndex(t *testing.T) {
 	}
 }
 
+func TestWebUIComposerPlacesAttachmentButtonOnLeft(t *testing.T) {
+	page := string(webUIIndex)
+	attachment := strings.Index(page, `id="attachment-actions"`)
+	content := strings.Index(page, `class="composer-content"`)
+	if attachment < 0 || content < 0 || attachment > content {
+		t.Fatalf("attachment action index = %d, composer content index = %d; want attachment action first", attachment, content)
+	}
+	for _, obsolete := range []string{`.composer::before {`, `padding-left: 22px`, `padding-left: 18px`} {
+		if strings.Contains(page, obsolete) {
+			t.Fatalf("composer still contains obsolete left prompt styling %q", obsolete)
+		}
+	}
+	for _, expected := range []string{
+		`.attachment-menu { position: absolute; left: 0;`,
+		`.attachment-menu::after { content: ""; position: absolute; left: 11px;`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("composer missing left-aligned attachment styling %q", expected)
+		}
+	}
+}
+
+func TestWebUICreateAgentUsesDistinctAgentIcon(t *testing.T) {
+	page := string(webUIIndex)
+	selectIcon := `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M3.5 7h6l2 2h9v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2zM12 12v5m-2.5-2.5h5"`
+	agentIcon := `<svg class="workspace-create-agent-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none">`
+	if !strings.Contains(page, selectIcon) {
+		t.Fatal("workspace selector folder icon is missing")
+	}
+	if !strings.Contains(page, agentIcon) {
+		t.Fatal("create .agent action is missing its distinct agent icon")
+	}
+}
+
 func TestWebUILightThemeUsesSoftSurfacesAndVisibleParticles(t *testing.T) {
 	page := string(webUIIndex)
 	for _, expected := range []string{

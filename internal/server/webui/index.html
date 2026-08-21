@@ -1182,7 +1182,7 @@
   }
   .composer-content { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
   .attachment-tray[hidden] { display: none; }
-  .attachment-tray { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 8px 0 30px; }
+  .attachment-tray { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 8px 0; }
   .attachment-item { position: relative; width: 68px; height: 58px; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--panel-strong); }
   .attachment-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .attachment-item.loading img { opacity: .45; }
@@ -1197,14 +1197,14 @@
   .attachment-file-meta { color: var(--text-muted); font: 9px/1.25 ui-monospace, "SFMono-Regular", Consolas, monospace; }
   .attachment-file .attachment-remove { position: static; flex: 0 0 auto; margin-left: 2px; background: transparent; color: var(--text-muted); border-color: transparent; }
   .attachment-file .attachment-remove:hover { color: #fff; background: rgba(var(--danger-rgb),.86); }
-  .attachment-error { color: var(--danger); font-size: 11px; padding: 0 10px 0 30px; }
+  .attachment-error { color: var(--danger); font-size: 11px; padding: 0 10px; }
   .attachment-actions { position: relative; flex: 0 0 36px; margin-bottom: 5px; }
   .attachment-trigger { color: var(--text-soft); }
   .attachment-trigger[aria-expanded="true"] { color: var(--bg); border-color: var(--signal); background: var(--signal); box-shadow: 0 0 22px rgba(var(--signal-rgb),.25); transform: rotate(45deg); }
   .attachment-trigger svg { width: 18px; height: 18px; transition: transform .18s ease; }
   .attachment-menu[hidden] { display: none; }
-  .attachment-menu { position: absolute; right: 0; bottom: calc(100% + 11px); width: min(310px, calc(100vw - 32px)); padding: 8px; border: 1px solid var(--line-strong); border-radius: 13px; background: var(--panel-strong); box-shadow: var(--shadow), 0 0 30px rgba(var(--signal-rgb),.09); backdrop-filter: blur(24px); }
-  .attachment-menu::after { content: ""; position: absolute; right: 11px; bottom: -5px; width: 9px; height: 9px; border-right: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); background: var(--panel-strong); transform: rotate(45deg); }
+  .attachment-menu { position: absolute; left: 0; bottom: calc(100% + 11px); width: min(310px, calc(100vw - 32px)); padding: 8px; border: 1px solid var(--line-strong); border-radius: 13px; background: var(--panel-strong); box-shadow: var(--shadow), 0 0 30px rgba(var(--signal-rgb),.09); backdrop-filter: blur(24px); }
+  .attachment-menu::after { content: ""; position: absolute; left: 11px; bottom: -5px; width: 9px; height: 9px; border-right: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); background: var(--panel-strong); transform: rotate(45deg); }
   .attachment-menu-action { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-color: transparent; border-radius: 9px; color: var(--text); background: transparent; text-align: left; }
   .attachment-menu-action:hover { border-color: rgba(var(--signal-rgb),.22); background: var(--surface-hover); transform: none; box-shadow: none; }
   .attachment-menu-action svg { width: 17px; height: 17px; color: var(--signal); }
@@ -1240,18 +1240,6 @@
   .reasoning-effort-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(var(--signal-rgb),.24), 0 2px 8px rgba(0,0,0,.28); }
   .reasoning-effort-labels { display: flex; justify-content: space-between; padding: 1px 1px 0; color: var(--text-muted); font-size: 9px; }
   .reasoning-effort-labels span.active { color: var(--signal); }
-  .composer::before {
-    content: ">";
-    position: absolute;
-    left: 20px;
-    bottom: 24px;
-    color: var(--signal);
-    font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-    font-size: 15px;
-    font-weight: 700;
-    pointer-events: none;
-    opacity: .9;
-  }
   .composer-meta {
     width: min(100%, var(--maxw));
     margin: 7px auto 0;
@@ -1265,7 +1253,6 @@
     flex: 1 1 auto;
     min-width: 0;
     position: relative;
-    padding-left: 22px;
   }
   textarea {
     width: 100%;
@@ -1350,8 +1337,6 @@
     .empty { margin-top: 46px; }
     .empty .big { font-size: 28px; }
     .composer { border-radius: 16px; padding: 8px; }
-    .composer::before { left: 16px; font-size: 14px; }
-    .input-shell { padding-left: 18px; }
     .composer-meta { display: none; }
     #particle-field { display: none; }
   }
@@ -1418,7 +1403,10 @@
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M3.5 7h6l2 2h9v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2zM12 12v5m-2.5-2.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
           <button class="workspace-tool" id="workspace-create-agent" type="button" title="在工作目录创建 .agent 配置" aria-label="在工作目录创建 .agent 配置">
-            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M4 5.5h6l2 2h8v11H4zM12 10.5v5m-2.5-2.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg class="workspace-create-agent-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none">
+              <path d="M11 7V4.5M9.5 4.5h3M7 7h8a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-6a3 3 0 0 1 3-3Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M8 12h.01M14 12h.01M8.5 15.5h5M20 3v4M18 5h4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+            </svg>
           </button>
           <button class="workspace-tool" id="workspace-refresh" type="button" title="刷新文件树" aria-label="刷新文件树">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M19 8a7.5 7.5 0 1 0 .4 7M19 4v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1474,13 +1462,6 @@
   </main>
   <footer>
     <div class="composer">
-      <div class="composer-content">
-        <div class="attachment-tray" id="attachment-tray" aria-label="待发送附件" hidden></div>
-        <div class="attachment-error" id="attachment-error" role="status" aria-live="polite"></div>
-        <div class="input-shell">
-          <textarea id="input" rows="1" placeholder="给 bqagent 发送消息，可粘贴图片或添加文件" autofocus></textarea>
-        </div>
-      </div>
       <div class="attachment-actions" id="attachment-actions">
         <button class="icon-button attachment-trigger" id="add-attachment" type="button" title="添加文件" aria-label="添加文件" aria-expanded="false" aria-controls="attachment-menu">
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="none">
@@ -1499,6 +1480,13 @@
             <input id="server-file-path" type="text" placeholder="例如 docs/design.md" autocomplete="off" spellcheck="false">
             <button class="attachment-path-add" id="add-server-path" type="button">添加</button>
           </div>
+        </div>
+      </div>
+      <div class="composer-content">
+        <div class="attachment-tray" id="attachment-tray" aria-label="待发送附件" hidden></div>
+        <div class="attachment-error" id="attachment-error" role="status" aria-live="polite"></div>
+        <div class="input-shell">
+          <textarea id="input" rows="1" placeholder="给 bqagent 发送消息，可粘贴图片或添加文件" autofocus></textarea>
         </div>
       </div>
       <div class="reasoning-effort" id="reasoning-effort">
