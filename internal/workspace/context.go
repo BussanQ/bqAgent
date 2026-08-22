@@ -57,12 +57,12 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 		parts = append(parts, rules)
 	}
 
-	skills, err := primary.loadSkillsSection(root)
+	skills, err := w.LoadSkills()
 	if err != nil {
 		return "", err
 	}
-	if skills != "" {
-		parts = append(parts, skills)
+	if section := formatSkillsSection(skills); section != "" {
+		parts = append(parts, section)
 	}
 
 	memory, err := primary.loadMemoryContext(root, memoryTailLines)
@@ -156,6 +156,7 @@ func (w *Workspace) workspaceSection() string {
 		"Legacy memory file: agent_memory.md",
 		"Global rules directory: ~/.agent/rules/*.md",
 		"Global skills directory: ~/.agent/skills/*/SKILL.md",
+		"Workspace skills directory: .agent/skills/*/SKILL.md (merged with global skills; same-named workspace skills override global skills)",
 		"Sessions directory: .agent/sessions/",
 		"MCP config: ~/.agent/mcp.json merged with optional workspace .agent/mcp.json",
 	}
@@ -233,8 +234,54 @@ func (w *Workspace) LoadSkills() ([]Skill, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
-	return primary.loadSkills(root)
+	globalSkills, err := primary.loadSkills(root)
+	closeErr := root.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if !w.hasDistinctLocalConfig() {
+		return globalSkills, nil
+	}
+
+	local := &Workspace{Root: w.Root}
+	localRoot, err := local.openRoot()
+	if err != nil {
+		return nil, err
+	}
+	localSkills, err := local.loadSkills(localRoot)
+	closeErr = localRoot.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return mergeSkills(globalSkills, localSkills), nil
+}
+
+func mergeSkills(globalSkills, localSkills []Skill) []Skill {
+	merged := make(map[string]Skill, len(globalSkills)+len(localSkills))
+	for _, skill := range globalSkills {
+		merged[strings.ToLower(skill.ID)] = skill
+	}
+	for _, skill := range localSkills {
+		merged[strings.ToLower(skill.ID)] = skill
+	}
+	result := make([]Skill, 0, len(merged))
+	for _, skill := range merged {
+		result = append(result, skill)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		left, right := strings.ToLower(result[i].ID), strings.ToLower(result[j].ID)
+		if left == right {
+			return result[i].ID < result[j].ID
+		}
+		return left < right
+	})
+	return result
 }
 
 func (w *Workspace) loadSkills(root *os.Root) ([]Skill, error) {
@@ -288,7 +335,7 @@ func (w *Workspace) LoadSkill(id string) (Skill, error) {
 		return Skill{}, err
 	}
 	for _, skill := range skills {
-		if skill.ID == id {
+		if strings.EqualFold(skill.ID, id) {
 			return skill, nil
 		}
 	}
@@ -337,8 +384,12 @@ func (w *Workspace) loadSkillsSection(root *os.Root) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return formatSkillsSection(skills), nil
+}
+
+func formatSkillsSection(skills []Skill) string {
 	if len(skills) == 0 {
-		return "", nil
+		return ""
 	}
 
 	lines := []string{
@@ -352,7 +403,7 @@ func (w *Workspace) loadSkillsSection(root *os.Root) (string, error) {
 			"  path: "+skill.Path,
 		)
 	}
-	return strings.Join(lines, "\n"), nil
+	return strings.Join(lines, "\n")
 }
 
 func (w *Workspace) skillPromptPath(skillPath string) (string, error) {

@@ -123,11 +123,22 @@ func ReadFileFromWorkspaceAndAgent(workspaceRoot, agentDir string, maxBytes int6
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, _ := args["path"].(string)
 		clean := filepath.Clean(strings.TrimSpace(path))
+		if isAgentSkillPath(clean) {
+			localPath := filepath.Join(workspaceRoot, clean)
+			if _, err := os.Lstat(localPath); err == nil || !os.IsNotExist(err) {
+				return workspaceReader(ctx, args)
+			}
+		}
 		if strings.TrimSpace(agentDir) != "" && (clean == ".agent" || strings.HasPrefix(clean, ".agent"+string(filepath.Separator))) {
 			return agentReader(ctx, args)
 		}
 		return workspaceReader(ctx, args)
 	}
+}
+
+func isAgentSkillPath(path string) bool {
+	prefix := filepath.Join(".agent", "skills")
+	return path == prefix || strings.HasPrefix(path, prefix+string(filepath.Separator))
 }
 
 // optionalPositiveInt reads an optional non-negative integer argument. It

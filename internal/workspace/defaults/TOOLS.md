@@ -19,7 +19,7 @@ It is guidance only — it does not change what tools are available.
 - **web_search**: Search the web for up-to-date information via Tavily by default. Configure `SEARCH_API_KEY`; optional `SEARCH_BASE_URL` defaults to `https://api.tavily.com`. Firecrawl remains supported as a compatibility fallback via `FIRECRAWL_API_KEY` and optional `FIRECRAWL_BASE_URL`.
 
 ## Skills
-- **install_skill**: Install a skill from a URL into `.agent/skills/<name>/SKILL.md`. Provide `url`, optionally `name`, and `overwrite` as `true` when replacing an existing skill.
+- **install_skill**: Install a skill from a URL into `.agent/skills/<name>/SKILL.md`. Provide `url`, optionally `name`, `overwrite`, and `target`; `target` defaults to `global`, while `workspace` installs into the current workspace overlay.
 - The system prompt lists only each skill's name, frontmatter description, and workspace-relative `SKILL.md` path. When a listed skill is relevant, first use **read_file** to read the complete file, then follow its instructions in the current conversation.
 - `/skill <name-or-alias> [args]` explicitly selects a skill but still uses the normal **read_file** workflow. There is no separate `run_skill` tool.
 

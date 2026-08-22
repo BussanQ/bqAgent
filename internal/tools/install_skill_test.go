@@ -73,7 +73,7 @@ func TestInstallSkillRefusesOverwriteByDefault(t *testing.T) {
 		t.Fatalf("failed to create existing skill: %v", err)
 	}
 
-	_, err := InstallSkillToRootWithClient(root, server.Client(), true)(context.Background(), map[string]any{"url": server.URL + "/demo"})
+	_, err := InstallSkillToRootsWithClient(t.TempDir(), root, server.Client(), true)(context.Background(), map[string]any{"url": server.URL + "/demo", "target": "workspace"})
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("InstallSkill error = %v, want already exists", err)
 	}
@@ -125,5 +125,35 @@ func TestInstallSkillOverwritesWhenRequested(t *testing.T) {
 	}
 	if string(content) != "# Replacement\n" {
 		t.Fatalf("installed content = %q", string(content))
+	}
+}
+
+func TestInstallSkillTargetsGlobalByDefaultAndWorkspaceExplicitly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/markdown")
+		_, _ = writer.Write([]byte("# Targeted Skill"))
+	}))
+	defer server.Close()
+
+	globalRoot := t.TempDir()
+	workspaceRoot := t.TempDir()
+	install := InstallSkillToRootsWithClient(globalRoot, workspaceRoot, server.Client(), true)
+	if _, err := install(context.Background(), map[string]any{"url": server.URL + "/global-skill"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(globalRoot, ".agent", "skills", "global-skill", "SKILL.md")); err != nil {
+		t.Fatalf("default global skill missing: %v", err)
+	}
+	if _, err := install(context.Background(), map[string]any{"url": server.URL + "/workspace-skill", "target": "workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(workspaceRoot, ".agent", "skills", "workspace-skill", "SKILL.md")); err != nil {
+		t.Fatalf("workspace skill missing: %v", err)
+	}
+	if _, err := install(context.Background(), map[string]any{"url": server.URL + "/workspace-skill", "target": "workspace"}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("workspace overwrite protection error = %v", err)
+	}
+	if _, err := install(context.Background(), map[string]any{"url": server.URL + "/invalid", "target": "project"}); err == nil || !strings.Contains(err.Error(), "global or workspace") {
+		t.Fatalf("invalid target error = %v", err)
 	}
 }

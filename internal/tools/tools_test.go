@@ -30,7 +30,7 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		{index: 6, name: "todo_write", description: "Create or update the task list for the current work. Pass todos as a JSON array string of {content, status, activeForm}, status in pending|in_progress|completed. Keep one item in_progress at a time.", required: []string{"todos"}},
 		{index: 7, name: "web_search", description: "Search the web for up-to-date information via Tavily. Requires SEARCH_API_KEY; Firecrawl env vars are supported as a compatibility fallback.", required: []string{"query"}},
 		{index: 8, name: "web_fetch", description: "Fetch content from a web URL", required: []string{"url"}},
-		{index: 9, name: "install_skill", description: "Install a workspace skill from a URL into .agent/skills/<name>/SKILL.md.", required: []string{"url"}},
+		{index: 9, name: "install_skill", description: "Install a skill from a URL. Defaults to the global .agent/skills directory; set target=workspace for the current workspace.", required: []string{"url"}},
 		{index: 10, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
 		{index: 11, name: "mem_get", description: "Read memory contents. Use to recall saved knowledge and context.", required: []string{"target"}},
 	}
@@ -68,6 +68,9 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 			}
 			if _, ok := definition.Function.Parameters.Properties["overwrite"]; !ok {
 				t.Fatal("install_skill definition missing overwrite property")
+			}
+			if _, ok := definition.Function.Parameters.Properties["target"]; !ok {
+				t.Fatal("install_skill definition missing target property")
 			}
 		}
 	}
@@ -171,6 +174,32 @@ func TestCatalogReadsDotAgentPathsFromGlobalAgentDirectory(t *testing.T) {
 	}
 	if content != "global skill" {
 		t.Fatalf("read_file = %q, want global skill", content)
+	}
+}
+
+func TestCatalogReadsWorkspaceSkillsBeforeGlobalSkills(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	for path, content := range map[string]string{
+		filepath.Join(agentDir, "skills", "shared", "SKILL.md"):                "global shared",
+		filepath.Join(agentDir, "skills", "global-only", "SKILL.md"):           "global only",
+		filepath.Join(workspaceRoot, ".agent", "skills", "shared", "SKILL.md"): "workspace shared",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readFile := NewCatalog(Options{WorkspaceRoot: workspaceRoot, AgentDir: agentDir}).Registry()["read_file"]
+	shared, err := readFile(context.Background(), map[string]any{"path": ".agent/skills/shared/SKILL.md"})
+	if err != nil || shared != "workspace shared" {
+		t.Fatalf("shared skill = %q, err = %v", shared, err)
+	}
+	globalOnly, err := readFile(context.Background(), map[string]any{"path": ".agent/skills/global-only/SKILL.md"})
+	if err != nil || globalOnly != "global only" {
+		t.Fatalf("global-only skill = %q, err = %v", globalOnly, err)
 	}
 }
 

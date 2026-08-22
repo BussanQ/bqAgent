@@ -117,7 +117,7 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"todo_write":    TodoWriteWithStore(todoStore),
 		"web_search":    WebSearchWithProviderConfig(searchProvider, searchAPIKey, searchBaseURL),
 		"web_fetch":     WebFetch,
-		"install_skill": InstallSkillToRoot(skillRoot),
+		"install_skill": InstallSkillToRoots(skillRoot, options.WorkspaceRoot),
 		"mem_save":      MemSaveInDir(options.MemoryDir),
 		"mem_get":       MemGetInDir(options.MemoryDir),
 	}
@@ -343,13 +343,14 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "install_skill",
-				Description: "Install a workspace skill from a URL into .agent/skills/<name>/SKILL.md.",
+				Description: "Install a skill from a URL. Defaults to the global .agent/skills directory; set target=workspace for the current workspace.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
 						"url":       {Type: "string", Description: "The URL to fetch skill markdown or readable skill instructions from"},
 						"name":      {Type: "string", Description: "Optional skill id; derived from the URL when omitted"},
 						"overwrite": {Type: "string", Description: "Optional true/false string; defaults to false"},
+						"target":    {Type: "string", Description: "Optional install target: global (default) or workspace"},
 					},
 					Required: []string{"url"},
 				},

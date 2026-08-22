@@ -230,7 +230,7 @@ bqagent resolves a workspace root by walking upward from the current directory u
 
 Relative tool paths and shell commands run from that resolved workspace root.
 
-Primary configuration is fixed at `~/.agent/`, where missing defaults are initialized at startup. A workspace `.agent/` is an optional secondary layer and is not created when switching workspaces. When present, its `AGENT.md`, `SOUL.md`, `USER.md`, memory content, and `mcp.json` are merged after the global configuration; same-named MCP servers use the workspace definition. The WebUI create button generates only `.agent/memory/`, `mcp.json`, `AGENT.md`, `SOUL.md`, and `USER.md`. Otherwise, workspace `.agent/memory/` is created lazily only when existing Markdown memory must be migrated or memory is explicitly written for the first time; read-only queries against an empty memory store do not create it.
+Primary configuration is fixed at `~/.agent/`, where missing defaults are initialized at startup. A workspace `.agent/` is an optional secondary layer and is not created when switching workspaces. When present, its `AGENT.md`, `SOUL.md`, `USER.md`, memory content, skills, and `mcp.json` are merged after the global configuration; same-named workspace skills and MCP servers override global definitions. The WebUI create button generates only `.agent/memory/`, `mcp.json`, `AGENT.md`, `SOUL.md`, and `USER.md`. Otherwise, workspace `.agent/memory/` is created lazily only when existing Markdown memory must be migrated or memory is explicitly written for the first time; read-only queries against an empty memory store do not create it.
 
 ```text
 ~/.agent/
@@ -290,6 +290,7 @@ project/
 - `.agent/rules/*.md`
   - full rule documents injected into the prompt
 - `.agent/skills/*/SKILL.md`
+  - global `~/.agent/skills` and workspace `.agent/skills` are merged; a same-named workspace skill fully replaces the global version
   - only the canonical name, frontmatter `description`, and workspace-relative path are indexed in the system prompt
   - when a skill is relevant, the model reads the complete `SKILL.md` on demand with `read_file`
   - explicit `/skill <name-or-alias> [args]` and leading skill IDs/aliases route through the same main conversation loop
@@ -342,7 +343,7 @@ aliases:
 ---
 ```
 
-The discovery prompt does not include the skill body or aliases. The model first calls `read_file` for the listed `.agent/skills/<name>/SKILL.md` path, then follows the complete instructions in the same conversation. `/skill <name-or-alias> [args]` is an explicit selection shortcut, not a separate skill runner.
+The discovery prompt does not include the skill body or aliases. The model first calls `read_file` for the listed `.agent/skills/<name>/SKILL.md` path; workspace skills are read first with global skills as fallback. It then follows the complete instructions in the same conversation. `/skill <name-or-alias> [args]` is an explicit selection shortcut, not a separate skill runner. `install_skill` installs globally by default; pass `target=workspace` to install into the current workspace.
 
 ## Sessions and background mode
 

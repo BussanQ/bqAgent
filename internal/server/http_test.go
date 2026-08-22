@@ -844,7 +844,11 @@ func TestServiceHandleTurnRejectsTraversalSessionIDBeforeLocking(t *testing.T) {
 
 func TestServiceHandleTurnHotReloadsSkillSectionForExistingSession(t *testing.T) {
 	root := t.TempDir()
-	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
+	globalAgent := filepath.Join(t.TempDir(), ".agent")
+	if err := os.MkdirAll(globalAgent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root, AgentDir: globalAgent})
 	var requestBodies []string
 	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		body, err := io.ReadAll(request.Body)
@@ -859,10 +863,11 @@ func TestServiceHandleTurnHotReloadsSkillSectionForExistingSession(t *testing.T)
 
 	service := NewService(ServiceOptions{
 		WorkspaceRoot: root,
+		AgentDir:      globalAgent,
 		Client:        agent.NewClient("", llmServer.URL, nil),
 		SystemPrompt:  "You are a helpful assistant. Be concise.",
 		SystemPromptBuilder: func() (string, error) {
-			return (&workspace.Workspace{Root: root}).BuildSystemPrompt(agent.DefaultSystemPrompt)
+			return (&workspace.Workspace{Root: root, GlobalAgentDir: globalAgent}).BuildSystemPrompt(agent.DefaultSystemPrompt)
 		},
 		ToolDefinitions: catalog.Definitions(),
 		Functions:       catalog.Registry(),

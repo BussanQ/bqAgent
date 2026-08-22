@@ -31,6 +31,18 @@ func InstallSkillToRootWithClient(root string, client *http.Client, allowPrivate
 }
 
 func installSkillToRootWithClient(root string, client *http.Client, allowPrivateHosts bool) Function {
+	return installSkillToRootsWithClient(root, root, client, allowPrivateHosts)
+}
+
+func InstallSkillToRoots(globalRoot, workspaceRoot string) Function {
+	return installSkillToRootsWithClient(globalRoot, workspaceRoot, nil, false)
+}
+
+func InstallSkillToRootsWithClient(globalRoot, workspaceRoot string, client *http.Client, allowPrivateHosts bool) Function {
+	return installSkillToRootsWithClient(globalRoot, workspaceRoot, client, allowPrivateHosts)
+}
+
+func installSkillToRootsWithClient(globalRoot, workspaceRoot string, client *http.Client, allowPrivateHosts bool) Function {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		rawURL, err := requireString(args, "url")
 		if err != nil {
@@ -43,6 +55,17 @@ func installSkillToRootWithClient(root string, client *http.Client, allowPrivate
 		overwrite, err := optionalBoolString(args, "overwrite")
 		if err != nil {
 			return "", err
+		}
+		target, err := optionalString(args, "target")
+		if err != nil {
+			return "", err
+		}
+		target = strings.ToLower(strings.TrimSpace(target))
+		if target == "" {
+			target = "global"
+		}
+		if target != "global" && target != "workspace" {
+			return "", fmt.Errorf("argument %q must be global or workspace", "target")
 		}
 
 		result, err := fetchReadableContent(ctx, webFetchOptions{client: client, allowPrivateHosts: allowPrivateHosts}, rawURL, extractModeMarkdown, 0)
@@ -66,10 +89,16 @@ func installSkillToRootWithClient(root string, client *http.Client, allowPrivate
 			return "", fmt.Errorf("fetched skill content is empty")
 		}
 
-		workspaceRoot := strings.TrimSpace(root)
-		if workspaceRoot == "" {
+		installRoot := strings.TrimSpace(globalRoot)
+		if target == "workspace" {
+			installRoot = strings.TrimSpace(workspaceRoot)
+		}
+		if installRoot == "" && target == "workspace" {
+			return "", fmt.Errorf("workspace skill target is unavailable")
+		}
+		if installRoot == "" {
 			var cwdErr error
-			workspaceRoot, cwdErr = os.Getwd()
+			installRoot, cwdErr = os.Getwd()
 			if cwdErr != nil {
 				return "", cwdErr
 			}
@@ -78,11 +107,11 @@ func installSkillToRootWithClient(root string, client *http.Client, allowPrivate
 		if err := safepath.ValidateComponent(skillName); err != nil {
 			return "", fmt.Errorf("invalid skill name: %w", err)
 		}
-		workspaceRoot, skillPath, err := safepath.Relative(workspaceRoot, filepath.Join(".agent", "skills", skillName, "SKILL.md"))
+		installRoot, skillPath, err := safepath.Relative(installRoot, filepath.Join(".agent", "skills", skillName, "SKILL.md"))
 		if err != nil {
 			return "", fmt.Errorf("skill path escapes workspace: %w", err)
 		}
-		rootFS, err := os.OpenRoot(workspaceRoot)
+		rootFS, err := os.OpenRoot(installRoot)
 		if err != nil {
 			return "", fmt.Errorf("open workspace root: %w", err)
 		}
@@ -98,7 +127,7 @@ func installSkillToRootWithClient(root string, client *http.Client, allowPrivate
 			return "", fmt.Errorf("failed to write skill %q: %w", skillName, err)
 		}
 
-		return fmt.Sprintf("Installed skill %q to %s", skillName, filepath.Join(workspaceRoot, skillPath)), nil
+		return fmt.Sprintf("Installed skill %q to %s (%s)", skillName, filepath.Join(installRoot, skillPath), target), nil
 	}
 }
 

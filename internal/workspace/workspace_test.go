@@ -87,6 +87,66 @@ func TestBuildSystemPromptMergesGlobalAndLocalContext(t *testing.T) {
 	}
 }
 
+func TestLoadSkillsMergesGlobalAndWorkspaceWithLocalOverride(t *testing.T) {
+	root := t.TempDir()
+	globalAgent := filepath.Join(t.TempDir(), ".agent")
+	files := map[string]string{
+		filepath.Join(globalAgent, "skills", "global-only", "SKILL.md"):   "---\ndescription: Global only.\nalias: collision\n---\n# Global",
+		filepath.Join(globalAgent, "skills", "shared", "SKILL.md"):        "---\ndescription: Global shared.\nalias: old-alias\n---\n# Global shared",
+		filepath.Join(root, ".agent", "skills", "local-only", "SKILL.md"): "---\ndescription: Local only.\nalias: collision\n---\n# Local",
+		filepath.Join(root, ".agent", "skills", "SHARED", "SKILL.md"):     "---\ndescription: Local shared.\nalias: new-alias\n---\n# Local shared",
+	}
+	for path, content := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".agent", "skills", "global-only"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ws := &Workspace{Root: root, GlobalAgentDir: globalAgent}
+	skills, err := ws.LoadSkills()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skills) != 3 || skills[0].ID != "global-only" || skills[1].ID != "local-only" || skills[2].ID != "SHARED" {
+		t.Fatalf("merged skills = %#v", skills)
+	}
+	shared, handled, err := ws.ResolveSkill("shared")
+	if err != nil || !handled || shared.Description != "Local shared." || len(shared.Aliases) != 1 || shared.Aliases[0] != "new-alias" {
+		t.Fatalf("resolved shared = (%#v, %t, %v)", shared, handled, err)
+	}
+	loadedShared, err := ws.LoadSkill("shared")
+	if err != nil || loadedShared.ID != "SHARED" {
+		t.Fatalf("LoadSkill shared = %#v, err = %v", loadedShared, err)
+	}
+	if _, handled, err := ws.ResolveSkill("old-alias"); err != nil || handled {
+		t.Fatalf("old overridden alias = handled %t, err %v", handled, err)
+	}
+	if resolved, handled, err := ws.ResolveSkill("new-alias"); err != nil || !handled || resolved.ID != "SHARED" {
+		t.Fatalf("workspace alias = (%#v, %t, %v)", resolved, handled, err)
+	}
+	if _, handled, err := ws.ResolveSkill("collision"); !handled || err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("merged alias collision = handled %t, err %v", handled, err)
+	}
+	prompt, err := ws.BuildSystemPrompt("base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"name: global-only", "name: local-only", "name: SHARED", "description: Local shared."} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("prompt missing %q: %s", expected, prompt)
+		}
+	}
+	if strings.Contains(prompt, "Global shared.") {
+		t.Fatalf("prompt retained overridden global skill: %s", prompt)
+	}
+}
+
 func TestEnsureLocalConfigCreatesOnlyWorkspaceOverlayFiles(t *testing.T) {
 	root := t.TempDir()
 	ws := &Workspace{Root: root, GlobalAgentDir: filepath.Join(t.TempDir(), ".agent")}

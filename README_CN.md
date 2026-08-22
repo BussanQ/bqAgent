@@ -230,7 +230,7 @@ bqagent 会从当前目录向上查找，直到命中以下任一工作区标记
 
 找到后就把它当作 workspace root。相对路径工具和 shell 命令都会以这个目录为基准执行。
 
-主配置固定使用 `~/.agent/`，启动时会在这里补齐默认文件。工作区中的 `.agent/` 是可选的次级配置层，不会在切换工作区时自动创建；存在时，其 `AGENT.md`、`SOUL.md`、`USER.md`、memory 内容和 `mcp.json` 会在全局配置之后合并加载，同名 MCP server 以工作区配置为准。WebUI 侧栏中的创建按钮只会生成 `.agent/memory/`、`mcp.json`、`AGENT.md`、`SOUL.md` 和 `USER.md`。除此之外，工作区 `.agent/memory/` 只会在发现已有 Markdown memory 需要迁移或首次显式写入 memory 时按需创建；对空 memory 的只读查询不会创建目录。
+主配置固定使用 `~/.agent/`，启动时会在这里补齐默认文件。工作区中的 `.agent/` 是可选的次级配置层，不会在切换工作区时自动创建；存在时，其 `AGENT.md`、`SOUL.md`、`USER.md`、memory 内容、skills 和 `mcp.json` 会在全局配置之后合并加载，同名工作区 Skill 和 MCP server 覆盖全局定义。WebUI 侧栏中的创建按钮只会生成 `.agent/memory/`、`mcp.json`、`AGENT.md`、`SOUL.md` 和 `USER.md`。除此之外，工作区 `.agent/memory/` 只会在发现已有 Markdown memory 需要迁移或首次显式写入 memory 时按需创建；对空 memory 的只读查询不会创建目录。
 
 ```text
 ~/.agent/
@@ -290,6 +290,7 @@ project/
 - `.agent/rules/*.md`
   - 规则全文注入 prompt
 - `.agent/skills/*/SKILL.md`
+  - 全局 `~/.agent/skills` 与工作区 `.agent/skills` 会合并；目录名称相同时工作区版本完整覆盖全局版本
   - system prompt 只索引规范名称、frontmatter `description` 和工作区相对路径
   - 当 Skill 与任务相关时，模型通过 `read_file` 按需读取完整 `SKILL.md`
   - 显式 `/skill <名称或别名> [参数]` 及消息开头的 Skill ID/alias 都进入同一个主会话循环
@@ -341,7 +342,7 @@ aliases:
 ---
 ```
 
-发现阶段的 system prompt 不包含 Skill 正文或 alias。模型会先对索引中的 `.agent/skills/<name>/SKILL.md` 路径调用 `read_file`，再在当前主会话中遵循完整指令。`/skill <名称或别名> [参数]` 只是显式选择 Skill 的快捷入口，不会创建独立 Skill Runner。
+发现阶段的 system prompt 不包含 Skill 正文或 alias。模型会先对索引中的 `.agent/skills/<name>/SKILL.md` 路径调用 `read_file`；读取时工作区 Skill 优先、全局 Skill 兜底，再在当前主会话中遵循完整指令。`/skill <名称或别名> [参数]` 只是显式选择 Skill 的快捷入口，不会创建独立 Skill Runner。`install_skill` 默认安装到全局目录，传入 `target=workspace` 可安装到当前工作区。
 
 ## 会话与后台模式
 
