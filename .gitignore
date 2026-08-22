@@ -10,7 +10,7 @@ coverage.out
 .cache/
 .env
 *.log
-agent.exe~
+bqagent.exe~
 .idea
 bqagent-linux*
 bqagent
