@@ -3,19 +3,26 @@ setlocal
 
 cd /d "%~dp0"
 
-echo [1/2] Building bqagent.exe...
+echo [1/3] Building bqagent.exe...
 go build -trimpath -o bqagent.exe .\cmd\agent
 if errorlevel 1 (
     echo Build failed.
     exit /b 1
 )
 
-echo [2/2] Copying bqagent.exe to run0808...
-copy /Y "bqagent.exe" "D:\Dev\ai\code\run\run0808\bqagent.exe" >nul
+echo [2/3] Killing bqagent.exe if running...
+taskkill /F /IM bqagent.exe
 if errorlevel 1 (
-    echo Copy failed.
+    echo Failed to kill bqagent.exe.
     exit /b 1
 )
 
-echo Build and copy completed successfully.
+echo [3/3] Running bqagent.exe
+.\bqagent.exe -d
+if errorlevel 1 (
+    echo Failed to run bqagent.exe.
+    exit /b 1
+)
+
+echo Build and run completed successfully.
 endlocal
