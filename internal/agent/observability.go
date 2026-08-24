@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -57,7 +58,7 @@ func (c *instrumentedClient) CreateChatCompletion(ctx context.Context, model str
 	reporter := startModelProgressReporter(ctx, c.progressWriter, false)
 	defer func() {
 		reporter.stop()
-		c.logModelRequest("chat", model, false, startedAt, err)
+		c.logModelRequest("chat", model, false, startedAt, message, err)
 	}()
 
 	message, err = c.inner.CreateChatCompletion(ctx, model, messages, definitions)
@@ -69,7 +70,7 @@ func (c *instrumentedClient) CreateChatCompletionWithOptions(ctx context.Context
 	reporter := startModelProgressReporter(ctx, c.progressWriter, false)
 	defer func() {
 		reporter.stop()
-		c.logModelRequest("chat", model, false, startedAt, err)
+		c.logModelRequest("chat", model, false, startedAt, message, err)
 	}()
 
 	if client, ok := c.inner.(chatCompletionOptionsClient); ok {
@@ -90,7 +91,7 @@ func (c *instrumentedClient) CreateChatCompletionStreamWithOptions(ctx context.C
 	reporter := startModelProgressReporter(ctx, c.progressWriter, true)
 	defer func() {
 		reporter.stop()
-		c.logModelRequest("chat", model, true, startedAt, err)
+		c.logModelRequest("chat", model, true, startedAt, message, err)
 	}()
 
 	wrappedOnChunk := func(chunk string) {
@@ -108,16 +109,32 @@ func (c *instrumentedClient) CreateChatCompletionStreamWithOptions(ctx context.C
 	return message, err
 }
 
-func (c *instrumentedClient) logModelRequest(requestType, model string, stream bool, startedAt time.Time, err error) {
+func (c *instrumentedClient) logModelRequest(requestType, model string, stream bool, startedAt time.Time, message AssistantMessage, err error) {
 	if c.logWriter == nil {
 		return
 	}
 
+	metadata := message.Request
+	if err != nil {
+		metadata = ProviderRequestMetadataFromError(err)
+	}
+	for _, recovery := range metadata.Recoveries {
+		fmt.Fprintf(c.logWriter, "[ModelRecovery] kind=%s attempt=%d category=%s status_code=%d delay=%s\n",
+			recovery.Kind, recovery.Attempt, recovery.Category, recovery.StatusCode, formatDuration(recovery.Delay))
+	}
+
 	status := "success"
-	extra := ""
+	extra := fmt.Sprintf(" retry_count=%d", metadata.RetryCount)
+	if metadata.ReasoningDowngraded {
+		extra += fmt.Sprintf(" reasoning_downgraded=true reasoning_downgrade_source=%s", metadata.ReasoningDowngradeSource)
+	}
 	if err != nil {
 		status = "error"
-		extra = fmt.Sprintf(" error=%q", sanitizeLogValue(err.Error()))
+		var providerErr *ProviderError
+		if errors.As(err, &providerErr) {
+			extra += fmt.Sprintf(" error_category=%s", providerErr.Category)
+		}
+		extra += fmt.Sprintf(" error=%q", sanitizeLogValue(err.Error()))
 	}
 
 	fmt.Fprintf(c.logWriter, "[Model] request=%s model=%s stream=%t duration=%s status=%s%s\n", requestType, model, stream, formatDuration(time.Since(startedAt)), status, extra)

@@ -49,6 +49,21 @@ type ErrorInfo struct {
 	Message  string `json:"message"`
 }
 
+type ModelRecovery struct {
+	Kind       string
+	Attempt    int
+	Category   string
+	StatusCode int
+	DelayMS    int64
+}
+
+type ModelCallMetadata struct {
+	RetryCount               int
+	ReasoningDowngraded      bool
+	ReasoningDowngradeSource string
+	Recoveries               []ModelRecovery
+}
+
 type Artifact struct {
 	Path   string `json:"path"`
 	Kind   string `json:"kind,omitempty"`
@@ -186,6 +201,10 @@ func (r *Recorder) Event(eventType string, data map[string]any) error {
 }
 
 func (r *Recorder) ModelCall(contextHash string, usage TokenUsage, duration time.Duration, err error) {
+	r.ModelCallWithMetadata(contextHash, usage, duration, err, ModelCallMetadata{})
+}
+
+func (r *Recorder) ModelCallWithMetadata(contextHash string, usage TokenUsage, duration time.Duration, err error, metadata ModelCallMetadata) {
 	if r == nil {
 		return
 	}
@@ -195,14 +214,33 @@ func (r *Recorder) ModelCall(contextHash string, usage TokenUsage, duration time
 	r.meta.Usage.CompletionTokens += usage.CompletionTokens
 	r.meta.Usage.TotalTokens += usage.TotalTokens
 	r.meta.Usage.Estimated = r.meta.Usage.Estimated || usage.Estimated
+	r.meta.RetryCount += metadata.RetryCount
 	_ = r.persistMetaLocked()
 	r.mu.Unlock()
-	data := map[string]any{"context_version": contextHash, "usage": usage, "duration_ms": duration.Milliseconds()}
+	data := map[string]any{
+		"context_version": contextHash,
+		"usage":           usage,
+		"duration_ms":     duration.Milliseconds(),
+		"retry_count":     metadata.RetryCount,
+	}
+	if metadata.ReasoningDowngraded {
+		data["reasoning_downgraded"] = true
+		data["reasoning_downgrade_source"] = metadata.ReasoningDowngradeSource
+	}
 	if err != nil {
 		data["error"] = err.Error()
 		data["error_category"] = ClassifyError(err)
 	}
 	_ = r.Event("model_call", data)
+	for _, recovery := range metadata.Recoveries {
+		eventData := map[string]any{
+			"attempt":     recovery.Attempt,
+			"category":    recovery.Category,
+			"status_code": recovery.StatusCode,
+			"delay_ms":    recovery.DelayMS,
+		}
+		_ = r.Event(recovery.Kind, eventData)
+	}
 }
 
 func (r *Recorder) ToolCall(name string, arguments map[string]any, result string, duration time.Duration, err error) {
@@ -351,6 +389,13 @@ func Summarize(value string, limit int) string {
 func ClassifyError(err error) string {
 	if err == nil {
 		return ""
+	}
+	type categorizedError interface {
+		ErrorCategory() string
+	}
+	var categorized categorizedError
+	if errors.As(err, &categorized) && strings.TrimSpace(categorized.ErrorCategory()) != "" {
+		return categorized.ErrorCategory()
 	}
 	text := strings.ToLower(err.Error())
 	switch {

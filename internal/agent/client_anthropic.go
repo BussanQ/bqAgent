@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -69,7 +70,7 @@ type anthropicResponse struct {
 func (c *Client) createAnthropicMessage(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
 	payload, err := buildAnthropicRequest(model, messages, definitions, options, false)
 	if err != nil {
-		return AssistantMessage{}, err
+		return AssistantMessage{}, &ProviderError{Category: ProviderErrorRequest, Message: "build anthropic messages request", Cause: err}
 	}
 	response, err := c.doAnthropicRequest(ctx, payload, false)
 	if err != nil {
@@ -79,15 +80,18 @@ func (c *Client) createAnthropicMessage(ctx context.Context, model string, messa
 
 	var decoded anthropicResponse
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
-		return AssistantMessage{}, err
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return AssistantMessage{}, providerTransportError(ctx, err)
+		}
+		return AssistantMessage{}, providerProtocolError("decode anthropic messages response", err)
 	}
 	return assistantFromAnthropic(decoded), nil
 }
 
-func (c *Client) createAnthropicMessageStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error) {
+func (c *Client) createAnthropicMessageStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, state *streamAttemptState, onChunk func(string)) (AssistantMessage, error) {
 	payload, err := buildAnthropicRequest(model, messages, definitions, options, true)
 	if err != nil {
-		return AssistantMessage{}, err
+		return AssistantMessage{}, &ProviderError{Category: ProviderErrorRequest, Message: "build anthropic messages stream request", Cause: err}
 	}
 	response, err := c.doAnthropicRequest(ctx, payload, true)
 	if err != nil {
@@ -127,23 +131,27 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 			Delta        struct {
 				Type        string `json:"type"`
 				Text        string `json:"text"`
+				Thinking    string `json:"thinking"`
+				Signature   string `json:"signature"`
 				PartialJSON string `json:"partial_json"`
 				StopReason  string `json:"stop_reason"`
 			} `json:"delta"`
 			Usage anthropicUsage `json:"usage"`
 			Error struct {
 				Message string `json:"message"`
+				Type    string `json:"type"`
+				Code    string `json:"code"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return AssistantMessage{}, fmt.Errorf("invalid anthropic stream event: %w", err)
+			return AssistantMessage{}, providerProtocolError("invalid anthropic stream event", err)
 		}
 		if event.Type == "error" {
 			message := strings.TrimSpace(event.Error.Message)
 			if message == "" {
 				message = "upstream reported an error event"
 			}
-			return AssistantMessage{}, fmt.Errorf("anthropic stream failed: %s", message)
+			return AssistantMessage{}, providerStreamEventError(message, firstNonBlank(event.Error.Code, event.Error.Type))
 		}
 		switch event.Type {
 		case "message_start":
@@ -151,22 +159,33 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 			usage.CompletionTokens = event.Message.Usage.OutputTokens
 		case "content_block_start":
 			if event.ContentBlock.Type == "tool_use" {
+				state.markSemantic()
 				calls[event.Index] = &partialCall{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
 			}
 		case "content_block_delta":
 			switch event.Delta.Type {
 			case "text_delta":
+				if event.Delta.Text != "" {
+					state.markSemantic()
+				}
 				content.WriteString(event.Delta.Text)
 				if onChunk != nil {
 					onChunk(event.Delta.Text)
 				}
 			case "input_json_delta":
+				if event.Delta.PartialJSON != "" {
+					state.markSemantic()
+				}
 				call := calls[event.Index]
 				if call == nil {
 					call = &partialCall{}
 					calls[event.Index] = call
 				}
 				call.arguments.WriteString(event.Delta.PartialJSON)
+			case "thinking_delta", "signature_delta":
+				if event.Delta.Thinking != "" || event.Delta.Signature != "" || event.Delta.Text != "" {
+					state.markSemantic()
+				}
 			}
 		case "message_delta":
 			if event.Usage.OutputTokens > 0 {
@@ -180,10 +199,11 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return AssistantMessage{}, fmt.Errorf("reading anthropic stream: %w", err)
+		return AssistantMessage{}, providerTransportError(ctx, err)
 	}
 	if !sawMessageStop {
-		return AssistantMessage{}, &IncompleteStreamError{Provider: "anthropic", Reason: "missing message_stop event"}
+		incomplete := &IncompleteStreamError{Provider: "anthropic", Reason: "missing message_stop event"}
+		return AssistantMessage{}, providerProtocolError(incomplete.Error(), incomplete)
 	}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
@@ -343,11 +363,11 @@ func assistantFromAnthropic(response anthropicResponse) AssistantMessage {
 func (c *Client) doAnthropicRequest(ctx context.Context, payload anthropicRequest, stream bool) (*http.Response, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return nil, &ProviderError{Category: ProviderErrorRequest, Message: "encode anthropic messages request", Cause: err}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/messages", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, &ProviderError{Category: ProviderErrorRequest, Message: "build anthropic messages request", Cause: err}
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("anthropic-version", "2023-06-01")
@@ -364,7 +384,7 @@ func (c *Client) doAnthropicRequest(ctx context.Context, payload anthropicReques
 		response, err = c.httpClient.Do(request)
 	}
 	if err != nil {
-		return nil, err
+		return nil, providerTransportError(ctx, err)
 	}
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
 		return response, nil
@@ -372,7 +392,7 @@ func (c *Client) doAnthropicRequest(ctx context.Context, payload anthropicReques
 	defer response.Body.Close()
 	errorPayload, readErr := io.ReadAll(response.Body)
 	if readErr != nil {
-		return nil, fmt.Errorf("anthropic messages request failed: %s", response.Status)
+		return nil, providerHTTPError(response, response.Status)
 	}
-	return nil, fmt.Errorf("anthropic messages request failed: %s: %s", response.Status, strings.TrimSpace(string(errorPayload)))
+	return nil, providerHTTPError(response, strings.TrimSpace(string(errorPayload)))
 }

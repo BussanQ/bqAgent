@@ -406,10 +406,24 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 				usage.Estimated = true
 			}
-			a.trace.ModelCall(apptrace.HashJSON(requestMessages), apptrace.TokenUsage{
+			requestMetadata := message.Request
+			if requestErr != nil {
+				requestMetadata = ProviderRequestMetadataFromError(requestErr)
+			}
+			traceRecoveries := make([]apptrace.ModelRecovery, 0, len(requestMetadata.Recoveries))
+			for _, recovery := range requestMetadata.Recoveries {
+				traceRecoveries = append(traceRecoveries, apptrace.ModelRecovery{
+					Kind: recovery.Kind, Attempt: recovery.Attempt, Category: string(recovery.Category),
+					StatusCode: recovery.StatusCode, DelayMS: recovery.Delay.Milliseconds(),
+				})
+			}
+			a.trace.ModelCallWithMetadata(apptrace.HashJSON(requestMessages), apptrace.TokenUsage{
 				PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 				TotalTokens: usage.TotalTokens, Estimated: usage.Estimated,
-			}, time.Since(modelStartedAt), requestErr)
+			}, time.Since(modelStartedAt), requestErr, apptrace.ModelCallMetadata{
+				RetryCount: requestMetadata.RetryCount, ReasoningDowngraded: requestMetadata.ReasoningDowngraded,
+				ReasoningDowngradeSource: requestMetadata.ReasoningDowngradeSource, Recoveries: traceRecoveries,
+			})
 		}
 		if requestErr != nil {
 			if errors.Is(requestErr, context.DeadlineExceeded) && ctx.Err() == nil && a.stageConfig.Timeout > 0 {

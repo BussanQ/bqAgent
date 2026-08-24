@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
 	"sort"
@@ -78,7 +78,7 @@ func completionFromOpenAIResponse(response openAIResponseEnvelope) CompletionSta
 func (c *Client) createOpenAIResponse(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
 	payload, err := buildOpenAIResponseRequest(model, messages, definitions, options, false)
 	if err != nil {
-		return AssistantMessage{}, err
+		return AssistantMessage{}, &ProviderError{Category: ProviderErrorRequest, Message: "build responses request", Cause: err}
 	}
 	response, err := c.doJSONRequest(ctx, c.baseURL+"/responses", payload, false, "responses request")
 	if err != nil {
@@ -88,15 +88,18 @@ func (c *Client) createOpenAIResponse(ctx context.Context, model string, message
 
 	var decoded openAIResponseEnvelope
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
-		return AssistantMessage{}, err
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return AssistantMessage{}, providerTransportError(ctx, err)
+		}
+		return AssistantMessage{}, providerProtocolError("decode responses response", err)
 	}
 	return assistantFromOpenAIResponse(decoded), nil
 }
 
-func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error) {
+func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, state *streamAttemptState, onChunk func(string)) (AssistantMessage, error) {
 	payload, err := buildOpenAIResponseRequest(model, messages, definitions, options, true)
 	if err != nil {
-		return AssistantMessage{}, err
+		return AssistantMessage{}, &ProviderError{Category: ProviderErrorRequest, Message: "build responses stream request", Cause: err}
 	}
 	response, err := c.doJSONRequest(ctx, c.baseURL+"/responses", payload, true, "responses stream request")
 	if err != nil {
@@ -135,29 +138,38 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			Response    openAIResponseEnvelope `json:"response"`
 			Error       struct {
 				Message string `json:"message"`
+				Type    string `json:"type"`
+				Code    string `json:"code"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return AssistantMessage{}, fmt.Errorf("invalid responses stream event: %w", err)
+			return AssistantMessage{}, providerProtocolError("invalid responses stream event", err)
 		}
 		if event.Type == "response.failed" || event.Type == "error" {
 			message := firstNonBlank(strings.TrimSpace(event.Error.Message), strings.TrimSpace(event.Message))
 			if message == "" {
 				message = "upstream reported " + event.Type
 			}
-			return AssistantMessage{}, fmt.Errorf("responses stream failed: %s", message)
+			return AssistantMessage{}, providerStreamEventError(message, firstNonBlank(event.Error.Code, event.Error.Type, event.Type))
 		}
 		switch event.Type {
 		case "response.output_text.delta":
+			if event.Delta != "" {
+				state.markSemantic()
+			}
 			content.WriteString(event.Delta)
 			if onChunk != nil {
 				onChunk(event.Delta)
 			}
 		case "response.output_item.added":
 			if event.Item.Type == "function_call" {
+				state.markSemantic()
 				calls[event.OutputIndex] = &partialCall{id: firstNonBlank(event.Item.CallID, event.Item.ID), name: event.Item.Name}
 			}
 		case "response.function_call_arguments.delta":
+			if event.Delta != "" {
+				state.markSemantic()
+			}
 			call := calls[event.OutputIndex]
 			if call == nil {
 				call = &partialCall{}
@@ -166,6 +178,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			call.arguments.WriteString(event.Delta)
 		case "response.output_item.done":
 			if event.Item.Type == "function_call" {
+				state.markSemantic()
 				call := calls[event.OutputIndex]
 				if call == nil {
 					call = &partialCall{}
@@ -187,12 +200,16 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				completion.OutputTruncated = strings.EqualFold(completion.IncompleteReason, "max_output_tokens") || strings.EqualFold(completion.IncompleteReason, "max_tokens")
 			}
 		}
+		if strings.Contains(event.Type, "reasoning") && strings.HasSuffix(event.Type, ".delta") && event.Delta != "" {
+			state.markSemantic()
+		}
 	}
 	if err := scanner.Err(); err != nil {
-		return AssistantMessage{}, fmt.Errorf("reading responses stream: %w", err)
+		return AssistantMessage{}, providerTransportError(ctx, err)
 	}
 	if !sawTerminal {
-		return AssistantMessage{}, &IncompleteStreamError{Provider: "responses", Reason: "missing response.completed or response.incomplete event"}
+		incomplete := &IncompleteStreamError{Provider: "responses", Reason: "missing response.completed or response.incomplete event"}
+		return AssistantMessage{}, providerProtocolError(incomplete.Error(), incomplete)
 	}
 
 	message := AssistantMessage{Role: "assistant", Content: content.String(), Completion: completion, Usage: usage}
@@ -326,11 +343,11 @@ func tokenUsageFromOpenAIResponse(usage openAIResponseUsage) TokenUsage {
 func (c *Client) doJSONRequest(ctx context.Context, url string, payload any, stream bool, label string) (*http.Response, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return nil, &ProviderError{Category: ProviderErrorRequest, Message: "encode " + label, Cause: err}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, &ProviderError{Category: ProviderErrorRequest, Message: "build " + label, Cause: err}
 	}
 	request.Header.Set("Content-Type", "application/json")
 	if stream {
@@ -346,7 +363,7 @@ func (c *Client) doJSONRequest(ctx context.Context, url string, payload any, str
 		response, err = c.httpClient.Do(request)
 	}
 	if err != nil {
-		return nil, err
+		return nil, providerTransportError(ctx, err)
 	}
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
 		return response, nil
@@ -354,9 +371,9 @@ func (c *Client) doJSONRequest(ctx context.Context, url string, payload any, str
 	defer response.Body.Close()
 	errorPayload, readErr := io.ReadAll(response.Body)
 	if readErr != nil {
-		return nil, fmt.Errorf("%s failed: %s", label, response.Status)
+		return nil, providerHTTPError(response, response.Status)
 	}
-	return nil, fmt.Errorf("%s failed: %s: %s", label, response.Status, strings.TrimSpace(string(errorPayload)))
+	return nil, providerHTTPError(response, strings.TrimSpace(string(errorPayload)))
 }
 
 func firstNonBlank(values ...string) string {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -83,10 +84,13 @@ func (err *IncompleteStreamError) Error() string {
 }
 
 type Client struct {
-	httpClient *http.Client
-	apiKey     string
-	baseURL    string
-	apiType    APIType
+	httpClient        *http.Client
+	apiKey            string
+	baseURL           string
+	apiType           APIType
+	streamIdleTimeout time.Duration
+	retrySleep        func(context.Context, time.Duration) error
+	retryJitter       func(time.Duration) time.Duration
 }
 
 type CompletionState struct {
@@ -96,11 +100,12 @@ type CompletionState struct {
 }
 
 type AssistantMessage struct {
-	Role       string          `json:"role"`
-	Content    any             `json:"content"`
-	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
-	Completion CompletionState `json:"-"`
-	Usage      TokenUsage      `json:"-"`
+	Role       string                  `json:"role"`
+	Content    any                     `json:"content"`
+	ToolCalls  []ToolCall              `json:"tool_calls,omitempty"`
+	Completion CompletionState         `json:"-"`
+	Usage      TokenUsage              `json:"-"`
+	Request    ProviderRequestMetadata `json:"-"`
 }
 
 type TokenUsage struct {
@@ -177,9 +182,11 @@ type inlineToolCallPayload struct {
 var inlineToolArgumentPattern = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*"([^"]*)"`)
 
 type streamDelta struct {
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	ToolCalls []struct {
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
+	Reasoning        string `json:"reasoning"`
+	ToolCalls        []struct {
 		Index    int    `json:"index"`
 		ID       string `json:"id"`
 		Type     string `json:"type"`
@@ -198,6 +205,11 @@ type streamChoice struct {
 type streamChunk struct {
 	Choices []streamChoice      `json:"choices"`
 	Usage   chatCompletionUsage `json:"usage,omitempty"`
+	Error   struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+	} `json:"error,omitempty"`
 }
 
 func completionFromStopReason(reason string) CompletionState {
@@ -213,6 +225,10 @@ func NewClient(apiKey, baseURL string, httpClient *http.Client) *Client {
 }
 
 func NewClientWithAPIType(apiKey, baseURL string, apiType APIType, httpClient *http.Client) *Client {
+	return NewClientWithOptions(apiKey, baseURL, apiType, httpClient, ClientOptions{StreamIdleTimeout: DefaultStreamIdleTimeout})
+}
+
+func NewClientWithOptions(apiKey, baseURL string, apiType APIType, httpClient *http.Client, options ClientOptions) *Client {
 	apiType = NormalizeAPIType(string(apiType))
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = defaultBaseURLForAPIType(apiType)
@@ -221,17 +237,36 @@ func NewClientWithAPIType(apiKey, baseURL string, apiType APIType, httpClient *h
 		httpClient = &http.Client{Timeout: 2 * time.Minute}
 	}
 	return &Client{
-		httpClient: httpClient,
-		apiKey:     apiKey,
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		apiType:    apiType,
+		httpClient:        httpClient,
+		apiKey:            apiKey,
+		baseURL:           strings.TrimRight(baseURL, "/"),
+		apiType:           apiType,
+		streamIdleTimeout: options.StreamIdleTimeout,
+		retryJitter:       defaultProviderRetryJitter,
 	}
 }
 
 func (c *Client) doStreamingRequest(request *http.Request) (*http.Response, error) {
 	streamingClient := *c.httpClient
 	streamingClient.Timeout = 0
-	return streamingClient.Do(request)
+	if c.streamIdleTimeout <= 0 {
+		return streamingClient.Do(request)
+	}
+	watchdogContext, watchdog := newStreamWatchdog(request.Context(), c.streamIdleTimeout)
+	response, err := streamingClient.Do(request.Clone(watchdogContext))
+	if err != nil {
+		watchdog.stop()
+		if request.Context().Err() != nil {
+			return nil, request.Context().Err()
+		}
+		if cause := context.Cause(watchdogContext); cause != nil {
+			return nil, cause
+		}
+		return nil, err
+	}
+	watchdog.touch()
+	response.Body = &watchdogResponseBody{inner: response.Body, watchdog: watchdog}
+	return response, nil
 }
 
 func NormalizeAPIType(raw string) APIType {
@@ -259,12 +294,19 @@ func (c *Client) CreateChatCompletion(ctx context.Context, model string, message
 }
 
 func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
-	switch c.apiType {
-	case APITypeOpenAIResponse:
-		return c.createOpenAIResponse(ctx, model, messages, definitions, options)
-	case APITypeAnthropic:
-		return c.createAnthropicMessage(ctx, model, messages, definitions, options)
-	}
+	return c.executeWithResilience(ctx, model, options, false, func(attemptOptions ChatCompletionOptions, _ *streamAttemptState) (AssistantMessage, error) {
+		switch c.apiType {
+		case APITypeOpenAIResponse:
+			return c.createOpenAIResponse(ctx, model, messages, definitions, attemptOptions)
+		case APITypeAnthropic:
+			return c.createAnthropicMessage(ctx, model, messages, definitions, attemptOptions)
+		default:
+			return c.createChatCompletion(ctx, model, messages, definitions, attemptOptions)
+		}
+	})
+}
+
+func (c *Client) createChatCompletion(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
 
 	body, err := json.Marshal(chatCompletionRequest{
 		Model:           model,
@@ -274,12 +316,12 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 		ReasoningEffort: options.ReasoningEffort,
 	})
 	if err != nil {
-		return AssistantMessage{}, err
+		return AssistantMessage{}, &ProviderError{Category: ProviderErrorRequest, Message: "encode chat completions request", Cause: err}
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return AssistantMessage{}, err
+		return AssistantMessage{}, &ProviderError{Category: ProviderErrorRequest, Message: "build chat completions request", Cause: err}
 	}
 	request.Header.Set("Content-Type", "application/json")
 	if c.apiKey != "" {
@@ -288,24 +330,27 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return AssistantMessage{}, err
+		return AssistantMessage{}, providerTransportError(ctx, err)
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		payload, readErr := io.ReadAll(response.Body)
 		if readErr != nil {
-			return AssistantMessage{}, fmt.Errorf("chat completions request failed: %s", response.Status)
+			return AssistantMessage{}, providerHTTPError(response, response.Status)
 		}
-		return AssistantMessage{}, fmt.Errorf("chat completions request failed: %s: %s", response.Status, strings.TrimSpace(string(payload)))
+		return AssistantMessage{}, providerHTTPError(response, strings.TrimSpace(string(payload)))
 	}
 
 	var decoded chatCompletionResponse
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
-		return AssistantMessage{}, err
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return AssistantMessage{}, providerTransportError(ctx, err)
+		}
+		return AssistantMessage{}, providerProtocolError("decode chat completions response", err)
 	}
 	if len(decoded.Choices) == 0 {
-		return AssistantMessage{}, fmt.Errorf("chat completions response contained no choices")
+		return AssistantMessage{}, providerProtocolError("chat completions response contained no choices", nil)
 	}
 
 	choice := decoded.Choices[0]
@@ -324,12 +369,19 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 }
 
 func (c *Client) CreateChatCompletionStreamWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error) {
-	switch c.apiType {
-	case APITypeOpenAIResponse:
-		return c.createOpenAIResponseStream(ctx, model, messages, definitions, options, onChunk)
-	case APITypeAnthropic:
-		return c.createAnthropicMessageStream(ctx, model, messages, definitions, options, onChunk)
-	}
+	return c.executeWithResilience(ctx, model, options, true, func(attemptOptions ChatCompletionOptions, state *streamAttemptState) (AssistantMessage, error) {
+		switch c.apiType {
+		case APITypeOpenAIResponse:
+			return c.createOpenAIResponseStream(ctx, model, messages, definitions, attemptOptions, state, onChunk)
+		case APITypeAnthropic:
+			return c.createAnthropicMessageStream(ctx, model, messages, definitions, attemptOptions, state, onChunk)
+		default:
+			return c.createChatCompletionStream(ctx, model, messages, definitions, attemptOptions, state, onChunk)
+		}
+	})
+}
+
+func (c *Client) createChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, state *streamAttemptState, onChunk func(string)) (AssistantMessage, error) {
 
 	body, err := json.Marshal(chatCompletionStreamRequest{
 		Model:           model,
@@ -340,12 +392,12 @@ func (c *Client) CreateChatCompletionStreamWithOptions(ctx context.Context, mode
 		ReasoningEffort: options.ReasoningEffort,
 	})
 	if err != nil {
-		return AssistantMessage{}, err
+		return AssistantMessage{}, &ProviderError{Category: ProviderErrorRequest, Message: "encode chat completions stream request", Cause: err}
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return AssistantMessage{}, err
+		return AssistantMessage{}, &ProviderError{Category: ProviderErrorRequest, Message: "build chat completions stream request", Cause: err}
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "text/event-stream")
@@ -355,16 +407,16 @@ func (c *Client) CreateChatCompletionStreamWithOptions(ctx context.Context, mode
 
 	response, err := c.doStreamingRequest(request)
 	if err != nil {
-		return AssistantMessage{}, err
+		return AssistantMessage{}, providerTransportError(ctx, err)
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		payload, readErr := io.ReadAll(response.Body)
 		if readErr != nil {
-			return AssistantMessage{}, fmt.Errorf("chat completions stream request failed: %s", response.Status)
+			return AssistantMessage{}, providerHTTPError(response, response.Status)
 		}
-		return AssistantMessage{}, fmt.Errorf("chat completions stream request failed: %s: %s", response.Status, strings.TrimSpace(string(payload)))
+		return AssistantMessage{}, providerHTTPError(response, strings.TrimSpace(string(payload)))
 	}
 
 	type partialToolCall struct {
@@ -400,7 +452,10 @@ func (c *Client) CreateChatCompletionStreamWithOptions(ctx context.Context, mode
 		}
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return AssistantMessage{}, fmt.Errorf("invalid chat completions stream event: %w", err)
+			return AssistantMessage{}, providerProtocolError("invalid chat completions stream event", err)
+		}
+		if chunk.Error.Message != "" || chunk.Error.Type != "" || chunk.Error.Code != "" {
+			return AssistantMessage{}, providerStreamEventError(chunk.Error.Message, firstNonBlank(chunk.Error.Code, chunk.Error.Type))
 		}
 		if chunk.Usage.TotalTokens > 0 || chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
 			usage = chunk.Usage.tokenUsage()
@@ -417,10 +472,17 @@ func (c *Client) CreateChatCompletionStreamWithOptions(ctx context.Context, mode
 			role = delta.Role
 		}
 		if delta.Content != "" {
+			state.markSemantic()
 			contentBuilder.WriteString(delta.Content)
 			if onChunk != nil {
 				onChunk(delta.Content)
 			}
+		}
+		if delta.ReasoningContent != "" || delta.Reasoning != "" {
+			state.markSemantic()
+		}
+		if len(delta.ToolCalls) > 0 {
+			state.markSemantic()
 		}
 		for _, tc := range delta.ToolCalls {
 			ptc, ok := toolCallMap[tc.Index]
@@ -443,10 +505,11 @@ func (c *Client) CreateChatCompletionStreamWithOptions(ctx context.Context, mode
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return AssistantMessage{}, fmt.Errorf("reading chat completions stream: %w", err)
+		return AssistantMessage{}, providerTransportError(ctx, err)
 	}
 	if !sawDone {
-		return AssistantMessage{}, &IncompleteStreamError{Provider: "chat completions", Reason: "missing [DONE] marker"}
+		incomplete := &IncompleteStreamError{Provider: "chat completions", Reason: "missing [DONE] marker"}
+		return AssistantMessage{}, providerProtocolError(incomplete.Error(), incomplete)
 	}
 
 	if role == "" {

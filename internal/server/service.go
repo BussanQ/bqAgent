@@ -28,6 +28,7 @@ type ServiceOptions struct {
 	WorkspaceRoot       string
 	AgentDir            string
 	Client              agent.ChatCompletionClient
+	ClientOptions       *agent.ClientOptions
 	APIType             agent.APIType
 	Model               string
 	Models              []string
@@ -51,6 +52,7 @@ type Service struct {
 	workspaceRoot       string
 	agentDir            string
 	client              agent.ChatCompletionClient
+	clientOptions       agent.ClientOptions
 	apiType             agent.APIType
 	model               string
 	models              []configuredModel
@@ -169,6 +171,10 @@ func NewService(options ServiceOptions) *Service {
 	if options.SessionOptions != nil {
 		sessionOptions = *options.SessionOptions
 	}
+	clientOptions := agent.ClientOptions{StreamIdleTimeout: agent.DefaultStreamIdleTimeout}
+	if options.ClientOptions != nil {
+		clientOptions = *options.ClientOptions
+	}
 	if strings.TrimSpace(options.AgentDir) != "" {
 		sessionOptions.AgentDir = options.AgentDir
 	}
@@ -181,6 +187,7 @@ func NewService(options ServiceOptions) *Service {
 		workspaceRoot:       options.WorkspaceRoot,
 		agentDir:            options.AgentDir,
 		client:              options.Client,
+		clientOptions:       clientOptions,
 		apiType:             agent.NormalizeAPIType(string(options.APIType)),
 		model:               agent.EffectiveModel(options.Model),
 		models:              parseConfiguredModels(options.Models),
@@ -214,7 +221,7 @@ func (service *Service) ConfigureLLM(providerID string, apiType agent.APIType, a
 	apiType = agent.NormalizeAPIType(string(apiType))
 	service.providerID = strings.TrimSpace(providerID)
 	service.apiType = apiType
-	service.client = agent.NewClientWithAPIType(apiKey, baseURL, apiType, nil)
+	service.client = agent.NewClientWithOptions(apiKey, baseURL, apiType, nil, service.clientOptions)
 	service.model = agent.EffectiveModel(model)
 	service.models = parseConfiguredModels(models)
 	if service.plannerEnabled {

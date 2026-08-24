@@ -33,7 +33,7 @@ go run ./cmd/agent --server           # HTTP on 127.0.0.1:8080
 go run ./cmd/agent --resume <id> "…"  # continue a persisted session
 ```
 
-Config is read from the environment and from a `.env` file at the workspace root (auto-loaded; real shell env wins over `.env`). `LLM_API_TYPE` selects `openai` (default), `openai-response`, or `anthropic`; generic `LLM_*` variables override the compatible `OPENAI_*` / `ANTHROPIC_*` variables. A matching API key is required for server mode. The model defaults to `agent.DefaultModel` (`MiniMax-M2.5`) when unset. **`.env` here contains live secrets — never print or commit its contents.**
+Config is read from the environment and from a `.env` file at the workspace root (auto-loaded; real shell env wins over `.env`). `LLM_API_TYPE` selects `openai` (default), `openai-response`, or `anthropic`; generic `LLM_*` variables override the compatible `OPENAI_*` / `ANTHROPIC_*` variables. `LLM_STREAM_IDLE_TIMEOUT` defaults to `2m`, uses Go duration syntax, and accepts `0` to disable the streaming watchdog. A matching API key is required for server mode. The model defaults to `agent.DefaultModel` (`MiniMax-M2.5`) when unset. **`.env` here contains live secrets — never print or commit its contents.**
 
 ## Architecture
 
@@ -59,6 +59,8 @@ The dependency direction is `cmd/agent → internal/{server,runtime} → interna
 `plan` is handled specially inside the loop because it recurses into a child `runConversation`; all other tools dispatch through the `functions` map. Skills use Pi-style progressive disclosure: the system prompt lists only name/description/path metadata, and the main conversation calls `read_file` to load the complete `SKILL.md` when needed. Unknown tools and malformed JSON args become tool error messages rather than aborting the run.
 
 WebUI turns may set `ReasoningEffort` to `low`, `medium`, or `high`; the empty value is automatic and preserves the provider/model default. The option applies only to the main agent loop, not planner, summarizer, or checkpoint helper calls. Provider mapping is OpenAI Chat Completions `reasoning_effort`, OpenAI Responses `reasoning.effort`, and Anthropic adaptive `thinking` plus `output_config.effort`.
+
+Provider reliability is centralized in `internal/agent/provider_resilience.go`. All three wire protocols classify provider failures into stable `model_*` categories and retry one transient 429/5xx/network/idle or structured in-stream overload failure. Streaming retry is disabled after the first text, reasoning, or tool-call delta; metadata and heartbeat events do not close the retry window. The watchdog starts before connection setup and is renewed by response headers and body bytes. Explicit reasoning settings rejected by a precise 400/422 incompatibility response are retried without reasoning; only a successful fallback populates the process-local protocol/base-URL/model capability cache. Run Trace counts transient retries separately from reasoning downgrades.
 
 **Messages are untyped `[]map[string]any`** in OpenAI chat shape (`role`, `content`, `tool_calls`, `tool_call_id`). This convention runs end to end — session persistence, context pruning, and channel state all operate on these maps.
 

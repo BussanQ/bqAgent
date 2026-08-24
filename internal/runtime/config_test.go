@@ -2,9 +2,45 @@ package runtime
 
 import (
 	"testing"
+	"time"
 
 	"bqagent/internal/agent"
 )
+
+func TestConfigFromEnvParsesStreamIdleTimeout(t *testing.T) {
+	if got := ConfigFromEnv(func(string) string { return "" }).StreamIdleTimeout; got != agent.DefaultStreamIdleTimeout {
+		t.Fatalf("default StreamIdleTimeout = %s, want %s", got, agent.DefaultStreamIdleTimeout)
+	}
+	configured := ConfigFromEnv(func(key string) string {
+		if key == "LLM_STREAM_IDLE_TIMEOUT" {
+			return "45s"
+		}
+		return ""
+	})
+	if configured.StreamIdleTimeout != 45*time.Second {
+		t.Fatalf("configured StreamIdleTimeout = %s, want 45s", configured.StreamIdleTimeout)
+	}
+	disabled := ConfigFromEnv(func(key string) string {
+		if key == "LLM_STREAM_IDLE_TIMEOUT" {
+			return "0"
+		}
+		return ""
+	})
+	if disabled.StreamIdleTimeout != 0 {
+		t.Fatalf("disabled StreamIdleTimeout = %s, want 0", disabled.StreamIdleTimeout)
+	}
+	for _, value := range []string{"bad", "-1s"} {
+		invalid := ConfigFromEnv(func(key string) string {
+			if key == "LLM_STREAM_IDLE_TIMEOUT" {
+				return value
+			}
+			return ""
+		})
+		if invalid.StreamIdleTimeout != agent.DefaultStreamIdleTimeout {
+			t.Fatalf("StreamIdleTimeout(%q) = %s, want default", value, invalid.StreamIdleTimeout)
+		}
+	}
+}
 
 func TestConfigFromEnvUsesEffectiveDefaultModel(t *testing.T) {
 	config := ConfigFromEnv(func(string) string { return "" })

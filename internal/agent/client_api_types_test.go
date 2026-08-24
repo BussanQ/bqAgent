@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -465,7 +466,9 @@ func TestStreamClientsRejectMissingRequiredTerminalEvents(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
 				writer.Header().Set("Content-Type", "text/event-stream")
 				_, _ = fmt.Fprint(writer, test.body)
 			}))
@@ -475,6 +478,9 @@ func TestStreamClientsRejectMissingRequiredTerminalEvents(t *testing.T) {
 			var incomplete *IncompleteStreamError
 			if !errors.As(err, &incomplete) {
 				t.Fatalf("stream error = %v, want IncompleteStreamError", err)
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("stream requests = %d, want no retry", calls.Load())
 			}
 		})
 	}

@@ -53,6 +53,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		WorkspaceRoot:   ws.Root,
 		AgentDir:        ws.AgentDir(),
 		Client:          runtime.Client,
+		ClientOptions:   &runtime.ClientOptions,
 		APIType:         runtime.APIType,
 		Model:           runtime.Model,
 		Models:          runtime.Models,

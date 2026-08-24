@@ -26,6 +26,7 @@ type Config struct {
 	BaseURL                      string
 	Model                        string
 	Models                       []string
+	StreamIdleTimeout            time.Duration
 	MaxIterations                int
 	RunTraceEnabled              bool
 	SessionTranscriptMode        session.TranscriptMode
@@ -63,6 +64,7 @@ type Factory struct {
 
 type Runtime struct {
 	Client          agent.ChatCompletionClient
+	ClientOptions   agent.ClientOptions
 	Planner         *agent.Planner
 	Catalog         tools.Catalog
 	APIType         agent.APIType
@@ -97,6 +99,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		BaseURL:                      baseURL,
 		Model:                        model,
 		Models:                       splitEnvList(getenv("LLM_MODELS")),
+		StreamIdleTimeout:            envDurationAllowZero(getenv("LLM_STREAM_IDLE_TIMEOUT"), agent.DefaultStreamIdleTimeout),
 		MaxIterations:                envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
 		RunTraceEnabled:              envBool(getenv("RUN_TRACE_ENABLED"), false),
 		SessionTranscriptMode:        session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
@@ -195,10 +198,26 @@ func envPositiveInt64(raw string, fallback int64) int64 {
 	return parsed
 }
 
+func envDurationAllowZero(raw string, fallback time.Duration) time.Duration {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return fallback
+	}
+	if text == "0" {
+		return 0
+	}
+	parsed, err := time.ParseDuration(text)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
+
 func (factory Factory) Build(includePlan bool) Runtime {
 	apiType := agent.NormalizeAPIType(string(factory.Config.APIType))
 	model := agent.EffectiveModel(factory.Config.Model)
-	client := agent.NewClientWithAPIType(factory.Config.APIKey, factory.Config.BaseURL, apiType, nil)
+	clientOptions := agent.ClientOptions{StreamIdleTimeout: factory.Config.StreamIdleTimeout}
+	client := agent.NewClientWithOptions(factory.Config.APIKey, factory.Config.BaseURL, apiType, nil, clientOptions)
 	factory.logf("[Runtime] api_type=%s model=%s\n", apiType, model)
 
 	var planner *agent.Planner
@@ -231,6 +250,7 @@ func (factory Factory) Build(includePlan bool) Runtime {
 
 	return Runtime{
 		Client:          client,
+		ClientOptions:   clientOptions,
 		Planner:         planner,
 		Catalog:         catalog,
 		APIType:         apiType,

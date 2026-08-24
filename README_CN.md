@@ -82,6 +82,7 @@ set LLM_API_KEY=your-key-here
 | `LLM_BASE_URL` | 供应商默认值 | 通用供应商端点覆盖。 |
 | `LLM_MODEL` | `MiniMax-M2.5` | 内置 LLM 的默认模型。 |
 | `LLM_MODELS` | 空 | 同一供应商下可切换的模型列表，逗号分隔；支持 `别名=模型ID`。聊天中使用 `/model` 查看，`/model <名称或别名>` 切换当前会话，`/model default` 恢复默认。 |
+| `LLM_STREAM_IDLE_TIMEOUT` | `2m` | 流式模型请求连续无响应头或响应体字节时的 idle watchdog；使用 Go duration 格式，设为 `0` 禁用。 |
 | `OPENAI_API_TYPE` | — | `LLM_API_TYPE` 的兼容别名。 |
 | `OPENAI_API_KEY` | — | OpenAI 兼容 API Key 回退值。 |
 | `OPENAI_BASE_URL` | 供应商默认值 | OpenAI 兼容端点回退值。 |
@@ -385,9 +386,11 @@ WebUI 的聊天、文件树、预览、状态、停止和 Trace 请求会携带 
 
 `GET /api/v1/status` 返回内置 LLM 的有效运行时身份，例如 `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`。该接口不会暴露 API Key 或供应商端点 URL；WebUI 会在 bqagent 标题下展示这项信息。
 
-`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖）。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。界面支持明暗主题，并会安全渲染 Markdown 标题、列表、任务列表、表格、引用、链接、图片与带复制按钮的代码块，适合直接阅读 README 等 `.md` 内容。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；发送后按钮会切换为停止按钮，通过与渠道无关的 `POST /api/v1/chat/stop` 接口按 `turn_id` 取消当前模型请求和工具执行。取消注册表位于共享对话服务中，其他通道后续接入时无需依赖 WebUI。`event: progress` 会持续报告迭代轮次和工具活动。WebUI 默认不设置固定阶段轮数、阶段时间或整轮超时，会在同一次请求中持续执行到最终回复。流式模型 HTTP 请求不使用 `http.Client` 总时限，其生命周期由请求 context 控制，包括浏览器断连、显式停止、主动启用的阶段 deadline 或服务关闭；非流式模型请求仍保留默认两分钟客户端超时。重复工具调用和连续失败仍受循环保护，整体循环仍受 `AGENT_MAX_ITERATIONS`（默认 1000）的失控安全阀约束。需要人工分阶段时，可显式配置正值的 `WEBUI_STAGE_MAX_ITERATIONS` 或 `WEBUI_STAGE_TIMEOUT`，恢复持久化阶段总结和“继续”机制。该网页渠道默认开启，可在[环境变量配置](#环境变量配置)中关闭。
+`GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖）。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。界面支持明暗主题，并会安全渲染 Markdown 标题、列表、任务列表、表格、引用、链接、图片与带复制按钮的代码块，适合直接阅读 README 等 `.md` 内容。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；发送后按钮会切换为停止按钮，通过与渠道无关的 `POST /api/v1/chat/stop` 接口按 `turn_id` 取消当前模型请求和工具执行。取消注册表位于共享对话服务中，其他通道后续接入时无需依赖 WebUI。`event: progress` 会持续报告迭代轮次和工具活动。WebUI 默认不设置固定阶段轮数、阶段时间或整轮超时，会在同一次请求中持续执行到最终回复。流式模型 HTTP 请求不使用 `http.Client` 总时限，但从请求发出起受 `LLM_STREAM_IDLE_TIMEOUT` watchdog 约束；响应头、SSE 数据和 heartbeat 都会续期。请求生命周期还受浏览器断连、显式停止、主动启用的阶段 deadline 或服务关闭控制。非流式模型请求仍保留默认两分钟客户端超时。重复工具调用和连续失败仍受循环保护，整体循环仍受 `AGENT_MAX_ITERATIONS`（默认 1000）的失控安全阀约束。需要人工分阶段时，可显式配置正值的 `WEBUI_STAGE_MAX_ITERATIONS` 或 `WEBUI_STAGE_TIMEOUT`，恢复持久化阶段总结和“继续”机制。该网页渠道默认开启，可在[环境变量配置](#环境变量配置)中关闭。
 
 输入区还提供“推理强度”选择器，包含**自动、低、中、高**四档。默认“自动”不会向上游发送 effort 参数，因此保持模型或供应商的默认行为；选择会保存在浏览器 `localStorage` 中，并随每次 WebUI 请求显式发送，但不会写入 session 元数据。非自动档位在 OpenAI Chat Completions 中映射为 `reasoning_effort`，在 OpenAI Responses 中映射为 `reasoning.effort`，在 Anthropic Messages 中映射为 adaptive `thinking` 与 `output_config.effort`。
+
+三种内置协议会对 429、5xx、可能恢复的网络故障和结构化流内限流/过载错误自动重试一次。流式请求一旦收到文本、推理或工具调用增量就不再重试，以免重放已产生的内容。429 与 503 会采用最长 10 秒的 `Retry-After`。如果上游以 400/422 明确拒绝 reasoning 参数，客户端会省略该参数重试；降级成功后会在当前进程中按协议、端点和模型记住该能力限制。重试和降级只写入模型日志与 Run Trace，不改变回复正文。
 
 WebUI 的工作区按钮会打开桌面侧栏或移动端抽屉。侧栏标题中的目录选择按钮可以在运行 bqagent 的机器上浏览用户主目录、启动工作区以及 `WEBUI_WORKSPACE_ROOTS` 追加的允许根目录；确认后的目录会被直接作为工作区根，切换本身不会创建 `.agent`。需要工作区次级配置时，使用侧栏标题中的 `.agent` 创建按钮。每个浏览器分别保存当前工作区，每个工作区分别保存 `session_id`，QQ、微信等其他通道仍固定使用启动工作区。切换期间不会重新加载新目录的 `.env`，模型和进程环境继续使用服务启动时的配置。目录按需分页加载；点击普通文件后，侧栏原位切换到只读预览，再通过返回按钮恢复原文件树位置。UTF-8 文本最多预览前 512 KiB，PNG、JPEG、GIF 和 WebP 图片最多预览 3 MiB，其他二进制文件只显示元信息。文件树在每轮对话结束后自动刷新，也可手动刷新；外部程序在空闲期间产生的改动需要手动刷新才能显示。除任意层级的 `.git` 外，包括 `.env`、`.agent` 和被 `.gitignore` 忽略的内容都会显示，因此不要把 WebUI 暴露给不受信任的访问者。符号链接会显示，但不能展开、预览、选择为工作区或从文件树加入附件。允许选择用户主目录意味着 WebUI 能把其中任意普通目录作为 Agent 工具边界，切勿将未认证的 WebUI 暴露给不受信任的访问者。
 
