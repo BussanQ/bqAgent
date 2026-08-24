@@ -757,7 +757,8 @@
     position: fixed;
     z-index: 6;
     left: 16px;
-    bottom: calc(16px + env(safe-area-inset-bottom));
+    top: calc(100% - 70px);
+    bottom: auto;
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -770,6 +771,7 @@
     box-shadow: var(--shadow);
     backdrop-filter: blur(18px);
     font: 650 14px/1.2 ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    transform: translateY(-50%);
   }
   .conversation-sidebar {
     position: relative; z-index: 2; order: 0; width: var(--conversation-width); min-width: var(--conversation-width); min-height: 0; flex: 0 0 var(--conversation-width); display: flex; flex-direction: column; padding: 14px 12px 64px; border-right: 1px solid var(--line); background: var(--panel-strong); backdrop-filter: blur(22px);
@@ -784,7 +786,12 @@
   .conversation-title { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
   .conversation-time { color: var(--text-muted); font-size: var(--font-tiny); }
   .conversation-list-state { padding: 18px 8px; color: var(--text-muted); font-size: var(--font-small); text-align: center; }
-  .global-settings:hover { border-color: var(--line-strong); color: var(--text); background: var(--panel-strong); transform: translateY(-1px); box-shadow: var(--shadow), 0 0 22px rgba(var(--signal-rgb),.10); }
+  .conversation-context-menu[hidden] { display: none; }
+  .conversation-context-menu { position: fixed; z-index: 20; min-width: 148px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 11px; background: var(--panel-strong); box-shadow: var(--overlay-shadow); backdrop-filter: blur(20px); }
+  .conversation-context-action { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-color: transparent; border-radius: 8px; color: var(--danger); background: transparent; box-shadow: none; text-align: left; }
+  .conversation-context-action:hover, .conversation-context-action:focus-visible { border-color: rgba(var(--danger-rgb), .24); background: rgba(var(--danger-rgb), .10); transform: none; box-shadow: none; }
+  .conversation-context-action svg { width: 16px; height: 16px; }
+  .global-settings:hover { border-color: var(--line-strong); color: var(--text); background: var(--panel-strong); transform: translateY(-50%) translateY(-1px); box-shadow: var(--shadow), 0 0 22px rgba(var(--signal-rgb),.10); }
   .global-settings svg { width: 18px; height: 18px; }
 
   main {
@@ -1471,6 +1478,12 @@
       <button class="conversation-new" id="conversation-new" type="button"><span aria-hidden="true">＋</span><span>新会话</span></button>
       <div class="conversation-sidebar-heading">对话</div>
       <div class="conversation-list" id="conversation-list"><div class="conversation-list-state">正在加载…</div></div>
+      <div class="conversation-context-menu" id="conversation-context-menu" role="menu" aria-label="对话操作" hidden>
+        <button class="conversation-context-action" id="conversation-delete" type="button" role="menuitem">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>删除对话</span>
+        </button>
+      </div>
     </aside>
     <aside class="workspace-sidebar" id="workspace-sidebar" aria-label="工作区文件">
       <section class="workspace-view" id="workspace-tree-view">
@@ -1679,10 +1692,13 @@
   var REASONING_EFFORT_LABELS = { auto: "自动", low: "低", medium: "中", high: "高" };
   var thread = document.getElementById("thread");
   var main = document.getElementById("main");
+  var composer = document.querySelector(".composer");
   var particleCanvas = document.getElementById("particle-field");
   var appLayout = document.getElementById("app-layout");
   var conversationList = document.getElementById("conversation-list");
   var conversationNew = document.getElementById("conversation-new");
+  var conversationContextMenu = document.getElementById("conversation-context-menu");
+  var conversationDelete = document.getElementById("conversation-delete");
   var workspaceSidebar = document.getElementById("workspace-sidebar");
   var workspaceToggle = document.getElementById("workspace-toggle");
   var workspaceBackdrop = document.getElementById("workspace-backdrop");
@@ -1759,6 +1775,7 @@
   var runtimeModelSelectionPromise = null;
   var conversationLoadID = 0;
   var conversations = [];
+  var conversationContextTarget = null;
   var providerSettingsState = { active_provider: "", providers: [] };
   var sessionId = "";
   var currentWorkspace = null;
@@ -2336,6 +2353,7 @@
   }
 
   function renderConversationList() {
+    closeConversationContextMenu();
     conversationList.innerHTML = "";
     if (!conversations.length) {
       var empty = document.createElement("div");
@@ -2358,8 +2376,56 @@
       button.appendChild(title);
       button.appendChild(time);
       button.addEventListener("click", function () { openConversation(conversation.id); });
+      button.addEventListener("contextmenu", function (event) { openConversationContextMenu(event, conversation); });
       conversationList.appendChild(button);
     });
+  }
+
+  function openConversationContextMenu(event, conversation) {
+    event.preventDefault();
+    if (busy) return;
+    conversationContextTarget = conversation;
+    conversationContextMenu.hidden = false;
+    var rect = conversationContextMenu.getBoundingClientRect();
+    var left = Math.max(8, Math.min(event.clientX, window.innerWidth - rect.width - 8));
+    var top = Math.max(8, Math.min(event.clientY, window.innerHeight - rect.height - 8));
+    conversationContextMenu.style.left = left + "px";
+    conversationContextMenu.style.top = top + "px";
+    conversationDelete.focus();
+  }
+
+  function closeConversationContextMenu() {
+    conversationContextMenu.hidden = true;
+    conversationContextTarget = null;
+  }
+
+  async function deleteConversation(conversation) {
+    if (busy || !conversation || !conversation.id) return;
+    if (!window.confirm("确定删除对话“" + (conversation.title || "新会话") + "”？此操作无法撤销。")) return;
+    conversationDelete.disabled = true;
+    try {
+      var response = await fetch(workspaceScopedURL("/api/v1/webui/conversations/" + encodeURIComponent(conversation.id)), {
+        method: "DELETE", headers: { "Accept": "application/json" }
+      });
+      var payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "删除对话失败");
+      conversationLoadID++;
+      conversations = conversations.filter(function (item) { return item.id !== conversation.id; });
+      if (sessionId === conversation.id) {
+        setCurrentWorkspaceSession("");
+        clearPendingAttachments();
+        thread.innerHTML = emptyMarkup();
+        loadRuntimeModel();
+      }
+      renderConversationList();
+      statusEl.textContent = "已删除对话";
+      statusEl.classList.remove("error", "busy");
+    } catch (error) {
+      statusEl.textContent = error && error.message ? error.message : String(error);
+      statusEl.classList.add("error");
+    } finally {
+      conversationDelete.disabled = false;
+    }
   }
 
   async function refreshConversations(loadCurrent) {
@@ -3720,6 +3786,12 @@
     input.style.height = Math.min(input.scrollHeight, 180) + "px";
   }
 
+  function alignProviderSettingsTrigger() {
+    if (!composer || !providerSettingsTrigger) return;
+    var rect = composer.getBoundingClientRect();
+    providerSettingsTrigger.style.top = (rect.top + rect.height / 2) + "px";
+  }
+
   function copyText(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       return navigator.clipboard.writeText(text);
@@ -4184,9 +4256,12 @@
   document.addEventListener("click", function (event) {
     if (!attachmentMenu.hidden && !attachmentActions.contains(event.target)) setAttachmentMenu(false);
     if (!reasoningEffortMenu.hidden && !reasoningEffortControl.contains(event.target)) setReasoningEffortMenu(false);
+    if (!conversationContextMenu.hidden && !conversationContextMenu.contains(event.target)) closeConversationContextMenu();
   });
   document.addEventListener("keydown", function (event) {
-    if (event.key === "Escape" && !attachmentMenu.hidden) {
+    if (event.key === "Escape" && !conversationContextMenu.hidden) {
+      closeConversationContextMenu();
+    } else if (event.key === "Escape" && !attachmentMenu.hidden) {
       setAttachmentMenu(false);
       addAttachmentBtn.focus();
     } else if (event.key === "Escape" && !reasoningEffortMenu.hidden) {
@@ -4201,6 +4276,14 @@
       workspaceToggle.focus();
     }
   });
+  conversationDelete.addEventListener("click", function (event) {
+    event.stopPropagation();
+    var conversation = conversationContextTarget;
+    closeConversationContextMenu();
+    deleteConversation(conversation);
+  });
+  window.addEventListener("resize", closeConversationContextMenu, { passive: true });
+  conversationList.addEventListener("scroll", closeConversationContextMenu, { passive: true });
   themeToggle.addEventListener("click", function () {
     var current = document.documentElement.getAttribute("data-theme") || "dark";
     setTheme(current === "dark" ? "light" : "dark");
@@ -4261,6 +4344,12 @@
   workspaceSelect.disabled = true;
   workspaceCreateAgent.disabled = true;
   initParticleField();
+  if (window.ResizeObserver) {
+    var composerResizeObserver = new ResizeObserver(alignProviderSettingsTrigger);
+    composerResizeObserver.observe(composer);
+  }
+  window.addEventListener("resize", alignProviderSettingsTrigger, { passive: true });
+  requestAnimationFrame(alignProviderSettingsTrigger);
   initializeWorkspaceSelection().catch(function (error) {
     statusEl.textContent = "工作区初始化失败";
     statusEl.classList.add("error");

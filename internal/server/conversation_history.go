@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"bqagent/internal/session"
 )
 
 type conversationListItem struct {
@@ -50,14 +52,18 @@ func (handler *handler) handleConversations(writer http.ResponseWriter, request 
 }
 
 func (handler *handler) handleConversationHistory(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet {
-		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
-		return
-	}
 	id := strings.Trim(strings.TrimPrefix(request.URL.Path, "/api/v1/webui/conversations/"), "/")
 	service, err := handler.serviceForWorkspace(request.URL.Query().Get("workspace_id"))
 	if err != nil {
 		writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
+		return
+	}
+	if request.Method == http.MethodDelete {
+		handler.deleteConversation(writer, service, id)
+		return
+	}
+	if request.Method != http.MethodGet {
+		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
 		return
 	}
 	saved, err := service.store.Open(id)
@@ -83,6 +89,34 @@ func (handler *handler) handleConversationHistory(writer http.ResponseWriter, re
 		}
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"id": saved.ID(), "title": saved.Meta().Task, "messages": history})
+}
+
+func (handler *handler) deleteConversation(writer http.ResponseWriter, service *Service, id string) {
+	canonicalID, err := session.CanonicalID(id)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
+		return
+	}
+	unlock := service.locker.Lock(canonicalID)
+	defer unlock()
+	saved, err := service.store.Open(canonicalID)
+	if errors.Is(err, os.ErrNotExist) {
+		writeError(writer, http.StatusNotFound, chatResponse{Error: "conversation not found"})
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
+		return
+	}
+	if !saved.Meta().Chat {
+		writeError(writer, http.StatusNotFound, chatResponse{Error: "conversation not found"})
+		return
+	}
+	if err := service.store.Delete(canonicalID); err != nil {
+		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"deleted": true, "id": canonicalID})
 }
 
 func conversationMessageText(content any) string {

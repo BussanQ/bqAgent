@@ -128,6 +128,45 @@ func TestSessionCurrentModelPersists(t *testing.T) {
 	}
 }
 
+func TestSessionStoreDeleteRemovesOnlyRequestedOwnedSession(t *testing.T) {
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	options := DefaultOptions()
+	options.AgentDir = agentDir
+	store := NewStore(t.TempDir(), options)
+	target, err := store.Create(CreateOptions{Task: "delete me", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := store.Create(CreateOptions{Task: "keep me", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignStore := NewStore(t.TempDir(), options)
+	foreign, err := foreignStore.Create(CreateOptions{Task: "foreign", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Delete(target.ID()); err != nil {
+		t.Fatalf("Delete returned error: %v", err)
+	}
+	if _, err := store.Open(target.ID()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Open deleted session error = %v, want not exist", err)
+	}
+	if _, err := store.Open(kept.ID()); err != nil {
+		t.Fatalf("kept session was affected: %v", err)
+	}
+	if err := store.Delete(foreign.ID()); !errors.Is(err, ErrWorkspaceMismatch) {
+		t.Fatalf("Delete foreign session error = %v, want workspace mismatch", err)
+	}
+	if _, err := foreignStore.Open(foreign.ID()); err != nil {
+		t.Fatalf("foreign session was deleted: %v", err)
+	}
+	if err := store.Delete("../outside"); err == nil {
+		t.Fatal("Delete accepted a traversal session ID")
+	}
+}
+
 func TestSessionStoreRejectsTraversalAndMismatchedMetadataID(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)

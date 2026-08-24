@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -427,6 +428,73 @@ func TestWebUIConversationListAndHistory(t *testing.T) {
 	}
 }
 
+func TestWebUIConversationContextMenuDeletesConversation(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`id="conversation-context-menu"`,
+		`button.addEventListener("contextmenu"`,
+		`method: "DELETE"`,
+		`if (sessionId === conversation.id)`,
+		`setCurrentWorkspaceSession("")`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("WebUI conversation deletion missing %q", expected)
+		}
+	}
+
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir})
+	target, err := service.store.Create(session.CreateOptions{Task: "删除这个对话", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := service.store.Create(session.CreateOptions{Task: "保留这个对话", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonChat, err := service.store.Create(session.CreateOptions{Task: "后台任务"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	apiServer := httptest.NewServer(NewHandler(HandlerOptions{Service: service}))
+	defer apiServer.Close()
+	request, err := http.NewRequest(http.MethodDelete, apiServer.URL+"/api/v1/webui/conversations/"+target.ID(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("DELETE conversation status = %d, want 200", response.StatusCode)
+	}
+	if _, err := service.store.Open(target.ID()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Open deleted conversation error = %v, want not exist", err)
+	}
+	if _, err := service.store.Open(kept.ID()); err != nil {
+		t.Fatalf("kept conversation was affected: %v", err)
+	}
+
+	request, err = http.NewRequest(http.MethodDelete, apiServer.URL+"/api/v1/webui/conversations/"+nonChat.ID(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("DELETE non-chat session status = %d, want 404", response.StatusCode)
+	}
+	if _, err := service.store.Open(nonChat.ID()); err != nil {
+		t.Fatalf("non-chat session was deleted: %v", err)
+	}
+}
+
 func TestWebUILightThemeUsesSoftSurfacesAndVisibleParticles(t *testing.T) {
 	page := string(webUIIndex)
 	for _, expected := range []string{
@@ -478,6 +546,21 @@ func TestWebUILightThemeUsesSoftSurfacesAndVisibleParticles(t *testing.T) {
 	} {
 		if strings.Contains(page, obsolete) {
 			t.Fatalf("light theme still flattens the page with %q", obsolete)
+		}
+	}
+}
+
+func TestWebUISettingsButtonAlignsWithComposerCenterline(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`transform: translateY(-50%);`,
+		`function alignProviderSettingsTrigger()`,
+		`rect.top + rect.height / 2`,
+		`new ResizeObserver(alignProviderSettingsTrigger)`,
+		`composerResizeObserver.observe(composer)`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("settings/composer centerline alignment missing %q", expected)
 		}
 	}
 }

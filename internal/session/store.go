@@ -196,6 +196,20 @@ func (s *Store) Open(id string) (*Session, error) {
 	return &Session{store: s, meta: meta, dir: dir}, nil
 }
 
+// Delete removes one validated session owned by this store's workspace.
+func (s *Store) Delete(id string) error {
+	saved, err := s.Open(id)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(filepath.Join(s.agentDir, "sessions"))
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.RemoveAll(saved.ID())
+}
+
 // List returns sessions belonging to this store's workspace, newest first.
 // Invalid entries and sessions owned by another workspace are ignored.
 func (s *Store) List(limit int) ([]Meta, error) {
