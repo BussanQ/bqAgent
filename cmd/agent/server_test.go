@@ -123,27 +123,26 @@ func TestServerListenDefaultsToLoopback(t *testing.T) {
 	}
 }
 
-func TestRunServerRequiresAPIKey(t *testing.T) {
+func TestRunServerStartsWithoutAPIKey(t *testing.T) {
 	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runWithDeps(context.Background(), nil, &stdout, &stderr, []string{"--server-run"}, func(string) string { return "" }, runDeps{
+	code := runWithDeps(ctx, nil, &stdout, &stderr, []string{"--server-run", "--listen", "127.0.0.1:0"}, func(string) string { return "" }, runDeps{
 		getwd:           func() (string, error) { return root, nil },
 		executable:      func() (string, error) { return "bqagent-test", nil },
 		startBackground: func(string, []string, string, string) error { return nil },
 	})
-	if code != 1 {
-		t.Fatalf("runWithDeps returned code %d, want 1", code)
+	if code != 0 {
+		t.Fatalf("runWithDeps returned code %d, want 0; stderr=%q", code, stderr.String())
 	}
-	if stdout.Len() != 0 {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
+	if !strings.Contains(stdout.String(), "server listening on 127.0.0.1:0") {
+		t.Fatalf("stdout = %q, want server startup output", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "OPENAI_API_KEY is required for server mode") {
-		t.Fatalf("stderr = %q, want missing api key error", stderr.String())
-	}
-	if !hasTimestampPrefix(stderr.String()) {
-		t.Fatalf("stderr = %q, want timestamp prefix", stderr.String())
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 }
 
