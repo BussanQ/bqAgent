@@ -2178,7 +2178,7 @@
     if (!option || !option.dataset.providerId || !option.dataset.model) return;
     var response = await fetch(workspaceScopedURL("/api/v1/webui/provider-selection"), {
       method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ provider_id: option.dataset.providerId, model: option.dataset.model })
+      body: JSON.stringify({ provider_id: option.dataset.providerId, model: option.dataset.model, session_id: sessionId })
     });
     var payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "切换模型失败");

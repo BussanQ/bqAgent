@@ -104,6 +104,7 @@ func (handler *handler) handleProviderSelection(writer http.ResponseWriter, requ
 	var selection struct {
 		ProviderID string `json:"provider_id"`
 		Model      string `json:"model"`
+		SessionID  string `json:"session_id"`
 	}
 	if err := decodeProviderJSON(writer, request, &selection); err != nil {
 		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
@@ -144,7 +145,11 @@ func (handler *handler) handleProviderSelection(writer http.ResponseWriter, requ
 		writeError(writer, http.StatusInternalServerError, chatResponse{Error: "apply provider failed"})
 		return
 	}
-	writeJSON(writer, http.StatusOK, service.RuntimeLLMInfo())
+	if err := service.setSessionModel(selection.SessionID, selection.Model); err != nil {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: fmt.Sprintf("apply session model: %v", err)})
+		return
+	}
+	writeJSON(writer, http.StatusOK, service.RuntimeLLMInfoForSession(selection.SessionID))
 }
 
 func (handler *handler) handleProviderModels(writer http.ResponseWriter, request *http.Request) {

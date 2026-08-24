@@ -252,6 +252,60 @@ func TestWebUIProviderSettingsEncryptKeyAndApplySelection(t *testing.T) {
 	}
 }
 
+func TestWebUIProviderSelectionUpdatesCurrentSessionModel(t *testing.T) {
+	if !strings.Contains(string(webUIIndex), `model: option.dataset.model, session_id: sessionId`) {
+		t.Fatal("WebUI model selector does not send the current session ID")
+	}
+
+	root := t.TempDir()
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	service := NewService(ServiceOptions{WorkspaceRoot: root, AgentDir: agentDir, Model: "environment-model", SystemPrompt: "base prompt"})
+	apiServer := httptest.NewServer(NewHandler(HandlerOptions{Service: service}))
+	defer apiServer.Close()
+
+	providerBody := `{"active_provider":"deepseek","providers":[{"id":"deepseek","name":"DeepSeek","api_type":"openai","base_url":"https://api.deepseek.example/v1","api_key":"secret-token","models":["deepseek-chat","deepseek-reasoner"],"default_model":"deepseek-chat"}]}`
+	request, err := http.NewRequest(http.MethodPut, apiServer.URL+"/api/v1/webui/providers", strings.NewReader(providerBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("PUT providers status = %d", response.StatusCode)
+	}
+
+	switchResponse, err := service.HandleTurn(context.Background(), TurnRequest{Message: "/model deepseek-chat"})
+	if err != nil {
+		t.Fatalf("create selected-model session: %v", err)
+	}
+	selection := fmt.Sprintf(`{"provider_id":"deepseek","model":"deepseek-reasoner","session_id":%q}`, switchResponse.SessionID)
+	response, err = http.Post(apiServer.URL+"/api/v1/webui/provider-selection", "application/json", strings.NewReader(selection))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(response.Body)
+		t.Fatalf("POST provider selection status = %d, body = %s", response.StatusCode, data)
+	}
+	if info := service.RuntimeLLMInfoForSession(switchResponse.SessionID); info.Model != "deepseek-reasoner" {
+		t.Fatalf("session runtime model = %q, want deepseek-reasoner", info.Model)
+	}
+
+	client := &modelRecordingClient{}
+	service.client = client
+	if _, err := service.HandleTurn(context.Background(), TurnRequest{SessionID: switchResponse.SessionID, Message: "hello"}); err != nil {
+		t.Fatalf("follow-up returned error: %v", err)
+	}
+	if len(client.models) != 1 || client.models[0] != "deepseek-reasoner" {
+		t.Fatalf("models = %#v, want deepseek-reasoner", client.models)
+	}
+}
+
 func TestWebUIProviderModelsUsesSavedEncryptedKey(t *testing.T) {
 	var authorization string
 	providerServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

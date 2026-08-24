@@ -67,6 +67,28 @@ func (service *Service) modelIsConfigured(modelID string) bool {
 	return false
 }
 
+func (service *Service) setSessionModel(sessionID, model string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	canonicalID, err := session.CanonicalID(sessionID)
+	if err != nil {
+		return err
+	}
+	unlock := service.locker.Lock(canonicalID)
+	defer unlock()
+	savedSession, err := service.store.Open(canonicalID)
+	if err != nil {
+		return err
+	}
+	modelID, ok := service.resolveConfiguredModel(model)
+	if !ok {
+		return fmt.Errorf("unknown model %q", model)
+	}
+	return savedSession.SetCurrentModel(modelID)
+}
+
 func (service *Service) handleModelCommand(message string, savedSession *session.Session) (string, bool, error) {
 	fields := strings.Fields(strings.TrimSpace(message))
 	if len(fields) == 0 || !strings.EqualFold(fields[0], "/model") {
