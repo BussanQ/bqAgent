@@ -165,6 +165,28 @@ func TestWebUIServesIndex(t *testing.T) {
 	}
 }
 
+func TestWebUIToolTimelineGroupsOnThirdCall(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`var TOOL_GROUP_START_COUNT = 3;`,
+		`function ensureToolGroup(timeline, cards)`,
+		`cardList.length < TOOL_GROUP_START_COUNT`,
+		`root.className = "tool-group";`,
+		`button.className = "tool-group-toggle";`,
+		`items.className = "tool-group-items";`,
+		`cardList.forEach(function (card) { items.appendChild(card.root); });`,
+		`(group ? group.items : timeline).appendChild(root);`,
+		`title.textContent = "工具调用";`,
+		`cardList.length + " 次 · " + running + " 运行中"`,
+		`cardList.length + " 次 · 全部完成"`,
+		`.tool-group-items.open { display: grid; }`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("WebUI tool-call grouping missing %q", expected)
+		}
+	}
+}
+
 func TestWebUIComposerPlacesAttachmentButtonOnLeft(t *testing.T) {
 	page := string(webUIIndex)
 	attachment := strings.Index(page, `id="attachment-actions"`)
