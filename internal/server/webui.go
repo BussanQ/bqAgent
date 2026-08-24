@@ -185,6 +185,7 @@ func (channel *WebUIChannel) handleIndex(writer http.ResponseWriter, request *ht
 		return
 	}
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-store")
 	writer.WriteHeader(http.StatusOK)
 	if request.Method == http.MethodHead {
 		return

@@ -1756,6 +1756,7 @@
   var providerModelAdd = document.getElementById("provider-model-add");
   var providerDefaultModelInput = document.getElementById("provider-default-model");
   var runtimeModelLoadID = 0;
+  var runtimeModelSelectionPromise = null;
   var conversationLoadID = 0;
   var conversations = [];
   var providerSettingsState = { active_provider: "", providers: [] };
@@ -2186,6 +2187,24 @@
     var active = providerSettingsState.providers.find(function (provider) { return provider.id === option.dataset.providerId; });
     if (active) active.default_model = option.dataset.model;
     updateRuntimeModel(payload.api_type, payload.model, payload.provider_id);
+  }
+
+  function beginRuntimeModelSelection() {
+    modelSelect.disabled = true;
+    var selection = selectRuntimeModel().then(function () {
+      return true;
+    }, function (error) {
+      statusEl.textContent = error.message;
+      statusEl.classList.add("error");
+      loadRuntimeModel();
+      return false;
+    });
+    runtimeModelSelectionPromise = selection;
+    selection.then(function () {
+      if (runtimeModelSelectionPromise !== selection) return;
+      runtimeModelSelectionPromise = null;
+      modelSelect.disabled = busy || modelSelect.options.length === 0;
+    });
   }
 
   function selectedProviderModels() {
@@ -3845,6 +3864,11 @@
   async function send() {
     if (!workspaceReady || busy || preparingSend) return;
     preparingSend = true;
+    var pendingModelSelection = runtimeModelSelectionPromise;
+    if (pendingModelSelection && !await pendingModelSelection) {
+      preparingSend = false;
+      return;
+    }
     try {
       await Promise.all(pendingImageReads.concat(pendingFileReads));
       pendingImageReads = [];
@@ -4094,7 +4118,7 @@
     providerSettingsSave.disabled = true;
     saveProviderSettings().catch(function (error) { statusEl.textContent = error.message; statusEl.classList.add("error"); }).finally(function () { providerSettingsSave.disabled = false; });
   });
-  modelSelect.addEventListener("change", function () { selectRuntimeModel().catch(function (error) { statusEl.textContent = error.message; statusEl.classList.add("error"); }); });
+  modelSelect.addEventListener("change", beginRuntimeModelSelection);
   workspaceSelect.addEventListener("click", openWorkspacePicker);
   workspaceCreateAgent.addEventListener("click", createWorkspaceAgentConfig);
   workspaceToggle.addEventListener("click", function () {

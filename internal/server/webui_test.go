@@ -39,6 +39,9 @@ func TestWebUIServesIndex(t *testing.T) {
 	if ct := response.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
 		t.Fatalf("content-type = %q, want text/html", ct)
 	}
+	if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("cache-control = %q, want no-store", cacheControl)
+	}
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatalf("read body failed: %v", err)
@@ -303,6 +306,25 @@ func TestWebUIProviderSelectionUpdatesCurrentSessionModel(t *testing.T) {
 	}
 	if len(client.models) != 1 || client.models[0] != "deepseek-reasoner" {
 		t.Fatalf("models = %#v, want deepseek-reasoner", client.models)
+	}
+}
+
+func TestWebUISendWaitsForPendingModelSelection(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`var runtimeModelSelectionPromise = null;`,
+		`modelSelect.addEventListener("change", beginRuntimeModelSelection);`,
+		`var pendingModelSelection = runtimeModelSelectionPromise;`,
+		`if (pendingModelSelection && !await pendingModelSelection)`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("WebUI model selection synchronization missing %q", expected)
+		}
+	}
+	selectionWait := strings.Index(page, `var pendingModelSelection = runtimeModelSelectionPromise;`)
+	chatRequest := strings.Index(page, `var res = await fetch("/api/v1/webui/chat"`)
+	if selectionWait < 0 || chatRequest < 0 || selectionWait > chatRequest {
+		t.Fatalf("model selection wait index = %d, chat request index = %d; want selection wait first", selectionWait, chatRequest)
 	}
 }
 
