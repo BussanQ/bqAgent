@@ -12,11 +12,6 @@ if errorlevel 1 (
 
 echo [2/3] Killing bqagent.exe if running...
 taskkill /F /IM bqagent.exe
-if errorlevel 1 (
-    echo Failed to kill bqagent.exe.
-    exit /b 1
-)
-
 echo [3/3] Running bqagent.exe
 .\bqagent.exe -d
 if errorlevel 1 (
@@ -26,3 +21,4 @@ if errorlevel 1 (
 
 echo Build and run completed successfully.
 endlocal
+ 
