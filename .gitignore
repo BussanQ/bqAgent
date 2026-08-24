@@ -8,7 +8,7 @@ coverage.out
 .claude/
 .agent/
 .cache/
-.env
+.env*
 *.log
 bqagent.exe~
 .idea

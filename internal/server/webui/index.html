@@ -756,21 +756,22 @@
   .global-settings {
     position: fixed;
     z-index: 6;
-    left: 16px;
-    top: calc(100% - 70px);
+    left: 12px;
+    top: calc(100% - 24px);
     bottom: auto;
-    display: inline-flex;
+    display: flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 8px;
-    min-height: 42px;
-    padding: 8px 16px;
-    border-radius: var(--radius-pill);
-    border-color: var(--line);
-    color: var(--text);
-    background: var(--panel-strong);
-    box-shadow: var(--shadow);
-    backdrop-filter: blur(18px);
-    font: 650 14px/1.2 ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    width: calc(var(--conversation-width) - 24px);
+    min-height: 40px;
+    padding: 9px 11px;
+    border-radius: 12px;
+    border-color: transparent;
+    color: var(--text-soft);
+    background: transparent;
+    box-shadow: none;
+    font: 650 13px/1.2 ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
     transform: translateY(-50%);
   }
   .conversation-sidebar {
@@ -791,8 +792,8 @@
   .conversation-context-action { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-color: transparent; border-radius: 8px; color: var(--danger); background: transparent; box-shadow: none; text-align: left; }
   .conversation-context-action:hover, .conversation-context-action:focus-visible { border-color: rgba(var(--danger-rgb), .24); background: rgba(var(--danger-rgb), .10); transform: none; box-shadow: none; }
   .conversation-context-action svg { width: 16px; height: 16px; }
-  .global-settings:hover { border-color: var(--line-strong); color: var(--text); background: var(--panel-strong); transform: translateY(-50%) translateY(-1px); box-shadow: var(--shadow), 0 0 22px rgba(var(--signal-rgb),.10); }
-  .global-settings svg { width: 18px; height: 18px; }
+  .global-settings:hover { border-color: var(--line); color: var(--text); background: var(--surface-hover); transform: translateY(-50%); box-shadow: none; }
+  .global-settings svg { width: 16px; height: 16px; }
 
   main {
     position: relative;
@@ -1376,6 +1377,8 @@
 
   @media (max-width: 900px) {
     .conversation-sidebar { display: none; }
+    .global-settings { width: auto; padding: 8px 14px; border-radius: var(--radius-pill); border-color: var(--line); color: var(--text); background: var(--panel-strong); box-shadow: var(--shadow); backdrop-filter: blur(18px); font-size: 14px; }
+    .global-settings:hover { border-color: var(--line-strong); background: var(--panel-strong); box-shadow: var(--shadow); }
     .workspace-sidebar {
       position: absolute;
       inset: 0 0 0 auto;
@@ -1419,7 +1422,6 @@
     .provider-settings-form { grid-template-columns: 1fr; }
     .provider-field.wide { grid-column: auto; }
     .composer-meta { min-height: 32px; margin-top: 6px; }
-    .global-settings { left: 12px; min-height: 40px; padding: 7px 14px; font-size: 14px; }
     .composer-hints { display: none; }
     #particle-field { display: none; }
   }
@@ -1693,6 +1695,7 @@
   var thread = document.getElementById("thread");
   var main = document.getElementById("main");
   var composer = document.querySelector(".composer");
+  var composerMeta = document.querySelector(".composer-meta");
   var particleCanvas = document.getElementById("particle-field");
   var appLayout = document.getElementById("app-layout");
   var conversationList = document.getElementById("conversation-list");
@@ -3787,8 +3790,8 @@
   }
 
   function alignProviderSettingsTrigger() {
-    if (!composer || !providerSettingsTrigger) return;
-    var rect = composer.getBoundingClientRect();
+    if (!composerMeta || !providerSettingsTrigger) return;
+    var rect = composerMeta.getBoundingClientRect();
     providerSettingsTrigger.style.top = (rect.top + rect.height / 2) + "px";
   }
 
@@ -4345,8 +4348,9 @@
   workspaceCreateAgent.disabled = true;
   initParticleField();
   if (window.ResizeObserver) {
-    var composerResizeObserver = new ResizeObserver(alignProviderSettingsTrigger);
-    composerResizeObserver.observe(composer);
+    var settingsAlignmentResizeObserver = new ResizeObserver(alignProviderSettingsTrigger);
+    settingsAlignmentResizeObserver.observe(composer);
+    settingsAlignmentResizeObserver.observe(composerMeta);
   }
   window.addEventListener("resize", alignProviderSettingsTrigger, { passive: true });
   requestAnimationFrame(alignProviderSettingsTrigger);

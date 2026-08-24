@@ -550,17 +550,34 @@ func TestWebUILightThemeUsesSoftSurfacesAndVisibleParticles(t *testing.T) {
 	}
 }
 
-func TestWebUISettingsButtonAlignsWithComposerCenterline(t *testing.T) {
+func TestWebUISettingsButtonSitsAtBottomLeftAndAlignsWithComposerHints(t *testing.T) {
 	page := string(webUIIndex)
 	for _, expected := range []string{
+		`left: 12px;`,
 		`transform: translateY(-50%);`,
+		`var composerMeta = document.querySelector(".composer-meta");`,
 		`function alignProviderSettingsTrigger()`,
+		`var rect = composerMeta.getBoundingClientRect();`,
 		`rect.top + rect.height / 2`,
-		`new ResizeObserver(alignProviderSettingsTrigger)`,
-		`composerResizeObserver.observe(composer)`,
+		`settingsAlignmentResizeObserver.observe(composer)`,
+		`settingsAlignmentResizeObserver.observe(composerMeta)`,
 	} {
 		if !strings.Contains(page, expected) {
-			t.Fatalf("settings/composer centerline alignment missing %q", expected)
+			t.Fatalf("settings/composer hints alignment missing %q", expected)
+		}
+	}
+}
+
+func TestWebUISettingsButtonUsesConversationSidebarNavigationStyle(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`justify-content: flex-start;`,
+		`width: calc(var(--conversation-width) - 24px);`,
+		`.global-settings:hover { border-color: var(--line); color: var(--text); background: var(--surface-hover); transform: translateY(-50%); box-shadow: none; }`,
+		`.global-settings { width: auto;`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("settings/sidebar navigation style missing %q", expected)
 		}
 	}
 }
