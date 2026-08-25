@@ -6,7 +6,41 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"bqagent/internal/tools"
 )
+
+func TestDefaultToolsDocumentMatchesToolDefinitions(t *testing.T) {
+	content, err := defaultFiles.ReadFile("defaults/TOOLS.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	documented := make(map[string]bool)
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- **") {
+			continue
+		}
+		name, _, ok := strings.Cut(strings.TrimPrefix(line, "- **"), "**:")
+		if ok {
+			documented[name] = true
+		}
+	}
+
+	definitions := tools.Definitions()
+	definitions = append(definitions, tools.PlanDefinition(), tools.StructuredMemoryDefinition())
+	for _, definition := range definitions {
+		name := definition.Function.Name
+		if !documented[name] {
+			t.Errorf("default TOOLS.md does not document %q", name)
+		}
+		delete(documented, name)
+	}
+	for name := range documented {
+		t.Errorf("default TOOLS.md documents unknown tool %q", name)
+	}
+}
 
 func TestDiscoverFindsNearestWorkspaceMarker(t *testing.T) {
 	root := t.TempDir()
