@@ -22,7 +22,11 @@ func TestStateStoreLoadMissingReturnsDefaultState(t *testing.T) {
 }
 
 func TestStateStorePersistsState(t *testing.T) {
-	store := NewStateStore(t.TempDir())
+	agentDir := t.TempDir()
+	store := NewStateStore(agentDir)
+	if store.root != filepath.Join(agentDir, "server", "qq-bot", "chats") {
+		t.Fatalf("root = %q, want global agent server path", store.root)
+	}
 	want := ChatState{
 		PeerKey:          "qq:group:group-1:member-1",
 		SessionID:        "session-1",

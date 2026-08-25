@@ -1,9 +1,16 @@
 package weixin
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestPollerStateStorePersistsState(t *testing.T) {
-	store := NewPollerStateStore(t.TempDir())
+	agentDir := t.TempDir()
+	store := NewPollerStateStore(agentDir)
+	if store.path != filepath.Join(agentDir, "server", "weixin", "poller.json") {
+		t.Fatalf("path = %q, want global agent server path", store.path)
+	}
 	want := PollerState{GetUpdatesBuf: "cursor-1", LastError: "temporary failure"}
 	if err := store.Save(want); err != nil {
 		t.Fatalf("Save returned error: %v", err)

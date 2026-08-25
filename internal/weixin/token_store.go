@@ -19,8 +19,8 @@ type TokenStore struct {
 	path string
 }
 
-func NewTokenStore(workspaceRoot string) *TokenStore {
-	return &TokenStore{path: filepath.Join(workspaceRoot, ".agent", "server", "weixin", "token.json")}
+func NewTokenStore(agentDir string) *TokenStore {
+	return &TokenStore{path: filepath.Join(agentDir, "server", "weixin", "token.json")}
 }
 
 func (store *TokenStore) Load() (TokenState, error) {

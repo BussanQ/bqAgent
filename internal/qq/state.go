@@ -24,8 +24,8 @@ type StateStore struct {
 	root string
 }
 
-func NewStateStore(workspaceRoot string) *StateStore {
-	return &StateStore{root: filepath.Join(workspaceRoot, ".agent", "server", "qq-bot", "chats")}
+func NewStateStore(agentDir string) *StateStore {
+	return &StateStore{root: filepath.Join(agentDir, "server", "qq-bot", "chats")}
 }
 
 func (store *StateStore) Load(peerKey string) (ChatState, error) {

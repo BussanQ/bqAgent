@@ -1,6 +1,9 @@
 package qq
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestGatewayStateStoreLoadMissingReturnsEmptyState(t *testing.T) {
 	store := NewGatewayStateStore(t.TempDir())
@@ -14,7 +17,11 @@ func TestGatewayStateStoreLoadMissingReturnsEmptyState(t *testing.T) {
 }
 
 func TestGatewayStateStorePersistsState(t *testing.T) {
-	store := NewGatewayStateStore(t.TempDir())
+	agentDir := t.TempDir()
+	store := NewGatewayStateStore(agentDir)
+	if store.path != filepath.Join(agentDir, "server", "qq-bot", "gateway.json") {
+		t.Fatalf("path = %q, want global agent server path", store.path)
+	}
 	want := GatewaySessionState{SessionID: "session-1", Seq: 42, LastError: "failed"}
 	if err := store.Save(want); err != nil {
 		t.Fatalf("Save() error = %v", err)

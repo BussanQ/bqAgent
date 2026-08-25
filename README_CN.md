@@ -237,13 +237,24 @@ bqagent 会从当前目录向上查找，直到命中以下任一工作区标记
 
 ```text
 ~/.agent/
-└─ sessions/
-   └─ <session-id>/
-      ├─ meta.json
-      ├─ messages.jsonl
-      ├─ working_messages.jsonl
-      ├─ context_checkpoint.json
-      └─ output.log
+├─ sessions/
+│  └─ <session-id>/
+│     ├─ meta.json
+│     ├─ messages.jsonl
+│     ├─ working_messages.jsonl
+│     ├─ context_checkpoint.json
+│     └─ output.log
+└─ server/
+   ├─ server.log
+   ├─ weixin/
+   │  ├─ token.json
+   │  ├─ poller.json
+   │  └─ chats/
+   ├─ qq-bot/
+   │  ├─ gateway.json
+   │  └─ chats/
+   └─ serverchan-bot/
+      └─ chats/
 
 project/
 ├─ .agent/
@@ -402,7 +413,7 @@ WebUI 输入区的 “+” 按钮支持上传浏览器本地文件，或引用�
 
 `/api/v1/serverchan/bot/webhook` 则用于 ServerChan Bot / 微信回复回流：它接收 Bot webhook 的 JSON update，用入站 `chat_id` 绑定到持久化的 bqagent session，并通过已配置的 Bot 凭据发送回复。可选的 webhook 鉴权配置集中在[环境变量配置](#环境变量配置)章节。
 
-`-d` 是 `--server --background` 的快捷方式。两种写法都会把该服务放到后台运行，并把服务日志写入 `.agent/server/server.log`。如果要真正接 webhook，需要把 `/api/v1/serverchan/bot/webhook` 通过公网 HTTPS 地址或反向代理暴露出去。
+`-d` 是 `--server --background` 的快捷方式。两种写法都会把该服务放到后台运行，并把服务日志写入 `~/.agent/server/server.log`。微信 iLink、QQ Bot 和 ServerChan Bot 的持久状态也统一保存在全局 `~/.agent/server/`，不再写入工作区 `.agent`。如果要真正接 webhook，需要把 `/api/v1/serverchan/bot/webhook` 通过公网 HTTPS 地址或反向代理暴露出去。
 
 默认情况下循环表现为"自动压缩续跑"：当对话接近输入 token 预算时，会把更早的对话摘要（压缩）后**继续**在压缩上下文上推进，而不是在固定轮数处停下。因此轮数上限只是失控保险（默认很高，为 `1000`）。所有上下文预算和摘要模型覆盖均集中在[环境变量配置](#环境变量配置)章节。
 

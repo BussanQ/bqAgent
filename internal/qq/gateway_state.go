@@ -18,8 +18,8 @@ type GatewayStateStore struct {
 	path string
 }
 
-func NewGatewayStateStore(workspaceRoot string) *GatewayStateStore {
-	return &GatewayStateStore{path: filepath.Join(workspaceRoot, ".agent", "server", "qq-bot", "gateway.json")}
+func NewGatewayStateStore(agentDir string) *GatewayStateStore {
+	return &GatewayStateStore{path: filepath.Join(agentDir, "server", "qq-bot", "gateway.json")}
 }
 
 func (store *GatewayStateStore) Load() (GatewaySessionState, error) {

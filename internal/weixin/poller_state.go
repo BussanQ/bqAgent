@@ -17,8 +17,8 @@ type PollerStateStore struct {
 	path string
 }
 
-func NewPollerStateStore(workspaceRoot string) *PollerStateStore {
-	return &PollerStateStore{path: filepath.Join(workspaceRoot, ".agent", "server", "weixin", "poller.json")}
+func NewPollerStateStore(agentDir string) *PollerStateStore {
+	return &PollerStateStore{path: filepath.Join(agentDir, "server", "weixin", "poller.json")}
 }
 
 func (store *PollerStateStore) Load() (PollerState, error) {

@@ -77,7 +77,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 	botProcessor := appserver.NewBotWebhookProcessor(
 		service,
 		serverchanclient.NewBotClient(getenv("SERVERCHAN_BOT_TOKEN"), nil),
-		serverchanclient.NewBotStateStore(ws.Root),
+		serverchanclient.NewBotStateStore(ws.AgentDir()),
 		getenv("SERVERCHAN_BOT_WEBHOOK_SECRET"),
 	)
 	channels := []appserver.Channel{
@@ -92,8 +92,8 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 			service,
 			qq.NewClient(tokenSource, apiBaseURL, nil),
 			qq.NewGatewayClient(tokenSource, apiBaseURL, nil),
-			qq.NewStateStore(ws.Root),
-			qq.NewGatewayStateStore(ws.Root),
+			qq.NewStateStore(ws.AgentDir()),
+			qq.NewGatewayStateStore(ws.AgentDir()),
 		))
 	}
 	if envEnabled(getenv("WEIXIN_ILINK_ENABLED")) {
@@ -102,9 +102,9 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 		channels = append(channels, appserver.NewIlinkChannel(
 			service,
 			ilinkClient,
-			weixin.NewTokenStore(ws.Root),
-			weixin.NewPollerStateStore(ws.Root),
-			weixin.NewChatStateStore(ws.Root),
+			weixin.NewTokenStore(ws.AgentDir()),
+			weixin.NewPollerStateStore(ws.AgentDir()),
+			weixin.NewChatStateStore(ws.AgentDir()),
 		))
 	}
 	for _, channel := range channels {

@@ -1,6 +1,9 @@
 package weixin
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestChatStateStoreLoadMissingReturnsDefaultState(t *testing.T) {
 	store := NewChatStateStore(t.TempDir())
@@ -17,7 +20,11 @@ func TestChatStateStoreLoadMissingReturnsDefaultState(t *testing.T) {
 }
 
 func TestChatStateStorePersistsState(t *testing.T) {
-	store := NewChatStateStore(t.TempDir())
+	agentDir := t.TempDir()
+	store := NewChatStateStore(agentDir)
+	if store.root != filepath.Join(agentDir, "server", "weixin", "chats") {
+		t.Fatalf("root = %q, want global agent server path", store.root)
+	}
 	want := ChatState{
 		UserID:                    "user-1",
 		SessionID:                 "session-1",

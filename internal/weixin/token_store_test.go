@@ -1,9 +1,16 @@
 package weixin
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestTokenStorePersistsState(t *testing.T) {
-	store := NewTokenStore(t.TempDir())
+	agentDir := t.TempDir()
+	store := NewTokenStore(agentDir)
+	if store.path != filepath.Join(agentDir, "server", "weixin", "token.json") {
+		t.Fatalf("path = %q, want global agent server path", store.path)
+	}
 	want := TokenState{BotToken: "token-1", BaseURL: "https://example.com", AccountID: "account-1", UserID: "user-1"}
 	if err := store.Save(want); err != nil {
 		t.Fatalf("Save returned error: %v", err)

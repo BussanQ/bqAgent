@@ -22,8 +22,8 @@ type BotStateStore struct {
 	root string
 }
 
-func NewBotStateStore(workspaceRoot string) *BotStateStore {
-	return &BotStateStore{root: filepath.Join(workspaceRoot, ".agent", "server", "serverchan-bot", "chats")}
+func NewBotStateStore(agentDir string) *BotStateStore {
+	return &BotStateStore{root: filepath.Join(agentDir, "server", "serverchan-bot", "chats")}
 }
 
 func (store *BotStateStore) Load(chatID int64) (BotChatState, error) {

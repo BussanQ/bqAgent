@@ -237,13 +237,24 @@ Primary configuration is fixed at `~/.agent/`, where missing defaults are initia
 
 ```text
 ~/.agent/
-└─ sessions/
-   └─ <session-id>/
-      ├─ meta.json
-      ├─ messages.jsonl
-      ├─ working_messages.jsonl
-      ├─ context_checkpoint.json
-      └─ output.log
+├─ sessions/
+│  └─ <session-id>/
+│     ├─ meta.json
+│     ├─ messages.jsonl
+│     ├─ working_messages.jsonl
+│     ├─ context_checkpoint.json
+│     └─ output.log
+└─ server/
+   ├─ server.log
+   ├─ weixin/
+   │  ├─ token.json
+   │  ├─ poller.json
+   │  └─ chats/
+   ├─ qq-bot/
+   │  ├─ gateway.json
+   │  └─ chats/
+   └─ serverchan-bot/
+      └─ chats/
 
 project/
 ├─ .agent/
@@ -406,7 +417,7 @@ The “+” button in the WebUI composer can upload browser-local files or refer
 
 `/api/v1/serverchan/bot/webhook` is the conversational webhook endpoint for ServerChan Bot / WeChat replies. It accepts the Bot webhook JSON update format, maps each inbound `chat_id` onto a persisted bqagent session, and sends the assistant reply through the configured Bot credentials. Optional webhook authentication is documented under [environment variables](#environment-variables).
 
-`-d` is a shortcut for `--server --background`. Both forms run this server in the background and write service logs to `.agent/server/server.log`. For real webhook use, expose `/api/v1/serverchan/bot/webhook` through a public HTTPS endpoint or reverse proxy.
+`-d` is a shortcut for `--server --background`. Both forms run this server in the background and write service logs to `~/.agent/server/server.log`. Persistent WeChat iLink, QQ Bot, and ServerChan Bot state is also kept globally under `~/.agent/server/`, never in a workspace `.agent`. For real webhook use, expose `/api/v1/serverchan/bot/webhook` through a public HTTPS endpoint or reverse proxy.
 
 By default the loop behaves like an auto-compacting agent: when the conversation
 approaches the input-token budget it summarizes (compacts) the older turns and

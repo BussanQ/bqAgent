@@ -1,6 +1,9 @@
 package serverchan
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestBotStateStoreLoadMissingReturnsDefaultState(t *testing.T) {
 	store := NewBotStateStore(t.TempDir())
@@ -17,7 +20,11 @@ func TestBotStateStoreLoadMissingReturnsDefaultState(t *testing.T) {
 }
 
 func TestBotStateStorePersistsState(t *testing.T) {
-	store := NewBotStateStore(t.TempDir())
+	agentDir := t.TempDir()
+	store := NewBotStateStore(agentDir)
+	if store.root != filepath.Join(agentDir, "server", "serverchan-bot", "chats") {
+		t.Fatalf("root = %q, want global agent server path", store.root)
+	}
 	want := BotChatState{
 		ChatID:                42,
 		SessionID:             "session-1",
