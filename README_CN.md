@@ -82,7 +82,7 @@ set LLM_API_KEY=your-key-here
 | `LLM_API_TYPE` | `openai` | 接口协议：`openai`、`openai-response` 或 `anthropic`。 |
 | `LLM_API_KEY` | — | 通用 API Key；Server 模式必填。 |
 | `LLM_BASE_URL` | 供应商默认值 | 通用供应商端点覆盖。 |
-| `LLM_MODEL` | `MiniMax-M2.5` | 内置 LLM 的默认模型。 |
+| `LLM_MODEL` | 空 | 内置 LLM 使用的模型 ID，需要显式配置。 |
 | `LLM_MODELS` | 空 | 同一供应商下可切换的模型列表，逗号分隔；支持 `别名=模型ID`。聊天中使用 `/model` 查看，`/model <名称或别名>` 切换当前会话，`/model default` 恢复默认。 |
 | `LLM_STREAM_IDLE_TIMEOUT` | `2m` | 流式模型请求连续无响应头或响应体字节时的 idle watchdog；使用 Go duration 格式，设为 `0` 禁用。 |
 | `OPENAI_API_TYPE` | — | `LLM_API_TYPE` 的兼容别名。 |
@@ -386,7 +386,7 @@ aliases:
 其中 `/api/v1/chat` 用于基于 `session_id` 的接口对话。
 WebUI 的聊天、文件树、预览、状态、停止和 Trace 请求会携带 `workspace_id`；省略该字段时保持兼容并使用启动工作区。
 
-`GET /api/v1/status` 返回内置 LLM 的有效运行时身份，例如 `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`。该接口不会暴露 API Key 或供应商端点 URL；WebUI 会在 bqagent 标题下展示这项信息。
+`GET /api/v1/status` 返回内置 LLM 的有效运行时身份，例如 `{"status":"ok","llm":{"api_type":"openai","model":"gpt-4o-mini"}}`。该接口不会暴露 API Key 或供应商端点 URL；WebUI 会在 bqagent 标题下展示这项信息。
 
 `GET /` 提供一个自包含的单页网页对话界面（HTML/CSS/JS 全部内嵌进二进制，无外部依赖）。浏览器打开 `http://127.0.0.1:8080` 即可直接对话。界面支持明暗主题，并会安全渲染 Markdown 标题、列表、任务列表、表格、引用、链接、图片与带复制按钮的代码块，适合直接阅读 README 等 `.md` 内容。回复通过 `POST /api/v1/webui/chat` 以 Server-Sent Events 逐字流式返回；发送后按钮会切换为停止按钮，通过与渠道无关的 `POST /api/v1/chat/stop` 接口按 `turn_id` 取消当前模型请求和工具执行。取消注册表位于共享对话服务中，其他通道后续接入时无需依赖 WebUI。`event: progress` 会持续报告迭代轮次和工具活动。WebUI 默认不设置固定阶段轮数、阶段时间或整轮超时，会在同一次请求中持续执行到最终回复。流式模型 HTTP 请求不使用 `http.Client` 总时限，但从请求发出起受 `LLM_STREAM_IDLE_TIMEOUT` watchdog 约束；响应头、SSE 数据和 heartbeat 都会续期。请求生命周期还受浏览器断连、显式停止、主动启用的阶段 deadline 或服务关闭控制。非流式模型请求仍保留默认两分钟客户端超时。重复工具调用和连续失败仍受循环保护，整体循环仍受 `AGENT_MAX_ITERATIONS`（默认 1000）的失控安全阀约束。需要人工分阶段时，可显式配置正值的 `WEBUI_STAGE_MAX_ITERATIONS` 或 `WEBUI_STAGE_TIMEOUT`，恢复持久化阶段总结和“继续”机制。该网页渠道默认开启，可在[环境变量配置](#环境变量配置)中关闭。
 

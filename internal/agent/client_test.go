@@ -40,7 +40,7 @@ func TestClientCreateChatCompletionUsesOpenAICompatibleRequest(t *testing.T) {
 	client := NewClient("test-key", server.URL, server.Client())
 	message, err := client.CreateChatCompletion(
 		context.Background(),
-		DefaultModel,
+		testModel,
 		[]map[string]any{{"role": "user", "content": "hello"}},
 		tools.Definitions(),
 	)
@@ -53,8 +53,8 @@ func TestClientCreateChatCompletionUsesOpenAICompatibleRequest(t *testing.T) {
 	if seenAuth != "Bearer test-key" {
 		t.Fatalf("authorization header = %q, want bearer token", seenAuth)
 	}
-	if seenRequest.Model != DefaultModel {
-		t.Fatalf("model = %q, want %q", seenRequest.Model, DefaultModel)
+	if seenRequest.Model != testModel {
+		t.Fatalf("model = %q, want %q", seenRequest.Model, testModel)
 	}
 	if len(seenRequest.Messages) != 1 {
 		t.Fatalf("messages length = %d, want 1", len(seenRequest.Messages))
@@ -80,7 +80,7 @@ func TestClientCreateChatCompletionParsesInlineToolCallContent(t *testing.T) {
 	client := NewClient("test-key", server.URL, server.Client())
 	message, err := client.CreateChatCompletion(
 		context.Background(),
-		DefaultModel,
+		testModel,
 		[]map[string]any{{"role": "user", "content": "hello"}},
 		tools.Definitions(),
 	)
@@ -133,7 +133,7 @@ func TestClientCreateChatCompletionParsesShorthandInlineToolCallContent(t *testi
 	client := NewClient("test-key", server.URL, server.Client())
 	message, err := client.CreateChatCompletion(
 		context.Background(),
-		DefaultModel,
+		testModel,
 		[]map[string]any{{"role": "user", "content": "hello"}},
 		tools.Definitions(),
 	)
@@ -168,7 +168,7 @@ func TestInstrumentedClientLogsChatCompletionTiming(t *testing.T) {
 	var logs bytes.Buffer
 
 	wrapped := instrumentChatCompletionClient(client, &logs, nil)
-	_, err := wrapped.CreateChatCompletion(context.Background(), DefaultModel, []map[string]any{{"role": "user", "content": "hello"}}, nil)
+	_, err := wrapped.CreateChatCompletion(context.Background(), testModel, []map[string]any{{"role": "user", "content": "hello"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateChatCompletion returned error: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestInstrumentedClientLogsChatCompletionTiming(t *testing.T) {
 	if !strings.Contains(content, "[Model] request=chat") {
 		t.Fatalf("logs = %q, want model request log", content)
 	}
-	if !strings.Contains(content, "model="+DefaultModel) {
+	if !strings.Contains(content, "model="+testModel) {
 		t.Fatalf("logs = %q, want model name", content)
 	}
 	if !strings.Contains(content, "stream=false") {
@@ -195,7 +195,7 @@ func TestInstrumentedClientLogsStreamErrors(t *testing.T) {
 	var logs bytes.Buffer
 
 	wrapped := instrumentChatCompletionClient(&failingStreamClient{}, &logs, nil)
-	_, err := wrapped.CreateChatCompletionStream(context.Background(), DefaultModel, []map[string]any{{"role": "user", "content": "hello"}}, nil, nil)
+	_, err := wrapped.CreateChatCompletionStream(context.Background(), testModel, []map[string]any{{"role": "user", "content": "hello"}}, nil, nil)
 	if err == nil {
 		t.Fatal("CreateChatCompletionStream returned nil error, want stream failure")
 	}
@@ -355,7 +355,7 @@ func TestInstrumentedClientEmitsProgressWhileChatCompletionInProgress(t *testing
 	resultCh := make(chan AssistantMessage, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		message, err := wrapped.CreateChatCompletion(context.Background(), DefaultModel, []map[string]any{{"role": "user", "content": "hello"}}, nil)
+		message, err := wrapped.CreateChatCompletion(context.Background(), testModel, []map[string]any{{"role": "user", "content": "hello"}}, nil)
 		resultCh <- message
 		errCh <- err
 	}()
@@ -389,7 +389,7 @@ func TestInstrumentedClientStopsProgressReporterAfterChatCompletion(t *testing.T
 	done := make(chan struct{})
 
 	go func() {
-		_, _ = wrapped.CreateChatCompletion(context.Background(), DefaultModel, []map[string]any{{"role": "user", "content": "hello"}}, nil)
+		_, _ = wrapped.CreateChatCompletion(context.Background(), testModel, []map[string]any{{"role": "user", "content": "hello"}}, nil)
 		close(done)
 	}()
 
@@ -419,7 +419,7 @@ func TestInstrumentedClientPreservesErrorWhileEmittingProgress(t *testing.T) {
 	errCh := make(chan error, 1)
 
 	go func() {
-		_, err := wrapped.CreateChatCompletion(context.Background(), DefaultModel, []map[string]any{{"role": "user", "content": "hello"}}, nil)
+		_, err := wrapped.CreateChatCompletion(context.Background(), testModel, []map[string]any{{"role": "user", "content": "hello"}}, nil)
 		errCh <- err
 	}()
 
@@ -450,7 +450,7 @@ func TestInstrumentedClientSuppressesProgressDuringActiveStreamingChunks(t *test
 	done := make(chan struct{})
 
 	go func() {
-		_, _ = wrapped.CreateChatCompletionStream(context.Background(), DefaultModel, []map[string]any{{"role": "user", "content": "hello"}}, nil, func(chunk string) {
+		_, _ = wrapped.CreateChatCompletionStream(context.Background(), testModel, []map[string]any{{"role": "user", "content": "hello"}}, nil, func(chunk string) {
 			chunks.WriteString(chunk)
 		})
 		close(done)
@@ -479,7 +479,7 @@ func TestInstrumentedClientEmitsProgressWhenStreamingStalls(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		_, _ = wrapped.CreateChatCompletionStream(context.Background(), DefaultModel, []map[string]any{{"role": "user", "content": "hello"}}, nil, nil)
+		_, _ = wrapped.CreateChatCompletionStream(context.Background(), testModel, []map[string]any{{"role": "user", "content": "hello"}}, nil, nil)
 		close(done)
 	}()
 
@@ -509,7 +509,7 @@ func TestInstrumentedClientEmitsProgressForChatCompletionWithOptions(t *testing.
 			close(done)
 			return
 		}
-		_, _ = optionsClient.CreateChatCompletionWithOptions(context.Background(), DefaultModel, []map[string]any{{"role": "user", "content": "hello"}}, nil, ChatCompletionOptions{ResponseFormat: map[string]any{"type": "json_object"}})
+		_, _ = optionsClient.CreateChatCompletionWithOptions(context.Background(), testModel, []map[string]any{{"role": "user", "content": "hello"}}, nil, ChatCompletionOptions{ResponseFormat: map[string]any{"type": "json_object"}})
 		close(done)
 	}()
 

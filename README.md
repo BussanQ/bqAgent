@@ -82,7 +82,7 @@ Generic `LLM_*` values take precedence over provider-specific compatibility vari
 | `LLM_API_TYPE` | `openai` | Wire protocol: `openai`, `openai-response`, or `anthropic`. |
 | `LLM_API_KEY` | — | Generic API key. Required in server mode. |
 | `LLM_BASE_URL` | provider default | Generic provider endpoint override. |
-| `LLM_MODEL` | `MiniMax-M2.5` | Default built-in model. |
+| `LLM_MODEL` | empty | Model ID for the built-in LLM provider; configure it explicitly. |
 | `LLM_MODELS` | empty | Comma-separated switchable models for the same provider; supports `alias=model-id`. Use `/model` to list, `/model <name-or-alias>` to switch the current session, and `/model default` to restore the default. |
 | `LLM_STREAM_IDLE_TIMEOUT` | `2m` | Idle watchdog for streaming model requests while no response headers or body bytes arrive. Uses Go duration syntax; set to `0` to disable. |
 | `OPENAI_API_TYPE` | — | Compatibility alias for `LLM_API_TYPE`. |
@@ -388,7 +388,7 @@ The command immediately prints the session ID, session directory, and log path.
 WebUI chat, explorer, preview, status, stop, and trace requests carry a `workspace_id`; omitting it remains backward compatible and selects the startup workspace.
 
 `GET /api/v1/status` returns the effective built-in LLM runtime identity, for
-example `{"status":"ok","llm":{"api_type":"openai","model":"MiniMax-M2.5"}}`.
+example `{"status":"ok","llm":{"api_type":"openai","model":"gpt-4o-mini"}}`.
 It never exposes API keys or provider endpoint URLs. The WebUI displays this
 identity under the bqagent title when the endpoint is available.
 

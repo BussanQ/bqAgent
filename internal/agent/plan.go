@@ -19,10 +19,7 @@ type chatCompletionOptionsClient interface {
 }
 
 func NewPlanner(client ChatCompletionClient, model string) *Planner {
-	if model == "" {
-		model = DefaultModel
-	}
-	return &Planner{client: client, model: model}
+	return &Planner{client: client, model: EffectiveModel(model)}
 }
 
 func (p *Planner) Generate(ctx context.Context, task string) ([]string, error) {

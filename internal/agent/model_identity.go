@@ -4,13 +4,9 @@ import "strings"
 
 const modelIdentityPrefix = "Current runtime model:"
 
-// EffectiveModel returns the model used for requests and runtime metadata.
+// EffectiveModel normalizes the configured model used for requests and runtime metadata.
 func EffectiveModel(model string) string {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return DefaultModel
-	}
-	return model
+	return strings.TrimSpace(model)
 }
 
 // AppendModelIdentitySystemPrompt adds or replaces the current model identity
@@ -18,20 +14,20 @@ func EffectiveModel(model string) string {
 // sessions from retaining a stale model after the service restarts.
 func AppendModelIdentitySystemPrompt(systemPrompt, model string, apiType APIType) string {
 	model = singleLinePromptValue(EffectiveModel(model))
-	apiType = NormalizeAPIType(string(apiType))
-	identity := modelIdentityPrefix + " " + model + " (API type: " + string(apiType) + "). When asked which model is in use, answer with this exact current-run value."
+	identity := ""
+	if model != "" {
+		apiType = NormalizeAPIType(string(apiType))
+		identity = modelIdentityPrefix + " " + model + " (API type: " + string(apiType) + "). When asked which model is in use, answer with this exact current-run value."
+	}
 
 	base := strings.TrimSpace(systemPrompt)
-	if base == "" {
-		base = DefaultSystemPrompt
-	}
 
 	lines := strings.Split(strings.ReplaceAll(base, "\r\n", "\n"), "\n")
 	replaced := false
 	output := make([]string, 0, len(lines)+2)
 	for _, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), modelIdentityPrefix) {
-			if !replaced {
+			if identity != "" && !replaced {
 				output = append(output, identity)
 				replaced = true
 			}
@@ -39,10 +35,14 @@ func AppendModelIdentitySystemPrompt(systemPrompt, model string, apiType APIType
 		}
 		output = append(output, line)
 	}
-	if replaced {
-		return strings.TrimSpace(strings.Join(output, "\n"))
+	prompt := strings.TrimSpace(strings.Join(output, "\n"))
+	if identity == "" || replaced {
+		return prompt
 	}
-	return strings.TrimSpace(strings.Join(output, "\n")) + "\n\n" + identity
+	if prompt == "" {
+		return identity
+	}
+	return prompt + "\n\n" + identity
 }
 
 func singleLinePromptValue(value string) string {

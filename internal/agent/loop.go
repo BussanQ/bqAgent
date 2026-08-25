@@ -17,8 +17,6 @@ import (
 )
 
 const (
-	DefaultModel        = "MiniMax-M2.5"
-	DefaultSystemPrompt = "You are a helpful assistant. Be concise."
 	// DefaultMaxIterations is the single canonical loop cap shared by every mode.
 	// With auto-compaction the loop continues on a budget-bounded context, so this
 	// is a runaway safety valve, not a task limit. Override with AGENT_MAX_ITERATIONS.

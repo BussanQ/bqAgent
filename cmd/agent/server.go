@@ -60,7 +60,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 		),
 		Factory: func(factoryContext context.Context, root string) (*appserver.Service, io.Closer, error) {
 			selected := &workspace.Workspace{Root: root, GlobalAgentDir: ws.AgentDir()}
-			prompt, promptErr := selected.BuildSystemPrompt(agent.DefaultSystemPrompt)
+			prompt, promptErr := selected.BuildSystemPrompt("")
 			if promptErr != nil {
 				return nil, nil, promptErr
 			}

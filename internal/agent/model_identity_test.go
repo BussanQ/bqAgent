@@ -6,9 +6,18 @@ import (
 	"testing"
 )
 
-func TestEffectiveModelUsesDefaultWhenUnset(t *testing.T) {
-	if got := EffectiveModel("  "); got != DefaultModel {
-		t.Fatalf("EffectiveModel() = %q, want %q", got, DefaultModel)
+const testModel = "test-model"
+
+func TestEffectiveModelKeepsUnsetModelEmpty(t *testing.T) {
+	if got := EffectiveModel("  "); got != "" {
+		t.Fatalf("EffectiveModel() = %q, want empty", got)
+	}
+}
+
+func TestAppendModelIdentitySystemPromptRemovesStaleIdentityWhenModelIsUnset(t *testing.T) {
+	base := "Custom instructions.\n\nCurrent runtime model: old-model (API type: openai). When asked which model is in use, answer with this exact current-run value."
+	if got := AppendModelIdentitySystemPrompt(base, "", APITypeOpenAI); got != "Custom instructions." {
+		t.Fatalf("prompt = %q, want stale model identity removed", got)
 	}
 }
 

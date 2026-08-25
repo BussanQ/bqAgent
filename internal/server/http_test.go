@@ -867,7 +867,7 @@ func TestServiceHandleTurnHotReloadsSkillSectionForExistingSession(t *testing.T)
 		Client:        agent.NewClient("", llmServer.URL, nil),
 		SystemPrompt:  "You are a helpful assistant. Be concise.",
 		SystemPromptBuilder: func() (string, error) {
-			return (&workspace.Workspace{Root: root, GlobalAgentDir: globalAgent}).BuildSystemPrompt(agent.DefaultSystemPrompt)
+			return (&workspace.Workspace{Root: root, GlobalAgentDir: globalAgent}).BuildSystemPrompt("")
 		},
 		ToolDefinitions: catalog.Definitions(),
 		Functions:       catalog.Registry(),

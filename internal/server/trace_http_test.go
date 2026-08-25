@@ -85,8 +85,8 @@ func TestRunTraceUsesEffectiveDefaultModel(t *testing.T) {
 	if err := json.NewDecoder(get.Body).Decode(&meta); err != nil {
 		t.Fatal(err)
 	}
-	if meta.Model != agent.DefaultModel {
-		t.Fatalf("trace model = %q, want %q", meta.Model, agent.DefaultModel)
+	if meta.Model != "" {
+		t.Fatalf("trace model = %q, want empty", meta.Model)
 	}
 }
 

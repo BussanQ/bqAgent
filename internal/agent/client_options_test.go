@@ -23,7 +23,7 @@ func TestClientCreateChatCompletionWithOptionsIncludesResponseFormat(t *testing.
 	defer server.Close()
 
 	client := NewClient("", server.URL, server.Client())
-	_, err := client.CreateChatCompletionWithOptions(context.Background(), DefaultModel, []map[string]any{{"role": "user", "content": "plan"}}, nil, ChatCompletionOptions{
+	_, err := client.CreateChatCompletionWithOptions(context.Background(), testModel, []map[string]any{{"role": "user", "content": "plan"}}, nil, ChatCompletionOptions{
 		ResponseFormat: map[string]any{"type": "json_object"},
 	})
 	if err != nil {

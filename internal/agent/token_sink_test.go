@@ -28,7 +28,7 @@ func (s *chunkingStub) CreateChatCompletionStream(_ context.Context, _ string, _
 
 func TestStreamTokensGoToTokenSink(t *testing.T) {
 	var logBuf, tokenBuf bytes.Buffer
-	app := NewWithOptions(&chunkingStub{content: "hello world"}, DefaultModel, Options{
+	app := NewWithOptions(&chunkingStub{content: "hello world"}, testModel, Options{
 		LogWriter: &logBuf,
 		TokenSink: &tokenBuf,
 		Stream:    true,
@@ -51,7 +51,7 @@ func TestStreamTokensGoToTokenSink(t *testing.T) {
 
 func TestStreamTokensFallBackToLogWriterWithoutSink(t *testing.T) {
 	var logBuf bytes.Buffer
-	app := NewWithOptions(&chunkingStub{content: "hello world"}, DefaultModel, Options{
+	app := NewWithOptions(&chunkingStub{content: "hello world"}, testModel, Options{
 		LogWriter: &logBuf,
 		Stream:    true,
 	})

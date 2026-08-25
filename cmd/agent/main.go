@@ -116,7 +116,7 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		return runSubagentWorker(ctx, stderr, getenv, ws, options.subagentRun, options.subagentLease)
 	}
 
-	systemPrompt, err := ws.BuildSystemPrompt(agent.DefaultSystemPrompt)
+	systemPrompt, err := ws.BuildSystemPrompt("")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

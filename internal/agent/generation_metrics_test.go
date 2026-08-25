@@ -56,7 +56,7 @@ func TestRunConversationTurnWithGenerationMetrics(t *testing.T) {
 		}},
 		chunks: [][]string{{"hello", " world"}},
 	}
-	app := NewWithOptions(stub, DefaultModel, Options{Stream: true})
+	app := NewWithOptions(stub, testModel, Options{Stream: true})
 
 	result, _, metrics, err := app.RunConversationTurnWithMetrics(context.Background(), []map[string]any{{"role": "user", "content": "hi"}}, 2)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestRunConversationTurnWithGenerationMetricsUsesFinalTextCall(t *testing.T)
 		},
 		chunks: [][]string{{"checking"}, {"final", " answer"}},
 	}
-	app := NewWithOptions(stub, DefaultModel, Options{
+	app := NewWithOptions(stub, testModel, Options{
 		Stream: true,
 		Functions: map[string]tools.Function{
 			"lookup": func(context.Context, map[string]any) (string, error) { return "found", nil },

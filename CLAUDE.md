@@ -33,7 +33,7 @@ go run ./cmd/agent --server           # HTTP on 127.0.0.1:8080
 go run ./cmd/agent --resume <id> "…"  # continue a persisted session
 ```
 
-Config is read from the environment and from a `.env` file at the workspace root (auto-loaded; real shell env wins over `.env`). `LLM_API_TYPE` selects `openai` (default), `openai-response`, or `anthropic`; generic `LLM_*` variables override the compatible `OPENAI_*` / `ANTHROPIC_*` variables. `LLM_STREAM_IDLE_TIMEOUT` defaults to `2m`, uses Go duration syntax, and accepts `0` to disable the streaming watchdog. A matching API key is required for server mode. The model defaults to `agent.DefaultModel` (`MiniMax-M2.5`) when unset. **`.env` here contains live secrets — never print or commit its contents.**
+Config is read from the environment and from a `.env` file at the workspace root (auto-loaded; real shell env wins over `.env`). `LLM_API_TYPE` selects `openai` (default), `openai-response`, or `anthropic`; generic `LLM_*` variables override the compatible `OPENAI_*` / `ANTHROPIC_*` variables. `LLM_STREAM_IDLE_TIMEOUT` defaults to `2m`, uses Go duration syntax, and accepts `0` to disable the streaming watchdog. A matching API key is required for server mode. `LLM_MODEL` must be configured explicitly unless a saved WebUI provider supplies the model; there is no built-in model default. **`.env` here contains live secrets — never print or commit its contents.**
 
 ## Architecture
 

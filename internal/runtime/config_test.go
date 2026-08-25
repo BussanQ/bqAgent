@@ -42,10 +42,10 @@ func TestConfigFromEnvParsesStreamIdleTimeout(t *testing.T) {
 	}
 }
 
-func TestConfigFromEnvUsesEffectiveDefaultModel(t *testing.T) {
+func TestConfigFromEnvKeepsUnsetModelEmpty(t *testing.T) {
 	config := ConfigFromEnv(func(string) string { return "" })
-	if config.Model != agent.DefaultModel {
-		t.Fatalf("Model = %q, want %q", config.Model, agent.DefaultModel)
+	if config.Model != "" {
+		t.Fatalf("Model = %q, want empty", config.Model)
 	}
 	if config.APIType != agent.APITypeOpenAI {
 		t.Fatalf("APIType = %q, want %q", config.APIType, agent.APITypeOpenAI)
