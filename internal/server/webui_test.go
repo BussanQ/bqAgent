@@ -572,20 +572,23 @@ func TestWebUILightThemeUsesSoftSurfacesAndVisibleParticles(t *testing.T) {
 	}
 }
 
-func TestWebUISettingsButtonSitsAtBottomLeftAndAlignsWithComposerHints(t *testing.T) {
+func TestWebUISettingsButtonSitsAbovePageBottom(t *testing.T) {
 	page := string(webUIIndex)
 	for _, expected := range []string{
 		`left: 12px;`,
-		`transform: translateY(-50%);`,
-		`var composerMeta = document.querySelector(".composer-meta");`,
-		`function alignProviderSettingsTrigger()`,
-		`var rect = composerMeta.getBoundingClientRect();`,
-		`rect.top + rect.height / 2`,
-		`settingsAlignmentResizeObserver.observe(composer)`,
-		`settingsAlignmentResizeObserver.observe(composerMeta)`,
+		`bottom: calc(12px + env(safe-area-inset-bottom));`,
+		`font: 650 15px/1.2 ui-sans-serif`,
 	} {
 		if !strings.Contains(page, expected) {
-			t.Fatalf("settings/composer hints alignment missing %q", expected)
+			t.Fatalf("settings bottom spacing missing %q", expected)
+		}
+	}
+	for _, obsolete := range []string{
+		`function alignProviderSettingsTrigger()`,
+		`transform: translateY(-50%);`,
+	} {
+		if strings.Contains(page, obsolete) {
+			t.Fatalf("settings button still uses content-dependent alignment %q", obsolete)
 		}
 	}
 }
@@ -595,7 +598,7 @@ func TestWebUISettingsButtonUsesConversationSidebarNavigationStyle(t *testing.T)
 	for _, expected := range []string{
 		`justify-content: flex-start;`,
 		`width: calc(var(--conversation-width) - 24px);`,
-		`.global-settings:hover { border-color: var(--line); color: var(--text); background: var(--surface-hover); transform: translateY(-50%); box-shadow: none; }`,
+		`.global-settings:hover { border-color: var(--line); color: var(--text); background: var(--surface-hover); transform: none; box-shadow: none; }`,
 		`.global-settings { width: auto;`,
 	} {
 		if !strings.Contains(page, expected) {

@@ -757,8 +757,8 @@
     position: fixed;
     z-index: 6;
     left: 12px;
-    top: calc(100% - 24px);
-    bottom: auto;
+    top: auto;
+    bottom: calc(12px + env(safe-area-inset-bottom));
     display: flex;
     align-items: center;
     justify-content: flex-start;
@@ -771,8 +771,7 @@
     color: var(--text-soft);
     background: transparent;
     box-shadow: none;
-    font: 650 13px/1.2 ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-    transform: translateY(-50%);
+    font: 650 15px/1.2 ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   }
   .conversation-sidebar {
     position: relative; z-index: 2; order: 0; width: var(--conversation-width); min-width: var(--conversation-width); min-height: 0; flex: 0 0 var(--conversation-width); display: flex; flex-direction: column; padding: 14px 12px 64px; border-right: 1px solid var(--line); background: var(--panel-strong); backdrop-filter: blur(22px);
@@ -792,7 +791,7 @@
   .conversation-context-action { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-color: transparent; border-radius: 8px; color: var(--danger); background: transparent; box-shadow: none; text-align: left; }
   .conversation-context-action:hover, .conversation-context-action:focus-visible { border-color: rgba(var(--danger-rgb), .24); background: rgba(var(--danger-rgb), .10); transform: none; box-shadow: none; }
   .conversation-context-action svg { width: 16px; height: 16px; }
-  .global-settings:hover { border-color: var(--line); color: var(--text); background: var(--surface-hover); transform: translateY(-50%); box-shadow: none; }
+  .global-settings:hover { border-color: var(--line); color: var(--text); background: var(--surface-hover); transform: none; box-shadow: none; }
   .global-settings svg { width: 16px; height: 16px; }
 
   main {
@@ -1405,7 +1404,7 @@
 
   @media (max-width: 900px) {
     .conversation-sidebar { display: none; }
-    .global-settings { width: auto; padding: 8px 14px; border-radius: var(--radius-pill); border-color: var(--line); color: var(--text); background: var(--panel-strong); box-shadow: var(--shadow); backdrop-filter: blur(18px); font-size: 14px; }
+    .global-settings { width: auto; padding: 8px 14px; border-radius: var(--radius-pill); border-color: var(--line); color: var(--text); background: var(--panel-strong); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
     .global-settings:hover { border-color: var(--line-strong); background: var(--panel-strong); box-shadow: var(--shadow); }
     .workspace-sidebar {
       position: absolute;
@@ -1725,7 +1724,6 @@
   var thread = document.getElementById("thread");
   var main = document.getElementById("main");
   var composer = document.querySelector(".composer");
-  var composerMeta = document.querySelector(".composer-meta");
   var particleCanvas = document.getElementById("particle-field");
   var appLayout = document.getElementById("app-layout");
   var conversationList = document.getElementById("conversation-list");
@@ -3896,12 +3894,6 @@
     input.style.height = Math.min(input.scrollHeight, 180) + "px";
   }
 
-  function alignProviderSettingsTrigger() {
-    if (!composerMeta || !providerSettingsTrigger) return;
-    var rect = composerMeta.getBoundingClientRect();
-    providerSettingsTrigger.style.top = (rect.top + rect.height / 2) + "px";
-  }
-
   function copyText(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       return navigator.clipboard.writeText(text);
@@ -4454,13 +4446,6 @@
   workspaceSelect.disabled = true;
   workspaceCreateAgent.disabled = true;
   initParticleField();
-  if (window.ResizeObserver) {
-    var settingsAlignmentResizeObserver = new ResizeObserver(alignProviderSettingsTrigger);
-    settingsAlignmentResizeObserver.observe(composer);
-    settingsAlignmentResizeObserver.observe(composerMeta);
-  }
-  window.addEventListener("resize", alignProviderSettingsTrigger, { passive: true });
-  requestAnimationFrame(alignProviderSettingsTrigger);
   initializeWorkspaceSelection().catch(function (error) {
     statusEl.textContent = "工作区初始化失败";
     statusEl.classList.add("error");
