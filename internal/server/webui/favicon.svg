@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Lucide bot icon via Iconify (MIT): https://icon-sets.iconify.design/lucide/bot/ -->
+  <defs>
+    <linearGradient id="background" x1="28" y1="20" x2="224" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0d2945"/>
+      <stop offset="0.48" stop-color="#071426"/>
+      <stop offset="1" stop-color="#030711"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="70" y1="68" x2="190" y2="194" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#99f0ff"/>
+      <stop offset="0.45" stop-color="#35b8ff"/>
+      <stop offset="1" stop-color="#6078ff"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#background)"/>
+  <rect x="10.5" y="10.5" width="235" height="235" rx="55.5" fill="none" stroke="#35b8ff" stroke-opacity=".34" stroke-width="5"/>
+  <path d="M52 70c16-30 44-46 78-46 33 0 62 15 79 42" fill="none" stroke="#7be7ff" stroke-opacity=".15" stroke-width="8" stroke-linecap="round"/>
+  <g fill="none" stroke="url(#signal)" stroke-linecap="round" stroke-linejoin="round" stroke-width="14" filter="url(#glow)">
+    <path d="M128 94V54H88"/>
+    <rect x="48" y="94" width="160" height="120" rx="24"/>
+    <path d="M28 154h20m160 0h20m-70-10v20m-60-20v20"/>
+  </g>
+  <circle cx="98" cy="154" r="6" fill="#d5f9ff"/>
+  <circle cx="158" cy="154" r="6" fill="#d5f9ff"/>
+</svg>

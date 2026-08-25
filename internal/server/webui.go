@@ -117,6 +117,9 @@ func SetWebUIStageMaxIterations(maxIterations int) {
 //go:embed webui/index.html
 var webUIIndex []byte
 
+//go:embed webui/favicon.ico
+var webUIFavicon []byte
+
 // WebUIChannel serves a self-contained browser chat page at "/" and streams
 // assistant replies token-by-token over Server-Sent Events. It reuses the
 // shared Service turn machinery and can resolve a workspace-specific Service
@@ -148,6 +151,7 @@ func (channel *WebUIChannel) RegisterRoutes(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("/", channel.handleIndex)
+	mux.HandleFunc("/favicon.ico", channel.handleFavicon)
 	mux.HandleFunc("/api/v1/webui/chat", channel.handleStreamChat)
 	mux.HandleFunc("/api/v1/webui/workspace", channel.handleWorkspaceList)
 	mux.HandleFunc("/api/v1/webui/workspace/config", channel.handleWorkspaceConfigCreate)
@@ -191,6 +195,21 @@ func (channel *WebUIChannel) handleIndex(writer http.ResponseWriter, request *ht
 		return
 	}
 	_, _ = writer.Write(webUIIndex)
+}
+
+func (channel *WebUIChannel) handleFavicon(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+		writer.Header().Set("Allow", "GET, HEAD")
+		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
+		return
+	}
+	writer.Header().Set("Content-Type", "image/x-icon")
+	writer.Header().Set("Cache-Control", "public, max-age=86400")
+	writer.WriteHeader(http.StatusOK)
+	if request.Method == http.MethodHead {
+		return
+	}
+	_, _ = writer.Write(webUIFavicon)
 }
 
 func decodeWebUIChatRequest(writer http.ResponseWriter, request *http.Request) (TurnRequest, error) {

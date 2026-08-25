@@ -72,7 +72,7 @@ func TestWebUIServesIndex(t *testing.T) {
 		`id="model-select"`,
 		`id="provider-settings-backdrop"`,
 		`class="global-settings" id="provider-settings-trigger"`,
-		`font: 650 14px/1.2 ui-sans-serif`,
+		`font: 650 15px/1.2 ui-sans-serif`,
 		`--font-body: 16px/1.6`,
 		`--radius: 16px`,
 		`id="provider-fetch-models"`,
@@ -211,13 +211,81 @@ func TestWebUIComposerPlacesAttachmentButtonOnLeft(t *testing.T) {
 
 func TestWebUICreateAgentUsesDistinctAgentIcon(t *testing.T) {
 	page := string(webUIIndex)
-	selectIcon := `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M3.5 7h6l2 2h9v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2zM12 12v5m-2.5-2.5h5"`
-	agentIcon := `<svg class="workspace-create-agent-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none">`
+	selectIcon := `<use href="#icon-folder-plus"></use>`
+	agentIcon := `<svg class="ui-icon workspace-create-agent-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-bot"></use></svg>`
 	if !strings.Contains(page, selectIcon) {
 		t.Fatal("workspace selector folder icon is missing")
 	}
 	if !strings.Contains(page, agentIcon) {
 		t.Fatal("create .agent action is missing its distinct agent icon")
+	}
+}
+
+func TestWebUIUsesVendoredIconifyLucideIcons(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`https://icon-sets.iconify.design/lucide/`,
+		`id="icon-folder-open"`,
+		`id="icon-message-square-plus"`,
+		`id="icon-brain-circuit"`,
+		`id="icon-thumbs-up"`,
+		`href="#icon-settings"`,
+		`href="#icon-paperclip"`,
+		`iconMarkup("chevron-right")`,
+		`createIcon(rating === "up" ? "thumbs-up" : "thumbs-down")`,
+		`<link rel="icon" href="/favicon.ico" sizes="any" />`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("WebUI Iconify integration missing %q", expected)
+		}
+	}
+	spriteEnd := strings.Index(page, "</svg>")
+	if spriteEnd < 0 {
+		t.Fatal("WebUI icon sprite is not closed")
+	}
+	if strings.Contains(page[spriteEnd+len("</svg>"):], "<path") {
+		t.Fatal("WebUI still contains hand-authored SVG paths outside the Iconify sprite")
+	}
+	for _, obsolete := range []string{"👍", "👎", `textContent = "×"`, `textContent = "▶"`} {
+		if strings.Contains(page, obsolete) {
+			t.Fatalf("WebUI still contains obsolete character icon %q", obsolete)
+		}
+	}
+}
+
+func TestWebUIServesFavicon(t *testing.T) {
+	root := t.TempDir()
+	service := newTestService(root, "http://example.invalid")
+	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}})
+	apiServer := httptest.NewServer(handler)
+	defer apiServer.Close()
+
+	response, err := http.Get(apiServer.URL + "/favicon.ico")
+	if err != nil {
+		t.Fatalf("GET /favicon.ico failed: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.StatusCode)
+	}
+	if contentType := response.Header.Get("Content-Type"); contentType != "image/x-icon" {
+		t.Fatalf("content-type = %q, want image/x-icon", contentType)
+	}
+	if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "public, max-age=86400" {
+		t.Fatalf("cache-control = %q, want public, max-age=86400", cacheControl)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read favicon failed: %v", err)
+	}
+	wantHeader := []byte{0, 0, 1, 0, 1, 0}
+	if len(body) < len(wantHeader) {
+		t.Fatalf("favicon length = %d, want at least %d", len(body), len(wantHeader))
+	}
+	for index := range wantHeader {
+		if body[index] != wantHeader[index] {
+			t.Fatalf("favicon header byte %d = %d, want %d", index, body[index], wantHeader[index])
+		}
 	}
 }
 
