@@ -253,6 +253,20 @@ func TestWebUIUsesVendoredIconifyLucideIcons(t *testing.T) {
 	}
 }
 
+func TestWebUIKeepsSpinningBrandMark(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`<div class="mark" aria-hidden="true"></div>`,
+		`.mark::before,`,
+		`animation: markSpin 4s linear infinite;`,
+		`@keyframes markSpin { 100% { transform: rotate(360deg); } }`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("WebUI spinning brand mark missing %q", expected)
+		}
+	}
+}
+
 func TestWebUIServesFavicon(t *testing.T) {
 	root := t.TempDir()
 	service := newTestService(root, "http://example.invalid")

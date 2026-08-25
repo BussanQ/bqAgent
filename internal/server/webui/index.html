@@ -319,14 +319,12 @@
       var(--panel-strong);
     box-shadow: inset 0 0 18px rgba(var(--signal-rgb),.10), 0 0 26px rgba(var(--signal-rgb),.12);
     position: relative;
-    display: grid;
-    place-items: center;
   }
   .mark::before,
   .mark::after {
-    display: none;
+    content: "";
+    position: absolute;
   }
-  .mark .ui-icon { width: 20px; height: 20px; color: var(--signal); filter: drop-shadow(0 0 8px rgba(var(--signal-rgb), .42)); }
   .mark::before {
     inset: 8px;
     border-radius: 50%;
@@ -1531,7 +1529,7 @@
   <div class="scanline" aria-hidden="true"></div>
   <header>
     <div class="brand">
-      <div class="mark" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24"><use href="#icon-bot"></use></svg></div>
+      <div class="mark" aria-hidden="true"></div>
       <div class="brand-text">
         <h1>bqagent</h1>
       </div>
