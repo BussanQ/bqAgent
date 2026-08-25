@@ -226,7 +226,6 @@ func TestWebUIUsesVendoredIconifyLucideIcons(t *testing.T) {
 	for _, expected := range []string{
 		`https://icon-sets.iconify.design/lucide/`,
 		`id="icon-folder-open"`,
-		`id="icon-message-square-plus"`,
 		`id="icon-brain-circuit"`,
 		`id="icon-thumbs-up"`,
 		`href="#icon-settings"`,
@@ -249,6 +248,24 @@ func TestWebUIUsesVendoredIconifyLucideIcons(t *testing.T) {
 	for _, obsolete := range []string{"👍", "👎", `textContent = "×"`, `textContent = "▶"`} {
 		if strings.Contains(page, obsolete) {
 			t.Fatalf("WebUI still contains obsolete character icon %q", obsolete)
+		}
+	}
+}
+
+func TestWebUIUsesConversationSidebarAsOnlyNewChatEntry(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`id="conversation-new"`,
+		`var conversationNew = document.getElementById("conversation-new");`,
+		`conversationNew.addEventListener("click", newChat);`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("WebUI conversation new-chat entry missing %q", expected)
+		}
+	}
+	for _, removed := range []string{`id="new-chat"`, `var newChatBtn`, `icon-message-square-plus`} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("WebUI still contains duplicate header new-chat entry %q", removed)
 		}
 	}
 }

@@ -393,18 +393,6 @@
   }
   .status.error::before { background: var(--danger); box-shadow: 0 0 14px var(--danger); }
   @keyframes statusPulse { 50% { opacity: .35; transform: scale(.72); } }
-  .ghost {
-    height: 36px;
-    padding: 0 13px;
-    border-radius: var(--radius-pill);
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: var(--panel);
-    font-size: var(--font-ui);
-    font-weight: 650;
-  }
-  .ghost .ui-icon { width: 17px; height: 17px; color: var(--signal); }
   .icon-button {
     width: 36px;
     height: 36px;
@@ -1453,8 +1441,6 @@
     header { padding: 12px; }
     .brand span { display: none; }
     .status { display: none; }
-    .ghost { width: 36px; padding: 0; justify-content: center; }
-    .ghost span:not(.plus) { display: none; }
     .thread { padding-top: 24px; gap: 14px; }
     .prompts { grid-template-columns: 1fr; }
     .message-stack, .msg.user .message-stack { max-width: calc(100% - 43px); }
@@ -1496,7 +1482,6 @@
     <symbol id="icon-sun" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></g></symbol>
     <symbol id="icon-moon" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></symbol>
     <symbol id="icon-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14m-7-7v14"/></symbol>
-    <symbol id="icon-message-square-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2zM12 8v6m-3-3h6"/></symbol>
     <symbol id="icon-trash-2" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 11v6m4-6v6m5-11v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
     <symbol id="icon-folder-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m-3-3h6m5 7a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
     <symbol id="icon-bot" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2m16 0h2m-7-1v2m-6-2v2"/></g></symbol>
@@ -1541,10 +1526,6 @@
       <div class="status" id="status" role="status" aria-live="polite" aria-atomic="true">在线</div>
       <button class="icon-button" id="theme-toggle" type="button" title="切换主题" aria-label="切换明暗主题">
         <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-sun"></use></svg>
-      </button>
-      <button class="ghost" id="new-chat" type="button" title="新建对话" aria-label="新建对话">
-        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-message-square-plus"></use></svg>
-        <span>新建</span>
       </button>
     </div>
   </header>
@@ -1839,7 +1820,6 @@
   var reasoningEffortRange = document.getElementById("reasoning-effort-range");
   var reasoningEffortLabels = document.getElementById("reasoning-effort-labels");
   var sendBtn = document.getElementById("send");
-  var newChatBtn = document.getElementById("new-chat");
   var themeToggle = document.getElementById("theme-toggle");
   var statusEl = document.getElementById("status");
   var modelSelect = document.getElementById("model-select");
@@ -4297,7 +4277,6 @@
   sendBtn.addEventListener("click", function () {
     if (busy) stopCurrentTurn(); else send();
   });
-  newChatBtn.addEventListener("click", newChat);
   conversationNew.addEventListener("click", newChat);
   providerSettingsTrigger.addEventListener("click", function () {
     openProviderSettings().catch(function (error) {
