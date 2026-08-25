@@ -2,6 +2,8 @@
 
 [English](./README.md) | 中文
 
+![bqagent WebUI 界面](./docs/images/webui-overview.png)
+
 > *"问题不在于你看到了什么，而在于你看见了什么。"* — 梭罗
 
 这是一个面向本地工作流的小型 Go 智能体。现在它在保留极简执行循环的同时，增加了工作区上下文、Markdown 技能定义、轻量记忆、规划、持久会话、请求级上下文管理、基于 checkpoint 的压缩恢复，以及最小后台模式。

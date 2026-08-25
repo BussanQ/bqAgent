@@ -2,6 +2,8 @@
 
 [中文](./README_CN.md) | English
 
+![bqagent WebUI](./docs/images/webui-overview.png)
+
 > *"The question is not what you look at, but what you see."* — Henry David Thoreau
 
 A small Go agent for local work, now with workspace-aware context, Markdown skill definitions, lightweight memory, planning, persistent sessions, request-time context management, checkpoint-based resume compaction, and a minimal background mode.
