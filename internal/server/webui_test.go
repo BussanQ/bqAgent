@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -232,7 +235,8 @@ func TestWebUIUsesVendoredIconifyLucideIcons(t *testing.T) {
 		`href="#icon-paperclip"`,
 		`iconMarkup("chevron-right")`,
 		`createIcon(rating === "up" ? "thumbs-up" : "thumbs-down")`,
-		`<link rel="icon" href="/favicon.ico" sizes="any" />`,
+		`<link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="256x256" />`,
+		`<link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("WebUI Iconify integration missing %q", expected)
@@ -317,6 +321,37 @@ func TestWebUIServesFavicon(t *testing.T) {
 		if body[index] != wantHeader[index] {
 			t.Fatalf("favicon header byte %d = %d, want %d", index, body[index], wantHeader[index])
 		}
+	}
+	pngOffset := int(binary.LittleEndian.Uint32(body[18:22]))
+	if pngOffset < 22 || pngOffset >= len(body) {
+		t.Fatalf("favicon PNG offset = %d, want a valid ICO payload offset", pngOffset)
+	}
+	iconImage, err := png.Decode(bytes.NewReader(body[pngOffset:]))
+	if err != nil {
+		t.Fatalf("decode favicon PNG failed: %v", err)
+	}
+	_, _, _, alpha := iconImage.At(0, 0).RGBA()
+	if alpha != 0 {
+		t.Fatalf("favicon corner alpha = %d, want transparent corner without a white border", alpha)
+	}
+
+	svgResponse, err := http.Get(apiServer.URL + "/favicon.svg")
+	if err != nil {
+		t.Fatalf("GET /favicon.svg failed: %v", err)
+	}
+	defer svgResponse.Body.Close()
+	if svgResponse.StatusCode != http.StatusOK {
+		t.Fatalf("SVG status = %d, want 200", svgResponse.StatusCode)
+	}
+	if contentType := svgResponse.Header.Get("Content-Type"); contentType != "image/svg+xml; charset=utf-8" {
+		t.Fatalf("SVG content-type = %q, want image/svg+xml; charset=utf-8", contentType)
+	}
+	svgBody, err := io.ReadAll(svgResponse.Body)
+	if err != nil {
+		t.Fatalf("read SVG favicon failed: %v", err)
+	}
+	if !bytes.Contains(svgBody, []byte(`<svg xmlns="http://www.w3.org/2000/svg"`)) {
+		t.Fatal("served SVG favicon is invalid")
 	}
 }
 

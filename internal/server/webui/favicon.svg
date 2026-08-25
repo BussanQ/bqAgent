@@ -16,8 +16,8 @@
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
-  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#background)"/>
-  <rect x="10.5" y="10.5" width="235" height="235" rx="55.5" fill="none" stroke="#35b8ff" stroke-opacity=".34" stroke-width="5"/>
+  <rect width="256" height="256" rx="54" fill="url(#background)"/>
+  <rect x="2.5" y="2.5" width="251" height="251" rx="51.5" fill="none" stroke="#35b8ff" stroke-opacity=".34" stroke-width="5"/>
   <path d="M52 70c16-30 44-46 78-46 33 0 62 15 79 42" fill="none" stroke="#7be7ff" stroke-opacity=".15" stroke-width="8" stroke-linecap="round"/>
   <g fill="none" stroke="url(#signal)" stroke-linecap="round" stroke-linejoin="round" stroke-width="14" filter="url(#glow)">
     <path d="M128 94V54H88"/>
