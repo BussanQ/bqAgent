@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"bqagent/internal/agent"
 	"bqagent/internal/qq"
 	appserver "bqagent/internal/server"
 	serverchanclient "bqagent/internal/serverchan"
