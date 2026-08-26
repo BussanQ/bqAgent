@@ -26,7 +26,7 @@ The difference now is that the loop can be wrapped with extra capabilities inspi
 - compatibility with legacy `workspace/memory/MEMORY.md` and `workspace/memory/YYYY-MM-DD.md`
 - continued support for `.agent/rules/*.md` and `.agent/skills/*/SKILL.md`
 - optional planning with `--plan`
-- interactive multi-turn conversation with `--chat`
+- inline, always-streaming terminal TUI by default (also available with `--chat`); see the [TUI guide](./docs/TUI.md)
 - persistent sessions with `--resume`
 - request-time context pruning for long conversations
 - optional request-time summary compaction for older turns
@@ -186,4 +186,4 @@ In `--chat` or `--server` sessions, use `/opencode <task>` to route the turn to 
 
 ## Documentation
 
-See the [project documentation](./docs/doc.md#english-documentation) for complete usage instructions.
+See the [project documentation](./docs/doc.md#english-documentation) for complete usage instructions and the [inline TUI guide](./docs/TUI.md) for shortcuts, commands, TTY fallback, and scrollback behavior.

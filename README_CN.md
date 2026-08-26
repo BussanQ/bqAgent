@@ -26,7 +26,7 @@ bqagent 的核心仍然很简单：
 - 兼容旧版 `workspace/memory/MEMORY.md` 和 `workspace/memory/YYYY-MM-DD.md`
 - 继续支持 `.agent/rules/*.md` 和 `.agent/skills/*/SKILL.md`
 - 使用 `--plan` 先拆步骤再执行
-- 使用 `--chat` 进行交互式多轮对话
+- 默认启动始终流式的内联终端 TUI（也可显式使用 `--chat`）
 - 使用 `--resume` 恢复持久会话
 - 对长对话做请求时上下文裁剪
 - 可选地对旧对话做请求时摘要压缩
@@ -186,4 +186,4 @@ Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex
 
 ## 文档
 
-完整使用说明请参阅[项目文档](./docs/doc.md#中文文档)。
+完整使用说明请参阅[项目文档](./docs/doc.md#中文文档)；终端快捷键、命令面板、TTY 回退与 scrollback 行为请参阅[内联 TUI 指南](./docs/TUI.md)。

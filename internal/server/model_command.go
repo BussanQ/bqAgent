@@ -12,6 +12,22 @@ type configuredModel struct {
 	ID    string
 }
 
+// ModelOption is a read-only model choice exposed to interactive clients.
+type ModelOption struct {
+	Alias string
+	ID    string
+}
+
+// ModelOptions returns a copy of the configured switchable model list.
+func (service *Service) ModelOptions() []ModelOption {
+	options := make([]ModelOption, 0, len(service.models)+1)
+	options = append(options, ModelOption{Alias: "default", ID: service.model})
+	for _, model := range service.models {
+		options = append(options, ModelOption{Alias: model.Alias, ID: model.ID})
+	}
+	return options
+}
+
 func parseConfiguredModels(values []string) []configuredModel {
 	models := make([]configuredModel, 0, len(values))
 	seenAliases := make(map[string]struct{}, len(values))
