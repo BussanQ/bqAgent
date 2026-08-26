@@ -9,11 +9,11 @@
 ## 快速开始
 
 ```bash
-# 默认单次任务
+# 单次任务
 go run ./cmd/agent "列出当前仓库里的所有 Go 文件"
 
-# 交互式多轮对话
-go run ./cmd/agent --chat
+# 默认启动交互式多轮对话（也可显式传入 --chat）
+go run ./cmd/agent
 
 # 带初始任务的交互对话
 go run ./cmd/agent --chat "读取 README.md 并总结"
@@ -46,7 +46,7 @@ go run ./cmd/agent --resume <session-id> "基于刚才的结果继续"
 go run ./cmd/agent --chat --resume <session-id>
 ```
 
-如果不传任何参数，bqagent 仍然会默认使用 `Hello`。
+如果不传任何参数，bqagent 默认启动交互式多轮对话，等同于传入 `--chat`。
 
 ## 工作区布局
 
@@ -328,11 +328,11 @@ MIT
 ## Quick start
 
 ```bash
-# default single-run task
+# single-run task
 go run ./cmd/agent "list all Go files in this repo"
 
-# interactive multi-turn conversation
-go run ./cmd/agent --chat
+# start interactive multi-turn conversation by default (--chat is also accepted)
+go run ./cmd/agent
 
 # start a chat with an initial task
 go run ./cmd/agent --chat "read README.md and summarize it"
@@ -365,7 +365,7 @@ go run ./cmd/agent --resume <session-id> "continue from the previous result"
 go run ./cmd/agent --chat --resume <session-id>
 ```
 
-If you run `bqagent` without any arguments, it still defaults to `Hello`.
+If you run `bqagent` without any arguments, it starts an interactive multi-turn conversation, equivalent to passing `--chat`.
 
 ## Workspace layout
 

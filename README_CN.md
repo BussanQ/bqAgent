@@ -75,6 +75,8 @@ set LLM_API_KEY=your-key-here
 
 ### LLM 供应商
 
+单次任务、Chat、后台任务、子任务和 Server 都会优先读取全局 `~/.agent/config.json` 中的当前 Provider；未配置当前 Provider 时才回退到环境变量。
+
 通用 `LLM_*` 配置优先于供应商兼容变量。
 
 | 变量 | 默认值 | 说明 |

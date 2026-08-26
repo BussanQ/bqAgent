@@ -75,6 +75,8 @@ set LLM_API_KEY=your-key-here
 
 ### LLM provider
 
+Single-run tasks, Chat, background tasks, subagent workers, and Server all prefer the active provider in global `~/.agent/config.json`; environment variables are used only when no active provider is configured.
+
 Generic `LLM_*` values take precedence over provider-specific compatibility variables.
 
 | Variable | Default | Description |
