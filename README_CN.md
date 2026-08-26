@@ -166,6 +166,7 @@ LLM_MODEL=claude-sonnet-4-5
 | `CONTEXT_TARGET_INPUT_TOKENS` | `128000` | 裁剪或摘要后的目标大小。 |
 | `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | 为模型回复预留的 token。 |
 | `CONTEXT_KEEP_LAST_TURNS` | `6` | 压缩时保留的最近轮次。 |
+| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `80` | 完整请求的本地/usage 估算达到目标预算的该百分比后，尝试调用 Provider 精确计数（OpenAI Responses、Anthropic）；不支持或失败时自动回退估算。 |
 | `CONTEXT_SUMMARIZATION_ENABLED` | `true` | 启用旧对话摘要。 |
 | `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `128000` | 触发摘要的输入大小。 |
 | `CONTEXT_SUMMARY_MODEL` | 主模型 | 可选的低成本摘要模型。 |

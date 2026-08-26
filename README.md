@@ -166,6 +166,7 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `CONTEXT_TARGET_INPUT_TOKENS` | `128000` | Target size after pruning or summarization. |
 | `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | Tokens reserved for the model response. |
 | `CONTEXT_KEEP_LAST_TURNS` | `6` | Recent turns retained during compaction. |
+| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `80` | Attempts provider-side exact counting (OpenAI Responses and Anthropic) after the full-request local/usage estimate reaches this percentage of the target; unsupported or failed counts fall back safely. |
 | `CONTEXT_SUMMARIZATION_ENABLED` | `true` | Enables summarization of older dialogue. |
 | `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `128000` | Estimated input size that triggers summarization. |
 | `CONTEXT_SUMMARY_MODEL` | main model | Optional cheaper model used for summaries. |

@@ -361,13 +361,17 @@ func assistantFromAnthropic(response anthropicResponse) AssistantMessage {
 }
 
 func (c *Client) doAnthropicRequest(ctx context.Context, payload anthropicRequest, stream bool) (*http.Response, error) {
+	return c.doAnthropicJSONRequest(ctx, c.baseURL+"/messages", payload, stream, "anthropic messages request")
+}
+
+func (c *Client) doAnthropicJSONRequest(ctx context.Context, url string, payload any, stream bool, label string) (*http.Response, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, &ProviderError{Category: ProviderErrorRequest, Message: "encode anthropic messages request", Cause: err}
+		return nil, &ProviderError{Category: ProviderErrorRequest, Message: "encode " + label, Cause: err}
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/messages", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, &ProviderError{Category: ProviderErrorRequest, Message: "build anthropic messages request", Cause: err}
+		return nil, &ProviderError{Category: ProviderErrorRequest, Message: "build " + label, Cause: err}
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("anthropic-version", "2023-06-01")

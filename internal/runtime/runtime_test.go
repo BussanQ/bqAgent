@@ -56,6 +56,9 @@ func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	if config.ContextKeepLastTurns != defaults.KeepLastTurns {
 		t.Fatalf("ContextKeepLastTurns = %d, want %d", config.ContextKeepLastTurns, defaults.KeepLastTurns)
 	}
+	if config.ContextExactCountTriggerPercent != defaults.ExactCountTriggerPercent {
+		t.Fatalf("ContextExactCountTriggerPercent = %d, want %d", config.ContextExactCountTriggerPercent, defaults.ExactCountTriggerPercent)
+	}
 	if config.ContextSummarizationEnabled != defaults.SummarizationEnabled {
 		t.Fatalf("ContextSummarizationEnabled = %t, want %t", config.ContextSummarizationEnabled, defaults.SummarizationEnabled)
 	}
@@ -162,6 +165,8 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 			return "bad"
 		case "CONTEXT_KEEP_LAST_TURNS":
 			return "bad"
+		case "CONTEXT_EXACT_COUNT_TRIGGER_PERCENT":
+			return "bad"
 		case "CONTEXT_SUMMARIZATION_ENABLED":
 			return "not-bool"
 		case "CONTEXT_SUMMARY_TRIGGER_TOKENS":
@@ -189,6 +194,9 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 	}
 	if config.ContextKeepLastTurns != defaults.KeepLastTurns {
 		t.Fatalf("ContextKeepLastTurns = %d, want fallback %d", config.ContextKeepLastTurns, defaults.KeepLastTurns)
+	}
+	if config.ContextExactCountTriggerPercent != defaults.ExactCountTriggerPercent {
+		t.Fatalf("ContextExactCountTriggerPercent = %d, want fallback %d", config.ContextExactCountTriggerPercent, defaults.ExactCountTriggerPercent)
 	}
 	if config.ContextSummarizationEnabled != defaults.SummarizationEnabled {
 		t.Fatalf("ContextSummarizationEnabled = %t, want fallback %t", config.ContextSummarizationEnabled, defaults.SummarizationEnabled)

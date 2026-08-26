@@ -88,6 +88,113 @@ func TestOpenAIResponseClientConvertsRequestAndResponse(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponseClientCountsFullInputTokens(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/responses/input_tokens" {
+			t.Fatalf("request path = %q, want /responses/input_tokens", request.URL.Path)
+		}
+		if got := request.Header.Get("Authorization"); got != "Bearer response-key" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(writer, `{"object":"response.input_tokens","input_tokens":321}`)
+	}))
+	defer server.Close()
+
+	client := NewClientWithAPIType("response-key", server.URL, APITypeOpenAIResponse, server.Client())
+	count, err := client.CountInputTokens(
+		context.Background(),
+		"gpt-test",
+		[]map[string]any{{"role": "system", "content": "be useful"}, {"role": "user", "content": "hello"}},
+		tools.Definitions()[:1],
+		ChatCompletionOptions{ReasoningEffort: ReasoningEffortHigh, ResponseFormat: map[string]any{"type": "json_object"}},
+	)
+	if err != nil {
+		t.Fatalf("CountInputTokens: %v", err)
+	}
+	if count.Tokens != 321 || !count.Exact {
+		t.Fatalf("count = %#v, want 321 exact", count)
+	}
+	if requestBody["model"] != "gpt-test" {
+		t.Fatalf("model = %#v", requestBody["model"])
+	}
+	if input, _ := requestBody["input"].([]any); len(input) != 2 {
+		t.Fatalf("input = %#v, want two messages", requestBody["input"])
+	}
+	if definitions, _ := requestBody["tools"].([]any); len(definitions) != 1 {
+		t.Fatalf("tools = %#v, want one definition", requestBody["tools"])
+	}
+	if reasoning, _ := requestBody["reasoning"].(map[string]any); reasoning["effort"] != "high" {
+		t.Fatalf("reasoning = %#v", requestBody["reasoning"])
+	}
+	if text, _ := requestBody["text"].(map[string]any); text["format"] == nil {
+		t.Fatalf("text = %#v, want response format", requestBody["text"])
+	}
+}
+
+func TestInputTokenCountUnsupportedProviders(t *testing.T) {
+	client := NewClientWithAPIType("", "https://unused.invalid", APITypeOpenAI, http.DefaultClient)
+	_, err := client.CountInputTokens(context.Background(), "model", nil, nil, ChatCompletionOptions{})
+	if !errors.Is(err, ErrInputTokenCountUnsupported) {
+		t.Fatalf("error = %v, want ErrInputTokenCountUnsupported", err)
+	}
+}
+
+func TestAnthropicClientCountsFullInputTokens(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/messages/count_tokens" {
+			t.Fatalf("request path = %q, want /messages/count_tokens", request.URL.Path)
+		}
+		if got := request.Header.Get("x-api-key"); got != "anthropic-key" {
+			t.Fatalf("x-api-key = %q", got)
+		}
+		if got := request.Header.Get("anthropic-version"); got != "2023-06-01" {
+			t.Fatalf("anthropic-version = %q", got)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(writer, `{"input_tokens":456}`)
+	}))
+	defer server.Close()
+
+	client := NewClientWithAPIType("anthropic-key", server.URL, APITypeAnthropic, server.Client())
+	count, err := client.CountInputTokens(
+		context.Background(),
+		"claude-test",
+		[]map[string]any{{"role": "system", "content": "be useful"}, {"role": "user", "content": "hello"}},
+		tools.Definitions()[:1],
+		ChatCompletionOptions{ReasoningEffort: ReasoningEffortHigh, ResponseFormat: map[string]any{"type": "json_object"}},
+	)
+	if err != nil {
+		t.Fatalf("CountInputTokens: %v", err)
+	}
+	if count.Tokens != 456 || !count.Exact {
+		t.Fatalf("count = %#v, want 456 exact", count)
+	}
+	if requestBody["model"] != "claude-test" || requestBody["max_tokens"] != nil || requestBody["stream"] != nil {
+		t.Fatalf("count request envelope = %#v", requestBody)
+	}
+	if system, _ := requestBody["system"].(string); !strings.Contains(system, "be useful") || !strings.Contains(system, "valid JSON object") {
+		t.Fatalf("system = %q", system)
+	}
+	if messages, _ := requestBody["messages"].([]any); len(messages) != 1 {
+		t.Fatalf("messages = %#v, want one user message", requestBody["messages"])
+	}
+	if definitions, _ := requestBody["tools"].([]any); len(definitions) != 1 {
+		t.Fatalf("tools = %#v, want one definition", requestBody["tools"])
+	}
+	if thinking, _ := requestBody["thinking"].(map[string]any); thinking["type"] != "adaptive" {
+		t.Fatalf("thinking = %#v", requestBody["thinking"])
+	}
+}
+
 func TestOpenAIResponseClientStreamsTextAndToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")

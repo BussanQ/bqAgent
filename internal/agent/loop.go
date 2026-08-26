@@ -25,6 +25,7 @@ const (
 	DefaultContextResponseReserveTokens = 4000
 	DefaultContextMaxInputTokens        = DefaultContextCompressionTokens + DefaultContextResponseReserveTokens
 	DefaultContextKeepLastTurns         = 6
+	DefaultExactCountTriggerPercent     = 80
 	EarlierConversationSummaryPrefix    = "Summary of earlier conversation:\n"
 	// maxParallelTools caps how many independent tool calls in one assistant turn
 	// run concurrently.
@@ -63,14 +64,27 @@ type ContextCheckpointRecorder interface {
 }
 
 type ContextConfig struct {
-	Enabled               bool
-	MaxInputTokens        int
-	TargetInputTokens     int
-	ResponseReserveTokens int
-	KeepLastTurns         int
-	SummarizationEnabled  bool
-	SummaryTriggerTokens  int
-	SummaryModel          string
+	Enabled                  bool
+	MaxInputTokens           int
+	TargetInputTokens        int
+	ResponseReserveTokens    int
+	KeepLastTurns            int
+	ExactCountTriggerPercent int
+	SummarizationEnabled     bool
+	SummaryTriggerTokens     int
+	SummaryModel             string
+}
+
+type promptUsageBaseline struct {
+	messageHashes    []string
+	requestShapeHash string
+	promptTokens     int
+}
+
+type requestTokenMeasurement struct {
+	tokens int
+	source string
+	exact  bool
 }
 
 // StageConfig bounds one interactive exploration stage without changing the
@@ -123,6 +137,8 @@ type Agent struct {
 	toolEventSink   ToolEventSink
 	toolEventSeq    atomic.Uint64
 	contextConfig   ContextConfig
+	contextUsageMu  sync.Mutex
+	promptUsage     promptUsageBaseline
 	stageConfig     StageConfig
 	reasoningEffort ReasoningEffort
 	trace           *apptrace.Recorder
@@ -228,13 +244,14 @@ func (a *Agent) RunConversationTurnWithMetrics(ctx context.Context, messages []m
 
 func DefaultContextConfig() ContextConfig {
 	return ContextConfig{
-		Enabled:               true,
-		MaxInputTokens:        DefaultContextMaxInputTokens,
-		ResponseReserveTokens: DefaultContextResponseReserveTokens,
-		TargetInputTokens:     DefaultContextCompressionTokens,
-		KeepLastTurns:         DefaultContextKeepLastTurns,
-		SummarizationEnabled:  true,
-		SummaryTriggerTokens:  DefaultContextCompressionTokens,
+		Enabled:                  true,
+		MaxInputTokens:           DefaultContextMaxInputTokens,
+		ResponseReserveTokens:    DefaultContextResponseReserveTokens,
+		TargetInputTokens:        DefaultContextCompressionTokens,
+		KeepLastTurns:            DefaultContextKeepLastTurns,
+		ExactCountTriggerPercent: DefaultExactCountTriggerPercent,
+		SummarizationEnabled:     true,
+		SummaryTriggerTokens:     DefaultContextCompressionTokens,
 	}
 }
 
@@ -269,6 +286,9 @@ func normalizeContextConfig(config ContextConfig) ContextConfig {
 	}
 	if config.KeepLastTurns < 0 {
 		config.KeepLastTurns = DefaultContextKeepLastTurns
+	}
+	if config.ExactCountTriggerPercent <= 0 || config.ExactCountTriggerPercent > 100 {
+		config.ExactCountTriggerPercent = DefaultExactCountTriggerPercent
 	}
 	if config.SummaryTriggerTokens <= 0 {
 		config.SummaryTriggerTokens = config.TargetInputTokens
@@ -365,7 +385,8 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if a.stageConfig.ImmediateProgress {
 			a.writeStageProgress(selectModelProgressMessage(modelProgressMessages))
 		}
-		requestMessages, compacted := a.buildRequestMessages(explorationCtx, messages)
+		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort}
+		requestMessages, compacted := a.buildRequestMessages(explorationCtx, messages, definitions, completionOptions)
 		if compacted != nil {
 			messages = compacted
 			updatedMessages = compacted
@@ -375,7 +396,6 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			requestErr error
 		)
 		modelStartedAt := time.Now()
-		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort}
 		if a.stream {
 			onChunk := func(chunk string) {
 				sink := a.tokenSink
@@ -396,6 +416,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		} else {
 			message, requestErr = a.client.CreateChatCompletion(explorationCtx, a.model, requestMessages, definitions)
 		}
+		a.rememberServerPromptUsage(requestMessages, definitions, completionOptions, message.Usage.PromptTokens)
 		if a.trace != nil {
 			usage := message.Usage
 			if usage.TotalTokens == 0 {
@@ -617,7 +638,7 @@ func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string
 		return "", messages, err
 	}
 	a.writeStageProgress(fmt.Sprintf("Preparing stage summary after %d iterations", iterations))
-	request, compacted := a.buildRequestMessages(ctx, messages)
+	request, compacted := a.buildRequestMessages(ctx, messages, nil, ChatCompletionOptions{})
 	if compacted != nil {
 		messages = compacted
 	}
@@ -764,38 +785,160 @@ func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, 
 // set can be persisted separately from the complete raw transcript. The
 // synthetic summary lives only in the working set and context checkpoint; it is
 // never recorded to messages.jsonl.
-func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]any) (request []map[string]any, compacted []map[string]any) {
+func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (request []map[string]any, compacted []map[string]any) {
 	sanitized := sanitizeCompletedToolHistory(duplicateMessages(messages))
 	if !a.contextConfig.Enabled {
 		return sanitized, nil
 	}
 
-	estimatedTokens := estimateMessagesTokens(sanitized)
-	if estimatedTokens <= a.contextConfig.TargetInputTokens {
-		a.logContextBudget(len(messages), len(sanitized), len(sanitized), estimatedTokens, false, false)
+	measurement := a.measureRequestTokens(ctx, sanitized, definitions, options, false)
+	if measurement.tokens <= a.contextConfig.TargetInputTokens {
+		a.logContextBudget(len(messages), len(sanitized), len(sanitized), measurement, false, false)
 		return sanitized, nil
 	}
 
+	messageTarget := messageBudgetForRequest(sanitized, measurement.tokens, a.contextConfig.TargetInputTokens)
 	pruned := pruneMessagesToBudget(sanitized, a.contextConfig)
-	pruned = hardPruneMessagesToBudget(pruned, a.contextConfig.TargetInputTokens)
-	prunedTokens := estimateMessagesTokens(pruned)
-	if !a.contextConfig.SummarizationEnabled || !shouldSummarize(estimatedTokens, a.contextConfig) {
-		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedTokens, true, false)
+	pruned = hardPruneMessagesToBudget(pruned, messageTarget)
+	if !a.contextConfig.SummarizationEnabled || !shouldSummarize(measurement.tokens, a.contextConfig) {
+		pruned, prunedMeasurement := a.finalizeRequestBudget(ctx, pruned, definitions, options, measurement.exact)
+		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedMeasurement, true, false)
 		return pruned, pruned
 	}
 
-	summarized, ok := a.summarizeMessages(ctx, sanitized)
+	summarized, ok := a.summarizeMessages(ctx, sanitized, messageTarget)
 	if !ok {
-		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedTokens, true, false)
+		pruned, prunedMeasurement := a.finalizeRequestBudget(ctx, pruned, definitions, options, measurement.exact)
+		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedMeasurement, true, false)
 		return pruned, pruned
 	}
-	summaryTokens := estimateMessagesTokens(summarized)
-	if summaryTokens > a.contextConfig.TargetInputTokens {
-		summarized = hardPruneMessagesToBudget(summarized, a.contextConfig.TargetInputTokens)
-		summaryTokens = estimateMessagesTokens(summarized)
-	}
-	a.logContextBudget(len(messages), len(sanitized), len(summarized), summaryTokens, true, true)
+	summarized, summaryMeasurement := a.finalizeRequestBudget(ctx, summarized, definitions, options, measurement.exact)
+	a.logContextBudget(len(messages), len(sanitized), len(summarized), summaryMeasurement, true, true)
 	return summarized, summarized
+}
+
+func (a *Agent) finalizeRequestBudget(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, forceExact bool) ([]map[string]any, requestTokenMeasurement) {
+	measurement := a.measureRequestTokens(ctx, messages, definitions, options, forceExact)
+	if measurement.tokens <= a.contextConfig.TargetInputTokens {
+		return messages, measurement
+	}
+
+	messageTokens := estimateMessagesTokens(messages)
+	overage := measurement.tokens - a.contextConfig.TargetInputTokens
+	// Leave a small guard because removing one locally estimated token does not
+	// always remove exactly one provider token after request framing.
+	guard := maxInt(1, a.contextConfig.TargetInputTokens/100)
+	messageTarget := maxInt(1, messageTokens-overage-guard)
+	adjusted := hardPruneMessagesToBudget(messages, messageTarget)
+	removedEstimate := messageTokens - estimateMessagesTokens(adjusted)
+	measurement.tokens = maxInt(0, measurement.tokens-removedEstimate)
+	measurement.source += "+adjusted"
+	measurement.exact = false
+	return adjusted, measurement
+}
+
+func messageBudgetForRequest(messages []map[string]any, requestTokens int, targetTokens int) int {
+	staticAndFramingTokens := requestTokens - estimateMessagesTokens(messages)
+	if staticAndFramingTokens < 0 {
+		staticAndFramingTokens = 0
+	}
+	return maxInt(1, targetTokens-staticAndFramingTokens)
+}
+
+func (a *Agent) measureRequestTokens(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, forceExact bool) requestTokenMeasurement {
+	estimated, source := a.estimateRequestTokens(messages, definitions, options)
+	measurement := requestTokenMeasurement{tokens: estimated, source: source}
+	trigger := a.contextConfig.TargetInputTokens * a.contextConfig.ExactCountTriggerPercent / 100
+	if !forceExact && estimated < trigger {
+		return measurement
+	}
+
+	counter, ok := a.client.(InputTokenCounter)
+	if !ok {
+		return measurement
+	}
+	count, err := counter.CountInputTokens(ctx, a.model, messages, definitions, options)
+	if err != nil {
+		if !errors.Is(err, ErrInputTokenCountUnsupported) {
+			a.logf("[Context] exact token count failed; using %s: %v\n", source, err)
+		}
+		return measurement
+	}
+	if count.Tokens <= 0 {
+		return measurement
+	}
+	measurement.tokens = count.Tokens
+	measurement.source = "provider"
+	measurement.exact = count.Exact
+	return measurement
+}
+
+func (a *Agent) estimateRequestTokens(messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (int, string) {
+	shapeHash := requestShapeHash(definitions, options)
+	messageHashes := hashMessages(messages)
+	a.contextUsageMu.Lock()
+	baseline := a.promptUsage
+	a.contextUsageMu.Unlock()
+	if baseline.promptTokens > 0 && baseline.requestShapeHash == shapeHash && hashesHavePrefix(messageHashes, baseline.messageHashes) {
+		return baseline.promptTokens + estimateMessagesTokens(messages[len(baseline.messageHashes):]), "usage+estimate"
+	}
+	return estimateVisibleRequestTokens(messages, definitions, options), "estimate"
+}
+
+func (a *Agent) rememberServerPromptUsage(messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, promptTokens int) {
+	if promptTokens <= 0 {
+		return
+	}
+	a.contextUsageMu.Lock()
+	a.promptUsage = promptUsageBaseline{
+		messageHashes:    hashMessages(messages),
+		requestShapeHash: requestShapeHash(definitions, options),
+		promptTokens:     promptTokens,
+	}
+	a.contextUsageMu.Unlock()
+}
+
+func estimateVisibleRequestTokens(messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) int {
+	total := estimateMessagesTokens(messages)
+	if len(definitions) > 0 {
+		if encoded, err := json.Marshal(definitions); err == nil {
+			total += estimateTextTokens(string(encoded))
+		}
+	}
+	if len(options.ResponseFormat) > 0 {
+		if encoded, err := json.Marshal(options.ResponseFormat); err == nil {
+			total += estimateTextTokens(string(encoded))
+		}
+	}
+	return total
+}
+
+func requestShapeHash(definitions []tools.Definition, options ChatCompletionOptions) string {
+	return apptrace.HashJSON(struct {
+		Definitions    []tools.Definition
+		ResponseFormat map[string]any
+		Reasoning      ReasoningEffort
+	}{definitions, options.ResponseFormat, options.ReasoningEffort})
+}
+
+func hashMessages(messages []map[string]any) []string {
+	hashes := make([]string, len(messages))
+	for index, message := range messages {
+		hashes[index] = apptrace.HashJSON(message)
+	}
+	return hashes
+}
+
+func hashesHavePrefix(values []string, prefix []string) bool {
+	if len(values) < len(prefix) {
+		return false
+	}
+	for index := range prefix {
+		if values[index] != prefix[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func pruneMessagesToBudget(messages []map[string]any, config ContextConfig) []map[string]any {
@@ -1057,7 +1200,7 @@ func shouldSummarize(estimatedTokens int, config ContextConfig) bool {
 	return config.SummarizationEnabled && estimatedTokens > config.SummaryTriggerTokens
 }
 
-func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any) ([]map[string]any, bool) {
+func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any, targetTokens int) ([]map[string]any, bool) {
 	prefix, tail, ok := splitMessagesForSummary(messages, a.contextConfig.KeepLastTurns)
 	if !ok {
 		return nil, false
@@ -1078,7 +1221,7 @@ func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any
 		"content": EarlierConversationSummaryPrefix + summary,
 	})
 	summarized = append(summarized, tail...)
-	summarized = hardPruneMessagesToBudget(summarized, a.contextConfig.TargetInputTokens)
+	summarized = hardPruneMessagesToBudget(summarized, targetTokens)
 	if a.checkpointSaver != nil {
 		checkpointTail := summarized
 		if len(checkpointTail) > 0 {
@@ -1226,11 +1369,11 @@ func estimateDataURIImageTokens(dataURI string) int {
 	return 256 + (rawBytes+1023)/1024
 }
 
-func (a *Agent) logContextBudget(rawCount, sanitizedCount, requestCount, estimatedTokens int, pruned bool, summarized bool) {
+func (a *Agent) logContextBudget(rawCount, sanitizedCount, requestCount int, measurement requestTokenMeasurement, pruned bool, summarized bool) {
 	if a.logWriter == nil {
 		return
 	}
-	fmt.Fprintf(a.logWriter, "[Context] raw_messages=%d sanitized_messages=%d request_messages=%d estimated_tokens=%d pruned=%t summarized=%t target_tokens=%d\n", rawCount, sanitizedCount, requestCount, estimatedTokens, pruned, summarized, a.contextConfig.TargetInputTokens)
+	fmt.Fprintf(a.logWriter, "[Context] raw_messages=%d sanitized_messages=%d request_messages=%d input_tokens=%d token_source=%s exact=%t pruned=%t summarized=%t target_tokens=%d\n", rawCount, sanitizedCount, requestCount, measurement.tokens, measurement.source, measurement.exact, pruned, summarized, a.contextConfig.TargetInputTokens)
 }
 
 func replayableToolCalls(toolCalls []ToolCall) []ToolCall {

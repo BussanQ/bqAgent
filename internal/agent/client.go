@@ -32,6 +32,20 @@ type ChatCompletionClient interface {
 	CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, onChunk func(string)) (AssistantMessage, error)
 }
 
+// InputTokenCounter is an optional provider capability for counting the exact
+// model-visible input before generation. Providers without a count endpoint do
+// not need to implement it; the agent falls back to its local estimate.
+type InputTokenCounter interface {
+	CountInputTokens(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (InputTokenCount, error)
+}
+
+type InputTokenCount struct {
+	Tokens int
+	Exact  bool
+}
+
+var ErrInputTokenCountUnsupported = errors.New("input token counting is not supported by this provider")
+
 type ReasoningEffort string
 
 const (

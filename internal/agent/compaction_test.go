@@ -50,7 +50,8 @@ func TestSummarizationAdoptedIntoWorkingSet(t *testing.T) {
 	}
 	recorder := &capturingRecorder{}
 	app := NewWithOptions(client, "", Options{
-		Recorder: recorder,
+		Recorder:        recorder,
+		ToolDefinitions: []tools.Definition{},
 		Functions: map[string]tools.Function{
 			"noop": func(_ context.Context, _ map[string]any) (string, error) { return "ok", nil },
 		},
@@ -124,10 +125,10 @@ func TestSummarizationAdoptedIntoWorkingSet(t *testing.T) {
 // and the working set is left untouched (regression guard for the nil-compacted path).
 func TestNoCompactionWhenUnderBudget(t *testing.T) {
 	client := &stubClient{
-		responses:       []AssistantMessage{{Role: "assistant", Content: "hi"}},
-		optionResponses: []AssistantMessage{{Role: "assistant", Content: "unexpected summary"}},
+		responses: []AssistantMessage{{Role: "assistant", Content: "hi"}},
 	}
 	app := NewWithOptions(client, "", Options{
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:              true,
 			MaxInputTokens:       200,
@@ -149,7 +150,17 @@ func TestNoCompactionWhenUnderBudget(t *testing.T) {
 	if result != "hi" {
 		t.Fatalf("result = %q, want %q", result, "hi")
 	}
-	if len(client.optionMessages) != 0 {
-		t.Fatalf("summary call count = %d, want 0 when under budget", len(client.optionMessages))
+	summaryRequests := 0
+	for _, request := range client.optionMessages {
+		if len(request) == 0 {
+			continue
+		}
+		content, _ := request[0]["content"].(string)
+		if strings.HasPrefix(content, "Summarize the earlier conversation") {
+			summaryRequests++
+		}
+	}
+	if summaryRequests != 0 {
+		t.Fatalf("summary call count = %d, want 0 when under budget", summaryRequests)
 	}
 }

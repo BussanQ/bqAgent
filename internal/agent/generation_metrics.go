@@ -94,6 +94,14 @@ func (client *generationMetricsClient) CreateChatCompletion(ctx context.Context,
 	return client.inner.CreateChatCompletion(ctx, model, messages, definitions)
 }
 
+func (client *generationMetricsClient) CountInputTokens(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (InputTokenCount, error) {
+	counter, ok := client.inner.(InputTokenCounter)
+	if !ok {
+		return InputTokenCount{}, ErrInputTokenCountUnsupported
+	}
+	return counter.CountInputTokens(ctx, model, messages, definitions, options)
+}
+
 func (client *generationMetricsClient) CreateChatCompletionWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
 	if inner, ok := client.inner.(chatCompletionOptionsClient); ok {
 		return inner.CreateChatCompletionWithOptions(ctx, model, messages, definitions, options)
