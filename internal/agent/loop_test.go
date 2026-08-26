@@ -21,6 +21,9 @@ func TestDefaultContextConfigUses128KCompressionThreshold(t *testing.T) {
 	if config.MaxInputTokens != 132000 || config.ResponseReserveTokens != 4000 {
 		t.Fatalf("context budget = max %d reserve %d, want 132000 and 4000", config.MaxInputTokens, config.ResponseReserveTokens)
 	}
+	if config.ExactCountTriggerPercent != 80 {
+		t.Fatalf("exact count trigger = %d, want 80 percent", config.ExactCountTriggerPercent)
+	}
 }
 
 type stubClient struct {
@@ -31,6 +34,30 @@ type stubClient struct {
 	optionErrors    []error
 	options         []ChatCompletionOptions
 	definitions     [][]tools.Definition
+}
+
+type exactCountingStubClient struct {
+	*stubClient
+	counts        []InputTokenCount
+	countErrors   []error
+	countMessages [][]map[string]any
+}
+
+func (client *exactCountingStubClient) CountInputTokens(_ context.Context, _ string, messages []map[string]any, _ []tools.Definition, _ ChatCompletionOptions) (InputTokenCount, error) {
+	client.countMessages = append(client.countMessages, cloneMessages(messages))
+	if len(client.countErrors) > 0 {
+		err := client.countErrors[0]
+		client.countErrors = client.countErrors[1:]
+		if err != nil {
+			return InputTokenCount{}, err
+		}
+	}
+	if len(client.counts) == 0 {
+		return InputTokenCount{}, errors.New("no token count configured")
+	}
+	count := client.counts[0]
+	client.counts = client.counts[1:]
+	return count, nil
 }
 
 func (s *stubClient) CreateChatCompletion(_ context.Context, _ string, messages []map[string]any, definitions []tools.Definition) (AssistantMessage, error) {
@@ -960,7 +987,8 @@ func TestRunContextPrunesOldMessages(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		LogWriter: &logs,
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:               true,
 			MaxInputTokens:        160,
@@ -1054,11 +1082,12 @@ func TestRunContextSummarizesOldMessages(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		LogWriter: &logs,
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:               true,
 			MaxInputTokens:        180,
-			TargetInputTokens:     110,
+			TargetInputTokens:     90,
 			ResponseReserveTokens: 10,
 			KeepLastTurns:         1,
 			SummarizationEnabled:  true,
@@ -1077,8 +1106,18 @@ func TestRunContextSummarizesOldMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunConversationTurn returned error: %v", err)
 	}
-	if len(client.optionMessages) != 1 {
-		t.Fatalf("summary call count = %d, want 1", len(client.optionMessages))
+	summaryRequests := 0
+	for _, request := range client.optionMessages {
+		if len(request) == 0 {
+			continue
+		}
+		content, _ := request[0]["content"].(string)
+		if strings.HasPrefix(content, "Summarize the earlier conversation") {
+			summaryRequests++
+		}
+	}
+	if summaryRequests != 1 {
+		t.Fatalf("summary call count = %d, want 1", summaryRequests)
 	}
 	if len(client.messages) != 1 {
 		t.Fatalf("client saw %d requests, want 1", len(client.messages))
@@ -1109,7 +1148,8 @@ func TestRunContextFallsBackWhenSummarizationFails(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		LogWriter: &logs,
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:               true,
 			MaxInputTokens:        160,
@@ -1144,6 +1184,167 @@ func TestRunContextFallsBackWhenSummarizationFails(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "summarized=true") {
 		t.Fatalf("logs unexpectedly reported summarization success: %q", logs.String())
+	}
+}
+
+func TestRunContextUsesProviderCountAsAuthority(t *testing.T) {
+	inner := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
+	client := &exactCountingStubClient{
+		stubClient: inner,
+		counts:     []InputTokenCount{{Tokens: 90, Exact: true}},
+	}
+	var logs bytes.Buffer
+	app := NewWithOptions(client, "", Options{
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
+		Context: ContextConfig{
+			Enabled:                  true,
+			MaxInputTokens:           120,
+			TargetInputTokens:        100,
+			ExactCountTriggerPercent: 50,
+			SummarizationEnabled:     false,
+		},
+	})
+	messages := []map[string]any{
+		{"role": "system", "content": "system"},
+		{"role": "user", "content": strings.Repeat("old-user-", 24)},
+		{"role": "assistant", "content": strings.Repeat("old-assistant-", 16)},
+		{"role": "user", "content": "recent"},
+	}
+
+	_, _, err := app.RunConversationTurn(context.Background(), messages, 2)
+	if err != nil {
+		t.Fatalf("RunConversationTurn: %v", err)
+	}
+	if len(client.countMessages) != 1 {
+		t.Fatalf("exact count calls = %d, want 1", len(client.countMessages))
+	}
+	if len(inner.messages) != 1 || len(inner.messages[0]) != len(messages) {
+		t.Fatalf("request was pruned despite exact under-budget count: %#v", inner.messages)
+	}
+	if !strings.Contains(logs.String(), "token_source=provider") || !strings.Contains(logs.String(), "exact=true") {
+		t.Fatalf("context log = %q", logs.String())
+	}
+}
+
+func TestRunContextFallsBackWhenProviderCountFails(t *testing.T) {
+	inner := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
+	client := &exactCountingStubClient{
+		stubClient:  inner,
+		countErrors: []error{errors.New("count endpoint unavailable")},
+	}
+	var logs bytes.Buffer
+	app := NewWithOptions(client, "", Options{
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
+		Context: ContextConfig{
+			Enabled:                  true,
+			MaxInputTokens:           120,
+			TargetInputTokens:        100,
+			ExactCountTriggerPercent: 50,
+			SummarizationEnabled:     false,
+		},
+	})
+	messages := []map[string]any{
+		{"role": "system", "content": "system"},
+		{"role": "user", "content": strings.Repeat("estimate-only-", 18)},
+	}
+
+	_, _, err := app.RunConversationTurn(context.Background(), messages, 2)
+	if err != nil {
+		t.Fatalf("RunConversationTurn: %v", err)
+	}
+	if len(client.countMessages) != 1 {
+		t.Fatalf("exact count calls = %d, want 1", len(client.countMessages))
+	}
+	if len(inner.messages) != 1 || len(inner.messages[0]) != len(messages) {
+		t.Fatalf("request changed after count failure: %#v", inner.messages)
+	}
+	if !strings.Contains(logs.String(), "exact token count failed") || !strings.Contains(logs.String(), "token_source=estimate") {
+		t.Fatalf("context log = %q", logs.String())
+	}
+}
+
+func TestRunContextCompactsWhenProviderCountExceedsBudget(t *testing.T) {
+	inner := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
+	client := &exactCountingStubClient{
+		stubClient: inner,
+		counts: []InputTokenCount{
+			{Tokens: 130, Exact: true},
+			{Tokens: 70, Exact: true},
+		},
+	}
+	app := NewWithOptions(client, "", Options{
+		ToolDefinitions: []tools.Definition{},
+		Context: ContextConfig{
+			Enabled:                  true,
+			MaxInputTokens:           120,
+			TargetInputTokens:        100,
+			KeepLastTurns:            1,
+			ExactCountTriggerPercent: 50,
+			SummarizationEnabled:     false,
+		},
+	})
+	oldContent := strings.Repeat("old-", 20)
+	messages := []map[string]any{
+		{"role": "system", "content": "system"},
+		{"role": "user", "content": oldContent},
+		{"role": "assistant", "content": oldContent},
+		{"role": "user", "content": strings.Repeat("recent-", 8)},
+	}
+
+	_, _, err := app.RunConversationTurn(context.Background(), messages, 2)
+	if err != nil {
+		t.Fatalf("RunConversationTurn: %v", err)
+	}
+	if len(client.countMessages) != 2 {
+		t.Fatalf("exact count calls = %d, want initial plus post-prune verification", len(client.countMessages))
+	}
+	if len(inner.messages) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(inner.messages))
+	}
+	for _, message := range inner.messages[0] {
+		if message["content"] == oldContent {
+			t.Fatalf("old content survived provider-triggered compaction: %#v", inner.messages[0])
+		}
+	}
+}
+
+func TestRunContextUsesPreviousServerUsageAsNextEstimateBaseline(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{
+		{
+			Role:      "assistant",
+			Usage:     TokenUsage{PromptTokens: 120, CompletionTokens: 5, TotalTokens: 125},
+			ToolCalls: []ToolCall{{ID: "call-1", Function: FunctionCall{Name: "noop", Arguments: `{}`}}},
+		},
+		{Role: "assistant", Content: "done"},
+	}}
+	var logs bytes.Buffer
+	app := NewWithOptions(client, "", Options{
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
+		Functions: map[string]tools.Function{
+			"noop": func(context.Context, map[string]any) (string, error) { return "ok", nil },
+		},
+		Context: ContextConfig{
+			Enabled:           true,
+			MaxInputTokens:    600,
+			TargetInputTokens: 500,
+		},
+	})
+
+	result, _, err := app.RunConversationTurn(context.Background(), []map[string]any{
+		{"role": "system", "content": "system"},
+		{"role": "user", "content": "run"},
+	}, 3)
+	if err != nil {
+		t.Fatalf("RunConversationTurn: %v", err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q, want done", result)
+	}
+	if !strings.Contains(logs.String(), "token_source=usage+estimate") {
+		t.Fatalf("context log did not use server usage baseline: %q", logs.String())
 	}
 }
 

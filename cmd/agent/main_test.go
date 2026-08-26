@@ -4,15 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"bqagent/internal/providerconfig"
 )
 
-func TestRunUsesDefaultHelloTask(t *testing.T) {
+func TestRunUsesExplicitHelloTask(t *testing.T) {
 	t.Helper()
 
 	var seenRequest struct {
@@ -40,7 +43,7 @@ func TestRunUsesDefaultHelloTask(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := run(context.Background(), nil, &stdout, &stderr, nil, getenv)
+	code := run(context.Background(), nil, &stdout, &stderr, []string{"Hello"}, getenv)
 	if code != 0 {
 		t.Fatalf("run returned code %d, want 0", code)
 	}
@@ -67,6 +70,116 @@ func TestRunUsesDefaultHelloTask(t *testing.T) {
 	}
 	if !strings.HasSuffix(stdout.String(), "done\n") {
 		t.Fatalf("stdout = %q, want final result", stdout.String())
+	}
+}
+
+func TestRunWithoutArgumentsStartsChatMode(t *testing.T) {
+	var requestCount int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestCount++
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"unexpected"}}]}`))
+	}))
+	defer server.Close()
+
+	getenv := func(key string) string {
+		if key == "OPENAI_BASE_URL" {
+			return server.URL
+		}
+		return ""
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run(context.Background(), strings.NewReader("/exit\n"), &stdout, &stderr, nil, getenv)
+	if code != 0 {
+		t.Fatalf("run returned code %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if requestCount != 0 {
+		t.Fatalf("API received %d requests, want 0 before chat input", requestCount)
+	}
+	if stdout.String() != "> " {
+		t.Fatalf("stdout = %q, want chat prompt", stdout.String())
+	}
+}
+
+func TestRunModesUseSavedProvider(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		stdin string
+	}{
+		{name: "single task", args: []string{"hello"}},
+		{name: "chat", args: []string{"--chat"}, stdin: "hello\n/exit\n"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var requestCount int
+			var requestedModel string
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				requestCount++
+				var payload struct {
+					Model string `json:"model"`
+				}
+				if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+				requestedModel = payload.Model
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`))
+			}))
+			defer server.Close()
+
+			home := t.TempDir()
+			agentDir := filepath.Join(home, ".agent")
+			store := providerconfig.NewStore(agentDir)
+			if err := store.Save(providerconfig.Config{
+				ActiveProvider: "saved",
+				Providers: []providerconfig.Provider{{
+					ID:           "saved",
+					Name:         "Saved Provider",
+					APIType:      "openai",
+					BaseURL:      server.URL,
+					Models:       []string{"saved-model"},
+					DefaultModel: "saved-model",
+				}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			root := t.TempDir()
+			getenv := func(key string) string {
+				switch key {
+				case "HOME":
+					return home
+				case "LLM_BASE_URL":
+					return "http://127.0.0.1:1"
+				case "LLM_MODEL":
+					return "env-model"
+				default:
+					return ""
+				}
+			}
+			var stdin io.Reader
+			if test.stdin != "" {
+				stdin = strings.NewReader(test.stdin)
+			}
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			code := runWithDeps(context.Background(), stdin, &stdout, &stderr, test.args, getenv, runDeps{
+				getwd: func() (string, error) { return root, nil },
+			})
+			if code != 0 {
+				t.Fatalf("runWithDeps returned code %d, want 0; stderr=%q", code, stderr.String())
+			}
+			if requestCount != 1 {
+				t.Fatalf("provider received %d requests, want 1", requestCount)
+			}
+			if requestedModel != "saved-model" {
+				t.Fatalf("requested model = %q, want saved-model", requestedModel)
+			}
+		})
 	}
 }
 

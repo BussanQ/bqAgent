@@ -65,6 +65,14 @@ func (c *instrumentedClient) CreateChatCompletion(ctx context.Context, model str
 	return message, err
 }
 
+func (c *instrumentedClient) CountInputTokens(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (InputTokenCount, error) {
+	counter, ok := c.inner.(InputTokenCounter)
+	if !ok {
+		return InputTokenCount{}, ErrInputTokenCountUnsupported
+	}
+	return counter.CountInputTokens(ctx, model, messages, definitions, options)
+}
+
 func (c *instrumentedClient) CreateChatCompletionWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (message AssistantMessage, err error) {
 	startedAt := time.Now()
 	reporter := startModelProgressReporter(ctx, c.progressWriter, false)

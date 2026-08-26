@@ -21,29 +21,30 @@ import (
 const mcpDiscoveryTimeout = 15 * time.Second
 
 type Config struct {
-	APIType                      agent.APIType
-	APIKey                       string
-	BaseURL                      string
-	Model                        string
-	Models                       []string
-	StreamIdleTimeout            time.Duration
-	MaxIterations                int
-	RunTraceEnabled              bool
-	SessionTranscriptMode        session.TranscriptMode
-	SessionOutputMaxBytes        int64
-	BashOutputMaxBytes           int64
-	ReadFileMaxBytes             int64
-	SearchProvider               string
-	SearchAPIKey                 string
-	SearchBaseURL                string
-	ContextManagementEnabled     bool
-	ContextMaxInputTokens        int
-	ContextTargetInputTokens     int
-	ContextResponseReserveTokens int
-	ContextKeepLastTurns         int
-	ContextSummarizationEnabled  bool
-	ContextSummaryTriggerTokens  int
-	ContextSummaryModel          string
+	APIType                         agent.APIType
+	APIKey                          string
+	BaseURL                         string
+	Model                           string
+	Models                          []string
+	StreamIdleTimeout               time.Duration
+	MaxIterations                   int
+	RunTraceEnabled                 bool
+	SessionTranscriptMode           session.TranscriptMode
+	SessionOutputMaxBytes           int64
+	BashOutputMaxBytes              int64
+	ReadFileMaxBytes                int64
+	SearchProvider                  string
+	SearchAPIKey                    string
+	SearchBaseURL                   string
+	ContextManagementEnabled        bool
+	ContextMaxInputTokens           int
+	ContextTargetInputTokens        int
+	ContextResponseReserveTokens    int
+	ContextKeepLastTurns            int
+	ContextExactCountTriggerPercent int
+	ContextSummarizationEnabled     bool
+	ContextSummaryTriggerTokens     int
+	ContextSummaryModel             string
 }
 
 type Factory struct {
@@ -94,29 +95,30 @@ func ConfigFromEnv(getenv func(string) string) Config {
 	searchAPIKey := firstNonEmpty(getenv("SEARCH_API_KEY"), getenv("FIRECRAWL_API_KEY"))
 	searchBaseURL := firstNonEmpty(getenv("SEARCH_BASE_URL"), getenv("FIRECRAWL_BASE_URL"))
 	return Config{
-		APIType:                      apiType,
-		APIKey:                       apiKey,
-		BaseURL:                      baseURL,
-		Model:                        model,
-		Models:                       splitEnvList(getenv("LLM_MODELS")),
-		StreamIdleTimeout:            envDurationAllowZero(getenv("LLM_STREAM_IDLE_TIMEOUT"), agent.DefaultStreamIdleTimeout),
-		MaxIterations:                envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
-		RunTraceEnabled:              envBool(getenv("RUN_TRACE_ENABLED"), false),
-		SessionTranscriptMode:        session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
-		SessionOutputMaxBytes:        envInt64(getenv("SESSION_OUTPUT_MAX_BYTES"), session.DefaultOutputMaxBytes),
-		BashOutputMaxBytes:           envPositiveInt64(getenv("BASH_OUTPUT_MAX_BYTES"), tools.DefaultBashOutputMaxBytes),
-		ReadFileMaxBytes:             envPositiveInt64(getenv("READ_FILE_MAX_BYTES"), tools.DefaultReadFileMaxBytes),
-		SearchProvider:               searchProvider,
-		SearchAPIKey:                 searchAPIKey,
-		SearchBaseURL:                searchBaseURL,
-		ContextManagementEnabled:     envBool(getenv("CONTEXT_MANAGEMENT_ENABLED"), defaults.Enabled),
-		ContextMaxInputTokens:        envInt(getenv("CONTEXT_MAX_INPUT_TOKENS"), defaults.MaxInputTokens),
-		ContextTargetInputTokens:     envInt(getenv("CONTEXT_TARGET_INPUT_TOKENS"), defaults.TargetInputTokens),
-		ContextResponseReserveTokens: envInt(getenv("CONTEXT_RESPONSE_RESERVE_TOKENS"), defaults.ResponseReserveTokens),
-		ContextKeepLastTurns:         envInt(getenv("CONTEXT_KEEP_LAST_TURNS"), defaults.KeepLastTurns),
-		ContextSummarizationEnabled:  envBool(getenv("CONTEXT_SUMMARIZATION_ENABLED"), defaults.SummarizationEnabled),
-		ContextSummaryTriggerTokens:  envInt(getenv("CONTEXT_SUMMARY_TRIGGER_TOKENS"), defaults.SummaryTriggerTokens),
-		ContextSummaryModel:          getenv("CONTEXT_SUMMARY_MODEL"),
+		APIType:                         apiType,
+		APIKey:                          apiKey,
+		BaseURL:                         baseURL,
+		Model:                           model,
+		Models:                          splitEnvList(getenv("LLM_MODELS")),
+		StreamIdleTimeout:               envDurationAllowZero(getenv("LLM_STREAM_IDLE_TIMEOUT"), agent.DefaultStreamIdleTimeout),
+		MaxIterations:                   envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
+		RunTraceEnabled:                 envBool(getenv("RUN_TRACE_ENABLED"), false),
+		SessionTranscriptMode:           session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
+		SessionOutputMaxBytes:           envInt64(getenv("SESSION_OUTPUT_MAX_BYTES"), session.DefaultOutputMaxBytes),
+		BashOutputMaxBytes:              envPositiveInt64(getenv("BASH_OUTPUT_MAX_BYTES"), tools.DefaultBashOutputMaxBytes),
+		ReadFileMaxBytes:                envPositiveInt64(getenv("READ_FILE_MAX_BYTES"), tools.DefaultReadFileMaxBytes),
+		SearchProvider:                  searchProvider,
+		SearchAPIKey:                    searchAPIKey,
+		SearchBaseURL:                   searchBaseURL,
+		ContextManagementEnabled:        envBool(getenv("CONTEXT_MANAGEMENT_ENABLED"), defaults.Enabled),
+		ContextMaxInputTokens:           envInt(getenv("CONTEXT_MAX_INPUT_TOKENS"), defaults.MaxInputTokens),
+		ContextTargetInputTokens:        envInt(getenv("CONTEXT_TARGET_INPUT_TOKENS"), defaults.TargetInputTokens),
+		ContextResponseReserveTokens:    envInt(getenv("CONTEXT_RESPONSE_RESERVE_TOKENS"), defaults.ResponseReserveTokens),
+		ContextKeepLastTurns:            envInt(getenv("CONTEXT_KEEP_LAST_TURNS"), defaults.KeepLastTurns),
+		ContextExactCountTriggerPercent: envInt(getenv("CONTEXT_EXACT_COUNT_TRIGGER_PERCENT"), defaults.ExactCountTriggerPercent),
+		ContextSummarizationEnabled:     envBool(getenv("CONTEXT_SUMMARIZATION_ENABLED"), defaults.SummarizationEnabled),
+		ContextSummaryTriggerTokens:     envInt(getenv("CONTEXT_SUMMARY_TRIGGER_TOKENS"), defaults.SummaryTriggerTokens),
+		ContextSummaryModel:             getenv("CONTEXT_SUMMARY_MODEL"),
 	}
 }
 
@@ -265,14 +267,15 @@ func (factory Factory) Build(includePlan bool) Runtime {
 		},
 		WorkspaceRoot: factory.WorkspaceRoot,
 		Context: agent.ContextConfig{
-			Enabled:               factory.Config.ContextManagementEnabled,
-			MaxInputTokens:        factory.Config.ContextMaxInputTokens,
-			TargetInputTokens:     factory.Config.ContextTargetInputTokens,
-			ResponseReserveTokens: factory.Config.ContextResponseReserveTokens,
-			KeepLastTurns:         factory.Config.ContextKeepLastTurns,
-			SummarizationEnabled:  factory.Config.ContextSummarizationEnabled,
-			SummaryTriggerTokens:  factory.Config.ContextSummaryTriggerTokens,
-			SummaryModel:          factory.Config.ContextSummaryModel,
+			Enabled:                  factory.Config.ContextManagementEnabled,
+			MaxInputTokens:           factory.Config.ContextMaxInputTokens,
+			TargetInputTokens:        factory.Config.ContextTargetInputTokens,
+			ResponseReserveTokens:    factory.Config.ContextResponseReserveTokens,
+			KeepLastTurns:            factory.Config.ContextKeepLastTurns,
+			ExactCountTriggerPercent: factory.Config.ContextExactCountTriggerPercent,
+			SummarizationEnabled:     factory.Config.ContextSummarizationEnabled,
+			SummaryTriggerTokens:     factory.Config.ContextSummaryTriggerTokens,
+			SummaryModel:             factory.Config.ContextSummaryModel,
 		},
 		Memory: memoryStore,
 	}

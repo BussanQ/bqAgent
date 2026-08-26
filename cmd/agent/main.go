@@ -207,6 +207,9 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, nil, err
 	}
+	if len(args) == 0 {
+		options.chat = true
+	}
 	if daemon {
 		options.server = true
 		options.background = true
@@ -263,7 +266,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 }
 
 func runSubagentWorker(ctx context.Context, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, id, lease string) int {
-	runtimeConfig := appruntime.ConfigFromEnv(getenv)
+	runtimeConfig := runtimeConfigFromSources(getenv, ws.AgentDir())
 	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
 	detections := extagent.Detect(ctx, externalConfig, nil)
 	broker := extagent.NewBroker(extagent.NewStateStore(ws.Root), detections, nil)
@@ -338,7 +341,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		return 1
 	}
 
-	llmConfig := appruntime.ConfigFromEnv(getenv)
+	llmConfig := runtimeConfigFromSources(getenv, ws.AgentDir())
 	systemPrompt = agent.AppendModelIdentitySystemPrompt(systemPrompt, llmConfig.Model, llmConfig.APIType)
 
 	var (
