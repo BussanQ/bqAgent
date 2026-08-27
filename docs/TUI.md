@@ -3,14 +3,14 @@
 不带参数启动 `bqagent`（或显式使用 `bqagent --chat`）时，真实 TTY 默认进入内联 TUI。它不会切换备用屏幕；已完成的用户消息、Markdown 回复和工具摘要会进入终端原生 scrollback。只有出现可点击的折叠工具组时才临时开启鼠标追踪，工具组提交或清理后会自动关闭。
 
 ```text
-bqAgent  内联终端助手
+bqAgent  Harness
 工作区  D:\Dev\my-project
 模型    openai/gpt-5
 
+────────────────────────────────────────────────────────
 你
 请检查测试失败原因
 
-bqAgent
 失败来自配置加载顺序……
 
 ⚙ #1 read_file path="go.mod"
@@ -31,7 +31,7 @@ openai/gpt-5 · 20260827   Enter 发送 · Alt+Enter 换行 · / 命令
 | `Alt+Enter` | 插入换行 |
 | `Tab` / `Shift+Tab` | 打开、补全或切换命令候选 |
 | `↑` / `↓` | 移动多行光标或召回当前工作区历史 |
-| `Esc` | 关闭候选面板 |
+| `Esc` | 打断当前回复；空闲时关闭候选面板或收起工具详情 |
 | `Ctrl+C` | 取消活动轮次；空闲时三秒内按两次退出 |
 | `Ctrl+D` | 仅在空输入且空闲时退出 |
 | `Ctrl+L` | 清理当前视口与草稿，不改变 Session |

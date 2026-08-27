@@ -126,6 +126,21 @@ func TestModelCancelRestoresQueueAndCommands(t *testing.T) {
 	}
 }
 
+func TestEscapeCancelsActiveTurn(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir()})
+	cancelled := false
+	model.active = &activeTurn{cancel: func() { cancelled = true }}
+	model.phase = phaseStreaming
+
+	commands := model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if len(commands) != 0 || !cancelled || !model.active.cancelled {
+		t.Fatalf("escape cancellation: commands=%d cancelCalled=%v active=%#v", len(commands), cancelled, model.active)
+	}
+	if model.phase != phaseCancelling || model.progress != "正在取消" {
+		t.Fatalf("escape phase=%v progress=%q", model.phase, model.progress)
+	}
+}
+
 func TestPromptChipHistoryMarkdownAndNarrowResize(t *testing.T) {
 	input := newPromptInput()
 	paste := strings.Repeat("长文本", 80)
@@ -185,5 +200,39 @@ func TestInitialTaskAutoSubmits(t *testing.T) {
 	got := updated.(Model)
 	if command == nil || got.phase != phaseThinking || got.active == nil || !got.initialSent {
 		t.Fatalf("initial task state: command=%v phase=%v active=%#v sent=%v", command != nil, got.phase, got.active, got.initialSent)
+	}
+}
+
+func TestTurnPresentationUsesSeparatorsWithoutRepeatedBrand(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.width = 30
+	startup := strings.Join(model.startup, "\n")
+	if !strings.Contains(startup, "bqAgent  Harness") || strings.Contains(startup, "内联终端助手") {
+		t.Fatalf("startup = %q", startup)
+	}
+
+	_ = model.submit("第一轮")
+	model.stream = "回答内容"
+	if view := model.View(); strings.Contains(view, "bqAgent") || !strings.Contains(view, "回答内容") {
+		t.Fatalf("streaming view = %q", view)
+	}
+	model.flushStream()
+	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "done", result: TurnResult{Reply: "非流式回答"}})
+	printed := strings.Join(model.printQueue, "\n")
+	separator := strings.Repeat("─", model.contentWidth())
+	if !strings.Contains(printed, separator+"\n你\n第一轮") || !strings.Contains(printed, "回答内容") || !strings.Contains(printed, "非流式回答") {
+		t.Fatalf("turn output = %q", printed)
+	}
+	if strings.Contains(printed, "bqAgent") {
+		t.Fatalf("turn output repeats brand = %q", printed)
+	}
+
+	history := model.renderHistory(History{ID: "session-1", Messages: []HistoryMessage{
+		{Role: "user", Content: "历史问题"},
+		{Role: "assistant", Content: "历史回答"},
+	}})
+	restored := strings.Join(history, "\n")
+	if !strings.Contains(restored, separator+"\n你\n历史问题") || strings.Contains(restored, "bqAgent") {
+		t.Fatalf("restored history = %q", restored)
 	}
 }

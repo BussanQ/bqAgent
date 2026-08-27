@@ -192,7 +192,7 @@ func (model Model) View() string {
 		sections = append(sections, tools)
 	}
 	if model.stream != "" {
-		sections = append(sections, model.styles.accent.Render("bqAgent")+"\n"+renderStreaming(model.stream, width))
+		sections = append(sections, renderStreaming(model.stream, width))
 	}
 	if model.panelOpen && len(model.suggestions) > 0 {
 		sections = append(sections, model.renderSuggestions(width))
@@ -222,10 +222,7 @@ func (model *Model) handleKey(key tea.KeyMsg) []tea.Cmd {
 		return nil
 	case "ctrl+c":
 		if model.active != nil {
-			model.active.cancelled = true
-			model.active.cancel()
-			model.phase = phaseCancelling
-			model.progress = "正在取消"
+			model.cancelActiveTurn()
 			return nil
 		}
 		if model.panelOpen {
@@ -251,6 +248,10 @@ func (model *Model) handleKey(key tea.KeyMsg) []tea.Cmd {
 		model.resizeInput()
 		return []tea.Cmd{disableMouse, tea.ClearScreen}
 	case "esc":
+		if model.active != nil {
+			model.cancelActiveTurn()
+			return nil
+		}
 		if model.tools.expanded {
 			model.tools.expanded = false
 			return nil
@@ -303,6 +304,13 @@ func (model *Model) handleKey(key tea.KeyMsg) []tea.Cmd {
 	model.refreshSuggestions()
 	model.resizeInput()
 	return []tea.Cmd{command}
+}
+
+func (model *Model) cancelActiveTurn() {
+	model.active.cancelled = true
+	model.active.cancel()
+	model.phase = phaseCancelling
+	model.progress = "正在取消"
 }
 
 func (model *Model) handleMouse(message tea.MouseMsg) []tea.Cmd {
@@ -359,7 +367,7 @@ func (model *Model) submit(value string) tea.Cmd {
 		return tea.Batch(toolCommand, tea.Quit)
 	}
 	model.recordHistory(value)
-	model.enqueuePrint(model.styles.user.Render("你") + "\n" + value)
+	model.enqueueUserTurn(value)
 	model.sequence++
 	model.phase = phaseThinking
 	model.progress = "正在思考"
@@ -391,7 +399,7 @@ func (model *Model) queue(value string) []tea.Cmd {
 	}
 	if strings.EqualFold(strings.TrimSpace(value), "/stop") {
 		model.recordHistory(value)
-		model.enqueuePrint(model.styles.user.Render("你") + "\n" + value)
+		model.enqueueUserTurn(value)
 		return []tea.Cmd{runControl(model.backend, model.config.Context, model.sessionID, value)}
 	}
 	if model.queued == nil {
@@ -447,7 +455,7 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	} else if cancelled {
 		model.enqueuePrint(model.styles.dim.Render("已取消本轮任务"))
 	} else if (!event.result.Streamed || model.liveRunes == 0) && strings.TrimSpace(event.result.Reply) != "" {
-		model.enqueuePrint(model.styles.accent.Render("bqAgent") + "\n" + renderMarkdown(event.result.Reply, model.contentWidth(), model.config.NoColor))
+		model.enqueuePrint(renderMarkdown(event.result.Reply, model.contentWidth(), model.config.NoColor))
 	}
 	if event.result.SessionID != "" {
 		model.sessionID = event.result.SessionID
@@ -527,8 +535,16 @@ func (model *Model) flushStream() {
 	if model.stream == "" {
 		return
 	}
-	model.enqueuePrint(model.styles.accent.Render("bqAgent") + "\n" + renderMarkdown(model.stream, model.contentWidth(), model.config.NoColor))
+	model.enqueuePrint(renderMarkdown(model.stream, model.contentWidth(), model.config.NoColor))
 	model.stream = ""
+}
+
+func (model *Model) enqueueUserTurn(value string) {
+	model.enqueuePrint(model.renderTurnSeparator(), model.styles.user.Render("你")+"\n"+value)
+}
+
+func (model Model) renderTurnSeparator() string {
+	return model.styles.dim.Render(strings.Repeat("─", max(10, model.contentWidth())))
 }
 
 func (model *Model) enqueuePrint(lines ...string) {
@@ -763,7 +779,7 @@ func (model Model) startupLines() []string {
 		provider = "未配置"
 	}
 	return []string{
-		model.styles.accent.Render("bqAgent") + "  内联终端助手",
+		model.styles.accent.Render("bqAgent") + "  Harness",
 		model.styles.dim.Render("工具可能修改文件或运行命令，请留意工具摘要与工作区边界。"),
 		fmt.Sprintf("工作区  %s\n模型    %s/%s", model.config.Workspace, provider, modelName),
 	}
@@ -776,9 +792,9 @@ func (model Model) renderHistory(history History) []string {
 	}
 	for _, message := range history.Messages {
 		if message.Role == "user" {
-			lines = append(lines, model.styles.user.Render("你")+"\n"+message.Content)
+			lines = append(lines, model.renderTurnSeparator(), model.styles.user.Render("你")+"\n"+message.Content)
 		} else {
-			lines = append(lines, model.styles.accent.Render("bqAgent")+"\n"+renderMarkdown(message.Content, model.contentWidth(), model.config.NoColor))
+			lines = append(lines, renderMarkdown(message.Content, model.contentWidth(), model.config.NoColor))
 		}
 	}
 	return lines
@@ -788,6 +804,7 @@ func (model Model) helpText() string {
 	return `快捷键
   Enter 发送    Alt+Enter 换行    Tab/Shift+Tab 补全
   ↑/↓ 历史      Ctrl+C 取消/双击退出    Ctrl+D 空闲退出
+  Esc 打断当前回复；空闲时关闭面板/收起工具详情
   Ctrl+L 清理当前视口和草稿（保留 Session）
   Ctrl+T 展开/收起已合并的工具详情（也可点击工具汇总行）
 
