@@ -225,7 +225,7 @@ func TestTurnPresentationUsesSeparatorsWithoutRepeatedBrand(t *testing.T) {
 	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "done", result: TurnResult{Reply: "非流式回答"}})
 	printed := strings.Join(model.printQueue, "\n")
 	separator := strings.Repeat("─", model.contentWidth())
-	if !strings.Contains(printed, separator+"\n你\n第一轮") || !strings.Contains(printed, "回答内容") || !strings.Contains(printed, "非流式回答") {
+	if !strings.Contains(printed, separator+"\n▸ 第一轮") || !strings.Contains(printed, "回答内容") || !strings.Contains(printed, "非流式回答") {
 		t.Fatalf("turn output = %q", printed)
 	}
 	if strings.Contains(printed, "bqAgent") {
@@ -237,7 +237,18 @@ func TestTurnPresentationUsesSeparatorsWithoutRepeatedBrand(t *testing.T) {
 		{Role: "assistant", Content: "历史回答"},
 	}})
 	restored := strings.Join(history, "\n")
-	if !strings.Contains(restored, separator+"\n你\n历史问题") || strings.Contains(restored, "bqAgent") {
+	if !strings.Contains(restored, separator+"\n▸ 历史问题") || strings.Contains(restored, "bqAgent") {
 		t.Fatalf("restored history = %q", restored)
+	}
+}
+
+func TestUserMessageTriangleStyle(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir()})
+	rendered := model.renderUserMessage("第一行\n第二行")
+	if !strings.Contains(rendered, "\x1b[") || !strings.Contains(rendered, "▸") {
+		t.Fatalf("triangle should be colored: %q", rendered)
+	}
+	if !strings.Contains(rendered, "\n  第二行") {
+		t.Fatalf("continuation should align with the question: %q", rendered)
 	}
 }

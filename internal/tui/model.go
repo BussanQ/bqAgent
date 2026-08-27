@@ -546,7 +546,11 @@ func (model *Model) flushStream() {
 }
 
 func (model *Model) enqueueUserTurn(value string) {
-	model.enqueuePrint(model.renderTurnSeparator(), model.styles.user.Render("你")+"\n"+value)
+	model.enqueuePrint(model.renderTurnSeparator(), model.renderUserMessage(value))
+}
+
+func (model Model) renderUserMessage(value string) string {
+	return model.styles.user.Render("▸") + " " + strings.ReplaceAll(value, "\n", "\n  ")
 }
 
 func (model Model) renderTurnSeparator() string {
@@ -794,7 +798,7 @@ func (model Model) renderHistory(history History) []string {
 	}
 	for _, message := range history.Messages {
 		if message.Role == "user" {
-			lines = append(lines, model.renderTurnSeparator(), model.styles.user.Render("你")+"\n"+message.Content)
+			lines = append(lines, model.renderTurnSeparator(), model.renderUserMessage(message.Content))
 		} else {
 			lines = append(lines, renderMarkdown(message.Content, model.contentWidth(), model.config.NoColor))
 		}
