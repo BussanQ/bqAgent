@@ -50,11 +50,11 @@ func TestRunUsesExplicitHelloTask(t *testing.T) {
 	if !strings.Contains(stderr.String(), "[Runtime] api_type=openai model=test-model") {
 		t.Fatalf("stderr = %q, want effective runtime model", stderr.String())
 	}
-	if len(seenRequest.Messages) != 2 {
-		t.Fatalf("messages length = %d, want 2", len(seenRequest.Messages))
+	if len(seenRequest.Messages) < 2 || len(seenRequest.Messages) > 3 {
+		t.Fatalf("messages length = %d, want stable prompt, optional memory snapshot, and user message", len(seenRequest.Messages))
 	}
-	if seenRequest.Messages[1]["content"] != "Hello" {
-		t.Fatalf("user message = %#v, want Hello", seenRequest.Messages[1]["content"])
+	if seenRequest.Messages[len(seenRequest.Messages)-1]["content"] != "Hello" {
+		t.Fatalf("user message = %#v, want Hello", seenRequest.Messages[len(seenRequest.Messages)-1]["content"])
 	}
 	if systemPrompt, _ := seenRequest.Messages[0]["content"].(string); !strings.Contains(systemPrompt, "Current runtime model: test-model (API type: openai).") {
 		t.Fatalf("system prompt = %q, want current model identity", systemPrompt)
@@ -213,8 +213,8 @@ func TestRunJoinsArgumentsIntoSingleTask(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run returned code %d, want 0", code)
 	}
-	if seenRequest.Messages[1]["content"] != "read README.md" {
-		t.Fatalf("user message = %#v, want joined argv string", seenRequest.Messages[1]["content"])
+	if seenRequest.Messages[len(seenRequest.Messages)-1]["content"] != "read README.md" {
+		t.Fatalf("user message = %#v, want joined argv string", seenRequest.Messages[len(seenRequest.Messages)-1]["content"])
 	}
 }
 
@@ -292,7 +292,7 @@ func TestRunLoadsDotEnvFromWorkspaceRoot(t *testing.T) {
 	if seenRequest.Model != "dotenv-model" {
 		t.Fatalf("model = %q, want dotenv model", seenRequest.Model)
 	}
-	if len(seenRequest.Messages) != 2 || seenRequest.Messages[1]["content"] != "hello" {
+	if len(seenRequest.Messages) < 2 || seenRequest.Messages[len(seenRequest.Messages)-1]["content"] != "hello" {
 		t.Fatalf("messages = %#v, want hello request", seenRequest.Messages)
 	}
 	if exported["OPENAI_BASE_URL"] != server.URL || exported["OPENAI_MODEL"] != "dotenv-model" {

@@ -267,6 +267,62 @@ func TestBuildSystemPromptIncludesRulesSkillsAndMemory(t *testing.T) {
 	}
 }
 
+func TestBuildPromptSectionsKeepsStableHashIndependentFromMemory(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, ".agent", "rules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rulePath := filepath.Join(root, ".agent", "rules", "cache.md")
+	memoryPath := filepath.Join(root, "agent_memory.md")
+	if err := os.WriteFile(rulePath, []byte("Keep static instructions stable.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(memoryPath, []byte("first memory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := ws.BuildPromptSections("Base\r\n\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := ws.BuildPromptSections("Base\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != repeated {
+		t.Fatalf("repeated sections differ:\nfirst=%#v\nsecond=%#v", first, repeated)
+	}
+	if strings.Contains(first.Stable, "first memory") || !strings.Contains(first.SessionContext, "first memory") {
+		t.Fatalf("sections = %#v, want memory only in session context", first)
+	}
+
+	if err := os.WriteFile(memoryPath, []byte("second memory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	afterMemory, err := ws.BuildPromptSections("Base\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterMemory.Stable != first.Stable || afterMemory.StableHash != first.StableHash {
+		t.Fatalf("memory changed stable section: before=%#v after=%#v", first, afterMemory)
+	}
+	if afterMemory.SessionContext == first.SessionContext {
+		t.Fatal("memory change did not change session context")
+	}
+
+	if err := os.WriteFile(rulePath, []byte("Changed static rule.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	afterRule, err := ws.BuildPromptSections("Base\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterRule.StableHash == first.StableHash {
+		t.Fatal("rule change did not change stable hash")
+	}
+}
+
 func TestLoadSkillReturnsStructuredSkill(t *testing.T) {
 	root := t.TempDir()
 	ws := &Workspace{Root: root}

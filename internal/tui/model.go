@@ -736,7 +736,11 @@ func (model Model) renderStatus(width int) string {
 			fmt.Sprintf("首字 %.2fs", float64(model.metrics.FirstTokenLatencyMS)/1000),
 			fmt.Sprintf("%d tok", model.metrics.CompletionTokens),
 		}
-		if model.metrics.CacheUsageAvailable && model.metrics.PromptTokens > 0 {
+		if model.metrics.CacheMetrics != nil && model.metrics.CacheMetrics.Available && model.metrics.CacheMetrics.InputTokens > 0 {
+			rate := 100 * model.metrics.CacheMetrics.HitRate
+			rate = min(100, max(0, rate))
+			parts = append(parts, fmt.Sprintf("缓存命中 %.0f%%", rate))
+		} else if model.metrics.CacheUsageAvailable && model.metrics.PromptTokens > 0 {
 			rate := 100 * float64(model.metrics.CachedPromptTokens) / float64(model.metrics.PromptTokens)
 			rate = min(100, max(0, rate))
 			parts = append(parts, fmt.Sprintf("缓存命中 %.0f%%", rate))

@@ -1,10 +1,14 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
+	"strings"
 
 	"bqagent/internal/tools"
 )
@@ -35,10 +39,14 @@ func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpC
 	seen := make(map[string]string)
 
 	enabled, invalid := cfg.enabledServers(getenv)
-	for name, err := range invalid {
+	invalidNames := sortedMapKeys(invalid)
+	for _, name := range invalidNames {
+		err := invalid[name]
 		logf("[MCP] server %q: invalid configuration, skipping: %v\n", name, err)
 	}
-	for name, server := range enabled {
+	serverNames := sortedMapKeys(enabled)
+	for _, name := range serverNames {
+		server := enabled[name]
 		client := NewClient(httpClient, server.URL, server.Headers)
 		if err := client.Initialize(ctx); err != nil {
 			logf("[MCP] server %q: initialize failed: %v\n", name, err)
@@ -49,6 +57,14 @@ func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpC
 			logf("[MCP] server %q: tools/list failed: %v\n", name, err)
 			continue
 		}
+		sort.SliceStable(specs, func(left, right int) bool {
+			leftName := toolNamePrefix + sanitizeName(name) + "__" + sanitizeName(specs[left].Name)
+			rightName := toolNamePrefix + sanitizeName(name) + "__" + sanitizeName(specs[right].Name)
+			if leftName != rightName {
+				return leftName < rightName
+			}
+			return specs[left].Name < specs[right].Name
+		})
 		added := 0
 		for _, spec := range specs {
 			toolName := toolNamePrefix + sanitizeName(name) + "__" + sanitizeName(spec.Name)
@@ -61,8 +77,8 @@ func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpC
 				Type: "function",
 				Function: tools.FunctionDefinition{
 					Name:          toolName,
-					Description:   spec.Description,
-					RawParameters: spec.InputSchema,
+					Description:   normalizeDescription(spec.Description),
+					RawParameters: canonicalJSON(spec.InputSchema),
 				},
 			})
 			functions[toolName] = makeToolFunc(client, spec.Name)
@@ -71,6 +87,39 @@ func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpC
 		logf("[MCP] server %q: registered %d tool(s)\n", name, added)
 	}
 	return definitions, functions
+}
+
+func sortedMapKeys[Value any](values map[string]Value) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func normalizeDescription(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	lines := strings.Split(value, "\n")
+	for index := range lines {
+		lines[index] = strings.TrimRight(lines[index], " \t")
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func canonicalJSON(raw json.RawMessage) json.RawMessage {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return append(json.RawMessage(nil), raw...)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return append(json.RawMessage(nil), raw...)
+	}
+	return canonical
 }
 
 // makeToolFunc binds an MCP client + remote tool name into a tools.Function.

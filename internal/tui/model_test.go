@@ -263,9 +263,13 @@ func TestCompletedStatusShowsCacheHitRate(t *testing.T) {
 		CacheUsageAvailable: true,
 		CompletionTokens:    20,
 		TokensPerSecond:     10,
+		CacheMetrics: &CacheMetrics{
+			Available: true, Calls: 2, InputTokens: 200,
+			CacheReadTokens: 50, CacheWriteTokens: 25, UncachedInputTokens: 125, HitRate: .25,
+		},
 	}
 	status := model.renderStatus(model.contentWidth())
-	if !strings.Contains(status, "缓存命中 75%") {
+	if !strings.Contains(status, "缓存命中 25%") || strings.Contains(status, "缓存命中 75%") {
 		t.Fatalf("status = %q", status)
 	}
 }

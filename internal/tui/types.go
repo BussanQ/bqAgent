@@ -51,6 +51,17 @@ type GenerationMetrics struct {
 	ReasoningTokens      int
 	GenerationDurationMS int64
 	TokensPerSecond      float64
+	CacheMetrics         *CacheMetrics
+}
+
+type CacheMetrics struct {
+	Available           bool
+	Calls               int
+	InputTokens         int
+	CacheReadTokens     int
+	CacheWriteTokens    int
+	UncachedInputTokens int
+	HitRate             float64
 }
 
 type RuntimeInfo struct {

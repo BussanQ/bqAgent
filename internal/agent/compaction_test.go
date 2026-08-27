@@ -164,3 +164,17 @@ func TestNoCompactionWhenUnderBudget(t *testing.T) {
 		t.Fatalf("summary call count = %d, want 0 when under budget", summaryRequests)
 	}
 }
+
+func TestHardPrunePreservesStableAndSessionPromptMessages(t *testing.T) {
+	messages := []map[string]any{
+		{"role": "system", "content": "stable instructions"},
+		{"role": "system", "content": "frozen memory snapshot"},
+		{"role": "user", "content": strings.Repeat("old context ", 200)},
+		{"role": "assistant", "content": strings.Repeat("old answer ", 200)},
+		{"role": "user", "content": "latest question"},
+	}
+	pruned := hardPruneMessagesToBudget(messages, 20)
+	if len(pruned) < 2 || pruned[0]["content"] != "stable instructions" || pruned[1]["content"] != "frozen memory snapshot" {
+		t.Fatalf("pruned messages lost prompt snapshot: %#v", pruned)
+	}
+}

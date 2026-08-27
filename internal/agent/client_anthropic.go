@@ -19,13 +19,24 @@ const anthropicDefaultMaxTokens = 8192
 
 type anthropicRequest struct {
 	Model        string                 `json:"model"`
-	System       string                 `json:"system,omitempty"`
+	System       []anthropicSystemBlock `json:"system,omitempty"`
 	Messages     []anthropicMessage     `json:"messages"`
 	Tools        []anthropicTool        `json:"tools,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 	MaxTokens    int                    `json:"max_tokens"`
 	Thinking     *anthropicThinking     `json:"thinking,omitempty"`
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 	Stream       bool                   `json:"stream,omitempty"`
+}
+
+type anthropicCacheControl struct {
+	Type string `json:"type"`
+}
+
+type anthropicSystemBlock struct {
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicThinking struct {
@@ -42,9 +53,10 @@ type anthropicMessage struct {
 }
 
 type anthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description,omitempty"`
+	InputSchema  json.RawMessage        `json:"input_schema"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicUsage struct {
@@ -59,6 +71,7 @@ func (usage anthropicUsage) tokenUsage() TokenUsage {
 	result := TokenUsage{CompletionTokens: usage.OutputTokens}
 	if usage.CacheCreationInputTokens != nil {
 		promptTokens += *usage.CacheCreationInputTokens
+		result.CacheWritePromptTokens = *usage.CacheCreationInputTokens
 		result.CacheUsageAvailable = true
 	}
 	if usage.CacheReadInputTokens != nil {
@@ -243,13 +256,16 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 }
 
 func buildAnthropicRequest(model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, stream bool) (anthropicRequest, error) {
-	system, converted := anthropicMessages(messages)
+	system, converted := anthropicMessages(messages, options.PromptCache)
 	if responseType, _ := options.ResponseFormat["type"].(string); responseType == "json_object" {
-		system = strings.TrimSpace(system + "\n\nReturn the response as a valid JSON object.")
+		system = append(system, anthropicSystemBlock{Type: "text", Text: "Return the response as a valid JSON object."})
 	}
 	request := anthropicRequest{
 		Model: model, System: system, Messages: converted,
 		MaxTokens: anthropicDefaultMaxTokens, Stream: stream,
+	}
+	if options.PromptCache.Enabled {
+		request.CacheControl = &anthropicCacheControl{Type: "ephemeral"}
 	}
 	if options.ReasoningEffort != ReasoningEffortAuto {
 		request.Thinking = &anthropicThinking{Type: "adaptive"}
@@ -264,11 +280,14 @@ func buildAnthropicRequest(model string, messages []map[string]any, definitions 
 			Name: definition.Function.Name, Description: definition.Function.Description, InputSchema: schema,
 		})
 	}
+	if options.PromptCache.Enabled && len(request.Tools) > 0 {
+		request.Tools[len(request.Tools)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+	}
 	return request, nil
 }
 
-func anthropicMessages(messages []map[string]any) (string, []anthropicMessage) {
-	systemParts := make([]string, 0, 1)
+func anthropicMessages(messages []map[string]any, cache PromptCacheOptions) ([]anthropicSystemBlock, []anthropicMessage) {
+	systemParts := make([]anthropicSystemBlock, 0, 2)
 	converted := make([]anthropicMessage, 0, len(messages))
 	appendMessage := func(role string, blocks []any) {
 		if len(blocks) == 0 {
@@ -281,12 +300,16 @@ func anthropicMessages(messages []map[string]any) (string, []anthropicMessage) {
 		converted = append(converted, anthropicMessage{Role: role, Content: blocks})
 	}
 
-	for _, message := range messages {
+	for index, message := range messages {
 		role, _ := message["role"].(string)
 		switch role {
 		case "system", "developer":
 			if text := strings.TrimSpace(contentText(message["content"])); text != "" {
-				systemParts = append(systemParts, text)
+				block := anthropicSystemBlock{Type: "text", Text: text}
+				if cache.Enabled && cache.ExplicitBreakpoint && index == cache.StableMessageCount-1 {
+					block.CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+				}
+				systemParts = append(systemParts, block)
 			}
 		case "tool":
 			callID, _ := message["tool_call_id"].(string)
@@ -306,7 +329,7 @@ func anthropicMessages(messages []map[string]any) (string, []anthropicMessage) {
 			appendMessage("user", anthropicContent(message["content"]))
 		}
 	}
-	return strings.Join(systemParts, "\n\n"), converted
+	return systemParts, converted
 }
 
 func anthropicContent(content any) []any {

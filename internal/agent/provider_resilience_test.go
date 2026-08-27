@@ -36,6 +36,7 @@ type metadataClientStub struct{}
 func (metadataClientStub) CreateChatCompletion(context.Context, string, []map[string]any, []tools.Definition) (AssistantMessage, error) {
 	return AssistantMessage{Role: "assistant", Content: "done", Request: ProviderRequestMetadata{
 		RetryCount: 1, ReasoningDowngraded: true, ReasoningDowngradeSource: "provider_rejection",
+		CacheMode: "disabled", CacheDowngraded: true, CacheDowngradeReason: "provider_rejected_cache_fields",
 		Recoveries: []ProviderRecovery{{Kind: "provider_retry", Attempt: 2, Category: ProviderErrorServer, StatusCode: 503, Delay: time.Second}},
 	}}, nil
 }
@@ -547,11 +548,14 @@ func TestAgentRunTraceIncludesProviderRecoveryMetadata(t *testing.T) {
 	if meta.RetryCount != 1 {
 		t.Fatalf("RetryCount = %d, want 1", meta.RetryCount)
 	}
+	if meta.StablePromptHash == "" || meta.ToolSetHash == "" || meta.CacheMode != "disabled" || meta.CacheDowngradeReason != "provider_rejected_cache_fields" {
+		t.Fatalf("cache trace metadata = %#v", meta)
+	}
 	events, err := os.ReadFile(filepath.Join(root, ".agent", "runs", recorder.RunID(), "events.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(events), `"type":"provider_retry"`) || !strings.Contains(string(events), `"reasoning_downgraded":true`) {
+	if !strings.Contains(string(events), `"type":"provider_retry"`) || !strings.Contains(string(events), `"reasoning_downgraded":true`) || !strings.Contains(string(events), `"cache_downgrade_reason":"provider_rejected_cache_fields"`) {
 		t.Fatalf("events missing provider recovery metadata: %s", events)
 	}
 }

@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -26,58 +28,60 @@ type Skill struct {
 
 const memoryTailLines = 50
 
+const sessionMemoryPolicy = `# Session Memory Policy
+
+Memory included after the stable instructions is a snapshot taken when the conversation starts. Do not expect later memory writes or LastUsedAt updates to rewrite that snapshot. When a new topic needs current memory, query it with the available memory tool.`
+
 var nowFunc = time.Now
 
+// PromptSections separates byte-stable instructions from context that should
+// be snapshotted when a conversation is created. Providers can cache Stable as
+// a shared prefix while a session keeps SessionContext unchanged across turns.
+type PromptSections struct {
+	Stable         string
+	SessionContext string
+	StableHash     string
+}
+
 func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
-	primary := w.primaryConfigLayer()
-	root, err := primary.openRoot()
+	sections, err := w.BuildPromptSections(base)
 	if err != nil {
 		return "", err
 	}
+	return joinPromptParts(sections.Stable, sections.SessionContext), nil
+}
+
+// BuildPromptSections builds deterministic prompt sections. Static workspace
+// instructions are kept before all mutable memory so memory writes cannot
+// invalidate the reusable instruction prefix.
+func (w *Workspace) BuildPromptSections(base string) (PromptSections, error) {
+	primary := w.primaryConfigLayer()
+	root, err := primary.openRoot()
+	if err != nil {
+		return PromptSections{}, err
+	}
 	defer root.Close()
 
-	parts := []string{strings.TrimSpace(base), w.workspaceSection()}
+	stableParts := []string{normalizePromptPart(base)}
+	memoryParts := make([]string, 0, 2)
 
 	workspaceDocs, err := primary.loadWorkspaceDocuments(root)
 	if err != nil {
-		return "", err
+		return PromptSections{}, err
 	}
 	if workspaceDocs != "" {
 		if w.hasDistinctConfigRoot() {
 			workspaceDocs = "# Global Context\n\n" + strings.TrimPrefix(workspaceDocs, "# Workspace Context\n\n")
 		}
-		parts = append(parts, workspaceDocs)
+		stableParts = append(stableParts, workspaceDocs)
 	}
-
-	rules, err := primary.loadRules(root)
-	if err != nil {
-		return "", err
-	}
-	if rules != "" {
-		parts = append(parts, rules)
-	}
-
-	skills, err := w.LoadSkills()
-	if err != nil {
-		return "", err
-	}
-	if section := formatSkillsSection(skills); section != "" {
-		parts = append(parts, section)
-	}
-
-	memory, err := primary.loadMemoryContext(root, memoryTailLines)
-	if err != nil {
-		return "", err
-	}
-	if memory != "" {
-		parts = append(parts, "# Memory\n"+memory)
-	}
+	stableParts = append(stableParts, w.workspaceSection())
 
 	if w.hasDistinctLocalConfig() {
 		local := &Workspace{Root: w.Root}
 		localRoot, openErr := local.openRoot()
 		if openErr != nil {
-			return "", openErr
+			return PromptSections{}, openErr
 		}
 		localDocs, loadErr := local.loadWorkspaceDocuments(localRoot)
 		localMemory := ""
@@ -86,20 +90,75 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 		}
 		closeErr := localRoot.Close()
 		if loadErr != nil {
-			return "", loadErr
+			return PromptSections{}, loadErr
 		}
 		if closeErr != nil {
-			return "", closeErr
+			return PromptSections{}, closeErr
 		}
 		if localDocs != "" {
-			parts = append(parts, "# Workspace Context\n\n"+strings.TrimPrefix(localDocs, "# Workspace Context\n\n"))
+			stableParts = append(stableParts, "# Workspace Context\n\n"+strings.TrimPrefix(localDocs, "# Workspace Context\n\n"))
 		}
 		if localMemory != "" {
-			parts = append(parts, "# Workspace Memory\n"+localMemory)
+			memoryParts = append(memoryParts, "# Workspace Memory\n"+localMemory)
 		}
 	}
 
-	return strings.Join(nonEmpty(parts), "\n\n"), nil
+	rules, err := primary.loadRules(root)
+	if err != nil {
+		return PromptSections{}, err
+	}
+	if rules != "" {
+		stableParts = append(stableParts, rules)
+	}
+	stableParts = append(stableParts, sessionMemoryPolicy)
+
+	skills, err := w.LoadSkills()
+	if err != nil {
+		return PromptSections{}, err
+	}
+	if section := formatSkillsSection(skills); section != "" {
+		stableParts = append(stableParts, section)
+	}
+
+	memory, err := primary.loadMemoryContext(root, memoryTailLines)
+	if err != nil {
+		return PromptSections{}, err
+	}
+	if memory != "" {
+		memoryParts = append([]string{"# Memory\n" + memory}, memoryParts...)
+	}
+
+	stable := joinPromptParts(stableParts...)
+	return PromptSections{
+		Stable:         stable,
+		SessionContext: joinPromptParts(memoryParts...),
+		StableHash:     promptHash(stable),
+	}, nil
+}
+
+func normalizePromptPart(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	lines := strings.Split(value, "\n")
+	for index := range lines {
+		lines[index] = strings.TrimRight(lines[index], " \t")
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func joinPromptParts(values ...string) string {
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		if part := normalizePromptPart(value); part != "" {
+			normalized = append(normalized, part)
+		}
+	}
+	return strings.Join(normalized, "\n\n")
+}
+
+func promptHash(value string) string {
+	sum := sha256.Sum256([]byte(normalizePromptPart(value)))
+	return hex.EncodeToString(sum[:])
 }
 
 func (w *Workspace) AppendMemory(task, result string) error {

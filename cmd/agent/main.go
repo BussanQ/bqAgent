@@ -342,7 +342,12 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	}
 
 	llmConfig := runtimeConfigFromSources(getenv, ws.AgentDir())
-	systemPrompt = agent.AppendModelIdentitySystemPrompt(systemPrompt, llmConfig.Model, llmConfig.APIType)
+	promptSections, promptErr := ws.BuildPromptSections("")
+	if promptErr != nil {
+		fmt.Fprintln(stderr, promptErr)
+		return 1
+	}
+	stablePrompt := agent.NewPromptSnapshot(promptSections.Stable, "", llmConfig.Model, llmConfig.APIType)
 
 	var (
 		conversation *appruntime.Conversation
@@ -359,7 +364,9 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 			createOptions = &session.CreateOptions{Task: task, Planned: options.plan, Background: options.sessionRun}
 		}
 		sessionOptions := session.Options{TranscriptMode: llmConfig.SessionTranscriptMode, OutputMaxBytes: llmConfig.SessionOutputMaxBytes, AgentDir: ws.AgentDir()}
-		conversation, err = appruntime.PrepareConversation(session.NewStore(ws.Root, sessionOptions), sessionID, createOptions, systemPrompt)
+		conversation, err = appruntime.PrepareConversationWithPrompt(session.NewStore(ws.Root, sessionOptions), sessionID, createOptions, stablePrompt, func() (string, error) {
+			return promptSections.SessionContext, nil
+		})
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -385,6 +392,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 			errorWriter = io.MultiWriter(stderr, timestampedLogFile)
 		}
 	}
+	systemPrompt = conversation.Prompt.Combined()
 
 	runtime := appruntime.Factory{
 		Config:         llmConfig,
@@ -407,7 +415,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		_ = conversation.Session.SetLastRunID(runRecorder.RunID())
 		ctx = apptrace.WithRunID(ctx, runRecorder.RunID())
 	}
-	app := agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{SystemPrompt: systemPrompt, APIType: runtime.APIType, LogWriter: outputWriter, ProgressWriter: stdout, ToolDefinitions: runtime.Catalog.Definitions(), Functions: runtime.Catalog.Registry(), Planner: runtime.Planner, Recorder: conversation.Recorder(), WorkspaceRoot: runtime.WorkspaceRoot, Context: runtime.Context, Trace: runRecorder})
+	app := agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{Prompt: conversation.Prompt, APIType: runtime.APIType, LogWriter: outputWriter, ProgressWriter: stdout, ToolDefinitions: runtime.Catalog.Definitions(), Functions: runtime.Catalog.Registry(), Planner: runtime.Planner, Recorder: conversation.Recorder(), WorkspaceRoot: runtime.WorkspaceRoot, Context: runtime.Context, Trace: runRecorder})
 
 	if strings.TrimSpace(task) != "" && !options.plan {
 		if err := conversation.AddUserMessage(task); err != nil {

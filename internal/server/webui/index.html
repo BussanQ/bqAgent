@@ -3959,7 +3959,11 @@
     }
     var promptTokens = Number(generation.prompt_tokens);
     var cachedPromptTokens = Number(generation.cached_prompt_tokens || 0);
-    if (generation.cache_usage_available === true && isFinite(promptTokens) && promptTokens > 0 && isFinite(cachedPromptTokens)) {
+    var cacheMetrics = generation.cache_metrics || null;
+    if (cacheMetrics && cacheMetrics.available === true && Number(cacheMetrics.input_tokens) > 0) {
+      var cacheHitRate = Math.max(0, Math.min(100, Number(cacheMetrics.hit_rate || 0) * 100));
+      parts.push("缓存命中 " + Math.round(cacheHitRate) + "%");
+    } else if (generation.cache_usage_available === true && isFinite(promptTokens) && promptTokens > 0 && isFinite(cachedPromptTokens)) {
       var cacheHitRate = Math.max(0, Math.min(100, cachedPromptTokens * 100 / promptTokens));
       parts.push("缓存命中 " + Math.round(cacheHitRate) + "%");
     }
@@ -3979,7 +3983,9 @@
     var generationDuration = Number(generation.generation_duration_ms);
     if (isFinite(completionTokens) && completionTokens > 0) details.push("输出 " + Math.round(completionTokens) + " tokens");
     if (isFinite(reasoningTokens) && reasoningTokens > 0) details.push("其中推理 " + Math.round(reasoningTokens) + " tokens");
-    if (generation.cache_usage_available === true && isFinite(promptTokens) && promptTokens > 0) details.push("输入 " + Math.round(promptTokens) + " tokens，缓存命中 " + Math.round(cachedPromptTokens) + " tokens");
+    if (cacheMetrics && cacheMetrics.available === true) {
+      details.push("缓存汇总 " + Math.round(Number(cacheMetrics.calls || 0)) + " 次调用，输入 " + Math.round(Number(cacheMetrics.input_tokens || 0)) + " tokens，读取 " + Math.round(Number(cacheMetrics.cache_read_tokens || 0)) + "，写入 " + Math.round(Number(cacheMetrics.cache_write_tokens || 0)) + "，未缓存 " + Math.round(Number(cacheMetrics.uncached_input_tokens || 0)));
+    } else if (generation.cache_usage_available === true && isFinite(promptTokens) && promptTokens > 0) details.push("输入 " + Math.round(promptTokens) + " tokens，缓存命中 " + Math.round(cachedPromptTokens) + " tokens");
     if (isFinite(generationDuration) && generationDuration > 0) details.push("生成区间 " + Math.round(generationDuration) + " ms");
     if (details.length) row.title = details.join(" · ");
     stack.appendChild(row);

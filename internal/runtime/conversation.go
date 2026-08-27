@@ -15,17 +15,34 @@ type Conversation struct {
 	Session             *session.Session
 	Messages            []map[string]any
 	UsingWorkingContext bool
+	Prompt              agent.PromptSnapshot
 }
 
+const PromptSchemaVersion = 1
+
+type SessionContextBuilder func() (string, error)
+
 func PrepareConversation(store *session.Store, sessionID string, createOptions *session.CreateOptions, systemPrompt string) (*Conversation, error) {
+	stable, sessionContext := splitLegacySystemPrompt(systemPrompt)
+	return PrepareConversationWithPrompt(store, sessionID, createOptions, agent.NewFrozenPromptSnapshot(stable, sessionContext), nil)
+}
+
+// PrepareConversationWithPrompt restores an existing prompt snapshot when its
+// stable hash still matches. The session context builder is deliberately lazy:
+// mutable memory is read only for a new snapshot, never on an ordinary resume.
+func PrepareConversationWithPrompt(store *session.Store, sessionID string, createOptions *session.CreateOptions, stablePrompt agent.PromptSnapshot, buildSessionContext SessionContextBuilder) (*Conversation, error) {
 	var (
 		savedSession *session.Session
 		err          error
 	)
+	stablePrompt = agent.NewFrozenPromptSnapshot(stablePrompt.Stable, stablePrompt.SessionContext)
 
 	sessionID = strings.TrimSpace(sessionID)
 	switch {
 	case sessionID != "":
+		if store == nil {
+			return nil, errors.New("session store is required when session_id is set")
+		}
 		savedSession, err = store.Open(sessionID)
 		if err != nil && errors.Is(err, os.ErrNotExist) && createOptions != nil {
 			log.Printf("session %s not found on disk; starting fresh session", sessionID)
@@ -52,10 +69,13 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 				err = savedSession.SaveWorkingMessages(messages)
 			}
 		}
-		if err == nil && !usingWorkingContext {
+		meta := savedSession.Meta()
+		promptMatches := meta.PromptSchemaVersion == PromptSchemaVersion &&
+			meta.PromptStableHash == stablePrompt.StableHash && meta.PromptMessageCount > 0
+		if err == nil && !usingWorkingContext && promptMatches {
 			if checkpoint, checkpointErr := savedSession.LoadCheckpoint(); checkpointErr == nil {
-				if provenance, provenanceErr := savedSession.LoadTranscriptProvenance(); provenanceErr == nil && checkpointCanRestore(checkpoint, systemPrompt, provenance) {
-					messages = restoreCheckpointMessages(messages, checkpoint, systemPrompt)
+				if provenance, provenanceErr := savedSession.LoadTranscriptProvenance(); provenanceErr == nil && checkpointCanRestore(checkpoint, stablePrompt, provenance) {
+					messages = restoreCheckpointMessages(messages, checkpoint, meta.PromptMessageCount)
 				}
 			}
 		}
@@ -64,58 +84,108 @@ func PrepareConversation(store *session.Store, sessionID string, createOptions *
 			return nil, err
 		}
 		conversation := &Conversation{Session: savedSession, Messages: messages, UsingWorkingContext: usingWorkingContext}
-		if err := conversation.EnsureSystemMessage(systemPrompt); err != nil {
+		if promptMatches {
+			if restoredPrompt, ok := promptSnapshotFromMessages(messages, meta.PromptMessageCount, stablePrompt.StableHash); ok {
+				conversation.Prompt = restoredPrompt
+				return conversation, nil
+			}
+		}
+
+		snapshot, snapshotErr := resolvePromptSnapshot(stablePrompt, buildSessionContext)
+		if snapshotErr != nil {
+			_ = savedSession.MarkFailed(snapshotErr)
+			return nil, snapshotErr
+		}
+		previousCount := legacyPromptMessageCount(messages)
+		if meta.PromptSchemaVersion == PromptSchemaVersion && meta.PromptMessageCount > 0 {
+			previousCount = meta.PromptMessageCount
+		}
+		if err := conversation.EnsurePromptSnapshot(snapshot, previousCount); err != nil {
+			_ = savedSession.MarkFailed(err)
+			return nil, err
+		}
+		if err := savedSession.SetPromptSnapshot(PromptSchemaVersion, snapshot.StableHash, snapshot.MessageCount()); err != nil {
 			_ = savedSession.MarkFailed(err)
 			return nil, err
 		}
 		return conversation, nil
 	}
 
+	snapshot, err := resolvePromptSnapshot(stablePrompt, buildSessionContext)
+	if err != nil {
+		return nil, err
+	}
 	conversation := &Conversation{
 		Session:  savedSession,
 		Messages: messages,
 	}
-	if err := conversation.EnsureSystemMessage(systemPrompt); err != nil {
+	if err := conversation.EnsurePromptSnapshot(snapshot, 0); err != nil {
 		if savedSession != nil {
 			// Best effort; the primary error is returned below.
 			_ = savedSession.MarkFailed(err)
 		}
 		return nil, err
 	}
+	if savedSession != nil {
+		if err := savedSession.SetPromptSnapshot(PromptSchemaVersion, snapshot.StableHash, snapshot.MessageCount()); err != nil {
+			return nil, err
+		}
+	}
 	return conversation, nil
 }
 
-func (conversation *Conversation) EnsureSystemMessage(systemPrompt string) error {
-	systemMessage := map[string]any{"role": "system", "content": systemPrompt}
-	if len(conversation.Messages) == 0 {
-		conversation.Messages = append(conversation.Messages, systemMessage)
-		if conversation.Session != nil {
-			return conversation.Session.RecordMessage(systemMessage)
+func resolvePromptSnapshot(stablePrompt agent.PromptSnapshot, buildSessionContext SessionContextBuilder) (agent.PromptSnapshot, error) {
+	sessionContext := stablePrompt.SessionContext
+	if buildSessionContext != nil {
+		var err error
+		sessionContext, err = buildSessionContext()
+		if err != nil {
+			return agent.PromptSnapshot{}, err
 		}
-		return nil
 	}
-
-	role, _ := conversation.Messages[0]["role"].(string)
-	content, _ := conversation.Messages[0]["content"].(string)
-	if role == "system" {
-		if content == systemPrompt {
-			return nil
-		}
-		conversation.Messages[0] = systemMessage
-	} else {
-		conversation.Messages = append([]map[string]any{systemMessage}, conversation.Messages...)
-	}
-	if conversation.Session != nil {
-		if conversation.UsingWorkingContext {
-			return conversation.Session.SaveWorkingMessages(conversation.Messages)
-		}
-		return conversation.Session.RewriteMessages(conversation.Messages)
-	}
-	return nil
+	return agent.NewFrozenPromptSnapshot(stablePrompt.Stable, sessionContext), nil
 }
 
-func checkpointCanRestore(checkpoint session.ContextCheckpoint, systemPrompt string, provenance session.TranscriptProvenance) bool {
-	if strings.TrimSpace(checkpoint.SystemPrompt) != "" && stablePrompt(checkpoint.SystemPrompt) != stablePrompt(systemPrompt) {
+func (conversation *Conversation) EnsurePromptSnapshot(snapshot agent.PromptSnapshot, previousCount int) error {
+	snapshot = agent.NewFrozenPromptSnapshot(snapshot.Stable, snapshot.SessionContext)
+	promptMessages := snapshot.Messages()
+	removeCount := previousCount
+	existingCount := legacyPromptMessageCount(conversation.Messages)
+	if removeCount <= 0 || removeCount > existingCount {
+		removeCount = existingCount
+	}
+
+	updated := make([]map[string]any, 0, len(promptMessages)+len(conversation.Messages)-removeCount)
+	updated = append(updated, promptMessages...)
+	updated = append(updated, conversation.Messages[removeCount:]...)
+	conversation.Messages = updated
+	conversation.Prompt = snapshot
+	if conversation.Session == nil {
+		return nil
+	}
+	if len(updated) == len(promptMessages) && removeCount == 0 {
+		return conversation.Session.RecordMessages(promptMessages...)
+	}
+	if conversation.UsingWorkingContext {
+		return conversation.Session.SaveWorkingMessages(updated)
+	}
+	return conversation.Session.RewriteMessages(updated)
+}
+
+func (conversation *Conversation) EnsureSystemMessage(systemPrompt string) error {
+	snapshot := agent.NewFrozenPromptSnapshot(systemPrompt, "")
+	if restored, ok := promptSnapshotFromMessages(conversation.Messages, 1, snapshot.StableHash); ok {
+		conversation.Prompt = restored
+		return nil
+	}
+	return conversation.EnsurePromptSnapshot(snapshot, legacyPromptMessageCount(conversation.Messages))
+}
+
+func checkpointCanRestore(checkpoint session.ContextCheckpoint, prompt agent.PromptSnapshot, provenance session.TranscriptProvenance) bool {
+	if checkpoint.PromptStableHash != "" && checkpoint.PromptStableHash != prompt.StableHash {
+		return false
+	}
+	if checkpoint.PromptStableHash == "" && strings.TrimSpace(checkpoint.SystemPrompt) != "" && stablePrompt(checkpoint.SystemPrompt) != stablePrompt(prompt.Combined()) {
 		return false
 	}
 	if checkpoint.SourceTranscriptSHA256 != "" {
@@ -124,19 +194,18 @@ func checkpointCanRestore(checkpoint session.ContextCheckpoint, systemPrompt str
 	return !checkpoint.UpdatedAt.Before(provenance.ModTime)
 }
 
-func restoreCheckpointMessages(messages []map[string]any, checkpoint session.ContextCheckpoint, systemPrompt string) []map[string]any {
+func restoreCheckpointMessages(messages []map[string]any, checkpoint session.ContextCheckpoint, promptMessageCount int) []map[string]any {
 	if strings.TrimSpace(checkpoint.Summary) == "" || len(checkpoint.TailMessages) == 0 {
 		return messages
 	}
-	if strings.TrimSpace(checkpoint.SystemPrompt) != "" && stablePrompt(checkpoint.SystemPrompt) != stablePrompt(systemPrompt) {
-		return messages
-	}
 
-	restored := make([]map[string]any, 0, len(checkpoint.TailMessages)+2)
-	if len(messages) > 0 {
-		if role, _ := messages[0]["role"].(string); role == "system" {
-			restored = append(restored, messages[0])
-		}
+	availablePromptCount := legacyPromptMessageCount(messages)
+	if promptMessageCount <= 0 || promptMessageCount > availablePromptCount {
+		promptMessageCount = availablePromptCount
+	}
+	restored := make([]map[string]any, 0, len(checkpoint.TailMessages)+promptMessageCount+1)
+	if promptMessageCount > 0 {
+		restored = append(restored, messages[:promptMessageCount]...)
 	}
 	restored = append(restored, map[string]any{
 		"role":    "system",
@@ -185,6 +254,52 @@ func stablePrompt(prompt string) string {
 		return prompt[:index]
 	}
 	return prompt
+}
+
+func splitLegacySystemPrompt(prompt string) (string, string) {
+	marker := "\n\n# Relevant structured memory\n"
+	if index := strings.Index(prompt, marker); index >= 0 {
+		return prompt[:index], prompt[index+2:]
+	}
+	return prompt, ""
+}
+
+func legacyPromptMessageCount(messages []map[string]any) int {
+	count := 0
+	for _, message := range messages {
+		role, _ := message["role"].(string)
+		if role != "system" {
+			break
+		}
+		content, _ := message["content"].(string)
+		if strings.HasPrefix(content, agent.EarlierConversationSummaryPrefix) {
+			break
+		}
+		count++
+	}
+	return count
+}
+
+func promptSnapshotFromMessages(messages []map[string]any, messageCount int, stableHash string) (agent.PromptSnapshot, bool) {
+	if messageCount < 1 || messageCount > 2 || len(messages) < messageCount {
+		return agent.PromptSnapshot{}, false
+	}
+	stableRole, _ := messages[0]["role"].(string)
+	stable, stableOK := messages[0]["content"].(string)
+	if stableRole != "system" || !stableOK {
+		return agent.PromptSnapshot{}, false
+	}
+	sessionContext := ""
+	if messageCount == 2 {
+		contextRole, _ := messages[1]["role"].(string)
+		var contextOK bool
+		sessionContext, contextOK = messages[1]["content"].(string)
+		if contextRole != "system" || !contextOK || strings.HasPrefix(sessionContext, agent.EarlierConversationSummaryPrefix) {
+			return agent.PromptSnapshot{}, false
+		}
+	}
+	snapshot := agent.NewFrozenPromptSnapshot(stable, sessionContext)
+	return snapshot, snapshot.StableHash == stableHash
 }
 
 func (conversation *Conversation) AddUserMessage(content string) error {

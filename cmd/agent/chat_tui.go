@@ -87,6 +87,17 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 			GenerationDurationMS: response.Generation.GenerationDurationMS,
 			TokensPerSecond:      response.Generation.TokensPerSecond,
 		}
+		if cache := response.Generation.CacheMetrics; cache != nil {
+			result.Metrics.CacheMetrics = &apptui.CacheMetrics{
+				Available:           cache.Available,
+				Calls:               cache.Calls,
+				InputTokens:         cache.InputTokens,
+				CacheReadTokens:     cache.CacheReadTokens,
+				CacheWriteTokens:    cache.CacheWriteTokens,
+				UncachedInputTokens: cache.UncachedInputTokens,
+				HitRate:             cache.HitRate,
+			}
+		}
 	}
 	return result, err
 }

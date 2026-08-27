@@ -14,7 +14,7 @@ type openAIInputTokenCountResponse struct {
 
 type anthropicInputTokenCountRequest struct {
 	Model        string                 `json:"model"`
-	System       string                 `json:"system,omitempty"`
+	System       []anthropicSystemBlock `json:"system,omitempty"`
 	Messages     []anthropicMessage     `json:"messages"`
 	Tools        []anthropicTool        `json:"tools,omitempty"`
 	Thinking     *anthropicThinking     `json:"thinking,omitempty"`
@@ -29,6 +29,11 @@ type anthropicInputTokenCountResponse struct {
 // this capability separate from generation lets additional providers add their
 // own exact count endpoint without changing the agent loop.
 func (c *Client) CountInputTokens(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (InputTokenCount, error) {
+	if options.PromptCache.Enabled {
+		if _, disabled := cacheUnsupportedEndpoints.Load(c.promptCacheCapabilityKey()); disabled {
+			options.PromptCache.Enabled = false
+		}
+	}
 	switch c.apiType {
 	case APITypeOpenAIResponse:
 		return c.countOpenAIResponseInputTokens(ctx, model, messages, definitions, options)

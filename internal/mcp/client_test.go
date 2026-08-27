@@ -178,3 +178,53 @@ func TestDiscoverSkipsInvalidServerAndKeepsValidServer(t *testing.T) {
 		t.Fatalf("logs leaked secret: %q", logs.String())
 	}
 }
+
+func TestDiscoverProducesDeterministicToolJSONAcrossServerOrder(t *testing.T) {
+	listCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var rpc struct {
+			ID     *int   `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&rpc); err != nil {
+			t.Fatal(err)
+		}
+		if rpc.ID == nil {
+			writer.WriteHeader(http.StatusAccepted)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		switch rpc.Method {
+		case "initialize":
+			fmt.Fprintf(writer, `{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":"%s","capabilities":{},"serverInfo":{"name":"ordered","version":"1"}}}`, *rpc.ID, protocolVersion)
+		case "tools/list":
+			listCalls++
+			if listCalls == 1 {
+				fmt.Fprintf(writer, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"zeta","description":"  zeta description\r\n","inputSchema":{"type":"object","properties":{"z":{"type":"string"},"a":{"type":"number"}}}},{"name":"alpha","description":"alpha description","inputSchema":{"properties":{"q":{"description":"query","type":"string"}},"type":"object"}}]}}`, *rpc.ID)
+				return
+			}
+			fmt.Fprintf(writer, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"inputSchema":{"type":"object","properties":{"q":{"type":"string","description":"query"}}},"description":"alpha description\n","name":"alpha"},{"inputSchema":{"properties":{"a":{"type":"number"},"z":{"type":"string"}},"type":"object"},"description":"zeta description","name":"zeta"}]}}`, *rpc.ID)
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := Config{Servers: map[string]ServerConfig{"ordered": {Type: "streamable-http", URL: server.URL}}}
+	first, _ := Discover(context.Background(), cfg, nil, server.Client(), nil)
+	second, _ := Discover(context.Background(), cfg, nil, server.Client(), nil)
+	firstJSON, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondJSON, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstJSON) != string(secondJSON) {
+		t.Fatalf("tool JSON differs by MCP return order:\nfirst:  %s\nsecond: %s", firstJSON, secondJSON)
+	}
+	if len(first) != 2 || first[0].Function.Name != "mcp__ordered__alpha" || first[1].Function.Name != "mcp__ordered__zeta" {
+		t.Fatalf("tool order = %#v", first)
+	}
+}
