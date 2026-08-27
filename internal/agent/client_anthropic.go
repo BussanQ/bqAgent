@@ -48,8 +48,27 @@ type anthropicTool struct {
 }
 
 type anthropicUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int  `json:"input_tokens"`
+	OutputTokens             int  `json:"output_tokens"`
+	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
+}
+
+func (usage anthropicUsage) tokenUsage() TokenUsage {
+	promptTokens := usage.InputTokens
+	result := TokenUsage{CompletionTokens: usage.OutputTokens}
+	if usage.CacheCreationInputTokens != nil {
+		promptTokens += *usage.CacheCreationInputTokens
+		result.CacheUsageAvailable = true
+	}
+	if usage.CacheReadInputTokens != nil {
+		promptTokens += *usage.CacheReadInputTokens
+		result.CachedPromptTokens = *usage.CacheReadInputTokens
+		result.CacheUsageAvailable = true
+	}
+	result.PromptTokens = promptTokens
+	result.TotalTokens = promptTokens + usage.OutputTokens
+	return result
 }
 
 type anthropicContentBlock struct {
@@ -155,8 +174,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 		}
 		switch event.Type {
 		case "message_start":
-			usage.PromptTokens = event.Message.Usage.InputTokens
-			usage.CompletionTokens = event.Message.Usage.OutputTokens
+			usage = event.Message.Usage.tokenUsage()
 		case "content_block_start":
 			if event.ContentBlock.Type == "tool_use" {
 				state.markSemantic()
@@ -206,7 +224,6 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 		return AssistantMessage{}, providerProtocolError(incomplete.Error(), incomplete)
 	}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-
 	message := AssistantMessage{Role: "assistant", Content: content.String(), Completion: completionFromStopReason(stopReason), Usage: usage}
 	indexes := make([]int, 0, len(calls))
 	for index := range calls {
@@ -352,10 +369,7 @@ func assistantFromAnthropic(response anthropicResponse) AssistantMessage {
 		}
 	}
 	message.Content = content.String()
-	message.Usage = TokenUsage{
-		PromptTokens: response.Usage.InputTokens, CompletionTokens: response.Usage.OutputTokens,
-		TotalTokens: response.Usage.InputTokens + response.Usage.OutputTokens,
-	}
+	message.Usage = response.Usage.tokenUsage()
 	message.normalizeInlineToolCalls()
 	return message
 }

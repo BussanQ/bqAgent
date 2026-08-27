@@ -732,7 +732,17 @@ func (model Model) renderStatus(width int) string {
 		elapsed := time.Since(model.startedAt).Round(100 * time.Millisecond)
 		right = fmt.Sprintf("%s %s · %s · ~%d tok", model.spinner.View(), model.phaseLabel(), elapsed, model.liveTokens)
 	} else if model.metrics != nil {
-		right = fmt.Sprintf("首字 %.2fs · %d tok · %.1f tok/s", float64(model.metrics.FirstTokenLatencyMS)/1000, model.metrics.CompletionTokens, model.metrics.TokensPerSecond)
+		parts := []string{
+			fmt.Sprintf("首字 %.2fs", float64(model.metrics.FirstTokenLatencyMS)/1000),
+			fmt.Sprintf("%d tok", model.metrics.CompletionTokens),
+		}
+		if model.metrics.CacheUsageAvailable && model.metrics.PromptTokens > 0 {
+			rate := 100 * float64(model.metrics.CachedPromptTokens) / float64(model.metrics.PromptTokens)
+			rate = min(100, max(0, rate))
+			parts = append(parts, fmt.Sprintf("缓存命中 %.0f%%", rate))
+		}
+		parts = append(parts, fmt.Sprintf("%.1f tok/s", model.metrics.TokensPerSecond))
+		right = strings.Join(parts, " · ")
 	}
 	if right == "" {
 		right = "Enter 发送 · Alt+Enter 换行 · / 命令"

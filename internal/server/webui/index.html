@@ -3957,6 +3957,12 @@
     if (isFinite(firstTokenLatency) && firstTokenLatency > 0) {
       parts.push("首字 " + Math.round(firstTokenLatency) + " ms");
     }
+    var promptTokens = Number(generation.prompt_tokens);
+    var cachedPromptTokens = Number(generation.cached_prompt_tokens || 0);
+    if (generation.cache_usage_available === true && isFinite(promptTokens) && promptTokens > 0 && isFinite(cachedPromptTokens)) {
+      var cacheHitRate = Math.max(0, Math.min(100, cachedPromptTokens * 100 / promptTokens));
+      parts.push("缓存命中 " + Math.round(cacheHitRate) + "%");
+    }
     if (isFinite(tokensPerSecond) && tokensPerSecond > 0) {
       parts.push("约 " + tokensPerSecond.toFixed(1).replace(/\.0$/, "") + " token/s");
     }
@@ -3973,6 +3979,7 @@
     var generationDuration = Number(generation.generation_duration_ms);
     if (isFinite(completionTokens) && completionTokens > 0) details.push("输出 " + Math.round(completionTokens) + " tokens");
     if (isFinite(reasoningTokens) && reasoningTokens > 0) details.push("其中推理 " + Math.round(reasoningTokens) + " tokens");
+    if (generation.cache_usage_available === true && isFinite(promptTokens) && promptTokens > 0) details.push("输入 " + Math.round(promptTokens) + " tokens，缓存命中 " + Math.round(cachedPromptTokens) + " tokens");
     if (isFinite(generationDuration) && generationDuration > 0) details.push("生成区间 " + Math.round(generationDuration) + " ms");
     if (details.length) row.title = details.join(" · ");
     stack.appendChild(row);

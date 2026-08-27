@@ -49,9 +49,12 @@ func TestRunConversationTurnWithGenerationMetrics(t *testing.T) {
 			Role:    "assistant",
 			Content: "hello world",
 			Usage: TokenUsage{
-				CompletionTokens: 12,
-				ReasoningTokens:  2,
-				TotalTokens:      20,
+				PromptTokens:        100,
+				CachedPromptTokens:  75,
+				CacheUsageAvailable: true,
+				CompletionTokens:    12,
+				ReasoningTokens:     2,
+				TotalTokens:         112,
 			},
 		}},
 		chunks: [][]string{{"hello", " world"}},
@@ -73,6 +76,9 @@ func TestRunConversationTurnWithGenerationMetrics(t *testing.T) {
 	}
 	if metrics.CompletionTokens != 12 || metrics.ReasoningTokens != 2 {
 		t.Fatalf("usage metrics = %#v", metrics)
+	}
+	if !metrics.CacheUsageAvailable || metrics.PromptTokens != 100 || metrics.CachedPromptTokens != 75 {
+		t.Fatalf("cache metrics = %#v", metrics)
 	}
 	if metrics.GenerationDuration <= 0 || metrics.TokensPerSecond <= 0 {
 		t.Fatalf("generation metrics = %#v, want positive duration and rate", metrics)

@@ -44,6 +44,9 @@ type TurnResult struct {
 
 type GenerationMetrics struct {
 	FirstTokenLatencyMS  int64
+	PromptTokens         int
+	CachedPromptTokens   int
+	CacheUsageAvailable  bool
 	CompletionTokens     int
 	ReasoningTokens      int
 	GenerationDurationMS int64

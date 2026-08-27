@@ -252,3 +252,20 @@ func TestUserMessageTriangleStyle(t *testing.T) {
 		t.Fatalf("continuation should align with the question: %q", rendered)
 	}
 }
+
+func TestCompletedStatusShowsCacheHitRate(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.width = 100
+	model.metrics = &GenerationMetrics{
+		FirstTokenLatencyMS: 250,
+		PromptTokens:        100,
+		CachedPromptTokens:  75,
+		CacheUsageAvailable: true,
+		CompletionTokens:    20,
+		TokensPerSecond:     10,
+	}
+	status := model.renderStatus(model.contentWidth())
+	if !strings.Contains(status, "缓存命中 75%") {
+		t.Fatalf("status = %q", status)
+	}
+}

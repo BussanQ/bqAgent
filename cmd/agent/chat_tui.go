@@ -79,6 +79,9 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 	if response.Generation != nil {
 		result.Metrics = &apptui.GenerationMetrics{
 			FirstTokenLatencyMS:  response.Generation.FirstTokenLatencyMS,
+			PromptTokens:         response.Generation.PromptTokens,
+			CachedPromptTokens:   response.Generation.CachedPromptTokens,
+			CacheUsageAvailable:  response.Generation.CacheUsageAvailable,
 			CompletionTokens:     response.Generation.CompletionTokens,
 			ReasoningTokens:      response.Generation.ReasoningTokens,
 			GenerationDurationMS: response.Generation.GenerationDurationMS,
