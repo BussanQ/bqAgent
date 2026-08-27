@@ -467,7 +467,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	return 0
 }
 
-func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt, initialTask string, options cliOptions) int {
+func runChatLegacy(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt, initialTask string, options cliOptions) int {
 	sessionID := effectiveSessionID(options)
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, nil)
 	defer externalBroker.Close()

@@ -114,6 +114,9 @@ const (
 
 type GenerationMetrics struct {
 	FirstTokenLatencyMS  int64   `json:"first_token_latency_ms"`
+	PromptTokens         int     `json:"prompt_tokens,omitempty"`
+	CachedPromptTokens   int     `json:"cached_prompt_tokens,omitempty"`
+	CacheUsageAvailable  bool    `json:"cache_usage_available,omitempty"`
 	CompletionTokens     int     `json:"completion_tokens,omitempty"`
 	ReasoningTokens      int     `json:"reasoning_tokens,omitempty"`
 	GenerationDurationMS int64   `json:"generation_duration_ms,omitempty"`
@@ -139,6 +142,9 @@ func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *Generation
 	}
 	generation := &GenerationMetrics{
 		FirstTokenLatencyMS: firstTokenLatencyMS,
+		PromptTokens:        metrics.PromptTokens,
+		CachedPromptTokens:  metrics.CachedPromptTokens,
+		CacheUsageAvailable: metrics.CacheUsageAvailable,
 		CompletionTokens:    metrics.CompletionTokens,
 		ReasoningTokens:     metrics.ReasoningTokens,
 		TokensPerSecond:     metrics.TokensPerSecond,

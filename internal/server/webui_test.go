@@ -69,6 +69,7 @@ func TestWebUIServesIndex(t *testing.T) {
 		`row.className = "message-actions"`,
 		`.message-meta`,
 		`function addMessageMeta(bubble, generation)`,
+		`"缓存命中 "`,
 		`addMessageMeta(bubble, done.generation)`,
 		`/api/v1/chat/stop`,
 		`/api/v1/status`,
@@ -779,7 +780,7 @@ func TestWebUIStreamChat(t *testing.T) {
 			}
 			time.Sleep(time.Millisecond)
 		}
-		fmt.Fprintln(writer, `data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":6,"total_tokens":9,"completion_tokens_details":{"reasoning_tokens":1}}}`)
+		fmt.Fprintln(writer, `data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":6,"total_tokens":10,"prompt_tokens_details":{"cached_tokens":3},"completion_tokens_details":{"reasoning_tokens":1}}}`)
 		fmt.Fprint(writer, "data: [DONE]\n\n")
 	}))
 	defer llmServer.Close()
@@ -814,6 +815,9 @@ func TestWebUIStreamChat(t *testing.T) {
 	}
 	if first.done.Generation.CompletionTokens != 6 || first.done.Generation.ReasoningTokens != 1 || first.done.Generation.TokensPerSecond <= 0 {
 		t.Fatalf("generation metrics = %#v", first.done.Generation)
+	}
+	if !first.done.Generation.CacheUsageAvailable || first.done.Generation.PromptTokens != 4 || first.done.Generation.CachedPromptTokens != 3 {
+		t.Fatalf("cache metrics = %#v", first.done.Generation)
 	}
 
 	// A follow-up carrying the session_id must reuse the same conversation.

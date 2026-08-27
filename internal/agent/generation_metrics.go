@@ -9,22 +9,28 @@ import (
 )
 
 type TurnGenerationMetrics struct {
-	Available          bool
-	FirstTokenLatency  time.Duration
-	CompletionTokens   int
-	ReasoningTokens    int
-	GenerationDuration time.Duration
-	TokensPerSecond    float64
+	Available           bool
+	FirstTokenLatency   time.Duration
+	PromptTokens        int
+	CachedPromptTokens  int
+	CacheUsageAvailable bool
+	CompletionTokens    int
+	ReasoningTokens     int
+	GenerationDuration  time.Duration
+	TokensPerSecond     float64
 }
 
 type generationMetricsContextKey struct{}
 
 type generationCandidate struct {
-	content            string
-	firstTokenLatency  time.Duration
-	completionTokens   int
-	reasoningTokens    int
-	generationDuration time.Duration
+	content             string
+	firstTokenLatency   time.Duration
+	promptTokens        int
+	cachedPromptTokens  int
+	cacheUsageAvailable bool
+	completionTokens    int
+	reasoningTokens     int
+	generationDuration  time.Duration
 }
 
 type turnGenerationCollector struct {
@@ -55,11 +61,14 @@ func (collector *turnGenerationCollector) metricsFor(result string) TurnGenerati
 	}
 
 	metrics := TurnGenerationMetrics{
-		Available:          true,
-		FirstTokenLatency:  candidate.firstTokenLatency,
-		CompletionTokens:   candidate.completionTokens,
-		ReasoningTokens:    candidate.reasoningTokens,
-		GenerationDuration: candidate.generationDuration,
+		Available:           true,
+		FirstTokenLatency:   candidate.firstTokenLatency,
+		PromptTokens:        candidate.promptTokens,
+		CachedPromptTokens:  candidate.cachedPromptTokens,
+		CacheUsageAvailable: candidate.cacheUsageAvailable,
+		CompletionTokens:    candidate.completionTokens,
+		ReasoningTokens:     candidate.reasoningTokens,
+		GenerationDuration:  candidate.generationDuration,
 	}
 	visibleTokens := candidate.completionTokens - candidate.reasoningTokens
 	if visibleTokens > 1 && candidate.generationDuration > 0 {
@@ -142,11 +151,14 @@ func (client *generationMetricsClient) CreateChatCompletionStreamWithOptions(ctx
 		return message, err
 	}
 	turnGenerationCollectorFromContext(ctx).record(generationCandidate{
-		content:            message.FinalContent(),
-		firstTokenLatency:  firstChunkAt.Sub(startedAt),
-		completionTokens:   message.Usage.CompletionTokens,
-		reasoningTokens:    message.Usage.ReasoningTokens,
-		generationDuration: lastChunkAt.Sub(firstChunkAt),
+		content:             message.FinalContent(),
+		firstTokenLatency:   firstChunkAt.Sub(startedAt),
+		promptTokens:        message.Usage.PromptTokens,
+		cachedPromptTokens:  message.Usage.CachedPromptTokens,
+		cacheUsageAvailable: message.Usage.CacheUsageAvailable,
+		completionTokens:    message.Usage.CompletionTokens,
+		reasoningTokens:     message.Usage.ReasoningTokens,
+		generationDuration:  lastChunkAt.Sub(firstChunkAt),
 	})
 	return message, nil
 }

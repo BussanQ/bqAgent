@@ -185,7 +185,7 @@ aliases:
 
 ## 会话与后台模式
 
-`--chat` 启动交互式多轮对话模式。在终端中逐条输入消息，智能体会在整个会话过程中持续接续上下文。输入 `/exit` 或按 Ctrl-D（EOF）结束会话。对话会自动持久化到全局 `~/.agent/sessions/` 目录下；`meta.json` 保留所属工作区，恢复时会校验工作区边界。配置 `LLM_MODELS` 后，可用 `/model` 查看模型列表、`/model <名称或别名>` 切换当前会话模型、`/model default` 恢复默认模型；选择会写入 session 的 `meta.json` 并在重启后保留。
+`--chat`（以及不带参数启动）在真实终端中进入始终流式的内联 TUI：已完成消息进入原生 scrollback，底部保留输入框、候选面板、排队区和状态栏，不切换备用屏幕。超过 5 次的工具调用会合并为可点击的详情组，仅在该工具组可交互时临时开启鼠标追踪。stdin/stdout 重定向或 `TERM=dumb` 时自动回退原有逐行模式。对话会自动持久化到全局 `~/.agent/sessions/`；恢复会校验工作区边界并按 200 KiB 显示预算回放最近用户/助手文本。快捷键、命令面板、粘贴 Chip、队列、历史文件和 `NO_COLOR` 说明见[内联 TUI 指南](./TUI.md)。
 
 长对话现在会在每次请求模型前做上下文管理：
 
@@ -505,7 +505,7 @@ The discovery prompt does not include the skill body or aliases. The model first
 
 ## Sessions and background mode
 
-`--chat` starts an interactive multi-turn conversation in the terminal. Type your messages one at a time; the agent keeps the conversation going across turns. Type `/exit` or press Ctrl-D (EOF) to end the session. Chat sessions are automatically persisted under the global `~/.agent/sessions/` directory; `meta.json` retains the owning workspace and resume validates that boundary. With `LLM_MODELS` configured, use `/model` to list models, `/model <name-or-alias>` to switch the current session, and `/model default` to restore the default. The selection is stored in the session `meta.json` and survives restarts.
+`--chat` (and no-argument startup) enters an always-streaming inline TUI on a real terminal. Completed messages remain in native scrollback while the input, completion panel, queue, and status bar stay at the bottom; no alternate screen is used. More than five tool calls are merged into a clickable detail group, with mouse tracking enabled only while that group is interactive. Redirected stdin/stdout and `TERM=dumb` automatically fall back to the legacy line mode. Sessions remain under global `~/.agent/sessions/`; resume validates the workspace and replays recent user/assistant text within a 200 KiB display budget. See the [inline TUI guide](./TUI.md) for shortcuts, commands, paste chips, queueing, prompt history, and `NO_COLOR`.
 
 Long conversations now use request-time context management before each model call:
 

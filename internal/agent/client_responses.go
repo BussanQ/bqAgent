@@ -35,9 +35,12 @@ type openAIResponseTool struct {
 }
 
 type openAIResponseUsage struct {
-	InputTokens         int `json:"input_tokens"`
-	OutputTokens        int `json:"output_tokens"`
-	TotalTokens         int `json:"total_tokens"`
+	InputTokens        int `json:"input_tokens"`
+	OutputTokens       int `json:"output_tokens"`
+	TotalTokens        int `json:"total_tokens"`
+	InputTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
 	OutputTokensDetails struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
 	} `json:"output_tokens_details"`
@@ -332,12 +335,17 @@ func tokenUsageFromOpenAIResponse(usage openAIResponseUsage) TokenUsage {
 	if total == 0 {
 		total = usage.InputTokens + usage.OutputTokens
 	}
-	return TokenUsage{
+	result := TokenUsage{
 		PromptTokens:     usage.InputTokens,
 		CompletionTokens: usage.OutputTokens,
 		ReasoningTokens:  usage.OutputTokensDetails.ReasoningTokens,
 		TotalTokens:      total,
 	}
+	if usage.InputTokensDetails != nil {
+		result.CachedPromptTokens = usage.InputTokensDetails.CachedTokens
+		result.CacheUsageAvailable = true
+	}
+	return result
 }
 
 func (c *Client) doJSONRequest(ctx context.Context, url string, payload any, stream bool, label string) (*http.Response, error) {

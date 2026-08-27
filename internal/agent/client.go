@@ -123,11 +123,13 @@ type AssistantMessage struct {
 }
 
 type TokenUsage struct {
-	PromptTokens     int  `json:"prompt_tokens,omitempty"`
-	CompletionTokens int  `json:"completion_tokens,omitempty"`
-	ReasoningTokens  int  `json:"reasoning_tokens,omitempty"`
-	TotalTokens      int  `json:"total_tokens,omitempty"`
-	Estimated        bool `json:"estimated,omitempty"`
+	PromptTokens        int  `json:"prompt_tokens,omitempty"`
+	CachedPromptTokens  int  `json:"cached_prompt_tokens,omitempty"`
+	CompletionTokens    int  `json:"completion_tokens,omitempty"`
+	ReasoningTokens     int  `json:"reasoning_tokens,omitempty"`
+	TotalTokens         int  `json:"total_tokens,omitempty"`
+	CacheUsageAvailable bool `json:"cache_usage_available,omitempty"`
+	Estimated           bool `json:"estimated,omitempty"`
 }
 
 type ToolCall struct {
@@ -159,9 +161,12 @@ type chatCompletionStreamRequest struct {
 }
 
 type chatCompletionUsage struct {
-	PromptTokens            int `json:"prompt_tokens"`
-	CompletionTokens        int `json:"completion_tokens"`
-	TotalTokens             int `json:"total_tokens"`
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
 	CompletionTokensDetails struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
 	} `json:"completion_tokens_details"`
@@ -172,12 +177,17 @@ func (usage chatCompletionUsage) tokenUsage() TokenUsage {
 	if totalTokens == 0 {
 		totalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
-	return TokenUsage{
+	result := TokenUsage{
 		PromptTokens:     usage.PromptTokens,
 		CompletionTokens: usage.CompletionTokens,
 		ReasoningTokens:  usage.CompletionTokensDetails.ReasoningTokens,
 		TotalTokens:      totalTokens,
 	}
+	if usage.PromptTokensDetails != nil {
+		result.CachedPromptTokens = usage.PromptTokensDetails.CachedTokens
+		result.CacheUsageAvailable = true
+	}
+	return result
 }
 
 type chatCompletionResponse struct {
