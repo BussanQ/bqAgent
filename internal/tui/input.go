@@ -5,9 +5,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 )
 
 const (
@@ -29,23 +28,25 @@ type promptInput struct {
 func newPromptInput(noColor ...bool) promptInput {
 	area := textarea.New()
 	if len(noColor) > 0 && noColor[0] {
-		area.FocusedStyle = textarea.Style{}
-		area.BlurredStyle = textarea.Style{}
-		area.Cursor.Style = lipgloss.NewStyle()
-		area.Cursor.TextStyle = lipgloss.NewStyle()
+		styles := area.Styles()
+		styles.Focused = textarea.StyleState{}
+		styles.Blurred = textarea.StyleState{}
+		styles.Cursor = textarea.CursorStyle{}
+		area.SetStyles(styles)
 	}
 	area.Placeholder = "输入消息，/ 查看命令"
 	area.Prompt = "❯ "
 	area.CharLimit = 0
 	area.SetHeight(1)
 	area.ShowLineNumbers = false
+	area.SetVirtualCursor(false)
 	area.Focus()
 	return promptInput{area: area}
 }
 
 func (input *promptInput) update(msg tea.Msg) tea.Cmd {
-	if key, ok := msg.(tea.KeyMsg); ok && key.Type == tea.KeyRunes && key.Paste {
-		text := string(key.Runes)
+	if paste, ok := msg.(tea.PasteMsg); ok {
+		text := paste.Content
 		if shouldFoldPaste(text) {
 			input.next++
 			label := fmt.Sprintf("[粘贴 %d 行 · #%d]", strings.Count(text, "\n")+1, input.next)
@@ -54,7 +55,7 @@ func (input *promptInput) update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 	}
-	if key, ok := msg.(tea.KeyMsg); ok && input.handleChipKey(key.String()) {
+	if key, ok := msg.(tea.KeyPressMsg); ok && input.handleChipKey(key.String()) {
 		return nil
 	}
 	var command tea.Cmd
@@ -134,7 +135,7 @@ func (input *promptInput) setCursorOffset(offset int) {
 	for input.area.Line() > row {
 		input.area.CursorUp()
 	}
-	input.area.SetCursor(column)
+	input.area.SetCursorColumn(column)
 }
 
 func (input *promptInput) replaceRuneRange(value []rune, start, end, cursor int) {

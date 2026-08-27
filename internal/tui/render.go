@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -36,7 +36,7 @@ func newTheme(noColor bool) theme {
 }
 
 func renderMarkdown(value string, width int, noColor bool) string {
-	style := "auto"
+	style := "dark"
 	if noColor {
 		style = "notty"
 	}

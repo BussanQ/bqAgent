@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // Run starts the inline Bubble Tea program. It deliberately avoids AltScreen;
@@ -31,7 +31,6 @@ func Run(backend Backend, config Config) error {
 		tea.WithContext(config.Context),
 		tea.WithInput(config.Input),
 		tea.WithOutput(config.Output),
-		tea.WithReportFocus(),
 	)
 	_, err := program.Run()
 	return err

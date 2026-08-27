@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type fakeBackend struct {
@@ -78,15 +78,15 @@ func TestToolGroupCollapsesAfterFiveAndMouseExpands(t *testing.T) {
 			model.handleTurnEvent(turnEvent{sequence: 1, kind: "tool", tool: ToolEvent{Kind: "tool_result", Seq: uint64(index * 2), ID: id, Name: "read_file", Status: "succeeded", DurationMS: 2}})
 		}
 	}
-	collapsed := model.View()
+	collapsed := model.View().Content
 	if !strings.Contains(collapsed, "工具活动 · 6 次") || !strings.Contains(collapsed, "点击或 Ctrl+T 展开") || strings.Contains(collapsed, "file-1.go") {
 		t.Fatalf("collapsed tool group = %q", collapsed)
 	}
 	viewLines := strings.Count(collapsed, "\n") + 1
 	headerY := max(0, model.height-viewLines)
-	updated, _ := model.Update(tea.MouseMsg{X: 1, Y: headerY, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	updated, _ := model.Update(tea.MouseClickMsg{X: 1, Y: headerY, Button: tea.MouseLeft})
 	model = updated.(Model)
-	expanded := model.View()
+	expanded := model.View().Content
 	if !model.tools.expanded || !strings.Contains(expanded, "file-1.go") || !strings.Contains(expanded, "收起详情") {
 		t.Fatalf("expanded tool group = %q", expanded)
 	}
@@ -132,7 +132,7 @@ func TestEscapeCancelsActiveTurn(t *testing.T) {
 	model.active = &activeTurn{cancel: func() { cancelled = true }}
 	model.phase = phaseStreaming
 
-	commands := model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	commands := model.handleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if len(commands) != 0 || !cancelled || !model.active.cancelled {
 		t.Fatalf("escape cancellation: commands=%d cancelCalled=%v active=%#v", len(commands), cancelled, model.active)
 	}
@@ -143,12 +143,17 @@ func TestEscapeCancelsActiveTurn(t *testing.T) {
 
 func TestPromptChipHistoryMarkdownAndNarrowResize(t *testing.T) {
 	input := newPromptInput()
+	input.update(tea.KeyPressMsg{Code: tea.KeyExtended, Text: "输入"})
+	if input.value() != "输入" || !strings.Contains(input.area.View(), "输入") {
+		t.Fatalf("Chinese input = value %q view %q", input.value(), input.area.View())
+	}
+	input.reset()
 	paste := strings.Repeat("长文本", 80)
-	input.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(paste), Paste: true})
+	input.update(tea.PasteMsg{Content: paste})
 	if len(input.chips) != 1 || input.value() != paste || strings.Contains(input.displayValue(), paste) {
 		t.Fatalf("chip = %#v display=%q", input.chips, input.displayValue())
 	}
-	input.update(tea.KeyMsg{Type: tea.KeyBackspace})
+	input.update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if input.displayValue() != "" || len(input.chips) != 0 {
 		t.Fatalf("chip backspace was not atomic: display=%q chips=%#v", input.displayValue(), input.chips)
 	}
@@ -189,8 +194,8 @@ func TestPromptChipHistoryMarkdownAndNarrowResize(t *testing.T) {
 	if model.contentWidth() != 10 {
 		t.Fatalf("narrow content width = %d", model.contentWidth())
 	}
-	if strings.Contains(model.View(), "\x1b[") {
-		t.Fatalf("NO_COLOR view contains ANSI: %q", model.View())
+	if strings.Contains(model.View().Content, "\x1b[") {
+		t.Fatalf("NO_COLOR view contains ANSI: %q", model.View().Content)
 	}
 }
 
@@ -213,7 +218,7 @@ func TestTurnPresentationUsesSeparatorsWithoutRepeatedBrand(t *testing.T) {
 
 	_ = model.submit("第一轮")
 	model.stream = "回答内容"
-	if view := model.View(); strings.Contains(view, "bqAgent") || !strings.Contains(view, "回答内容") {
+	if view := model.View().Content; strings.Contains(view, "bqAgent") || !strings.Contains(view, "回答内容") {
 		t.Fatalf("streaming view = %q", view)
 	}
 	model.flushStream()

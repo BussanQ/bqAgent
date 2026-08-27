@@ -8,9 +8,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 )
@@ -152,9 +152,9 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.width = message.Width
 		model.height = message.Height
 		model.resizeInput()
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		commands = append(commands, model.handleKey(message)...)
-	case tea.MouseMsg:
+	case tea.MouseClickMsg:
 		commands = append(commands, model.handleMouse(message)...)
 	case turnEvent:
 		commands = append(commands, model.handleTurnEvent(message)...)
@@ -185,7 +185,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return model, tea.Batch(commands...)
 }
 
-func (model Model) View() string {
+func (model Model) View() tea.View {
 	width := model.contentWidth()
 	sections := make([]string, 0, 7)
 	if tools := model.tools.render(model.styles, true); tools != "" {
@@ -206,16 +206,23 @@ func (model Model) View() string {
 		sections = append(sections, model.styles.dim.Render("已排队 · "+preview))
 	}
 	sections = append(sections, model.styles.dim.Render(strings.Repeat("─", max(10, width))))
+	inputOffsetY := strings.Count(strings.Join(sections, "\n"), "\n") + 1
 	sections = append(sections, model.input.area.View())
 	sections = append(sections, model.renderStatus(width))
-	return strings.Join(sections, "\n")
+	view := tea.NewView(strings.Join(sections, "\n"))
+	view.Cursor = model.input.area.Cursor()
+	if view.Cursor != nil {
+		view.Cursor.Position.Y += inputOffsetY
+	}
+	view.ReportFocus = true
+	if model.toolMouse {
+		view.MouseMode = tea.MouseModeCellMotion
+	}
+	return view
 }
 
-func (model *Model) handleKey(key tea.KeyMsg) []tea.Cmd {
+func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	name := key.String()
-	if key.Type == tea.KeyEnter && key.Alt {
-		name = "alt+enter"
-	}
 	switch name {
 	case "ctrl+t":
 		model.toggleToolGroup()
@@ -259,7 +266,7 @@ func (model *Model) handleKey(key tea.KeyMsg) []tea.Cmd {
 		model.closePanel()
 		return nil
 	case "alt+enter":
-		command := model.input.update(tea.KeyMsg{Type: tea.KeyEnter})
+		command := model.input.update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		model.refreshSuggestions()
 		model.resizeInput()
 		return []tea.Cmd{command}
@@ -313,12 +320,12 @@ func (model *Model) cancelActiveTurn() {
 	model.progress = "正在取消"
 }
 
-func (model *Model) handleMouse(message tea.MouseMsg) []tea.Cmd {
-	event := tea.MouseEvent(message)
-	if len(model.tools.items) <= toolCollapseThreshold || event.Button != tea.MouseButtonLeft || event.Action != tea.MouseActionPress {
+func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
+	event := message.Mouse()
+	if len(model.tools.items) <= toolCollapseThreshold || event.Button != tea.MouseLeft {
 		return nil
 	}
-	viewLines := strings.Count(model.View(), "\n") + 1
+	viewLines := strings.Count(model.View().Content, "\n") + 1
 	headerY := max(0, model.height-viewLines)
 	if event.Y != headerY && !(model.height == 0 && event.Y == 0) {
 		return nil
@@ -442,7 +449,6 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 			model.progress = "正在运行工具 " + event.tool.Name
 			if model.tools.add(event.tool) && !model.toolMouse {
 				model.toolMouse = true
-				commands = append(commands, tea.EnableMouseCellMotion)
 			}
 		}
 		return commands
@@ -564,12 +570,8 @@ func (model *Model) commitToolGroup() tea.Cmd {
 }
 
 func (model *Model) discardToolGroup() tea.Cmd {
-	disableMouse := model.toolMouse
 	model.tools = toolGroup{}
 	model.toolMouse = false
-	if disableMouse {
-		return tea.DisableMouse
-	}
 	return nil
 }
 
