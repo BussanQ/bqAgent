@@ -8,7 +8,7 @@ import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
 import { renderMarkdown } from "./markdown";
 import { waitForModelSelection } from "./model-selection";
 import { initParticleField, redrawParticleField, refreshParticleCapability, refreshParticlePalette } from "./particles";
-import { providerPayload } from "./providers";
+import { filterProviderModels, providerAPIKeyPlaceholder, providerListSubtitle, providerModelOptions, providerPayload, remainingActiveProvider, resolveDefaultModel, resolveProviderEditorIndex, selectedProviderModelIDs, toggleProviderModel, upsertProviderModel, type ProviderModelOption } from "./providers";
 import { readJSONStorage } from "./storage";
 import { SSEBuffer } from "./stream";
 import { initialTheme } from "./theme";
@@ -106,13 +106,17 @@ import type { ConversationHistory, ConversationSummary, ConversationsResponse, G
   const providerSettingsSave = byId<HTMLButtonElement>("provider-settings-save");
   const providerSettingsNew = byId<HTMLButtonElement>("provider-settings-new");
   const providerSettingsDelete = byId<HTMLButtonElement>("provider-settings-delete");
-  const providerSettingsList = byId<HTMLSelectElement>("provider-settings-list");
+  const providerSettingsList = byId<HTMLDivElement>("provider-settings-list");
   const providerIDInput = byId<HTMLInputElement>("provider-id");
   const providerNameInput = byId<HTMLInputElement>("provider-name");
   const providerAPITypeInput = byId<HTMLSelectElement>("provider-api-type");
   const providerBaseURLInput = byId<HTMLInputElement>("provider-base-url");
   const providerAPIKeyInput = byId<HTMLInputElement>("provider-api-key");
-  const providerModelsInput = byId<HTMLSelectElement>("provider-models");
+  const providerAPIKeyToggle = byId<HTMLButtonElement>("provider-api-key-toggle");
+  const providerAPIKeyStatus = byId<HTMLSpanElement>("provider-api-key-status");
+  const providerModelsInput = byId<HTMLDivElement>("provider-models");
+  const providerModelFilter = byId<HTMLInputElement>("provider-model-filter");
+  const providerModelCount = byId<HTMLSpanElement>("provider-model-count");
   const providerFetchModels = byId<HTMLButtonElement>("provider-fetch-models");
   const providerModelManual = byId<HTMLInputElement>("provider-model-manual");
   const providerModelAdd = byId<HTMLButtonElement>("provider-model-add");
@@ -123,6 +127,9 @@ import type { ConversationHistory, ConversationSummary, ConversationsResponse, G
   var conversations: ConversationSummary[] = [];
   var conversationContextTarget: ConversationSummary | null = null;
   var providerSettingsState: ProviderSettings = { active_provider: "", providers: [] };
+  var editingProviderIndex = -1;
+  var providerCatalogModels: ProviderModelOption[] = [];
+  var providerDeleteArmed = false;
   var sessionId = "";
   var currentWorkspace: WorkspaceInfo | null = null;
   var workspaceRoots: WorkspaceRoot[] = [];
@@ -231,58 +238,153 @@ import type { ConversationHistory, ConversationSummary, ConversationsResponse, G
   }
 
   function selectedProviderModels(): string[] {
-    return Array.from(providerModelsInput.selectedOptions, function (option) { return option.value; });
+    return selectedProviderModelIDs(providerCatalogModels);
   }
 
   function refreshProviderDefaultModels(preferred = ""): void {
     var models = selectedProviderModels();
+    var current = resolveDefaultModel(models, preferred);
     providerDefaultModelInput.innerHTML = "";
+    if (!models.length) providerDefaultModelInput.add(new Option("请先启用模型", ""));
     models.forEach(function (model) { providerDefaultModelInput.add(new Option(model, model)); });
-    if (models.indexOf(preferred) >= 0) providerDefaultModelInput.value = preferred;
+    providerDefaultModelInput.value = current;
+    providerDefaultModelInput.disabled = models.length === 0;
+    providerModelCount.textContent = models.length + " 已启用";
+  }
+
+  function renderProviderModelCatalog(): void {
+    var visible = filterProviderModels(providerCatalogModels, providerModelFilter.value);
+    providerModelsInput.innerHTML = "";
+    if (!providerCatalogModels.length) {
+      var empty = document.createElement("div");
+      empty.className = "provider-model-empty";
+      empty.textContent = "还没有模型。获取可用模型，或手工添加。";
+      providerModelsInput.appendChild(empty);
+      refreshProviderDefaultModels(providerDefaultModelInput.value);
+      return;
+    }
+    if (!visible.length) {
+      var unmatched = document.createElement("div");
+      unmatched.className = "provider-model-empty";
+      unmatched.textContent = "没有匹配的模型";
+      providerModelsInput.appendChild(unmatched);
+      refreshProviderDefaultModels(providerDefaultModelInput.value);
+      return;
+    }
+    visible.forEach(function (item) {
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "provider-model-row" + (item.selected ? " selected" : "");
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", item.selected ? "true" : "false");
+      row.dataset.model = item.id;
+      var check = document.createElement("span");
+      check.className = "provider-model-check";
+      check.setAttribute("aria-hidden", "true");
+      var label = document.createElement("code");
+      label.textContent = item.id;
+      row.appendChild(check);
+      row.appendChild(label);
+      providerModelsInput.appendChild(row);
+    });
+    refreshProviderDefaultModels(providerDefaultModelInput.value);
+  }
+
+  function setProviderAPIKeyVisible(visible: boolean): void {
+    providerAPIKeyInput.type = visible ? "text" : "password";
+    providerAPIKeyToggle.setAttribute("aria-pressed", visible ? "true" : "false");
+    providerAPIKeyToggle.setAttribute("aria-label", visible ? "隐藏 API Key" : "显示 API Key");
+    providerAPIKeyToggle.innerHTML = iconMarkup(visible ? "eye-off" : "eye");
+  }
+
+  function resetProviderDeleteArmed(): void {
+    providerDeleteArmed = false;
+    setIconButtonLabel(providerSettingsDelete, "trash-2", "删除");
+    providerSettingsDelete.classList.remove("armed");
+  }
+
+  function createProviderNavItem(name: string, subtitle: string, index: number, selected: boolean, active: boolean): HTMLButtonElement {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "provider-settings-item" + (selected ? " selected" : "");
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+    button.dataset.index = String(index);
+    var title = document.createElement("strong");
+    title.textContent = name;
+    var meta = document.createElement("span");
+    meta.textContent = subtitle;
+    button.appendChild(title);
+    button.appendChild(meta);
+    if (active) {
+      var badge = document.createElement("em");
+      badge.textContent = "当前";
+      button.appendChild(badge);
+    }
+    return button;
+  }
+
+  function syncProviderNavSelection(): void {
+    Array.prototype.forEach.call(providerSettingsList.querySelectorAll(".provider-settings-item"), function (item: HTMLElement) {
+      var selected = Number(item.dataset.index) === editingProviderIndex;
+      item.classList.toggle("selected", selected);
+      item.setAttribute("aria-selected", selected ? "true" : "false");
+    });
   }
 
   function editProvider(index = -1): void {
     var provider = providerSettingsState.providers[index];
-    providerSettingsList.value = String(index);
+    editingProviderIndex = index;
+    resetProviderDeleteArmed();
+    setProviderAPIKeyVisible(false);
+    providerSettingsDelete.disabled = index < 0;
     providerIDInput.value = provider ? provider.id : "";
     providerNameInput.value = provider ? provider.name : "";
     providerAPITypeInput.value = provider ? provider.api_type : "openai";
     providerBaseURLInput.value = provider ? provider.base_url || "" : "";
     providerAPIKeyInput.value = "";
-    providerAPIKeyInput.placeholder = provider && provider.api_key_configured ? "已保存；留空保持不变" : "输入 API Key";
-    providerModelsInput.innerHTML = "";
-    (provider ? provider.models : []).forEach(function (model) {
-      var option = new Option(model, model, true, true);
-      providerModelsInput.add(option);
-    });
+    var configured = !!(provider && provider.api_key_configured);
+    providerAPIKeyInput.placeholder = providerAPIKeyPlaceholder(configured);
+    providerAPIKeyStatus.hidden = !configured;
+    providerModelFilter.value = "";
+    providerCatalogModels = providerModelOptions(provider ? provider.models : [], true);
+    renderProviderModelCatalog();
     refreshProviderDefaultModels(provider ? provider.default_model : "");
+    syncProviderNavSelection();
   }
 
   function renderProviderSettingsList(selected?: number): void {
+    var index = resolveProviderEditorIndex(providerSettingsState.providers, providerSettingsState.active_provider, selected);
     providerSettingsList.innerHTML = "";
-    providerSettingsState.providers.forEach(function (provider, index) { providerSettingsList.add(new Option(provider.name, String(index))); });
-    if (!providerSettingsState.providers.length) providerSettingsList.add(new Option("新 Provider", "-1"));
-    editProvider(typeof selected === "number" ? selected : Math.max(0, providerSettingsState.providers.findIndex(function (provider) { return provider.id === providerSettingsState.active_provider; })));
+    if (index < 0) providerSettingsList.appendChild(createProviderNavItem("新 Provider", "填写后保存", -1, true, false));
+    providerSettingsState.providers.forEach(function (provider, providerIndex) {
+      providerSettingsList.appendChild(createProviderNavItem(provider.name || provider.id || "未命名", providerListSubtitle(provider), providerIndex, providerIndex === index, provider.id === providerSettingsState.active_provider));
+    });
+    if (!providerSettingsList.children.length) {
+      var empty = document.createElement("div");
+      empty.className = "provider-settings-list-empty";
+      empty.textContent = "还没有 Provider";
+      providerSettingsList.appendChild(empty);
+    }
+    editProvider(index);
   }
 
   async function openProviderSettings(): Promise<void> {
     await loadProviderSettings();
     renderProviderSettingsList();
     providerSettingsBackdrop.hidden = false;
-    providerIDInput.focus();
+    providerNameInput.focus();
   }
 
-  function closeProviderSettings() { providerSettingsBackdrop.hidden = true; }
+  function closeProviderSettings() {
+    providerSettingsBackdrop.hidden = true;
+    setProviderAPIKeyVisible(false);
+    resetProviderDeleteArmed();
+  }
 
   function addProviderModel(model: string, selected: boolean): void {
-    model = String(model || "").trim();
-    if (!model) return;
-    var existing = Array.prototype.find.call(providerModelsInput.options, function (option) { return option.value === model; });
-    if (existing) {
-      if (selected) existing.selected = true;
-      return;
-    }
-    providerModelsInput.add(new Option(model, model, selected, selected));
+    providerCatalogModels = upsertProviderModel(providerCatalogModels, model, selected);
+    renderProviderModelCatalog();
   }
 
   async function fetchAvailableProviderModels(): Promise<void> {
@@ -295,8 +397,10 @@ import type { ConversationHistory, ConversationSummary, ConversationsResponse, G
       });
       var payload = await responseJSON<ProviderModelsResponse>(response);
       if (!response.ok) throw new Error(payload.error || "获取模型失败");
-      (payload.models || []).forEach(function (model) { addProviderModel(model, true); });
-      refreshProviderDefaultModels(providerDefaultModelInput.value);
+      (payload.models || []).forEach(function (model) {
+        providerCatalogModels = upsertProviderModel(providerCatalogModels, model, true);
+      });
+      renderProviderModelCatalog();
       statusEl.textContent = "已获取 " + (payload.models || []).length + " 个模型";
       statusEl.classList.remove("error");
     } finally {
@@ -308,7 +412,7 @@ import type { ConversationHistory, ConversationSummary, ConversationsResponse, G
   async function saveProviderSettings(): Promise<void> {
     var models = selectedProviderModels();
     var provider = { id: providerIDInput.value.trim(), name: providerNameInput.value.trim(), api_type: providerAPITypeInput.value, base_url: providerBaseURLInput.value.trim(), api_key: providerAPIKeyInput.value, models: models, default_model: providerDefaultModelInput.value || models[0] || "" };
-    var index = Number(providerSettingsList.value);
+    var index = editingProviderIndex;
     var providers = providerSettingsState.providers.map(providerPayload);
     if (index >= 0) providers[index] = provider; else providers.push(provider);
     var response = await fetch(workspaceScopedURL("/api/v1/webui/providers"), { method: "PUT", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ active_provider: provider.id, providers: providers }) });
@@ -1928,29 +2032,53 @@ import type { ConversationHistory, ConversationSummary, ConversationsResponse, G
   providerSettingsClose.addEventListener("click", closeProviderSettings);
   providerSettingsCancel.addEventListener("click", closeProviderSettings);
   providerSettingsBackdrop.addEventListener("click", function (event) { if (event.target === providerSettingsBackdrop) closeProviderSettings(); });
-  providerSettingsList.addEventListener("change", function () { editProvider(Number(providerSettingsList.value)); });
-  providerModelsInput.addEventListener("change", function () { refreshProviderDefaultModels(providerDefaultModelInput.value); });
+  providerSettingsList.addEventListener("click", function (event) {
+    var item = eventElement(event.target)?.closest(".provider-settings-item") as HTMLElement | null;
+    if (!item || !providerSettingsList.contains(item) || item.dataset.index == null) return;
+    var index = Number(item.dataset.index);
+    if (index === editingProviderIndex) return;
+    renderProviderSettingsList(index);
+  });
+  providerModelsInput.addEventListener("click", function (event) {
+    var row = eventElement(event.target)?.closest(".provider-model-row") as HTMLElement | null;
+    if (!row || !providerModelsInput.contains(row) || !row.dataset.model) return;
+    providerCatalogModels = toggleProviderModel(providerCatalogModels, row.dataset.model, row.getAttribute("aria-selected") !== "true");
+    renderProviderModelCatalog();
+  });
+  providerModelFilter.addEventListener("input", function () { renderProviderModelCatalog(); });
+  providerAPIKeyToggle.addEventListener("click", function () {
+    setProviderAPIKeyVisible(providerAPIKeyInput.type === "password");
+  });
   providerFetchModels.addEventListener("click", function () {
     fetchAvailableProviderModels().catch(function (error: unknown) { statusEl.textContent = errorMessage(error); statusEl.classList.add("error"); });
   });
   providerModelAdd.addEventListener("click", function () {
     addProviderModel(providerModelManual.value, true);
     providerModelManual.value = "";
-    refreshProviderDefaultModels(providerDefaultModelInput.value);
     providerModelManual.focus();
   });
   providerModelManual.addEventListener("keydown", function (event) {
     if (event.key === "Enter") { event.preventDefault(); providerModelAdd.click(); }
   });
   providerSettingsNew.addEventListener("click", function () {
-    if (!Array.prototype.some.call(providerSettingsList.options, function (option) { return option.value === "-1"; })) providerSettingsList.add(new Option("新 Provider", "-1"));
-    editProvider(-1);
+    if (editingProviderIndex < 0) {
+      providerNameInput.focus();
+      return;
+    }
+    renderProviderSettingsList(-1);
+    providerNameInput.focus();
   });
   providerSettingsDelete.addEventListener("click", async function () {
-    var index = Number(providerSettingsList.value);
+    var index = editingProviderIndex;
     if (index < 0) { renderProviderSettingsList(); return; }
+    if (!providerDeleteArmed) {
+      providerDeleteArmed = true;
+      setIconButtonLabel(providerSettingsDelete, "trash-2", "确认删除");
+      providerSettingsDelete.classList.add("armed");
+      return;
+    }
     var providers = providerSettingsState.providers.filter(function (_, providerIndex) { return providerIndex !== index; }).map(providerPayload);
-    var active = providers.some(function (provider) { return provider.id === providerSettingsState.active_provider; }) ? providerSettingsState.active_provider : (providers[0] ? providers[0].id : "");
+    var active = remainingActiveProvider(providers, providerSettingsState.active_provider);
     try {
       var response = await fetch(workspaceScopedURL("/api/v1/webui/providers"), { method: "PUT", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ active_provider: active, providers: providers }) });
       var payload = await responseJSON<ProviderSettings & { error?: string }>(response);

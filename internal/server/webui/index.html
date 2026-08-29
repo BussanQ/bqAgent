@@ -39,6 +39,8 @@
     <symbol id="icon-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 6 9 17l-5-5"/></symbol>
     <symbol id="icon-save" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7M7 3v4a1 1 0 0 0 1 1h7"/></g></symbol>
     <symbol id="icon-download" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 15V3m9 12v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></g></symbol>
+    <symbol id="icon-eye" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></g></symbol>
+    <symbol id="icon-eye-off" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></g></symbol>
     <symbol id="icon-folder-tree" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Zm0 11a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1ZM3 5a2 2 0 0 0 2 2h3"/><path d="M3 3v13a2 2 0 0 0 2 2h3"/></g></symbol>
     <symbol id="icon-list-todo" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M13 5h8m-8 7h8m-8 7h8M3 17l2 2 4-4"/><rect width="6" height="6" x="3" y="4" rx="1"/></g></symbol>
     <symbol id="icon-code-xml" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m18 16 4-4-4-4M6 8l-4 4 4 4m8.5-12-5 16"/></symbol>
@@ -227,37 +229,104 @@
   </div>
 
   <div class="workspace-picker-backdrop" id="provider-settings-backdrop" hidden>
-    <section class="workspace-picker" role="dialog" aria-modal="true" aria-labelledby="provider-settings-title">
-      <div class="workspace-picker-header">
-        <strong id="provider-settings-title">模型 Provider 设置</strong>
-        <button class="workspace-tool" id="provider-settings-close" type="button" aria-label="关闭 Provider 设置">
+    <section class="provider-settings" role="dialog" aria-modal="true" aria-labelledby="provider-settings-title">
+      <div class="provider-settings-header">
+        <div class="provider-settings-heading">
+          <strong id="provider-settings-title">模型 Provider</strong>
+          <span>管理 API 连接、可用模型，以及当前默认模型。</span>
+        </div>
+        <button class="ui-btn ui-btn-ghost ui-btn-icon" id="provider-settings-close" type="button" aria-label="关闭 Provider 设置">
           <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-x"></use></svg>
         </button>
       </div>
-      <div class="workspace-picker-body">
-        <div class="provider-settings-row">
-          <select class="provider-list" id="provider-settings-list" aria-label="Provider 列表"></select>
-          <button class="button-with-icon" type="button" id="provider-settings-new"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg><span>新增</span></button>
-          <button class="provider-danger button-with-icon" type="button" id="provider-settings-delete"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash-2"></use></svg><span>删除</span></button>
-        </div>
-        <div class="provider-settings-form">
-          <label class="provider-field">标识<input id="provider-id" type="text" placeholder="例如 deepseek"></label>
-          <label class="provider-field">名称<input id="provider-name" type="text" placeholder="例如 DeepSeek"></label>
-          <label class="provider-field">API 协议<select id="provider-api-type"><option value="openai">OpenAI Chat Completions</option><option value="openai-response">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option></select></label>
-          <label class="provider-field">Base URL<input id="provider-base-url" type="url" placeholder="https://api.example.com/v1"></label>
-          <label class="provider-field wide">API Key<input id="provider-api-key" type="password" autocomplete="new-password" placeholder="留空则保留已经保存的 Key"></label>
-          <div class="provider-field wide">
-            <div class="provider-model-heading"><span>模型目录（可多选）</span><button class="button-with-icon" type="button" id="provider-fetch-models"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"></use></svg><span>获取可用模型</span></button></div>
-            <select class="provider-model-catalog" id="provider-models" multiple aria-label="选择启用的模型"></select>
-            <div class="provider-model-manual"><input id="provider-model-manual" type="text" placeholder="手工输入模型 ID"><button class="button-with-icon" type="button" id="provider-model-add"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg><span>添加模型</span></button></div>
+      <div class="provider-settings-body">
+        <aside class="provider-settings-nav">
+          <div class="provider-settings-nav-head">
+            <span>已配置</span>
+            <button class="ui-btn ui-btn-soft ui-btn-sm" type="button" id="provider-settings-new">
+              <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg>
+              <span>新增</span>
+            </button>
           </div>
-          <label class="provider-field wide">默认模型<select id="provider-default-model"></select></label>
+          <div class="provider-settings-list" id="provider-settings-list" role="listbox" aria-label="Provider 列表"></div>
+        </aside>
+        <div class="provider-settings-editor">
+          <section class="provider-settings-section">
+            <div class="provider-settings-section-head">
+              <div>
+                <h3>基本信息</h3>
+                <p>用于在底部模型选择器中识别这个 Provider。</p>
+              </div>
+            </div>
+            <div class="provider-settings-grid">
+              <label class="provider-field">名称<input id="provider-name" type="text" placeholder="例如 DeepSeek" autocomplete="off"></label>
+              <label class="provider-field">标识<input id="provider-id" type="text" placeholder="例如 deepseek" spellcheck="false" autocomplete="off"></label>
+            </div>
+          </section>
+          <section class="provider-settings-section">
+            <div class="provider-settings-section-head">
+              <div>
+                <h3>连接</h3>
+                <p>协议、接口地址和密钥只保存在本机。</p>
+              </div>
+            </div>
+            <div class="provider-settings-grid">
+              <label class="provider-field">API 协议<select id="provider-api-type"><option value="openai">OpenAI Chat Completions</option><option value="openai-response">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option></select></label>
+              <label class="provider-field">Base URL<input id="provider-base-url" type="url" placeholder="https://api.example.com/v1" spellcheck="false" autocomplete="off"></label>
+              <div class="provider-field wide">
+                <div class="provider-field-label">
+                  <span>API Key</span>
+                  <span class="provider-key-status" id="provider-api-key-status" hidden>已加密保存</span>
+                </div>
+                <div class="provider-secret">
+                  <input id="provider-api-key" type="password" autocomplete="new-password" placeholder="输入 API Key">
+                  <button class="provider-secret-toggle" id="provider-api-key-toggle" type="button" aria-label="显示 API Key" aria-pressed="false">
+                    <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-eye"></use></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section class="provider-settings-section">
+            <div class="provider-settings-section-head">
+              <div>
+                <h3>模型目录</h3>
+                <p>勾选后会出现在底部模型选择器中。</p>
+              </div>
+              <button class="ui-btn ui-btn-outline ui-btn-sm" type="button" id="provider-fetch-models">
+                <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"></use></svg>
+                <span>获取可用模型</span>
+              </button>
+            </div>
+            <div class="provider-model-toolbar">
+              <input id="provider-model-filter" type="search" placeholder="搜索模型 ID" aria-label="搜索模型" autocomplete="off">
+              <span class="provider-model-count" id="provider-model-count">0 已启用</span>
+            </div>
+            <div class="provider-model-catalog" id="provider-models" role="listbox" aria-multiselectable="true" aria-label="选择启用的模型"></div>
+            <div class="provider-model-manual">
+              <input id="provider-model-manual" type="text" placeholder="手工输入模型 ID" spellcheck="false" autocomplete="off">
+              <button class="ui-btn ui-btn-outline ui-btn-field" type="button" id="provider-model-add">
+                <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg>
+                <span>添加</span>
+              </button>
+            </div>
+            <label class="provider-field">默认模型<select id="provider-default-model"></select></label>
+          </section>
+          <p class="provider-settings-note">API Key 使用本机随机主密钥、随机盐及 AES-256-GCM 加密后保存到 ~/.agent/config.json，页面不会读取已保存的 Key。</p>
         </div>
-        <div class="provider-settings-note">API Key 使用本机随机主密钥、随机盐及 AES-256-GCM 加密后保存到 ~/.agent/config.json，页面不会读取已保存的 Key。</div>
       </div>
-      <div class="workspace-picker-footer">
-        <button type="button" id="provider-settings-cancel">取消</button>
-        <button class="workspace-picker-select button-with-icon" type="button" id="provider-settings-save"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-save"></use></svg><span>保存并应用</span></button>
+      <div class="provider-settings-footer">
+        <button class="ui-btn ui-btn-danger" type="button" id="provider-settings-delete">
+          <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-trash-2"></use></svg>
+          <span>删除</span>
+        </button>
+        <div class="provider-settings-actions">
+          <button class="ui-btn ui-btn-outline" type="button" id="provider-settings-cancel">取消</button>
+          <button class="ui-btn ui-btn-primary" type="button" id="provider-settings-save">
+            <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-save"></use></svg>
+            <span>保存并应用</span>
+          </button>
+        </div>
       </div>
     </section>
   </div>
