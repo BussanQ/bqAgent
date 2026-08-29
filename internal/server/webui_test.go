@@ -56,12 +56,12 @@ func TestWebUIServesIndex(t *testing.T) {
 	page := string(body)
 	for _, expected := range []string{
 		`id="theme-toggle"`,
-		`--bg: #e6ecf5`,
-		`--panel-strong: rgba(255, 255, 255, .88)`,
-		`--text: #17222f`,
-		`--signal: #2f6feb`,
-		`--line: rgba(23, 51, 89, .13)`,
-		`--select-bg: #0a1b32`,
+		`--bg: #eef3f8`,
+		`--panel-strong: rgba(250, 252, 254, .96)`,
+		`--text: #182430`,
+		`--signal: #2563a6`,
+		`--line: rgba(38, 60, 82, .14)`,
+		`--select-bg: #0c1a28`,
 		`.model-controls select option`,
 		`function renderMarkdown(source)`,
 		`class="table-wrap"`,
@@ -77,8 +77,8 @@ func TestWebUIServesIndex(t *testing.T) {
 		`id="provider-settings-backdrop"`,
 		`class="global-settings" id="provider-settings-trigger"`,
 		`font: 650 15px/1.2 ui-sans-serif`,
-		`--font-body: 16px/1.6`,
-		`--radius: 16px`,
+		`--font-body: 16px/1.62`,
+		`--radius: 14px`,
 		`id="provider-fetch-models"`,
 		`/api/v1/webui/provider-models`,
 		`id="conversation-sidebar"`,
@@ -169,6 +169,29 @@ func TestWebUIServesIndex(t *testing.T) {
 	}
 }
 
+func TestWebUIUsesRefinedResponsiveVisualSystem(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`Native CSS visual system: restrained dark-tech product UI with one blue accent.`,
+		`--sidebar-bg: rgba(11, 23, 35, .94)`,
+		`.prompt:first-child { grid-row: 1 / span 2;`,
+		`.msg.assistant .bubble {`,
+		`background: transparent;`,
+		`.msg.user .message-label::before { content: "[YOU]"; }`,
+		`.msg.assistant .message-label::before { content: "[AI]"; }`,
+		`grid-template-columns: 36px minmax(76px, 1fr) 40px 44px;`,
+		`.reasoning-effort-trigger #reasoning-effort-label,`,
+		`@media (prefers-reduced-motion: reduce)`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("WebUI refined visual system missing %q", expected)
+		}
+	}
+	if strings.ContainsAny(page, "—–") {
+		t.Fatal("WebUI visible copy contains em dash or en dash")
+	}
+}
+
 func TestWebUIToolTimelineGroupsOnThirdCall(t *testing.T) {
 	page := string(webUIIndex)
 	for _, expected := range []string{
@@ -181,8 +204,8 @@ func TestWebUIToolTimelineGroupsOnThirdCall(t *testing.T) {
 		`cardList.forEach(function (card) { items.appendChild(card.root); });`,
 		`(group ? group.items : timeline).appendChild(root);`,
 		`title.textContent = "工具调用";`,
-		`cardList.length + " 次 · " + running + " 运行中"`,
-		`cardList.length + " 次 · 全部完成"`,
+		`cardList.length + " 次，" + running + " 运行中"`,
+		`cardList.length + " 次，全部完成"`,
 		`.tool-group-items.open { display: grid; }`,
 	} {
 		if !strings.Contains(page, expected) {
@@ -655,36 +678,39 @@ func TestWebUIConversationContextMenuDeletesConversation(t *testing.T) {
 func TestWebUILightThemeUsesSoftSurfacesAndVisibleParticles(t *testing.T) {
 	page := string(webUIIndex)
 	for _, expected := range []string{
-		`--bg: #e6ecf5`,
-		`--bg-soft: #f2f5fa`,
-		`--panel: rgba(255, 255, 255, .70)`,
-		`--panel-strong: rgba(255, 255, 255, .88)`,
-		`--header-bg: rgba(240, 244, 250, .80)`,
-		`--footer-bg: rgba(230, 236, 245, .94)`,
-		`--code-bg: #f3f6fc`,
-		`--bubble-user: rgba(224, 234, 251, .92)`,
-		`--quote-bg: rgba(47, 111, 235, .07)`,
-		`--table-head: rgba(47, 111, 235, .08)`,
-		`--surface-subtle: rgba(47, 111, 235, .05)`,
-		`--surface-hover: rgba(47, 111, 235, .09)`,
-		`--surface-active: rgba(47, 111, 235, .13)`,
-		`--line: rgba(23, 51, 89, .13)`,
-		`--text: #17222f`,
-		`--signal: #2f6feb`,
-		`--particle-dot: rgba(38, 74, 128, .52)`,
-		`--particle-static: rgba(38, 74, 128, .26)`,
-		`--particle-strength: 1.7`,
-		`--vignette-rgb: 33, 56, 92`,
-		`--ambient-vignette: .09`,
-		`--grid-opacity: .05`,
-		`--scan-opacity: .012`,
+		`--bg: #eef3f8`,
+		`--bg-soft: #f8fafc`,
+		`--panel: rgba(250, 252, 254, .82)`,
+		`--panel-strong: rgba(250, 252, 254, .96)`,
+		`--sidebar-bg: rgba(247, 250, 252, .95)`,
+		`--header-bg: rgba(246, 249, 252, .93)`,
+		`--footer-bg: rgba(238, 243, 248, .98)`,
+		`--code-bg: #f3f6f9`,
+		`--bubble-user: rgba(215, 230, 245, .88)`,
+		`--quote-bg: rgba(37, 99, 166, .07)`,
+		`--table-head: rgba(37, 99, 166, .08)`,
+		`--surface-subtle: rgba(37, 99, 166, .035)`,
+		`--surface-hover: rgba(37, 99, 166, .07)`,
+		`--surface-active: rgba(37, 99, 166, .11)`,
+		`--line: rgba(38, 60, 82, .14)`,
+		`--text: #182430`,
+		`--signal: #2563a6`,
+		`--particle-dot: rgba(45, 80, 113, .42)`,
+		`--particle-static: rgba(45, 80, 113, .20)`,
+		`--particle-strength: 1.25`,
+		`--vignette-rgb: 49, 70, 91`,
+		`--ambient-vignette: .06`,
+		`--scan-opacity: .006`,
 	} {
 		if count := strings.Count(page, expected); count != 2 {
 			t.Fatalf("light theme token %q count = %d, want automatic and explicit definitions", expected, count)
 		}
 	}
+	if count := strings.Count(page, `--grid-opacity: .025`); count != 3 {
+		t.Fatalf("shared light/dark grid opacity count = %d, want three theme definitions", count)
+	}
 	for _, expected := range []string{
-		`--particle-strength: 1;`,
+		`--particle-strength: .72;`,
 		`rgba(var(--vignette-rgb), var(--ambient-vignette))`,
 		`function particleAlpha(base)`,
 		`particlePalette.strength`,
