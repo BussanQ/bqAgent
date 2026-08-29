@@ -292,7 +292,7 @@ Memory 的事实源为 `.agent/memory/entries.jsonl`，支持 revision、来源 
 /memory compact
 ```
 
-旧的 `mem_save`、`mem_get` 工具继续可用，并会转接到结构化存储。
+召回只用 `memory` 的 `search` / `list`；写入可用 `memory` 的 `add` / `replace`，或兼容的 `mem_save`。
 
 ## 示例
 
@@ -596,7 +596,7 @@ Use `/feedback up|down [comment]` or `POST /api/v1/runs/<run-id>/feedback` to ra
 
 ## Structured memory
 
-Structured, revisioned memory is stored in `.agent/memory/entries.jsonl` with source-run provenance, confidence, supersession, sensitive-entry confirmation, and Chinese/English full-text indexing. Existing Markdown memory is imported idempotently. `/memory list|search|confirm|compact` provides direct management, while `mem_save` and `mem_get` remain compatible.
+Structured, revisioned memory is stored in `.agent/memory/entries.jsonl` with source-run provenance, confidence, supersession, sensitive-entry confirmation, and Chinese/English full-text indexing. Existing Markdown memory is imported idempotently. `/memory list|search|confirm|compact` provides direct management. Recall uses `memory` `search` or `list`; `mem_save` remains a write-only fallback.
 
 ## Examples
 

@@ -13,9 +13,9 @@ import (
 
 func StructuredMemoryDefinition() Definition {
 	return Definition{Type: "function", Function: FunctionDefinition{
-		Name: "memory", Description: "Manage structured persistent memory: add, replace, remove, search, list, confirm, or compact.",
+		Name: "memory", Description: "Manage structured persistent memory. Recall only with action=search or action=list; do not prefetch at session start or before exploring a codebase. Write with add/replace. Other actions: remove, confirm, compact.",
 		Parameters: JSONSchema{Type: "object", Properties: map[string]JSONSchemaProperty{
-			"action": {Type: "string", Description: "add|replace|remove|search|list|confirm|compact"},
+			"action": {Type: "string", Description: "search|list to recall; add|replace|remove|confirm|compact to manage"},
 			"id":     {Type: "string"}, "kind": {Type: "string"}, "content": {Type: "string"}, "query": {Type: "string"},
 			"confidence": {Type: "string"}, "sensitivity": {Type: "string"}, "supersedes": {Type: "string", Description: "Comma-separated memory ids"}, "limit": {Type: "string"},
 		}, Required: []string{"action"}},

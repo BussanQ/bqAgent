@@ -7,12 +7,14 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	appmemory "bqagent/internal/memory"
 )
 
 func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 12 {
-		t.Fatalf("definitions length = %d, want 12", len(definitions))
+	if len(definitions) != 11 {
+		t.Fatalf("definitions length = %d, want 11", len(definitions))
 	}
 
 	tests := []struct {
@@ -32,7 +34,6 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		{index: 8, name: "web_fetch", description: "Fetch content from a web URL", required: []string{"url"}},
 		{index: 9, name: "install_skill", description: "Install a skill from a URL. Defaults to the global .agent/skills directory; set target=workspace for the current workspace.", required: []string{"url"}},
 		{index: 10, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
-		{index: 11, name: "mem_get", description: "Read memory contents. Use to recall saved knowledge and context.", required: []string{"target"}},
 	}
 
 	for _, testCase := range tests {
@@ -100,8 +101,8 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 	catalog := NewCatalog(Options{IncludePlan: true})
 	definitions := catalog.Definitions()
-	if len(definitions) != 13 {
-		t.Fatalf("definitions length = %d, want 13", len(definitions))
+	if len(definitions) != 12 {
+		t.Fatalf("definitions length = %d, want 12", len(definitions))
 	}
 	if definitions[len(definitions)-1].Function.Name != "plan" {
 		t.Fatalf("last definition name = %q, want %q", definitions[len(definitions)-1].Function.Name, "plan")
@@ -119,11 +120,29 @@ func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 		t.Fatal("definitions missing install_skill")
 	}
 	registry := catalog.Registry()
-	if len(registry) != 12 {
-		t.Fatalf("registry length = %d, want 12", len(registry))
+	if len(registry) != 11 {
+		t.Fatalf("registry length = %d, want 11", len(registry))
+	}
+	if _, ok := registry["mem_get"]; ok {
+		t.Fatal("registry should not include mem_get")
 	}
 	if _, ok := registry["install_skill"]; !ok {
 		t.Fatal("registry missing install_skill")
+	}
+}
+
+func TestNewCatalogExposesMemorySearchWithoutMemGet(t *testing.T) {
+	catalog := NewCatalog(Options{MemoryStore: appmemory.NewStore(t.TempDir())})
+	if _, ok := catalog.Registry()["mem_get"]; ok {
+		t.Fatal("registry should not include mem_get")
+	}
+	if _, ok := catalog.Registry()["memory"]; !ok {
+		t.Fatal("registry missing memory")
+	}
+	for _, definition := range catalog.Definitions() {
+		if definition.Function.Name == "mem_get" {
+			t.Fatal("definitions should not include mem_get")
+		}
 	}
 }
 
