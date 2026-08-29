@@ -3,7 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
-	_ "embed"
+	"embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -13,8 +13,11 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"io/fs"
+	"mime"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -114,14 +117,29 @@ func SetWebUIStageMaxIterations(maxIterations int) {
 	webUIStageMaxIterations.Store(int64(maxIterations))
 }
 
-//go:embed webui/index.html
-var webUIIndex []byte
+//go:embed webui/dist
+var webUIDist embed.FS
 
-//go:embed webui/favicon.ico
-var webUIFavicon []byte
+var webUIFiles = mustWebUISub(webUIDist, "webui/dist")
+var webUIIndex = mustReadWebUIFile("index.html")
+var webUIFavicon = mustReadWebUIFile("favicon.ico")
+var webUIFaviconSVG = mustReadWebUIFile("favicon.svg")
 
-//go:embed webui/favicon.svg
-var webUIFaviconSVG []byte
+func mustWebUISub(root fs.FS, directory string) fs.FS {
+	sub, err := fs.Sub(root, directory)
+	if err != nil {
+		panic(fmt.Sprintf("prepare embedded WebUI: %v", err))
+	}
+	return sub
+}
+
+func mustReadWebUIFile(name string) []byte {
+	data, err := fs.ReadFile(webUIFiles, name)
+	if err != nil {
+		panic(fmt.Sprintf("read embedded WebUI file %q: %v", name, err))
+	}
+	return data
+}
 
 // WebUIChannel serves a self-contained browser chat page at "/" and streams
 // assistant replies token-by-token over Server-Sent Events. It reuses the
@@ -154,6 +172,7 @@ func (channel *WebUIChannel) RegisterRoutes(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("/", channel.handleIndex)
+	mux.HandleFunc("/assets/", channel.handleAsset)
 	mux.HandleFunc("/favicon.ico", channel.handleFavicon)
 	mux.HandleFunc("/favicon.svg", channel.handleFaviconSVG)
 	mux.HandleFunc("/api/v1/webui/chat", channel.handleStreamChat)
@@ -163,6 +182,35 @@ func (channel *WebUIChannel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/webui/workspaces", channel.handleWorkspaces)
 	mux.HandleFunc("/api/v1/webui/workspaces/directories", channel.handleWorkspaceDirectories)
 	mux.HandleFunc("/api/v1/webui/workspaces/open", channel.handleWorkspaceOpen)
+}
+
+func (channel *WebUIChannel) handleAsset(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+		writer.Header().Set("Allow", "GET, HEAD")
+		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
+		return
+	}
+	name := strings.TrimPrefix(request.URL.Path, "/")
+	if !strings.HasPrefix(name, "assets/") || !fs.ValidPath(name) || strings.Contains(name, "\\") {
+		http.NotFound(writer, request)
+		return
+	}
+	data, err := fs.ReadFile(webUIFiles, name)
+	if err != nil {
+		http.NotFound(writer, request)
+		return
+	}
+	contentType := mime.TypeByExtension(path.Ext(name))
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	writer.Header().Set("Content-Type", contentType)
+	writer.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	writer.WriteHeader(http.StatusOK)
+	if request.Method == http.MethodHead {
+		return
+	}
+	_, _ = writer.Write(data)
 }
 
 func (channel *WebUIChannel) resolveService(workspaceID string) (*Service, WorkspaceInfo, error) {

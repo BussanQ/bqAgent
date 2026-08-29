@@ -36,11 +36,15 @@ bqagent 的核心仍然很简单：
 
 ## 安装
 
-安装 Go 1.22+，然后构建 CLI：
+安装 Go 1.22+、Node.js 24+ 和 npm 11+，然后通过 Makefile 构建 CLI：
 
 ```bash
-go build -o bqagent ./cmd/agent
+make build
 ```
+
+`make build` 会根据 `internal/server/webui/package-lock.json` 安装前端依赖，执行 TypeScript 严格检查和 Vite 生产构建，再把 `internal/server/webui/dist` 嵌入 Go 可执行文件。`dist` 和 `node_modules` 不提交到仓库；最终运行和分发仍只需要一个 `bqagent` 文件，不依赖 Node.js、Vite、CDN 或磁盘静态文件。Linux amd64 和 Windows amd64 分别使用 `make build-amd`、`make build-windows`。
+
+仅开发 WebUI 时，可在 `internal/server/webui` 中运行 `npm run dev`；Vite 会把 `/api` 代理到 `http://127.0.0.1:8080`。全新检出后不要直接运行原始 `go build`，应先执行 `make webui-build` 或直接使用上述 Makefile 构建目标。
 
 ## 环境变量配置
 

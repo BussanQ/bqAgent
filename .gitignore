@@ -15,3 +15,5 @@ bqagent.exe~
 bqagent-linux*
 bqagent
 .DS_Store
+internal/server/webui/node_modules/
+internal/server/webui/dist/
