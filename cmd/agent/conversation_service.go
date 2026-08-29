@@ -18,13 +18,14 @@ import (
 
 func newConversationService(ctx context.Context, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, includePlan bool, statusWriter io.Writer) (*appserver.Service, *extagent.Broker) {
 	runtime := appruntime.Factory{
-		Config:         runtimeConfigFromSources(getenv, ws.AgentDir()),
-		WorkspaceRoot:  ws.Root,
-		AgentDir:       ws.AgentDir(),
-		MemoryDir:      ws.WorkspaceMemoryDir(),
-		Getenv:         getenv,
-		MCPConfigPaths: ws.MCPConfigPaths(),
-		LogWriter:      statusWriter,
+		Config:          runtimeConfigFromSources(getenv, ws.AgentDir()),
+		WorkspaceRoot:   ws.Root,
+		AgentDir:        ws.AgentDir(),
+		MemoryDir:       ws.WorkspaceMemoryDir(),
+		GlobalMemoryDir: ws.GlobalMemoryDir(),
+		Getenv:          getenv,
+		MCPConfigPaths:  ws.MCPConfigPaths(),
+		LogWriter:       statusWriter,
 	}.Build(includePlan)
 
 	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
@@ -62,16 +63,17 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		PromptSectionsBuilder: func() (workspace.PromptSections, error) {
 			return ws.BuildPromptSections("")
 		},
-		Planner:         runtime.Planner,
-		ToolDefinitions: runtime.Catalog.Definitions(),
-		Functions:       runtime.Catalog.Registry(),
-		ExternalBroker:  externalBroker,
-		MemoryAppend:    memoryAppend,
-		Context:         runtime.Context,
-		RunTraceEnabled: runtime.RunTraceEnabled,
-		SessionOptions:  &runtime.SessionOptions,
-		Subagents:       subagentManager,
-		MemoryStore:     runtime.Memory,
+		Planner:           runtime.Planner,
+		ToolDefinitions:   runtime.Catalog.Definitions(),
+		Functions:         runtime.Catalog.Registry(),
+		ExternalBroker:    externalBroker,
+		MemoryAppend:      memoryAppend,
+		Context:           runtime.Context,
+		RunTraceEnabled:   runtime.RunTraceEnabled,
+		SessionOptions:    &runtime.SessionOptions,
+		Subagents:         subagentManager,
+		MemoryStore:       runtime.Memory,
+		GlobalMemoryStore: runtime.GlobalMemory,
 	})
 	return service, externalBroker
 }

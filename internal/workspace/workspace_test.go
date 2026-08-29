@@ -64,6 +64,12 @@ func TestDiscoverFindsNearestWorkspaceMarker(t *testing.T) {
 	if ws.AgentDir() != filepath.Join(home, ".agent") {
 		t.Fatalf("agent dir = %q, want global home config", ws.AgentDir())
 	}
+	if ws.GlobalMemoryDir() != filepath.Join(home, ".agent", "memory") {
+		t.Fatalf("global memory dir = %q, want ~/.agent/memory", ws.GlobalMemoryDir())
+	}
+	if ws.WorkspaceMemoryDir() == ws.GlobalMemoryDir() {
+		t.Fatal("workspace memory dir should be distinct from global memory dir")
+	}
 }
 
 func TestDiscoverDoesNotTreatGlobalAgentDirectoryAsWorkspaceMarker(t *testing.T) {

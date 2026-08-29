@@ -113,6 +113,10 @@ func (w *Workspace) WorkspaceMemoryDir() string {
 	return filepath.Join(w.ContextDir(), memoryDirName)
 }
 
+func (w *Workspace) GlobalMemoryDir() string {
+	return filepath.Join(w.AgentDir(), memoryDirName)
+}
+
 func (w *Workspace) LocalMemoryDir() string {
 	return filepath.Join(w.LocalAgentDir(), memoryDirName)
 }

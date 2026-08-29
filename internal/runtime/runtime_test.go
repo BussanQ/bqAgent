@@ -1,8 +1,10 @@
 package runtime
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"bqagent/internal/agent"
@@ -28,6 +30,42 @@ func TestFactoryBuildDoesNotInitializeUnusedWorkspaceMemory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".agent")); !os.IsNotExist(err) {
 		t.Fatalf("building a runtime initialized workspace .agent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(agentDir, "memory")); !os.IsNotExist(err) {
+		t.Fatalf("building a runtime initialized global memory: %v", err)
+	}
+}
+
+func TestFactoryBuildRoutesMemoryTargetGlobal(t *testing.T) {
+	workspaceMemory := filepath.Join(t.TempDir(), "workspace-memory")
+	globalMemory := filepath.Join(t.TempDir(), "global-memory")
+	runtime := Factory{
+		Config:          Config{},
+		WorkspaceRoot:   t.TempDir(),
+		AgentDir:        filepath.Join(t.TempDir(), ".agent"),
+		MemoryDir:       workspaceMemory,
+		GlobalMemoryDir: globalMemory,
+		Getenv:          func(string) string { return "" },
+	}.Build(false)
+
+	memory := runtime.Catalog.Registry()["memory"]
+	if memory == nil {
+		t.Fatal("catalog missing memory")
+	}
+	result, err := memory(context.Background(), map[string]any{
+		"action": "add", "kind": "user_preference", "content": "用户在北京", "target": "global",
+	})
+	if err != nil {
+		t.Fatalf("memory add: %v", err)
+	}
+	if !strings.Contains(result, `"target": "global"`) {
+		t.Fatalf("result = %s, want target=global", result)
+	}
+	if _, err := os.Stat(filepath.Join(globalMemory, "entries.jsonl")); err != nil {
+		t.Fatalf("global entries missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspaceMemory, "entries.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("workspace entries should not exist: %v", err)
 	}
 }
 

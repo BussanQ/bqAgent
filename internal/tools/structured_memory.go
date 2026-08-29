@@ -13,19 +13,21 @@ import (
 
 func StructuredMemoryDefinition() Definition {
 	return Definition{Type: "function", Function: FunctionDefinition{
-		Name: "memory", Description: "Manage structured persistent memory. Recall only with action=search or action=list; do not prefetch at session start or before exploring a codebase. Write with add/replace. Other actions: remove, confirm, compact.",
+		Name: "memory", Description: "Manage structured persistent memory. Recall only with action=search or action=list; do not prefetch at session start or before exploring a codebase. Write with add/replace. Default target is workspace; use target=global only when the user explicitly asks for global memory. Other actions: remove, confirm, compact.",
 		Parameters: JSONSchema{Type: "object", Properties: map[string]JSONSchemaProperty{
 			"action": {Type: "string", Description: "search|list to recall; add|replace|remove|confirm|compact to manage"},
 			"id":     {Type: "string"}, "kind": {Type: "string"}, "content": {Type: "string"}, "query": {Type: "string"},
+			"target":     {Type: "string", Description: "workspace (default) or global. Use global only when the user asks for global memory."},
 			"confidence": {Type: "string"}, "sensitivity": {Type: "string"}, "supersedes": {Type: "string", Description: "Comma-separated memory ids"}, "limit": {Type: "string"},
 		}, Required: []string{"action"}},
 	}}
 }
 
-func StructuredMemory(store *appmemory.Store) Function {
+func StructuredMemory(workspace, global *appmemory.Store) Function {
 	return func(ctx context.Context, args map[string]any) (string, error) {
-		if store == nil {
-			return "", fmt.Errorf("memory store is unavailable")
+		target, store, err := resolveMemoryStore(args, workspace, global)
+		if err != nil {
+			return "", err
 		}
 		action, _ := args["action"].(string)
 		action = strings.ToLower(strings.TrimSpace(action))
@@ -33,6 +35,11 @@ func StructuredMemory(store *appmemory.Store) Function {
 		encode := func(value any) (string, error) {
 			content, err := json.MarshalIndent(value, "", "  ")
 			return string(content), err
+		}
+		scoped := func(payload map[string]any) (string, error) {
+			payload["target"] = target
+			payload["path"] = store.EntriesPath()
+			return encode(payload)
 		}
 		switch action {
 		case "add":
@@ -44,7 +51,7 @@ func StructuredMemory(store *appmemory.Store) Function {
 			if err != nil {
 				return "", err
 			}
-			return encode(entry)
+			return scoped(map[string]any{"entry": entry})
 		case "replace":
 			id, _ := args["id"].(string)
 			kind, _ := args["kind"].(string)
@@ -53,21 +60,21 @@ func StructuredMemory(store *appmemory.Store) Function {
 			if err != nil {
 				return "", err
 			}
-			return encode(entry)
+			return scoped(map[string]any{"entry": entry})
 		case "remove":
 			id, _ := args["id"].(string)
 			entry, err := store.Remove(id, source, "removed")
 			if err != nil {
 				return "", err
 			}
-			return encode(entry)
+			return scoped(map[string]any{"entry": entry})
 		case "confirm":
 			id, _ := args["id"].(string)
 			entry, err := store.Confirm(id, source)
 			if err != nil {
 				return "", err
 			}
-			return encode(entry)
+			return scoped(map[string]any{"entry": entry})
 		case "search":
 			query, _ := args["query"].(string)
 			limit := parseIntArg(args["limit"], appmemory.DefaultLimit)
@@ -75,23 +82,44 @@ func StructuredMemory(store *appmemory.Store) Function {
 			if err != nil {
 				return "", err
 			}
-			return encode(results)
+			return scoped(map[string]any{"results": results})
 		case "list":
 			entries, err := store.ListAll()
 			if err != nil {
 				return "", err
 			}
-			return encode(entries)
+			return scoped(map[string]any{"entries": entries})
 		case "compact":
 			report, err := store.Compact()
 			if err != nil {
 				return "", err
 			}
-			return encode(report)
+			return scoped(map[string]any{"report": report})
 		default:
 			return "", fmt.Errorf("memory action must be add, replace, remove, search, list, confirm, or compact")
 		}
 	}
+}
+
+func resolveMemoryStore(args map[string]any, workspace, global *appmemory.Store) (string, *appmemory.Store, error) {
+	target, _ := args["target"].(string)
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target == "" {
+		target = "workspace"
+	}
+	if target != "workspace" && target != "global" {
+		return "", nil, fmt.Errorf("memory target must be workspace or global")
+	}
+	if target == "global" {
+		if global == nil {
+			return "", nil, fmt.Errorf("global memory store is unavailable")
+		}
+		return target, global, nil
+	}
+	if workspace == nil {
+		return "", nil, fmt.Errorf("memory store is unavailable")
+	}
+	return target, workspace, nil
 }
 
 func StructuredMemSave(store *appmemory.Store) Function {

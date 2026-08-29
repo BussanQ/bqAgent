@@ -395,13 +395,14 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	systemPrompt = conversation.Prompt.Combined()
 
 	runtime := appruntime.Factory{
-		Config:         llmConfig,
-		WorkspaceRoot:  ws.Root,
-		AgentDir:       ws.AgentDir(),
-		MemoryDir:      ws.WorkspaceMemoryDir(),
-		Getenv:         getenv,
-		MCPConfigPaths: ws.MCPConfigPaths(),
-		LogWriter:      stderr,
+		Config:          llmConfig,
+		WorkspaceRoot:   ws.Root,
+		AgentDir:        ws.AgentDir(),
+		MemoryDir:       ws.WorkspaceMemoryDir(),
+		GlobalMemoryDir: ws.GlobalMemoryDir(),
+		Getenv:          getenv,
+		MCPConfigPaths:  ws.MCPConfigPaths(),
+		LogWriter:       stderr,
 	}.Build(true)
 	var runRecorder *apptrace.Recorder
 	if runtime.RunTraceEnabled {

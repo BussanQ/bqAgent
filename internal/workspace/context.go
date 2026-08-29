@@ -30,7 +30,7 @@ const memoryTailLines = 50
 
 const sessionMemoryPolicy = `# Session Memory Policy
 
-Memory included after the stable instructions is a snapshot taken when the conversation starts. Do not expect later memory writes or LastUsedAt updates to rewrite that snapshot. Do not prefetch memory at the start of a turn. To refresh recall, call memory with action=search or action=list only when the user asks about prior facts or preferences; an empty result means there is nothing further to load.`
+Memory included after the stable instructions is a snapshot taken when the conversation starts. Do not expect later memory writes or LastUsedAt updates to rewrite that snapshot. Do not prefetch memory at the start of a turn. To refresh recall, call memory with action=search or action=list only when the user asks about prior facts or preferences; an empty result means there is nothing further to load. Default write target is workspace. Use target=global only when the user explicitly asks for global memory.`
 
 var nowFunc = time.Now
 
@@ -209,8 +209,10 @@ func (w *Workspace) workspaceSection() string {
 		"Primary context: ~/.agent/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
 		"Optional workspace context: .agent/{AGENT.md, SOUL.md, USER.md} (merged after global context)",
 		"Legacy compatible context directory: workspace/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
-		"Global long-term memory: ~/.agent/memory/MEMORY.md",
-		"Global daily memory: ~/.agent/memory/YYYY-MM-DD.md (loads today and yesterday; new session notes append to today)",
+		"Global structured memory: ~/.agent/memory/entries.jsonl (memory target=global)",
+		"Workspace structured memory: .agent/memory/entries.jsonl",
+		"Legacy global long-term memory: ~/.agent/memory/MEMORY.md",
+		"Legacy global daily memory: ~/.agent/memory/YYYY-MM-DD.md (loads today and yesterday)",
 		"Legacy compatible memory directory: workspace/memory/{MEMORY.md, YYYY-MM-DD.md}",
 		"Legacy memory file: agent_memory.md",
 		"Global rules directory: ~/.agent/rules/*.md",

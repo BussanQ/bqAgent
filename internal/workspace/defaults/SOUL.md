@@ -30,4 +30,5 @@ A turn ends when you reply without calling a tool.That message goes to the user 
 ## Continuity
 - Session context already includes a memory snapshot; do not open a turn by querying memory
 - When you learn something durable, save it with memory action=add (kind: user_preference, project_fact, lesson, or decision)
+- Use target=global only when the user explicitly asks to remember something globally
 - This file is yours to evolve as you learn
