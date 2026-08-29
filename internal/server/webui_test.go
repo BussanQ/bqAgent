@@ -236,6 +236,21 @@ func TestWebUIComposerPlacesAttachmentButtonOnLeft(t *testing.T) {
 	}
 }
 
+func TestWebUIAttachmentErrorsAutoDismiss(t *testing.T) {
+	page := string(webUIIndex)
+	for _, expected := range []string{
+		`var attachmentErrorTimer = 0;`,
+		`var ATTACHMENT_ERROR_TIMEOUT_MS = 4000;`,
+		`clearTimeout(attachmentErrorTimer);`,
+		`attachmentErrorTimer = setTimeout(function () {`,
+		`}, ATTACHMENT_ERROR_TIMEOUT_MS);`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("WebUI attachment error auto-dismiss missing %q", expected)
+		}
+	}
+}
+
 func TestWebUICreateAgentUsesDistinctAgentIcon(t *testing.T) {
 	page := string(webUIIndex)
 	selectIcon := `<use href="#icon-folder-plus"></use>`

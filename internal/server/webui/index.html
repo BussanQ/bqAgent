@@ -1899,6 +1899,8 @@
   var pendingFiles = [];
   var pendingFileReads = [];
   var nextAttachmentID = 1;
+  var attachmentErrorTimer = 0;
+  var ATTACHMENT_ERROR_TIMEOUT_MS = 4000;
   var MAX_PENDING_IMAGES = 4;
   var MAX_PENDING_IMAGE_BYTES = 3 * 1024 * 1024;
   var MAX_PENDING_TOTAL_BYTES = 8 * 1024 * 1024;
@@ -3377,11 +3379,21 @@
   }
 
   function clearAttachmentError() {
+    if (attachmentErrorTimer) {
+      clearTimeout(attachmentErrorTimer);
+      attachmentErrorTimer = 0;
+    }
     attachmentError.textContent = "";
   }
 
   function setAttachmentError(message) {
+    clearAttachmentError();
     attachmentError.textContent = message || "";
+    if (!attachmentError.textContent) return;
+    attachmentErrorTimer = setTimeout(function () {
+      attachmentError.textContent = "";
+      attachmentErrorTimer = 0;
+    }, ATTACHMENT_ERROR_TIMEOUT_MS);
   }
 
   function formatBytes(bytes) {
