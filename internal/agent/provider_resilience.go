@@ -51,6 +51,9 @@ type ProviderRequestMetadata struct {
 	RetryCount               int
 	ReasoningDowngraded      bool
 	ReasoningDowngradeSource string
+	CacheMode                string
+	CacheDowngraded          bool
+	CacheDowngradeReason     string
 	Recoveries               []ProviderRecovery
 }
 
@@ -146,9 +149,10 @@ func (state *streamAttemptState) markSemantic() {
 type providerAttempt func(ChatCompletionOptions, *streamAttemptState) (AssistantMessage, error)
 
 var reasoningUnsupportedModels sync.Map
+var cacheUnsupportedEndpoints sync.Map
 
 func (c *Client) executeWithResilience(ctx context.Context, model string, options ChatCompletionOptions, stream bool, attempt providerAttempt) (AssistantMessage, error) {
-	metadata := ProviderRequestMetadata{}
+	metadata := ProviderRequestMetadata{CacheMode: options.PromptCache.Mode}
 	effectiveOptions := options
 	cacheKey := c.reasoningCacheKey(model)
 	if options.ReasoningEffort != ReasoningEffortAuto {
@@ -158,9 +162,19 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 			metadata.ReasoningDowngradeSource = "capability_cache"
 		}
 	}
+	cacheCapabilityKey := c.promptCacheCapabilityKey()
+	if options.PromptCache.Enabled {
+		if _, disabled := cacheUnsupportedEndpoints.Load(cacheCapabilityKey); disabled {
+			effectiveOptions.PromptCache.Enabled = false
+			metadata.CacheDowngraded = true
+			metadata.CacheDowngradeReason = "capability_cache"
+			metadata.CacheMode = "disabled"
+		}
+	}
 
 	transientRetryUsed := false
 	downgradeAttempt := false
+	cacheDowngradeAttempt := false
 	attemptNumber := 0
 	for {
 		attemptNumber++
@@ -181,6 +195,20 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 		if stream && state.semanticOutput {
 			providerErr.Request = cloneProviderRequestMetadata(metadata)
 			return AssistantMessage{}, providerErr
+		}
+
+		if effectiveOptions.PromptCache.Enabled && !cacheDowngradeAttempt && promptCacheUnsupportedError(providerErr) {
+			effectiveOptions.PromptCache.Enabled = false
+			metadata.CacheDowngraded = true
+			metadata.CacheDowngradeReason = "provider_rejected_cache_fields"
+			metadata.CacheMode = "disabled"
+			metadata.Recoveries = append(metadata.Recoveries, ProviderRecovery{
+				Kind: "prompt_cache_downgrade", Attempt: attemptNumber + 1,
+				Category: providerErr.Category, StatusCode: providerErr.StatusCode,
+			})
+			cacheUnsupportedEndpoints.Store(cacheCapabilityKey, struct{}{})
+			cacheDowngradeAttempt = true
+			continue
 		}
 
 		if !metadata.ReasoningDowngraded && effectiveOptions.ReasoningEffort != ReasoningEffortAuto && reasoningUnsupportedError(c.apiType, providerErr) {
@@ -221,6 +249,30 @@ func cloneProviderRequestMetadata(metadata ProviderRequestMetadata) ProviderRequ
 
 func (c *Client) reasoningCacheKey(model string) string {
 	return strings.Join([]string{string(c.apiType), strings.ToLower(strings.TrimRight(strings.TrimSpace(c.baseURL), "/")), strings.TrimSpace(model)}, "\x00")
+}
+
+func (c *Client) promptCacheCapabilityKey() string {
+	return strings.Join([]string{string(c.apiType), strings.ToLower(strings.TrimRight(strings.TrimSpace(c.baseURL), "/"))}, "\x00")
+}
+
+func promptCacheUnsupportedError(err *ProviderError) bool {
+	if err == nil || (err.StatusCode != http.StatusBadRequest && err.StatusCode != http.StatusUnprocessableEntity) {
+		return false
+	}
+	text := strings.ToLower(err.Message)
+	cacheField := strings.Contains(text, "prompt_cache_key") ||
+		strings.Contains(text, "prompt_cache_options") ||
+		strings.Contains(text, "prompt_cache_breakpoint") ||
+		strings.Contains(text, "cache_control") ||
+		strings.Contains(text, "cache control") || strings.Contains(text, "prompt cache")
+	if !cacheField {
+		return false
+	}
+	return strings.Contains(text, "unknown") || strings.Contains(text, "unrecognized") ||
+		strings.Contains(text, "unsupported") || strings.Contains(text, "not support") ||
+		strings.Contains(text, "not allowed") || strings.Contains(text, "not permitted") ||
+		strings.Contains(text, "unexpected") || strings.Contains(text, "extra input") ||
+		strings.Contains(text, "additional propert")
 }
 
 func reasoningUnsupportedError(apiType APIType, err *ProviderError) bool {

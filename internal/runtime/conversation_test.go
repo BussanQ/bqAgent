@@ -94,6 +94,117 @@ func TestPrepareConversationInitializesSystemMessageWithoutSession(t *testing.T)
 	}
 }
 
+func TestPrepareConversationWithPromptReusesSessionMemorySnapshot(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	stable := agent.NewFrozenPromptSnapshot("stable instructions", "")
+	buildCalls := 0
+	conversation, err := PrepareConversationWithPrompt(store, "", &session.CreateOptions{Task: "hello", Chat: true}, stable, func() (string, error) {
+		buildCalls++
+		return "memory snapshot v1", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conversation.AddUserMessage("preserved history"); err != nil {
+		t.Fatal(err)
+	}
+	if buildCalls != 1 || len(conversation.Messages) != 3 {
+		t.Fatalf("initial conversation = %#v, build calls = %d", conversation.Messages, buildCalls)
+	}
+
+	restored, err := PrepareConversationWithPrompt(store, conversation.Session.ID(), nil, stable, func() (string, error) {
+		buildCalls++
+		return "memory snapshot v2", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buildCalls != 1 {
+		t.Fatalf("session context builder called on matching resume: %d", buildCalls)
+	}
+	if restored.Messages[1]["content"] != "memory snapshot v1" {
+		t.Fatalf("restored memory = %#v, want original snapshot", restored.Messages[1]["content"])
+	}
+	if restored.Messages[2]["content"] != "preserved history" {
+		t.Fatalf("history was not preserved: %#v", restored.Messages)
+	}
+	meta := restored.Session.Meta()
+	if meta.PromptSchemaVersion != PromptSchemaVersion || meta.PromptStableHash != stable.StableHash || meta.PromptMessageCount != 2 {
+		t.Fatalf("prompt metadata = %#v", meta)
+	}
+}
+
+func TestPrepareConversationWithPromptRebuildsStaticChangeOnlyOnce(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	firstStable := agent.NewFrozenPromptSnapshot("stable v1", "")
+	conversation, err := PrepareConversationWithPrompt(store, "", &session.CreateOptions{Task: "hello", Chat: true}, firstStable, func() (string, error) {
+		return "memory v1", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conversation.AddUserMessage("history"); err != nil {
+		t.Fatal(err)
+	}
+
+	secondStable := agent.NewFrozenPromptSnapshot("stable v2", "")
+	buildCalls := 0
+	rebuilt, err := PrepareConversationWithPrompt(store, conversation.Session.ID(), nil, secondStable, func() (string, error) {
+		buildCalls++
+		return "memory v2", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buildCalls != 1 || rebuilt.Messages[0]["content"] != "stable v2" || rebuilt.Messages[1]["content"] != "memory v2" || rebuilt.Messages[2]["content"] != "history" {
+		t.Fatalf("rebuilt conversation = %#v, calls = %d", rebuilt.Messages, buildCalls)
+	}
+
+	reused, err := PrepareConversationWithPrompt(store, conversation.Session.ID(), nil, secondStable, func() (string, error) {
+		buildCalls++
+		return "memory v3", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buildCalls != 1 || reused.Messages[1]["content"] != "memory v2" {
+		t.Fatalf("second resume rebuilt snapshot: messages=%#v calls=%d", reused.Messages, buildCalls)
+	}
+}
+
+func TestPrepareConversationWithPromptMigratesLegacySessionWithoutHistoryLoss(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	legacy, err := store.Create(session.CreateOptions{Task: "legacy", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.RecordMessages(
+		map[string]any{"role": "system", "content": "legacy combined prompt"},
+		map[string]any{"role": "user", "content": "old question"},
+		map[string]any{"role": "assistant", "content": "old answer"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	stable := agent.NewFrozenPromptSnapshot("new stable", "")
+	migrated, err := PrepareConversationWithPrompt(store, legacy.ID(), nil, stable, func() (string, error) {
+		return "new memory snapshot", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrated.Messages) != 4 || migrated.Messages[2]["content"] != "old question" || migrated.Messages[3]["content"] != "old answer" {
+		t.Fatalf("legacy history was not preserved: %#v", migrated.Messages)
+	}
+	if migrated.Messages[0]["content"] != "new stable" || migrated.Messages[1]["content"] != "new memory snapshot" {
+		t.Fatalf("legacy prompt was not migrated: %#v", migrated.Messages[:2])
+	}
+	meta := migrated.Session.Meta()
+	if meta.PromptSchemaVersion != PromptSchemaVersion || meta.PromptMessageCount != 2 {
+		t.Fatalf("migrated metadata = %#v", meta)
+	}
+}
+
 func TestPrepareConversationCreatesSessionAndPersistsSystemMessage(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	createOptions := &session.CreateOptions{Task: "hello", Chat: true}

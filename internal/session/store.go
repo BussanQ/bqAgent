@@ -29,18 +29,21 @@ const (
 )
 
 type Meta struct {
-	ID            string    `json:"id"`
-	WorkspaceRoot string    `json:"workspace_root"`
-	Task          string    `json:"task,omitempty"`
-	Planned       bool      `json:"planned,omitempty"`
-	Background    bool      `json:"background,omitempty"`
-	Chat          bool      `json:"chat,omitempty"`
-	Status        Status    `json:"status"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	LastError     string    `json:"last_error,omitempty"`
-	LastRunID     string    `json:"last_run_id,omitempty"`
-	CurrentModel  string    `json:"current_model,omitempty"`
+	ID                  string    `json:"id"`
+	WorkspaceRoot       string    `json:"workspace_root"`
+	Task                string    `json:"task,omitempty"`
+	Planned             bool      `json:"planned,omitempty"`
+	Background          bool      `json:"background,omitempty"`
+	Chat                bool      `json:"chat,omitempty"`
+	Status              Status    `json:"status"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	LastError           string    `json:"last_error,omitempty"`
+	LastRunID           string    `json:"last_run_id,omitempty"`
+	CurrentModel        string    `json:"current_model,omitempty"`
+	PromptSchemaVersion int       `json:"prompt_schema_version,omitempty"`
+	PromptStableHash    string    `json:"prompt_stable_hash,omitempty"`
+	PromptMessageCount  int       `json:"prompt_message_count,omitempty"`
 }
 
 type Store struct {
@@ -90,6 +93,8 @@ type ContextCheckpoint struct {
 	Summary                string           `json:"summary"`
 	TailMessages           []map[string]any `json:"tail_messages"`
 	SystemPrompt           string           `json:"system_prompt,omitempty"`
+	PromptStableHash       string           `json:"prompt_stable_hash,omitempty"`
+	PromptMessageCount     int              `json:"prompt_message_count,omitempty"`
 	SourceTranscriptSHA256 string           `json:"source_transcript_sha256,omitempty"`
 	SourceTranscriptSize   int64            `json:"source_transcript_size,omitempty"`
 	UpdatedAt              time.Time        `json:"updated_at"`
@@ -436,6 +441,10 @@ func (session *Session) LoadCheckpoint() (ContextCheckpoint, error) {
 }
 
 func (session *Session) SaveCheckpointSummary(summary string, tailMessages []map[string]any, systemPrompt string) error {
+	return session.SaveCheckpointSummaryWithPrompt(summary, tailMessages, systemPrompt, "", 1)
+}
+
+func (session *Session) SaveCheckpointSummaryWithPrompt(summary string, tailMessages []map[string]any, systemPrompt, stableHash string, promptMessageCount int) error {
 	provenance, err := session.LoadTranscriptProvenance()
 	if err != nil {
 		return err
@@ -453,6 +462,8 @@ func (session *Session) SaveCheckpointSummary(summary string, tailMessages []map
 		Summary:                strings.TrimSpace(summary),
 		TailMessages:           clonedTail,
 		SystemPrompt:           systemPrompt,
+		PromptStableHash:       strings.TrimSpace(stableHash),
+		PromptMessageCount:     promptMessageCount,
 		SourceTranscriptSHA256: provenance.SHA256,
 		SourceTranscriptSize:   provenance.Size,
 		UpdatedAt:              time.Now().UTC(),
@@ -572,6 +583,14 @@ func (session *Session) SetLastRunID(runID string) error {
 
 func (session *Session) SetCurrentModel(model string) error {
 	session.meta.CurrentModel = strings.TrimSpace(model)
+	session.meta.UpdatedAt = time.Now().UTC()
+	return session.persistMeta()
+}
+
+func (session *Session) SetPromptSnapshot(schemaVersion int, stableHash string, messageCount int) error {
+	session.meta.PromptSchemaVersion = schemaVersion
+	session.meta.PromptStableHash = strings.TrimSpace(stableHash)
+	session.meta.PromptMessageCount = messageCount
 	session.meta.UpdatedAt = time.Now().UTC()
 	return session.persistMeta()
 }

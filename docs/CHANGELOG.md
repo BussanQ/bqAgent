@@ -5,7 +5,7 @@
 ## 说明
 
 - 仓库当前没有版本 Tag，因此本文以提交日期为时间线，不将日期解释为正式发布版本。
-- 时间范围为 2026-03-15 至 2026-08-25，并以当前本地代码作为校验基线。
+- 时间范围为 2026-03-15 至 2026-08-27，并以当前本地代码作为校验基线。
 - 时间线按功能首次落地日期从早到晚排列；后续行为变化标记为“演进”或“可靠性”。
 - 纯合并、忽略规则、测试约束和不改变产品能力的构建脚本调整不单独列出。
 - 提交标题与实际改动不一致时，以代码差异和当前实现为准。例如历史中标题为 “Add files via upload” 的提交只增加了架构 HTML 文档，真正的附件能力更早已经落地。
@@ -14,11 +14,12 @@
 
 当前代码保留的主要能力包括：
 
-- 单次任务、规划执行、终端多轮对话、会话恢复、后台任务和常驻 HTTP Server。
+- 单次任务、规划执行、默认内联终端 TUI、兼容逐行对话、会话恢复、后台任务和常驻 HTTP Server。
 - OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 三种模型协议。
 - 内嵌 WebUI、QQ Bot Gateway、微信 iLink、ServerChan Bot 等交互渠道。
 - 工作区文件与 Shell 工具、网页搜索与抓取、Skill、Memory、MCP 和独立子 Agent。
 - 持久化 Session、上下文裁剪与摘要压缩、checkpoint 恢复、结构化 Trace、评估和反馈。
+- 基于 Provider usage、本地估算和精确计数端点的上下文预算，以及稳定提示词缓存、会话级 Prompt 快照和缓存命中率观测。
 - WebUI 工作区浏览/切换、文件预览与附件、供应商配置、模型切换、历史会话和删除会话。
 - 路径边界、原子写入、输出上限、进程组取消、重复调用保护和模型请求重试等可靠性机制。
 
@@ -293,12 +294,39 @@
 - **同步默认工具说明**：内置 `TOOLS.md` 与当前工具定义、参数和安全边界保持一致。
 - **演进设置入口布局**：避免设置按钮被页面底部遮挡。
 
+### 2026-08-25 至 2026-08-26 — WebUI 品牌与运行配置收敛
+
+- **演进 WebUI 品牌和会话入口**：统一应用图标并增加 favicon、恢复品牌旋转效果；随后改用透明 SVG favicon，并移除重复的新建对话按钮。
+- **移除内置默认模型与固定 System Prompt**：`LLM_MODEL` 未配置时保持为空，Agent 指令由全局/工作区配置层和运行时模型身份组装，避免暗含特定供应商、模型或固定提示词。
+- **统一 Server 持久状态目录**：后台服务日志、微信 iLink、QQ 和 ServerChan Bot 状态统一保存到全局 `~/.agent/server/`，不再写入工作区 `.agent`。
+
+### 2026-08-26 — 多 Provider 精确 token 计数
+
+- **新增 Provider 侧精确输入 token 计数**：OpenAI Responses 使用 `/responses/input_tokens`，Anthropic 使用 `/messages/count_tokens`，按模型实际可见的完整消息、工具和请求选项计数。
+- **演进上下文预算估算**：优先复用上一响应报告的 prompt usage，只对新增消息和请求形状做本地增量估算；接近预算边界时再请求完整精确计数。
+- **新增 `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT`**：默认在估算达到目标预算 80% 后尝试精确计数；Provider 不支持或计数失败时安全回退本地估算，不阻断对话。
+
+### 2026-08-27 — 默认内联终端 TUI
+
+- **默认启动交互式对话**：无参数运行 `bqagent` 等同于 `--chat`；单次任务、Chat、后台任务、子任务和 Server 统一优先读取全局 `~/.agent/config.json` 的当前 Provider，未配置时再回退环境变量。
+- **新增内联终端 TUI**：真实 TTY 使用始终流式、非备用屏幕界面，已完成的用户消息、Markdown 回复和工具摘要保留在终端原生 scrollback。
+- **增强终端交互**：加入命令候选、多行输入、长粘贴 Chip、单槽排队、工作区独立输入历史、会话恢复回放，以及超过 5 次工具调用后的可展开聚合视图。
+- **增强中断与兼容性**：支持 `Esc`/`Ctrl+C` 取消活动轮次、双击 `Ctrl+C` 退出和安全等待后台轮次；非 TTY 或 `TERM=dumb` 自动回退逐行模式，并修复 Ghostty 原始输入与退出乱码。
+- **演进提问展示**：用户问题改为带 `▸` 前缀的独立视觉块，与回复和工具时间线更易区分。
+
+### 2026-08-27 — 提示词缓存与缓存指标
+
+- **新增稳定 Prompt 快照**：将静态指令前缀与会话 Memory/结构化上下文拆分，规范换行和顺序并持久化稳定哈希；会话创建后冻结上下文快照，后续 Memory 写入不再反复破坏缓存前缀。
+- **新增跨 Provider 提示词缓存**：OpenAI Chat/Responses 使用由模型、稳定 Prompt 和请求形状派生的缓存键，并在支持时附加显式断点；Anthropic 对稳定 System 前缀和工具定义使用 ephemeral cache control。
+- **新增整轮缓存指标**：解析 OpenAI Chat、OpenAI Responses 和 Anthropic 的缓存读取/写入 usage，聚合一轮内包含工具迭代的全部模型调用，并在 TUI 与 WebUI 显示缓存命中率。
+- **新增缓存兼容降级**：Provider 拒绝缓存字段时自动移除后重试一次，并按端点记忆能力限制；Run Trace 同步记录稳定 Prompt 哈希、工具集哈希、缓存模式和降级原因。
+
 ## 当前演进主线总结
 
 从提交历史看，bqAgent 的演进可以归纳为五条连续主线：
 
-1. **执行内核**：最小工具循环 → 规划、多轮、流式 → 自动上下文压缩 → 截断 Fail-Closed 与模型请求韧性。
-2. **工作区与知识**：Markdown 上下文 → Skill/Memory → 渐进式 Skill → 全局与工作区分层配置。
-3. **交互渠道**：CLI → HTTP/ServerChan → 微信 iLink/QQ → 内嵌 WebUI 与多工作区桌面体验。
+1. **执行内核**：最小工具循环 → 规划、多轮、流式 → 自动上下文压缩 → 截断 Fail-Closed、模型请求韧性、精确 token 预算与提示词缓存。
+2. **工作区与知识**：Markdown 上下文 → Skill/Memory → 渐进式 Skill → 全局与工作区分层配置 → 会话级稳定 Prompt 快照。
+3. **交互渠道**：CLI → HTTP/ServerChan → 微信 iLink/QQ → 内嵌 WebUI 与多工作区桌面体验 → 默认内联终端 TUI。
 4. **扩展能力**：基础文件/Shell → 搜索抓取 → Claude Code 风格工具与并行执行 → MCP、外部 Agent 和隔离子 Agent。
-5. **可恢复与可治理**：Session/日志 → checkpoint/紧凑存储 → Trace/Eval/反馈 → 安全路径、原子写入、超时、停止和重试。
+5. **可恢复与可治理**：Session/日志 → checkpoint/紧凑存储 → Trace/Eval/反馈 → 安全路径、原子写入、超时、停止、重试与缓存降级观测。

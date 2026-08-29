@@ -136,6 +136,12 @@ func (c *instrumentedClient) logModelRequest(requestType, model string, stream b
 	if metadata.ReasoningDowngraded {
 		extra += fmt.Sprintf(" reasoning_downgraded=true reasoning_downgrade_source=%s", metadata.ReasoningDowngradeSource)
 	}
+	if metadata.CacheMode != "" {
+		extra += fmt.Sprintf(" cache_mode=%s", metadata.CacheMode)
+	}
+	if metadata.CacheDowngraded {
+		extra += fmt.Sprintf(" cache_downgraded=true cache_downgrade_reason=%s", metadata.CacheDowngradeReason)
+	}
 	if err != nil {
 		status = "error"
 		var providerErr *ProviderError

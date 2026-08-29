@@ -38,10 +38,12 @@ const (
 )
 
 type TokenUsage struct {
-	PromptTokens     int  `json:"prompt_tokens,omitempty"`
-	CompletionTokens int  `json:"completion_tokens,omitempty"`
-	TotalTokens      int  `json:"total_tokens,omitempty"`
-	Estimated        bool `json:"estimated,omitempty"`
+	PromptTokens           int  `json:"prompt_tokens,omitempty"`
+	CachedPromptTokens     int  `json:"cached_prompt_tokens,omitempty"`
+	CacheWritePromptTokens int  `json:"cache_write_prompt_tokens,omitempty"`
+	CompletionTokens       int  `json:"completion_tokens,omitempty"`
+	TotalTokens            int  `json:"total_tokens,omitempty"`
+	Estimated              bool `json:"estimated,omitempty"`
 }
 
 type ErrorInfo struct {
@@ -61,6 +63,10 @@ type ModelCallMetadata struct {
 	RetryCount               int
 	ReasoningDowngraded      bool
 	ReasoningDowngradeSource string
+	StablePromptHash         string
+	ToolSetHash              string
+	CacheMode                string
+	CacheDowngradeReason     string
 	Recoveries               []ModelRecovery
 }
 
@@ -78,24 +84,28 @@ type VerifierResult struct {
 }
 
 type RunTrace struct {
-	SchemaVersion  int              `json:"schema_version"`
-	RunID          string           `json:"run_id"`
-	ParentRunID    string           `json:"parent_run_id,omitempty"`
-	SessionID      string           `json:"session_id"`
-	TurnID         string           `json:"turn_id"`
-	Kind           string           `json:"kind"`
-	Status         Status           `json:"status"`
-	Model          string           `json:"model,omitempty"`
-	PromptVersion  string           `json:"prompt_version,omitempty"`
-	ContextVersion string           `json:"context_version,omitempty"`
-	Usage          TokenUsage       `json:"usage,omitempty"`
-	RetryCount     int              `json:"retry_count,omitempty"`
-	Error          *ErrorInfo       `json:"error,omitempty"`
-	FinalSummary   string           `json:"final_summary,omitempty"`
-	Artifacts      []Artifact       `json:"artifacts,omitempty"`
-	Verifiers      []VerifierResult `json:"verifiers,omitempty"`
-	StartedAt      time.Time        `json:"started_at"`
-	FinishedAt     *time.Time       `json:"finished_at,omitempty"`
+	SchemaVersion        int              `json:"schema_version"`
+	RunID                string           `json:"run_id"`
+	ParentRunID          string           `json:"parent_run_id,omitempty"`
+	SessionID            string           `json:"session_id"`
+	TurnID               string           `json:"turn_id"`
+	Kind                 string           `json:"kind"`
+	Status               Status           `json:"status"`
+	Model                string           `json:"model,omitempty"`
+	PromptVersion        string           `json:"prompt_version,omitempty"`
+	StablePromptHash     string           `json:"stable_prompt_hash,omitempty"`
+	ToolSetHash          string           `json:"tool_set_hash,omitempty"`
+	CacheMode            string           `json:"cache_mode,omitempty"`
+	CacheDowngradeReason string           `json:"cache_downgrade_reason,omitempty"`
+	ContextVersion       string           `json:"context_version,omitempty"`
+	Usage                TokenUsage       `json:"usage,omitempty"`
+	RetryCount           int              `json:"retry_count,omitempty"`
+	Error                *ErrorInfo       `json:"error,omitempty"`
+	FinalSummary         string           `json:"final_summary,omitempty"`
+	Artifacts            []Artifact       `json:"artifacts,omitempty"`
+	Verifiers            []VerifierResult `json:"verifiers,omitempty"`
+	StartedAt            time.Time        `json:"started_at"`
+	FinishedAt           *time.Time       `json:"finished_at,omitempty"`
 }
 
 type Event struct {
@@ -211,17 +221,37 @@ func (r *Recorder) ModelCallWithMetadata(contextHash string, usage TokenUsage, d
 	r.mu.Lock()
 	r.meta.ContextVersion = contextHash
 	r.meta.Usage.PromptTokens += usage.PromptTokens
+	r.meta.Usage.CachedPromptTokens += usage.CachedPromptTokens
+	r.meta.Usage.CacheWritePromptTokens += usage.CacheWritePromptTokens
 	r.meta.Usage.CompletionTokens += usage.CompletionTokens
 	r.meta.Usage.TotalTokens += usage.TotalTokens
 	r.meta.Usage.Estimated = r.meta.Usage.Estimated || usage.Estimated
 	r.meta.RetryCount += metadata.RetryCount
+	if metadata.StablePromptHash != "" {
+		r.meta.StablePromptHash = metadata.StablePromptHash
+	}
+	if metadata.ToolSetHash != "" {
+		r.meta.ToolSetHash = metadata.ToolSetHash
+	}
+	if metadata.CacheMode != "" {
+		r.meta.CacheMode = metadata.CacheMode
+	}
+	if metadata.CacheDowngradeReason != "" {
+		r.meta.CacheDowngradeReason = metadata.CacheDowngradeReason
+	}
 	_ = r.persistMetaLocked()
 	r.mu.Unlock()
 	data := map[string]any{
-		"context_version": contextHash,
-		"usage":           usage,
-		"duration_ms":     duration.Milliseconds(),
-		"retry_count":     metadata.RetryCount,
+		"context_version":    contextHash,
+		"usage":              usage,
+		"duration_ms":        duration.Milliseconds(),
+		"retry_count":        metadata.RetryCount,
+		"stable_prompt_hash": metadata.StablePromptHash,
+		"tool_set_hash":      metadata.ToolSetHash,
+		"cache_mode":         metadata.CacheMode,
+	}
+	if metadata.CacheDowngradeReason != "" {
+		data["cache_downgrade_reason"] = metadata.CacheDowngradeReason
 	}
 	if metadata.ReasoningDowngraded {
 		data["reasoning_downgraded"] = true

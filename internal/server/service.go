@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,55 +26,57 @@ import (
 )
 
 type ServiceOptions struct {
-	WorkspaceRoot       string
-	AgentDir            string
-	Client              agent.ChatCompletionClient
-	ClientOptions       *agent.ClientOptions
-	APIType             agent.APIType
-	Model               string
-	Models              []string
-	SystemPrompt        string
-	SystemPromptBuilder func() (string, error)
-	Planner             *agent.Planner
-	ToolDefinitions     []tools.Definition
-	Functions           map[string]tools.Function
-	DefaultMaxTurns     int
-	ExternalBroker      *extagent.Broker
-	MemoryAppend        func(task, result string) error
-	Context             agent.ContextConfig
-	RunTraceEnabled     bool
-	SessionOptions      *session.Options
-	Subagents           *subagent.Manager
-	MemoryStore         *appmemory.Store
+	WorkspaceRoot         string
+	AgentDir              string
+	Client                agent.ChatCompletionClient
+	ClientOptions         *agent.ClientOptions
+	APIType               agent.APIType
+	Model                 string
+	Models                []string
+	SystemPrompt          string
+	SystemPromptBuilder   func() (string, error)
+	PromptSectionsBuilder func() (workspace.PromptSections, error)
+	Planner               *agent.Planner
+	ToolDefinitions       []tools.Definition
+	Functions             map[string]tools.Function
+	DefaultMaxTurns       int
+	ExternalBroker        *extagent.Broker
+	MemoryAppend          func(task, result string) error
+	Context               agent.ContextConfig
+	RunTraceEnabled       bool
+	SessionOptions        *session.Options
+	Subagents             *subagent.Manager
+	MemoryStore           *appmemory.Store
 }
 
 type Service struct {
-	store               *session.Store
-	workspaceRoot       string
-	agentDir            string
-	client              agent.ChatCompletionClient
-	clientOptions       agent.ClientOptions
-	apiType             agent.APIType
-	model               string
-	models              []configuredModel
-	systemPrompt        string
-	systemPromptBuilder func() (string, error)
-	planner             *agent.Planner
-	plannerEnabled      bool
-	providerID          string
-	toolDefinitions     []tools.Definition
-	functions           map[string]tools.Function
-	maxTurns            int
-	locker              *KeyedLocker
-	externalBroker      *extagent.Broker
-	memoryAppend        func(task, result string) error
-	context             agent.ContextConfig
-	processGroupStops   *processGroupStopRegistry
-	environmentCommands *environmentCommandGuard
-	traceStore          *apptrace.Store
-	subagents           *subagent.Manager
-	memoryStore         *appmemory.Store
-	activeTurns         *activeTurnRegistry
+	store                 *session.Store
+	workspaceRoot         string
+	agentDir              string
+	client                agent.ChatCompletionClient
+	clientOptions         agent.ClientOptions
+	apiType               agent.APIType
+	model                 string
+	models                []configuredModel
+	systemPrompt          string
+	systemPromptBuilder   func() (string, error)
+	promptSectionsBuilder func() (workspace.PromptSections, error)
+	planner               *agent.Planner
+	plannerEnabled        bool
+	providerID            string
+	toolDefinitions       []tools.Definition
+	functions             map[string]tools.Function
+	maxTurns              int
+	locker                *KeyedLocker
+	externalBroker        *extagent.Broker
+	memoryAppend          func(task, result string) error
+	context               agent.ContextConfig
+	processGroupStops     *processGroupStopRegistry
+	environmentCommands   *environmentCommandGuard
+	traceStore            *apptrace.Store
+	subagents             *subagent.Manager
+	memoryStore           *appmemory.Store
+	activeTurns           *activeTurnRegistry
 }
 
 type FileAttachment struct {
@@ -113,14 +116,25 @@ const (
 )
 
 type GenerationMetrics struct {
-	FirstTokenLatencyMS  int64   `json:"first_token_latency_ms"`
-	PromptTokens         int     `json:"prompt_tokens,omitempty"`
-	CachedPromptTokens   int     `json:"cached_prompt_tokens,omitempty"`
-	CacheUsageAvailable  bool    `json:"cache_usage_available,omitempty"`
-	CompletionTokens     int     `json:"completion_tokens,omitempty"`
-	ReasoningTokens      int     `json:"reasoning_tokens,omitempty"`
-	GenerationDurationMS int64   `json:"generation_duration_ms,omitempty"`
-	TokensPerSecond      float64 `json:"tokens_per_second,omitempty"`
+	FirstTokenLatencyMS  int64         `json:"first_token_latency_ms"`
+	PromptTokens         int           `json:"prompt_tokens,omitempty"`
+	CachedPromptTokens   int           `json:"cached_prompt_tokens,omitempty"`
+	CacheUsageAvailable  bool          `json:"cache_usage_available,omitempty"`
+	CompletionTokens     int           `json:"completion_tokens,omitempty"`
+	ReasoningTokens      int           `json:"reasoning_tokens,omitempty"`
+	GenerationDurationMS int64         `json:"generation_duration_ms,omitempty"`
+	TokensPerSecond      float64       `json:"tokens_per_second,omitempty"`
+	CacheMetrics         *CacheMetrics `json:"cache_metrics,omitempty"`
+}
+
+type CacheMetrics struct {
+	Available           bool    `json:"available"`
+	Calls               int     `json:"calls"`
+	InputTokens         int     `json:"input_tokens"`
+	CacheReadTokens     int     `json:"cache_read_tokens"`
+	CacheWriteTokens    int     `json:"cache_write_tokens"`
+	UncachedInputTokens int     `json:"uncached_input_tokens"`
+	HitRate             float64 `json:"hit_rate"`
 }
 
 type TurnResponse struct {
@@ -133,26 +147,38 @@ type TurnResponse struct {
 }
 
 func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *GenerationMetrics {
-	if !metrics.Available || metrics.FirstTokenLatency < 0 {
+	if (!metrics.Available || metrics.FirstTokenLatency < 0) && metrics.CacheMetrics.Calls == 0 {
 		return nil
 	}
-	firstTokenLatencyMS := metrics.FirstTokenLatency.Milliseconds()
-	if firstTokenLatencyMS == 0 {
-		firstTokenLatencyMS = 1
-	}
-	generation := &GenerationMetrics{
-		FirstTokenLatencyMS: firstTokenLatencyMS,
-		PromptTokens:        metrics.PromptTokens,
-		CachedPromptTokens:  metrics.CachedPromptTokens,
-		CacheUsageAvailable: metrics.CacheUsageAvailable,
-		CompletionTokens:    metrics.CompletionTokens,
-		ReasoningTokens:     metrics.ReasoningTokens,
-		TokensPerSecond:     metrics.TokensPerSecond,
+	generation := &GenerationMetrics{}
+	if metrics.Available && metrics.FirstTokenLatency >= 0 {
+		firstTokenLatencyMS := metrics.FirstTokenLatency.Milliseconds()
+		if firstTokenLatencyMS == 0 {
+			firstTokenLatencyMS = 1
+		}
+		generation.FirstTokenLatencyMS = firstTokenLatencyMS
+		generation.PromptTokens = metrics.PromptTokens
+		generation.CachedPromptTokens = metrics.CachedPromptTokens
+		generation.CacheUsageAvailable = metrics.CacheUsageAvailable
+		generation.CompletionTokens = metrics.CompletionTokens
+		generation.ReasoningTokens = metrics.ReasoningTokens
+		generation.TokensPerSecond = metrics.TokensPerSecond
 	}
 	if metrics.GenerationDuration > 0 {
 		generation.GenerationDurationMS = metrics.GenerationDuration.Milliseconds()
 		if generation.GenerationDurationMS == 0 {
 			generation.GenerationDurationMS = 1
+		}
+	}
+	if metrics.CacheMetrics.Calls > 0 {
+		generation.CacheMetrics = &CacheMetrics{
+			Available:           metrics.CacheMetrics.Available,
+			Calls:               metrics.CacheMetrics.Calls,
+			InputTokens:         metrics.CacheMetrics.InputTokens,
+			CacheReadTokens:     metrics.CacheMetrics.CacheReadTokens,
+			CacheWriteTokens:    metrics.CacheMetrics.CacheWriteTokens,
+			UncachedInputTokens: metrics.CacheMetrics.UncachedInputTokens,
+			HitRate:             metrics.CacheMetrics.HitRate,
 		}
 	}
 	return generation
@@ -189,30 +215,31 @@ func NewService(options ServiceOptions) *Service {
 		log.Printf("session maintenance: %v", maintenanceErr)
 	}
 	service := &Service{
-		store:               store,
-		workspaceRoot:       options.WorkspaceRoot,
-		agentDir:            options.AgentDir,
-		client:              options.Client,
-		clientOptions:       clientOptions,
-		apiType:             agent.NormalizeAPIType(string(options.APIType)),
-		model:               agent.EffectiveModel(options.Model),
-		models:              parseConfiguredModels(options.Models),
-		systemPrompt:        options.SystemPrompt,
-		systemPromptBuilder: options.SystemPromptBuilder,
-		planner:             options.Planner,
-		plannerEnabled:      options.Planner != nil,
-		toolDefinitions:     append(append([]tools.Definition{}, options.ToolDefinitions...), subagentToolDefinitions(options.Subagents != nil)...),
-		functions:           cloneFunctions(options.Functions),
-		maxTurns:            maxTurns,
-		locker:              NewKeyedLocker(),
-		externalBroker:      options.ExternalBroker,
-		memoryAppend:        options.MemoryAppend,
-		context:             options.Context,
-		processGroupStops:   newProcessGroupStopRegistry(),
-		environmentCommands: newEnvironmentCommandGuard(0),
-		subagents:           options.Subagents,
-		memoryStore:         options.MemoryStore,
-		activeTurns:         newActiveTurnRegistry(),
+		store:                 store,
+		workspaceRoot:         options.WorkspaceRoot,
+		agentDir:              options.AgentDir,
+		client:                options.Client,
+		clientOptions:         clientOptions,
+		apiType:               agent.NormalizeAPIType(string(options.APIType)),
+		model:                 agent.EffectiveModel(options.Model),
+		models:                parseConfiguredModels(options.Models),
+		systemPrompt:          options.SystemPrompt,
+		systemPromptBuilder:   options.SystemPromptBuilder,
+		promptSectionsBuilder: options.PromptSectionsBuilder,
+		planner:               options.Planner,
+		plannerEnabled:        options.Planner != nil,
+		toolDefinitions:       append(append([]tools.Definition{}, options.ToolDefinitions...), subagentToolDefinitions(options.Subagents != nil)...),
+		functions:             cloneFunctions(options.Functions),
+		maxTurns:              maxTurns,
+		locker:                NewKeyedLocker(),
+		externalBroker:        options.ExternalBroker,
+		memoryAppend:          options.MemoryAppend,
+		context:               options.Context,
+		processGroupStops:     newProcessGroupStopRegistry(),
+		environmentCommands:   newEnvironmentCommandGuard(0),
+		subagents:             options.Subagents,
+		memoryStore:           options.MemoryStore,
+		activeTurns:           newActiveTurnRegistry(),
 	}
 	if options.RunTraceEnabled {
 		service.traceStore = apptrace.NewStore(options.WorkspaceRoot)
@@ -366,14 +393,17 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		}
 	}
 	createOptions := &session.CreateOptions{Task: effectiveText, Planned: service.planner != nil, Chat: true}
-	systemPrompt, err := service.currentSystemPrompt(effectiveText, effectiveModel)
+	stablePrompt, initialSessionContext, err := service.currentPromptSnapshot(effectiveModel)
 	if err != nil {
 		return TurnResponse{}, err
 	}
-	conversation, err := appruntime.PrepareConversation(service.store, sessionID, createOptions, systemPrompt)
+	conversation, err := appruntime.PrepareConversationWithPrompt(service.store, sessionID, createOptions, stablePrompt, func() (string, error) {
+		return service.currentSessionContext(effectiveText, initialSessionContext)
+	})
 	if err != nil {
 		return TurnResponse{}, err
 	}
+	systemPrompt := conversation.Prompt.Combined()
 	defer func() {
 		if response.SessionID != "" {
 			response.Model = service.effectiveModel(conversation.Session)
@@ -606,7 +636,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		planner = agent.NewPlanner(service.client, effectiveModel)
 	}
 	app := agent.NewWithOptions(service.client, effectiveModel, agent.Options{
-		SystemPrompt:    systemPrompt,
+		Prompt:          conversation.Prompt,
 		APIType:         service.apiType,
 		LogWriter:       logWriter,
 		ToolDefinitions: service.toolDefinitions,
@@ -1011,23 +1041,61 @@ func splitFirstToken(message string) (string, string) {
 }
 
 func (service *Service) currentSystemPrompt(query string, model string) (string, error) {
-	if service == nil {
-		return "", nil
+	stablePrompt, initialSessionContext, err := service.currentPromptSnapshot(model)
+	if err != nil {
+		return "", err
 	}
-	prompt := service.systemPrompt
-	if service.systemPromptBuilder != nil {
+	sessionContext, err := service.currentSessionContext(query, initialSessionContext)
+	if err != nil {
+		return "", err
+	}
+	return agent.NewFrozenPromptSnapshot(stablePrompt.Stable, sessionContext).Combined(), nil
+}
+
+func (service *Service) currentPromptSnapshot(model string) (agent.PromptSnapshot, string, error) {
+	if service == nil {
+		return agent.PromptSnapshot{}, "", nil
+	}
+	sections := workspace.PromptSections{Stable: service.systemPrompt}
+	if service.promptSectionsBuilder != nil {
+		built, err := service.promptSectionsBuilder()
+		if err != nil {
+			return agent.PromptSnapshot{}, "", err
+		}
+		sections = built
+	} else if service.systemPromptBuilder != nil {
 		built, err := service.systemPromptBuilder()
 		if err != nil {
-			return "", err
+			return agent.PromptSnapshot{}, "", err
 		}
-		prompt = built
+		sections.Stable = built
+	}
+	return agent.NewPromptSnapshot(sections.Stable, "", model, service.apiType), sections.SessionContext, nil
+}
+
+func (service *Service) currentSessionContext(query string, initial string) (string, error) {
+	parts := make([]string, 0, 2)
+	if strings.TrimSpace(initial) != "" {
+		parts = append(parts, initial)
 	}
 	if service.memoryStore != nil {
 		results, err := service.memoryStore.Search(query, nil, 12)
 		entries, listErr := service.memoryStore.Active()
 		if err == nil && listErr == nil {
+			sort.Slice(entries, func(left, right int) bool {
+				if entries[left].Kind != entries[right].Kind {
+					return entries[left].Kind < entries[right].Kind
+				}
+				return entries[left].ID < entries[right].ID
+			})
+			sort.SliceStable(results, func(left, right int) bool {
+				if results[left].Score != results[right].Score {
+					return results[left].Score > results[right].Score
+				}
+				return results[left].Entry.ID < results[right].Entry.ID
+			})
 			var memory strings.Builder
-			memory.WriteString("\n\n# Relevant structured memory\n")
+			memory.WriteString("# Relevant structured memory\n")
 			seen := map[string]bool{}
 			for _, entry := range entries {
 				if entry.Kind != appmemory.KindDecision && entry.Kind != appmemory.KindUserPreference {
@@ -1050,10 +1118,12 @@ func (service *Service) currentSystemPrompt(query string, model string) (string,
 				}
 				memory.WriteString(line)
 			}
-			prompt += memory.String()
+			if memory.Len() > len("# Relevant structured memory\n") {
+				parts = append(parts, strings.TrimSpace(memory.String()))
+			}
 		}
 	}
-	return agent.AppendModelIdentitySystemPrompt(prompt, model, service.apiType), nil
+	return strings.Join(parts, "\n\n"), nil
 }
 
 type RuntimeLLMInfo struct {

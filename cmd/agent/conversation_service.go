@@ -59,8 +59,8 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		Models:          runtime.Models,
 		DefaultMaxTurns: runtime.MaxIterations,
 		SystemPrompt:    systemPrompt,
-		SystemPromptBuilder: func() (string, error) {
-			return ws.BuildSystemPrompt("")
+		PromptSectionsBuilder: func() (workspace.PromptSections, error) {
+			return ws.BuildPromptSections("")
 		},
 		Planner:         runtime.Planner,
 		ToolDefinitions: runtime.Catalog.Definitions(),

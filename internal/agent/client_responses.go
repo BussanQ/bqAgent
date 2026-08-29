@@ -15,12 +15,14 @@ import (
 )
 
 type openAIResponseRequest struct {
-	Model     string                   `json:"model"`
-	Input     []any                    `json:"input"`
-	Tools     []openAIResponseTool     `json:"tools,omitempty"`
-	Text      map[string]any           `json:"text,omitempty"`
-	Reasoning *openAIResponseReasoning `json:"reasoning,omitempty"`
-	Stream    bool                     `json:"stream,omitempty"`
+	Model              string                           `json:"model"`
+	Input              []any                            `json:"input"`
+	Tools              []openAIResponseTool             `json:"tools,omitempty"`
+	Text               map[string]any                   `json:"text,omitempty"`
+	Reasoning          *openAIResponseReasoning         `json:"reasoning,omitempty"`
+	PromptCacheKey     string                           `json:"prompt_cache_key,omitempty"`
+	PromptCacheOptions *openAIPromptCacheRequestOptions `json:"prompt_cache_options,omitempty"`
+	Stream             bool                             `json:"stream,omitempty"`
 }
 
 type openAIResponseReasoning struct {
@@ -39,7 +41,8 @@ type openAIResponseUsage struct {
 	OutputTokens       int `json:"output_tokens"`
 	TotalTokens        int `json:"total_tokens"`
 	InputTokensDetails *struct {
-		CachedTokens int `json:"cached_tokens"`
+		CachedTokens     int `json:"cached_tokens"`
+		CacheWriteTokens int `json:"cache_write_tokens"`
 	} `json:"input_tokens_details"`
 	OutputTokensDetails struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
@@ -233,7 +236,11 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 }
 
 func buildOpenAIResponseRequest(model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, stream bool) (openAIResponseRequest, error) {
-	request := openAIResponseRequest{Model: model, Input: openAIResponseInput(messages), Stream: stream}
+	request := openAIResponseRequest{
+		Model: model, Input: openAIResponseInput(messages, options.PromptCache), Stream: stream,
+		PromptCacheKey:     openAIPromptCacheKey(options.PromptCache),
+		PromptCacheOptions: openAIPromptCacheRequest(options.PromptCache),
+	}
 	for _, definition := range definitions {
 		schema, err := toolSchema(definition)
 		if err != nil {
@@ -253,9 +260,9 @@ func buildOpenAIResponseRequest(model string, messages []map[string]any, definit
 	return request, nil
 }
 
-func openAIResponseInput(messages []map[string]any) []any {
+func openAIResponseInput(messages []map[string]any, cache PromptCacheOptions) []any {
 	input := make([]any, 0, len(messages))
-	for _, message := range messages {
+	for index, message := range messages {
 		role, _ := message["role"].(string)
 		switch role {
 		case "tool":
@@ -274,7 +281,11 @@ func openAIResponseInput(messages []map[string]any) []any {
 				})
 			}
 		case "system", "developer", "user":
-			input = append(input, map[string]any{"role": role, "content": openAIResponseContent(message["content"])})
+			content := openAIResponseContent(message["content"])
+			if cache.Enabled && cache.ExplicitBreakpoint && index == cache.StableMessageCount-1 {
+				content = openAITextContentWithBreakpoint(content, "input_text")
+			}
+			input = append(input, map[string]any{"role": role, "content": content})
 		}
 	}
 	return input
@@ -343,6 +354,7 @@ func tokenUsageFromOpenAIResponse(usage openAIResponseUsage) TokenUsage {
 	}
 	if usage.InputTokensDetails != nil {
 		result.CachedPromptTokens = usage.InputTokensDetails.CachedTokens
+		result.CacheWritePromptTokens = usage.InputTokensDetails.CacheWriteTokens
 		result.CacheUsageAvailable = true
 	}
 	return result

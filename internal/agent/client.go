@@ -73,6 +73,17 @@ func ParseReasoningEffort(raw string) (ReasoningEffort, error) {
 type ChatCompletionOptions struct {
 	ResponseFormat  map[string]any
 	ReasoningEffort ReasoningEffort
+	PromptCache     PromptCacheOptions
+}
+
+type PromptCacheOptions struct {
+	Enabled            bool
+	Key                string
+	StableMessageCount int
+	StableHash         string
+	RequestShapeHash   string
+	Mode               string
+	ExplicitBreakpoint bool
 }
 
 type chatCompletionStreamOptionsClient interface {
@@ -123,13 +134,14 @@ type AssistantMessage struct {
 }
 
 type TokenUsage struct {
-	PromptTokens        int  `json:"prompt_tokens,omitempty"`
-	CachedPromptTokens  int  `json:"cached_prompt_tokens,omitempty"`
-	CompletionTokens    int  `json:"completion_tokens,omitempty"`
-	ReasoningTokens     int  `json:"reasoning_tokens,omitempty"`
-	TotalTokens         int  `json:"total_tokens,omitempty"`
-	CacheUsageAvailable bool `json:"cache_usage_available,omitempty"`
-	Estimated           bool `json:"estimated,omitempty"`
+	PromptTokens           int  `json:"prompt_tokens,omitempty"`
+	CachedPromptTokens     int  `json:"cached_prompt_tokens,omitempty"`
+	CacheWritePromptTokens int  `json:"cache_write_prompt_tokens,omitempty"`
+	CompletionTokens       int  `json:"completion_tokens,omitempty"`
+	ReasoningTokens        int  `json:"reasoning_tokens,omitempty"`
+	TotalTokens            int  `json:"total_tokens,omitempty"`
+	CacheUsageAvailable    bool `json:"cache_usage_available,omitempty"`
+	Estimated              bool `json:"estimated,omitempty"`
 }
 
 type ToolCall struct {
@@ -144,20 +156,28 @@ type FunctionCall struct {
 }
 
 type chatCompletionRequest struct {
-	Model           string             `json:"model"`
-	Messages        []map[string]any   `json:"messages"`
-	Tools           []tools.Definition `json:"tools,omitempty"`
-	ResponseFormat  map[string]any     `json:"response_format,omitempty"`
-	ReasoningEffort ReasoningEffort    `json:"reasoning_effort,omitempty"`
+	Model              string                           `json:"model"`
+	Messages           []map[string]any                 `json:"messages"`
+	Tools              []tools.Definition               `json:"tools,omitempty"`
+	ResponseFormat     map[string]any                   `json:"response_format,omitempty"`
+	ReasoningEffort    ReasoningEffort                  `json:"reasoning_effort,omitempty"`
+	PromptCacheKey     string                           `json:"prompt_cache_key,omitempty"`
+	PromptCacheOptions *openAIPromptCacheRequestOptions `json:"prompt_cache_options,omitempty"`
 }
 
 type chatCompletionStreamRequest struct {
-	Model           string             `json:"model"`
-	Messages        []map[string]any   `json:"messages"`
-	Tools           []tools.Definition `json:"tools,omitempty"`
-	Stream          bool               `json:"stream"`
-	StreamOptions   map[string]any     `json:"stream_options,omitempty"`
-	ReasoningEffort ReasoningEffort    `json:"reasoning_effort,omitempty"`
+	Model              string                           `json:"model"`
+	Messages           []map[string]any                 `json:"messages"`
+	Tools              []tools.Definition               `json:"tools,omitempty"`
+	Stream             bool                             `json:"stream"`
+	StreamOptions      map[string]any                   `json:"stream_options,omitempty"`
+	ReasoningEffort    ReasoningEffort                  `json:"reasoning_effort,omitempty"`
+	PromptCacheKey     string                           `json:"prompt_cache_key,omitempty"`
+	PromptCacheOptions *openAIPromptCacheRequestOptions `json:"prompt_cache_options,omitempty"`
+}
+
+type openAIPromptCacheRequestOptions struct {
+	Mode string `json:"mode"`
 }
 
 type chatCompletionUsage struct {
@@ -165,7 +185,8 @@ type chatCompletionUsage struct {
 	CompletionTokens    int `json:"completion_tokens"`
 	TotalTokens         int `json:"total_tokens"`
 	PromptTokensDetails *struct {
-		CachedTokens int `json:"cached_tokens"`
+		CachedTokens     int `json:"cached_tokens"`
+		CacheWriteTokens int `json:"cache_write_tokens"`
 	} `json:"prompt_tokens_details"`
 	CompletionTokensDetails struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
@@ -185,6 +206,7 @@ func (usage chatCompletionUsage) tokenUsage() TokenUsage {
 	}
 	if usage.PromptTokensDetails != nil {
 		result.CachedPromptTokens = usage.PromptTokensDetails.CachedTokens
+		result.CacheWritePromptTokens = usage.PromptTokensDetails.CacheWriteTokens
 		result.CacheUsageAvailable = true
 	}
 	return result
@@ -331,13 +353,15 @@ func (c *Client) CreateChatCompletionWithOptions(ctx context.Context, model stri
 }
 
 func (c *Client) createChatCompletion(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
-
+	requestMessages := openAIChatMessagesWithCache(messages, options.PromptCache)
 	body, err := json.Marshal(chatCompletionRequest{
-		Model:           model,
-		Messages:        messages,
-		Tools:           definitions,
-		ResponseFormat:  options.ResponseFormat,
-		ReasoningEffort: options.ReasoningEffort,
+		Model:              model,
+		Messages:           requestMessages,
+		Tools:              definitions,
+		ResponseFormat:     options.ResponseFormat,
+		ReasoningEffort:    options.ReasoningEffort,
+		PromptCacheKey:     openAIPromptCacheKey(options.PromptCache),
+		PromptCacheOptions: openAIPromptCacheRequest(options.PromptCache),
 	})
 	if err != nil {
 		return AssistantMessage{}, &ProviderError{Category: ProviderErrorRequest, Message: "encode chat completions request", Cause: err}
@@ -406,14 +430,16 @@ func (c *Client) CreateChatCompletionStreamWithOptions(ctx context.Context, mode
 }
 
 func (c *Client) createChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, state *streamAttemptState, onChunk func(string)) (AssistantMessage, error) {
-
+	requestMessages := openAIChatMessagesWithCache(messages, options.PromptCache)
 	body, err := json.Marshal(chatCompletionStreamRequest{
-		Model:           model,
-		Messages:        messages,
-		Tools:           definitions,
-		Stream:          true,
-		StreamOptions:   map[string]any{"include_usage": true},
-		ReasoningEffort: options.ReasoningEffort,
+		Model:              model,
+		Messages:           requestMessages,
+		Tools:              definitions,
+		Stream:             true,
+		StreamOptions:      map[string]any{"include_usage": true},
+		ReasoningEffort:    options.ReasoningEffort,
+		PromptCacheKey:     openAIPromptCacheKey(options.PromptCache),
+		PromptCacheOptions: openAIPromptCacheRequest(options.PromptCache),
 	})
 	if err != nil {
 		return AssistantMessage{}, &ProviderError{Category: ProviderErrorRequest, Message: "encode chat completions stream request", Cause: err}

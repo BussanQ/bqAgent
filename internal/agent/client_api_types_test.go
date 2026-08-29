@@ -181,8 +181,9 @@ func TestAnthropicClientCountsFullInputTokens(t *testing.T) {
 	if requestBody["model"] != "claude-test" || requestBody["max_tokens"] != nil || requestBody["stream"] != nil {
 		t.Fatalf("count request envelope = %#v", requestBody)
 	}
-	if system, _ := requestBody["system"].(string); !strings.Contains(system, "be useful") || !strings.Contains(system, "valid JSON object") {
-		t.Fatalf("system = %q", system)
+	systemJSON, _ := json.Marshal(requestBody["system"])
+	if !strings.Contains(string(systemJSON), "be useful") || !strings.Contains(string(systemJSON), "valid JSON object") {
+		t.Fatalf("system = %s", systemJSON)
 	}
 	if messages, _ := requestBody["messages"].([]any); len(messages) != 1 {
 		t.Fatalf("messages = %#v, want one user message", requestBody["messages"])
@@ -270,8 +271,13 @@ func TestAnthropicClientConvertsRequestAndResponse(t *testing.T) {
 		t.Fatalf("CreateChatCompletion: %v", err)
 	}
 
-	if requestBody["system"] != "be useful" {
-		t.Fatalf("system = %#v", requestBody["system"])
+	systemBlocks, _ := requestBody["system"].([]any)
+	if len(systemBlocks) != 1 {
+		t.Fatalf("system = %#v, want one content block", requestBody["system"])
+	}
+	firstSystemBlock, _ := systemBlocks[0].(map[string]any)
+	if firstSystemBlock["type"] != "text" || firstSystemBlock["text"] != "be useful" {
+		t.Fatalf("system block = %#v", firstSystemBlock)
 	}
 	requestMessages, _ := requestBody["messages"].([]any)
 	if len(requestMessages) != 3 {

@@ -63,6 +63,10 @@ type ContextCheckpointRecorder interface {
 	SaveCheckpointSummary(summary string, tailMessages []map[string]any, systemPrompt string) error
 }
 
+type PromptContextCheckpointRecorder interface {
+	SaveCheckpointSummaryWithPrompt(summary string, tailMessages []map[string]any, systemPrompt, stableHash string, promptMessageCount int) error
+}
+
 type ContextConfig struct {
 	Enabled                  bool
 	MaxInputTokens           int
@@ -103,6 +107,7 @@ type StageConfig struct {
 
 type Options struct {
 	SystemPrompt    string
+	Prompt          PromptSnapshot
 	APIType         APIType
 	LogWriter       io.Writer
 	ToolDefinitions []tools.Definition
@@ -123,8 +128,10 @@ type Options struct {
 type Agent struct {
 	client          ChatCompletionClient
 	model           string
+	apiType         APIType
 	logWriter       io.Writer
 	systemPrompt    string
+	prompt          PromptSnapshot
 	toolDefinitions []tools.Definition
 	functions       map[string]tools.Function
 	planner         *Planner
@@ -157,7 +164,12 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 	client = instrumentChatCompletionClient(client, logWriter, progressWriter)
 	client = instrumentGenerationMetrics(client)
 
-	systemPrompt := AppendModelIdentitySystemPrompt(options.SystemPrompt, model, options.APIType)
+	prompt := options.Prompt
+	if strings.TrimSpace(prompt.Stable) == "" {
+		prompt.Stable = options.SystemPrompt
+	}
+	prompt = NewPromptSnapshot(prompt.Stable, prompt.SessionContext, model, options.APIType)
+	systemPrompt := prompt.Combined()
 
 	definitions := options.ToolDefinitions
 	if definitions == nil {
@@ -184,9 +196,11 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 	return &Agent{
 		client:          client,
 		model:           model,
+		apiType:         NormalizeAPIType(string(options.APIType)),
 		logWriter:       logWriter,
 		progressWriter:  progressWriter,
 		systemPrompt:    systemPrompt,
+		prompt:          prompt,
 		toolDefinitions: definitions,
 		functions:       functions,
 		planner:         clonePlannerWithClient(options.Planner, client),
@@ -214,10 +228,7 @@ func normalizeStageConfig(config StageConfig) StageConfig {
 }
 
 func (a *Agent) Run(ctx context.Context, userMessage string, maxIterations int) (string, error) {
-	messages := []map[string]any{
-		{"role": "system", "content": a.systemPrompt},
-		{"role": "user", "content": userMessage},
-	}
+	messages := append(a.prompt.Messages(), map[string]any{"role": "user", "content": userMessage})
 	if err := a.recordMessages(messages...); err != nil {
 		return "", err
 	}
@@ -297,7 +308,7 @@ func normalizeContextConfig(config ContextConfig) ContextConfig {
 }
 
 func (a *Agent) RunPlanned(ctx context.Context, task string, maxIterations int) (string, error) {
-	messages := []map[string]any{{"role": "system", "content": a.systemPrompt}}
+	messages := a.prompt.Messages()
 	if err := a.recordMessages(messages...); err != nil {
 		return "", err
 	}
@@ -349,7 +360,7 @@ func (a *Agent) runPlannedConversation(ctx context.Context, messages []map[strin
 }
 
 func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, maxIterations int, allowPlan bool) (result string, updatedMessages []map[string]any, err error) {
-	messages = ensureSystemPromptMessage(messages, a.systemPrompt)
+	messages = ensurePromptSnapshotMessages(messages, a.prompt)
 	startedAt := time.Now()
 	updatedMessages = messages
 	if maxIterations <= 0 {
@@ -386,6 +397,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			a.writeStageProgress(selectModelProgressMessage(modelProgressMessages))
 		}
 		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort}
+		completionOptions.PromptCache = buildPromptCacheOptions(a.apiType, a.model, a.prompt, definitions, completionOptions)
 		requestMessages, compacted := a.buildRequestMessages(explorationCtx, messages, definitions, completionOptions)
 		if compacted != nil {
 			messages = compacted
@@ -429,6 +441,10 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			if requestErr != nil {
 				requestMetadata = ProviderRequestMetadataFromError(requestErr)
 			}
+			cacheMode := requestMetadata.CacheMode
+			if cacheMode == "" {
+				cacheMode = completionOptions.PromptCache.Mode
+			}
 			traceRecoveries := make([]apptrace.ModelRecovery, 0, len(requestMetadata.Recoveries))
 			for _, recovery := range requestMetadata.Recoveries {
 				traceRecoveries = append(traceRecoveries, apptrace.ModelRecovery{
@@ -438,10 +454,13 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 			a.trace.ModelCallWithMetadata(apptrace.HashJSON(requestMessages), apptrace.TokenUsage{
 				PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
+				CachedPromptTokens: usage.CachedPromptTokens, CacheWritePromptTokens: usage.CacheWritePromptTokens,
 				TotalTokens: usage.TotalTokens, Estimated: usage.Estimated,
 			}, time.Since(modelStartedAt), requestErr, apptrace.ModelCallMetadata{
 				RetryCount: requestMetadata.RetryCount, ReasoningDowngraded: requestMetadata.ReasoningDowngraded,
 				ReasoningDowngradeSource: requestMetadata.ReasoningDowngradeSource, Recoveries: traceRecoveries,
+				StablePromptHash: a.prompt.StableHash, ToolSetHash: apptrace.HashJSON(definitions),
+				CacheMode: cacheMode, CacheDowngradeReason: requestMetadata.CacheDowngradeReason,
 			})
 		}
 		if requestErr != nil {
@@ -611,16 +630,39 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 }
 
 func ensureSystemPromptMessage(messages []map[string]any, systemPrompt string) []map[string]any {
-	systemMessage := map[string]any{"role": "system", "content": systemPrompt}
+	return ensurePromptSnapshotMessages(messages, PromptSnapshot{Stable: systemPrompt, StableHash: hashPromptText(systemPrompt)})
+}
+
+func ensurePromptSnapshotMessages(messages []map[string]any, snapshot PromptSnapshot) []map[string]any {
+	promptMessages := snapshot.Messages()
+	if len(promptMessages) == 0 {
+		return messages
+	}
 	if len(messages) == 0 {
-		return []map[string]any{systemMessage}
+		return promptMessages
 	}
 	role, _ := messages[0]["role"].(string)
 	if role == "system" {
-		messages[0] = systemMessage
+		messages[0] = promptMessages[0]
+	} else {
+		messages = append([]map[string]any{promptMessages[0]}, messages...)
+	}
+	if len(promptMessages) == 1 {
 		return messages
 	}
-	return append([]map[string]any{systemMessage}, messages...)
+	if len(messages) > 1 {
+		secondRole, _ := messages[1]["role"].(string)
+		secondContent, _ := messages[1]["content"].(string)
+		expectedContent, _ := promptMessages[1]["content"].(string)
+		if secondRole == "system" && secondContent == expectedContent {
+			return messages
+		}
+		if secondRole == "system" && !strings.HasPrefix(secondContent, EarlierConversationSummaryPrefix) {
+			messages[1] = promptMessages[1]
+			return messages
+		}
+	}
+	return append(messages[:1], append([]map[string]any{promptMessages[1]}, messages[1:]...)...)
 }
 
 func (a *Agent) stageBoundaryReason(iteration int, explorationCtx context.Context) string {
@@ -946,10 +988,7 @@ func pruneMessagesToBudget(messages []map[string]any, config ContextConfig) []ma
 		return messages
 	}
 
-	systemEnd := 0
-	if role, _ := messages[0]["role"].(string); role == "system" {
-		systemEnd = 1
-	}
+	systemEnd := leadingPromptMessageCount(messages)
 	if systemEnd >= len(messages) {
 		return messages
 	}
@@ -993,10 +1032,10 @@ func hardPruneMessagesToBudget(messages []map[string]any, targetTokens int) []ma
 		reservedUser = truncateMessageGroupToBudget(messages[latestUserIndex:latestUserIndex+1], userBudget)
 		reservedUserTokens = estimateMessagesTokens(reservedUser)
 	}
-	if role, _ := messages[0]["role"].(string); role == "system" {
-		result = append(result, messages[0])
-		remaining -= estimateMessagesTokens(messages[:1])
-		protectedEnd = 1
+	protectedEnd = leadingPromptMessageCount(messages)
+	if protectedEnd > 0 {
+		result = append(result, messages[:protectedEnd]...)
+		remaining -= estimateMessagesTokens(messages[:protectedEnd])
 	}
 	if protectedEnd < len(messages) {
 		if content, _ := messages[protectedEnd]["content"].(string); strings.HasPrefix(content, EarlierConversationSummaryPrefix) {
@@ -1210,11 +1249,10 @@ func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any
 		return nil, false
 	}
 
-	summarized := make([]map[string]any, 0, len(tail)+2)
-	if len(prefix) > 0 {
-		if role, _ := prefix[0]["role"].(string); role == "system" {
-			summarized = append(summarized, prefix[0])
-		}
+	promptMessageCount := leadingPromptMessageCount(prefix)
+	summarized := make([]map[string]any, 0, len(tail)+promptMessageCount+1)
+	if promptMessageCount > 0 {
+		summarized = append(summarized, prefix[:promptMessageCount]...)
 	}
 	summarized = append(summarized, map[string]any{
 		"role":    "system",
@@ -1224,17 +1262,22 @@ func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any
 	summarized = hardPruneMessagesToBudget(summarized, targetTokens)
 	if a.checkpointSaver != nil {
 		checkpointTail := summarized
-		if len(checkpointTail) > 0 {
-			if role, _ := checkpointTail[0]["role"].(string); role == "system" {
-				checkpointTail = checkpointTail[1:]
-			}
+		storedPromptCount := leadingPromptMessageCount(checkpointTail)
+		if storedPromptCount > 0 {
+			checkpointTail = checkpointTail[storedPromptCount:]
 		}
 		if len(checkpointTail) > 0 {
 			if content, _ := checkpointTail[0]["content"].(string); strings.HasPrefix(content, EarlierConversationSummaryPrefix) {
 				checkpointTail = checkpointTail[1:]
 			}
 		}
-		if err := a.checkpointSaver.SaveCheckpointSummary(summary, checkpointTail, a.systemPrompt); err != nil {
+		var err error
+		if saver, ok := a.checkpointSaver.(PromptContextCheckpointRecorder); ok {
+			err = saver.SaveCheckpointSummaryWithPrompt(summary, checkpointTail, a.systemPrompt, a.prompt.StableHash, storedPromptCount)
+		} else {
+			err = a.checkpointSaver.SaveCheckpointSummary(summary, checkpointTail, a.systemPrompt)
+		}
+		if err != nil {
 			a.logf("[Context] checkpoint save failed: %v\n", err)
 		}
 	}
@@ -1246,14 +1289,27 @@ func splitMessagesForSummary(messages []map[string]any, keepLastTurns int) ([]ma
 		return nil, nil, false
 	}
 	start := safeTailStart(messages, keepLastTurns)
-	systemEnd := 0
-	if role, _ := messages[0]["role"].(string); role == "system" {
-		systemEnd = 1
-	}
+	systemEnd := leadingPromptMessageCount(messages)
 	if start <= systemEnd || start >= len(messages) {
 		return nil, nil, false
 	}
 	return messages[:start], messages[start:], true
+}
+
+func leadingPromptMessageCount(messages []map[string]any) int {
+	count := 0
+	for _, message := range messages {
+		role, _ := message["role"].(string)
+		if role != "system" {
+			break
+		}
+		content, _ := message["content"].(string)
+		if strings.HasPrefix(content, EarlierConversationSummaryPrefix) {
+			break
+		}
+		count++
+	}
+	return count
 }
 
 func (a *Agent) generateSummary(ctx context.Context, messages []map[string]any) (string, error) {

@@ -17,20 +17,20 @@ import (
 
 func TestTokenUsageTracksPromptCache(t *testing.T) {
 	var chatUsage chatCompletionUsage
-	if err := json.Unmarshal([]byte(`{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_tokens_details":{"cached_tokens":75}}`), &chatUsage); err != nil {
+	if err := json.Unmarshal([]byte(`{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_tokens_details":{"cached_tokens":75,"cache_write_tokens":15}}`), &chatUsage); err != nil {
 		t.Fatal(err)
 	}
 	chat := chatUsage.tokenUsage()
-	if !chat.CacheUsageAvailable || chat.PromptTokens != 100 || chat.CachedPromptTokens != 75 {
+	if !chat.CacheUsageAvailable || chat.PromptTokens != 100 || chat.CachedPromptTokens != 75 || chat.CacheWritePromptTokens != 15 {
 		t.Fatalf("chat usage = %#v", chat)
 	}
 
 	var responseUsage openAIResponseUsage
-	if err := json.Unmarshal([]byte(`{"input_tokens":80,"output_tokens":10,"total_tokens":90,"input_tokens_details":{"cached_tokens":60}}`), &responseUsage); err != nil {
+	if err := json.Unmarshal([]byte(`{"input_tokens":80,"output_tokens":10,"total_tokens":90,"input_tokens_details":{"cached_tokens":60,"cache_write_tokens":12}}`), &responseUsage); err != nil {
 		t.Fatal(err)
 	}
 	response := tokenUsageFromOpenAIResponse(responseUsage)
-	if !response.CacheUsageAvailable || response.PromptTokens != 80 || response.CachedPromptTokens != 60 {
+	if !response.CacheUsageAvailable || response.PromptTokens != 80 || response.CachedPromptTokens != 60 || response.CacheWritePromptTokens != 12 {
 		t.Fatalf("responses usage = %#v", response)
 	}
 
@@ -39,7 +39,7 @@ func TestTokenUsageTracksPromptCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	claude := claudeUsage.tokenUsage()
-	if !claude.CacheUsageAvailable || claude.PromptTokens != 100 || claude.CachedPromptTokens != 70 || claude.TotalTokens != 105 {
+	if !claude.CacheUsageAvailable || claude.PromptTokens != 100 || claude.CachedPromptTokens != 70 || claude.CacheWritePromptTokens != 20 || claude.TotalTokens != 105 {
 		t.Fatalf("anthropic usage = %#v", claude)
 	}
 }

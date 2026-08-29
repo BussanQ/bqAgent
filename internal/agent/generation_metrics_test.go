@@ -94,12 +94,18 @@ func TestRunConversationTurnWithGenerationMetricsUsesFinalTextCall(t *testing.T)
 				ToolCalls: []ToolCall{{
 					ID: "call-1", Type: "function", Function: FunctionCall{Name: "lookup", Arguments: `{}`},
 				}},
-				Usage: TokenUsage{CompletionTokens: 50, TotalTokens: 60},
+				Usage: TokenUsage{
+					PromptTokens: 100, CachedPromptTokens: 40, CacheWritePromptTokens: 20,
+					CacheUsageAvailable: true, CompletionTokens: 50, TotalTokens: 150,
+				},
 			},
 			{
 				Role:    "assistant",
 				Content: "final answer",
-				Usage:   TokenUsage{CompletionTokens: 8, TotalTokens: 18},
+				Usage: TokenUsage{
+					PromptTokens: 120, CachedPromptTokens: 80, CacheWritePromptTokens: 10,
+					CacheUsageAvailable: true, CompletionTokens: 8, TotalTokens: 128,
+				},
 			},
 		},
 		chunks: [][]string{{"checking"}, {"final", " answer"}},
@@ -120,6 +126,13 @@ func TestRunConversationTurnWithGenerationMetricsUsesFinalTextCall(t *testing.T)
 	}
 	if !metrics.Available || metrics.CompletionTokens != 8 {
 		t.Fatalf("metrics = %#v, want final call usage", metrics)
+	}
+	cache := metrics.CacheMetrics
+	if !cache.Available || cache.Calls != 2 || cache.InputTokens != 220 || cache.CacheReadTokens != 120 || cache.CacheWriteTokens != 30 || cache.UncachedInputTokens != 70 {
+		t.Fatalf("aggregate cache metrics = %#v", cache)
+	}
+	if math.Abs(cache.HitRate-float64(120)/220) > 0.0001 {
+		t.Fatalf("aggregate cache hit rate = %v", cache.HitRate)
 	}
 }
 
