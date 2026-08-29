@@ -10,11 +10,13 @@ import (
 	"fmt"
 	"image/png"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -25,10 +27,11 @@ import (
 	"bqagent/internal/tools"
 )
 
-func TestWebUIServesIndex(t *testing.T) {
+func TestWebUIEmbeddedAssetContract(t *testing.T) {
 	root := t.TempDir()
 	service := newTestService(root, "http://example.invalid")
-	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}})
+	channel := NewWebUIChannel(service, true)
+	handler := NewHandler(HandlerOptions{Service: service, Channels: []Channel{channel}})
 	apiServer := httptest.NewServer(handler)
 	defer apiServer.Close()
 
@@ -36,293 +39,109 @@ func TestWebUIServesIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET / failed: %v", err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", response.StatusCode)
-	}
-	if ct := response.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
-		t.Fatalf("content-type = %q, want text/html", ct)
-	}
-	if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "no-store" {
-		t.Fatalf("cache-control = %q, want no-store", cacheControl)
-	}
-	body, err := io.ReadAll(response.Body)
+	page, err := io.ReadAll(response.Body)
+	response.Body.Close()
 	if err != nil {
-		t.Fatalf("read body failed: %v", err)
+		t.Fatalf("read index failed: %v", err)
 	}
-	if !strings.Contains(string(body), "/api/v1/webui/chat") {
-		t.Fatal("served page does not reference the chat endpoint")
+	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("GET / status = %d, content-type = %q", response.StatusCode, response.Header.Get("Content-Type"))
 	}
-	page := string(body)
-	for _, expected := range []string{
-		`id="theme-toggle"`,
-		`--bg: #eef3f8`,
-		`--panel-strong: rgba(250, 252, 254, .96)`,
-		`--text: #182430`,
-		`--signal: #2563a6`,
-		`--line: rgba(38, 60, 82, .14)`,
-		`--select-bg: #0c1a28`,
-		`.model-controls select option`,
-		`function renderMarkdown(source)`,
-		`class="table-wrap"`,
-		`class="copy-code"`,
-		`row.className = "message-actions"`,
-		`.message-meta`,
-		`function addMessageMeta(bubble, generation)`,
-		`"缓存命中 "`,
-		`addMessageMeta(bubble, done.generation)`,
-		`/api/v1/chat/stop`,
-		`/api/v1/status`,
-		`id="model-select"`,
-		`id="provider-settings-backdrop"`,
-		`class="global-settings" id="provider-settings-trigger"`,
-		`font: 650 15px/1.2 ui-sans-serif`,
-		`--font-body: 16px/1.62`,
-		`--radius: 14px`,
-		`id="provider-fetch-models"`,
-		`/api/v1/webui/provider-models`,
-		`id="conversation-sidebar"`,
-		`id="conversation-list"`,
-		`/api/v1/webui/conversations`,
-		`function openConversation(id)`,
-		`loadRuntimeModel()`,
-		`"?session_id=" + encodeURIComponent(sessionId)`,
-		`updateRuntimeModel(done.api_type, done.model, providerSettingsState.active_provider)`,
-		`document.createElement("optgroup")`,
-		`var finalReply = typeof done.reply === "string" ? done.reply : "";`,
-		`服务端未返回有效回复`,
-		`响应在完成事件到达前中断`,
-		`class="stop-icon"`,
-		`classList.add("is-streaming")`,
-		`role="status"`,
-		`status.setAttribute("aria-live", "polite")`,
-		`status.setAttribute("aria-atomic", "true")`,
-		`id="particle-field"`,
-		`getContext("2d")`,
-		`PARTICLE_MAX_COUNT = 80`,
-		`PARTICLE_TARGET_FPS = 30`,
-		`PARTICLE_TRAIL_MAX_POINTS = 8`,
-		`PARTICLE_PULSE_MAX_COUNT = 3`,
-		`Math.min(window.devicePixelRatio || 1, 1.5)`,
-		`refreshParticlePalette`,
-		`particleBuckets`,
-		`function addParticleTrailPoint`,
-		`function addParticlePulse`,
-		`function drawParticleInteractionFeedback`,
-		`event.button !== 0`,
-		`window.addEventListener("pointerdown", handleParticlePointerDown, { passive: true });`,
-		`pointer-events: none`,
-		`requestAnimationFrame`,
-		`cancelAnimationFrame`,
-		`visibilitychange`,
-		`(hover: hover) and (pointer: fine)`,
-		`event.pointerType !== "mouse"`,
-		`id="add-attachment"`,
-		`id="file-input"`,
-		`id="server-file-path"`,
-		`var pendingFiles = []`,
-		`files: sentFiles`,
-		`id="reasoning-effort-toggle"`,
-		`id="reasoning-effort-menu"`,
-		`id="reasoning-effort-range"`,
-		`bqagent.webui.reasoning-effort`,
-		`reasoning_effort:`,
-		`id="workspace-toggle"`,
-		`id="workspace-sidebar"`,
-		`--workspace-width: clamp(240px, 20.8vw, 336px)`,
-		`order: 2`,
-		`margin-right: calc(0px - var(--workspace-width))`,
-		`inset: 0 0 0 auto`,
-		`transform: translateX(104%)`,
-		`id="workspace-tree"`,
-		`id="workspace-preview-view"`,
-		`id="workspace-preview-attach"`,
-		`id="workspace-select"`,
-		`id="workspace-create-agent"`,
-		`id="workspace-picker-backdrop"`,
-		`id="workspace-picker-root"`,
-		`id="workspace-picker-confirm"`,
-		`bqagent.webui.workspace-sessions`,
-		`function initializeWorkspaceSelection()`,
-		`function applyWorkspace(info, switching)`,
-		`workspace_id: currentWorkspace ? currentWorkspace.id : ""`,
-		`function renderWorkspaceTree()`,
-		`function loadWorkspacePreview()`,
-		`function addWorkspacePath(value, size)`,
-		`/api/v1/webui/workspace?path=`,
-		`/api/v1/webui/workspace/preview?path=`,
-		`/api/v1/webui/workspaces/directories?root_id=`,
-		`/api/v1/webui/workspaces/open`,
-		`/api/v1/webui/workspace/config`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("served page missing WebUI feature %q", expected)
+	if cache := response.Header.Get("Cache-Control"); cache != "no-store" {
+		t.Fatalf("index cache-control = %q, want no-store", cache)
+	}
+	if bytes.Contains(page, []byte(`/src/`)) {
+		t.Fatal("production index still references Vite source files")
+	}
+	for _, target := range []string{"/", "/favicon.ico", "/favicon.svg"} {
+		headRequest, err := http.NewRequest(http.MethodHead, apiServer.URL+target, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		headResponse, err := http.DefaultClient.Do(headRequest)
+		if err != nil {
+			t.Fatalf("HEAD %s failed: %v", target, err)
+		}
+		headBody, _ := io.ReadAll(headResponse.Body)
+		headResponse.Body.Close()
+		if headResponse.StatusCode != http.StatusOK || len(headBody) != 0 {
+			t.Fatalf("HEAD %s status = %d, body bytes = %d", target, headResponse.StatusCode, len(headBody))
 		}
 	}
-	if strings.Contains(page, "<script src=") {
-		t.Fatal("served page should remain self-contained without external scripts")
-	}
-	for _, obsolete := range []string{"ambient-particles", "ambient-particle", "cursor-stars", "ambientDrift", "done.reply || streamed"} {
-		if strings.Contains(page, obsolete) {
-			t.Fatalf("served page still contains obsolete particle implementation %q", obsolete)
-		}
-	}
-}
 
-func TestWebUIUsesRefinedResponsiveVisualSystem(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`Native CSS visual system: restrained dark-tech product UI with one blue accent.`,
-		`--sidebar-bg: rgba(11, 23, 35, .94)`,
-		`.prompt:first-child { grid-row: 1 / span 2;`,
-		`.msg.assistant .bubble {`,
-		`background: transparent;`,
-		`.msg.user .message-label::before { content: "[YOU]"; }`,
-		`.msg.assistant .message-label::before { content: "[AI]"; }`,
-		`grid-template-columns: 36px minmax(76px, 1fr) 40px 44px;`,
-		`.reasoning-effort-trigger #reasoning-effort-label,`,
-		`@media (prefers-reduced-motion: reduce)`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("WebUI refined visual system missing %q", expected)
+	assetPattern := regexp.MustCompile(`(?:src|href)="(/assets/[^"]+)"`)
+	matches := assetPattern.FindAllSubmatch(page, -1)
+	if len(matches) < 2 {
+		t.Fatalf("index asset references = %d, want hashed JavaScript and CSS", len(matches))
+	}
+	for _, match := range matches {
+		assetPath := string(match[1])
+		if _, err := fs.ReadFile(webUIFiles, strings.TrimPrefix(assetPath, "/")); err != nil {
+			t.Fatalf("embedded asset %q is missing: %v", assetPath, err)
 		}
-	}
-	if strings.ContainsAny(page, "—–") {
-		t.Fatal("WebUI visible copy contains em dash or en dash")
-	}
-}
+		assetResponse, err := http.Get(apiServer.URL + assetPath)
+		if err != nil {
+			t.Fatalf("GET %s failed: %v", assetPath, err)
+		}
+		assetBody, readErr := io.ReadAll(assetResponse.Body)
+		assetResponse.Body.Close()
+		if readErr != nil || assetResponse.StatusCode != http.StatusOK || len(assetBody) == 0 {
+			t.Fatalf("GET %s status = %d, bytes = %d, err = %v", assetPath, assetResponse.StatusCode, len(assetBody), readErr)
+		}
+		if cache := assetResponse.Header.Get("Cache-Control"); cache != "public, max-age=31536000, immutable" {
+			t.Fatalf("asset %s cache-control = %q", assetPath, cache)
+		}
+		if strings.HasSuffix(assetPath, ".js") && !strings.Contains(assetResponse.Header.Get("Content-Type"), "javascript") {
+			t.Fatalf("JavaScript content-type = %q", assetResponse.Header.Get("Content-Type"))
+		}
+		if strings.HasSuffix(assetPath, ".css") && !strings.Contains(assetResponse.Header.Get("Content-Type"), "text/css") {
+			t.Fatalf("CSS content-type = %q", assetResponse.Header.Get("Content-Type"))
+		}
 
-func TestWebUIToolTimelineGroupsOnThirdCall(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`var TOOL_GROUP_START_COUNT = 3;`,
-		`function ensureToolGroup(timeline, cards)`,
-		`cardList.length < TOOL_GROUP_START_COUNT`,
-		`root.className = "tool-group";`,
-		`button.className = "tool-group-toggle";`,
-		`items.className = "tool-group-items";`,
-		`cardList.forEach(function (card) { items.appendChild(card.root); });`,
-		`(group ? group.items : timeline).appendChild(root);`,
-		`title.textContent = "工具调用";`,
-		`cardList.length + " 次，" + running + " 运行中"`,
-		`cardList.length + " 次，全部完成"`,
-		`.tool-group-items.open { display: grid; }`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("WebUI tool-call grouping missing %q", expected)
+		headRequest, err := http.NewRequest(http.MethodHead, apiServer.URL+assetPath, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		headResponse, err := http.DefaultClient.Do(headRequest)
+		if err != nil {
+			t.Fatalf("HEAD %s failed: %v", assetPath, err)
+		}
+		headBody, _ := io.ReadAll(headResponse.Body)
+		headResponse.Body.Close()
+		if headResponse.StatusCode != http.StatusOK || len(headBody) != 0 {
+			t.Fatalf("HEAD %s status = %d, body bytes = %d", assetPath, headResponse.StatusCode, len(headBody))
 		}
 	}
-}
 
-func TestWebUIComposerPlacesAttachmentButtonOnLeft(t *testing.T) {
-	page := string(webUIIndex)
-	attachment := strings.Index(page, `id="attachment-actions"`)
-	content := strings.Index(page, `class="composer-content"`)
-	if attachment < 0 || content < 0 || attachment > content {
-		t.Fatalf("attachment action index = %d, composer content index = %d; want attachment action first", attachment, content)
-	}
-	for _, obsolete := range []string{`.composer::before {`, `padding-left: 22px`, `padding-left: 18px`} {
-		if strings.Contains(page, obsolete) {
-			t.Fatalf("composer still contains obsolete left prompt styling %q", obsolete)
+	for _, target := range []string{"/missing", "/assets/missing.js"} {
+		missing, err := http.Get(apiServer.URL + target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		missing.Body.Close()
+		if missing.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", target, missing.StatusCode)
 		}
 	}
-	for _, expected := range []string{
-		`.attachment-menu { position: absolute; left: 0;`,
-		`.attachment-menu::after { content: ""; position: absolute; left: 11px;`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("composer missing left-aligned attachment styling %q", expected)
-		}
-	}
-}
 
-func TestWebUIAttachmentErrorsAutoDismiss(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`var attachmentErrorTimer = 0;`,
-		`var ATTACHMENT_ERROR_TIMEOUT_MS = 4000;`,
-		`clearTimeout(attachmentErrorTimer);`,
-		`attachmentErrorTimer = setTimeout(function () {`,
-		`}, ATTACHMENT_ERROR_TIMEOUT_MS);`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("WebUI attachment error auto-dismiss missing %q", expected)
-		}
+	traversal := httptest.NewRecorder()
+	channel.handleAsset(traversal, httptest.NewRequest(http.MethodGet, "/assets/../index.html", nil))
+	if traversal.Code != http.StatusNotFound {
+		t.Fatalf("asset traversal status = %d, want 404", traversal.Code)
 	}
-}
 
-func TestWebUICreateAgentUsesDistinctAgentIcon(t *testing.T) {
-	page := string(webUIIndex)
-	selectIcon := `<use href="#icon-folder-plus"></use>`
-	agentIcon := `<svg class="ui-icon workspace-create-agent-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-bot"></use></svg>`
-	if !strings.Contains(page, selectIcon) {
-		t.Fatal("workspace selector folder icon is missing")
-	}
-	if !strings.Contains(page, agentIcon) {
-		t.Fatal("create .agent action is missing its distinct agent icon")
-	}
-}
-
-func TestWebUIUsesVendoredIconifyLucideIcons(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`https://icon-sets.iconify.design/lucide/`,
-		`id="icon-folder-open"`,
-		`id="icon-brain-circuit"`,
-		`id="icon-thumbs-up"`,
-		`href="#icon-settings"`,
-		`href="#icon-paperclip"`,
-		`iconMarkup("chevron-right")`,
-		`createIcon(rating === "up" ? "thumbs-up" : "thumbs-down")`,
-		`<link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="256x256" />`,
-		`<link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("WebUI Iconify integration missing %q", expected)
+	for _, target := range []string{"/", string(matches[0][1]), "/favicon.ico"} {
+		request, err := http.NewRequest(http.MethodPost, apiServer.URL+target, nil)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	spriteEnd := strings.Index(page, "</svg>")
-	if spriteEnd < 0 {
-		t.Fatal("WebUI icon sprite is not closed")
-	}
-	if strings.Contains(page[spriteEnd+len("</svg>"):], "<path") {
-		t.Fatal("WebUI still contains hand-authored SVG paths outside the Iconify sprite")
-	}
-	for _, obsolete := range []string{"👍", "👎", `textContent = "×"`, `textContent = "▶"`} {
-		if strings.Contains(page, obsolete) {
-			t.Fatalf("WebUI still contains obsolete character icon %q", obsolete)
+		methodResponse, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-}
-
-func TestWebUIUsesConversationSidebarAsOnlyNewChatEntry(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`id="conversation-new"`,
-		`var conversationNew = document.getElementById("conversation-new");`,
-		`conversationNew.addEventListener("click", newChat);`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("WebUI conversation new-chat entry missing %q", expected)
-		}
-	}
-	for _, removed := range []string{`id="new-chat"`, `var newChatBtn`, `icon-message-square-plus`} {
-		if strings.Contains(page, removed) {
-			t.Fatalf("WebUI still contains duplicate header new-chat entry %q", removed)
-		}
-	}
-}
-
-func TestWebUIKeepsSpinningBrandMark(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`<div class="mark" aria-hidden="true"></div>`,
-		`.mark::before,`,
-		`animation: markSpin 4s linear infinite;`,
-		`@keyframes markSpin { 100% { transform: rotate(360deg); } }`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("WebUI spinning brand mark missing %q", expected)
+		methodResponse.Body.Close()
+		if methodResponse.StatusCode != http.StatusMethodNotAllowed {
+			t.Fatalf("POST %s status = %d, want 405", target, methodResponse.StatusCode)
 		}
 	}
 }
@@ -452,10 +271,6 @@ func TestWebUIProviderSettingsEncryptKeyAndApplySelection(t *testing.T) {
 }
 
 func TestWebUIProviderSelectionUpdatesCurrentSessionModel(t *testing.T) {
-	if !strings.Contains(string(webUIIndex), `model: option.dataset.model, session_id: sessionId`) {
-		t.Fatal("WebUI model selector does not send the current session ID")
-	}
-
 	root := t.TempDir()
 	agentDir := filepath.Join(t.TempDir(), ".agent")
 	service := NewService(ServiceOptions{WorkspaceRoot: root, AgentDir: agentDir, Model: "environment-model", SystemPrompt: "base prompt"})
@@ -502,25 +317,6 @@ func TestWebUIProviderSelectionUpdatesCurrentSessionModel(t *testing.T) {
 	}
 	if len(client.models) != 1 || client.models[0] != "deepseek-reasoner" {
 		t.Fatalf("models = %#v, want deepseek-reasoner", client.models)
-	}
-}
-
-func TestWebUISendWaitsForPendingModelSelection(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`var runtimeModelSelectionPromise = null;`,
-		`modelSelect.addEventListener("change", beginRuntimeModelSelection);`,
-		`var pendingModelSelection = runtimeModelSelectionPromise;`,
-		`if (pendingModelSelection && !await pendingModelSelection)`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("WebUI model selection synchronization missing %q", expected)
-		}
-	}
-	selectionWait := strings.Index(page, `var pendingModelSelection = runtimeModelSelectionPromise;`)
-	chatRequest := strings.Index(page, `var res = await fetch("/api/v1/webui/chat"`)
-	if selectionWait < 0 || chatRequest < 0 || selectionWait > chatRequest {
-		t.Fatalf("model selection wait index = %d, chat request index = %d; want selection wait first", selectionWait, chatRequest)
 	}
 }
 
@@ -624,19 +420,6 @@ func TestWebUIConversationListAndHistory(t *testing.T) {
 }
 
 func TestWebUIConversationContextMenuDeletesConversation(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`id="conversation-context-menu"`,
-		`button.addEventListener("contextmenu"`,
-		`method: "DELETE"`,
-		`if (sessionId === conversation.id)`,
-		`setCurrentWorkspaceSession("")`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("WebUI conversation deletion missing %q", expected)
-		}
-	}
-
 	agentDir := filepath.Join(t.TempDir(), ".agent")
 	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir})
 	target, err := service.store.Create(session.CreateOptions{Task: "删除这个对话", Chat: true})
@@ -687,99 +470,6 @@ func TestWebUIConversationContextMenuDeletesConversation(t *testing.T) {
 	}
 	if _, err := service.store.Open(nonChat.ID()); err != nil {
 		t.Fatalf("non-chat session was deleted: %v", err)
-	}
-}
-
-func TestWebUILightThemeUsesSoftSurfacesAndVisibleParticles(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`--bg: #eef3f8`,
-		`--bg-soft: #f8fafc`,
-		`--panel: rgba(250, 252, 254, .82)`,
-		`--panel-strong: rgba(250, 252, 254, .96)`,
-		`--sidebar-bg: rgba(247, 250, 252, .95)`,
-		`--header-bg: rgba(246, 249, 252, .93)`,
-		`--footer-bg: rgba(238, 243, 248, .98)`,
-		`--code-bg: #f3f6f9`,
-		`--bubble-user: rgba(215, 230, 245, .88)`,
-		`--quote-bg: rgba(37, 99, 166, .07)`,
-		`--table-head: rgba(37, 99, 166, .08)`,
-		`--surface-subtle: rgba(37, 99, 166, .035)`,
-		`--surface-hover: rgba(37, 99, 166, .07)`,
-		`--surface-active: rgba(37, 99, 166, .11)`,
-		`--line: rgba(38, 60, 82, .14)`,
-		`--text: #182430`,
-		`--signal: #2563a6`,
-		`--particle-dot: rgba(45, 80, 113, .42)`,
-		`--particle-static: rgba(45, 80, 113, .20)`,
-		`--particle-strength: 1.25`,
-		`--vignette-rgb: 49, 70, 91`,
-		`--ambient-vignette: .06`,
-		`--scan-opacity: .006`,
-	} {
-		if count := strings.Count(page, expected); count != 2 {
-			t.Fatalf("light theme token %q count = %d, want automatic and explicit definitions", expected, count)
-		}
-	}
-	if count := strings.Count(page, `--grid-opacity: .025`); count != 3 {
-		t.Fatalf("shared light/dark grid opacity count = %d, want three theme definitions", count)
-	}
-	for _, expected := range []string{
-		`--particle-strength: .72;`,
-		`rgba(var(--vignette-rgb), var(--ambient-vignette))`,
-		`function particleAlpha(base)`,
-		`particlePalette.strength`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("page missing theme-aware particle rule %q", expected)
-		}
-	}
-	for _, obsolete := range []string{
-		`--particle-dot: transparent`,
-		`--particle-static: transparent`,
-		`--shadow: none`,
-		`isLightTheme`,
-		`:root[data-theme="light"] body { background: #fff; }`,
-		`:root[data-theme="light"] #particle-field,`,
-	} {
-		if strings.Contains(page, obsolete) {
-			t.Fatalf("light theme still flattens the page with %q", obsolete)
-		}
-	}
-}
-
-func TestWebUISettingsButtonSitsAbovePageBottom(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`left: 12px;`,
-		`bottom: calc(12px + env(safe-area-inset-bottom));`,
-		`font: 650 15px/1.2 ui-sans-serif`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("settings bottom spacing missing %q", expected)
-		}
-	}
-	for _, obsolete := range []string{
-		`function alignProviderSettingsTrigger()`,
-		`transform: translateY(-50%);`,
-	} {
-		if strings.Contains(page, obsolete) {
-			t.Fatalf("settings button still uses content-dependent alignment %q", obsolete)
-		}
-	}
-}
-
-func TestWebUISettingsButtonUsesConversationSidebarNavigationStyle(t *testing.T) {
-	page := string(webUIIndex)
-	for _, expected := range []string{
-		`justify-content: flex-start;`,
-		`width: calc(var(--conversation-width) - 24px);`,
-		`.global-settings:hover { border-color: var(--line); color: var(--text); background: var(--surface-hover); transform: none; box-shadow: none; }`,
-		`.global-settings { width: auto;`,
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("settings/sidebar navigation style missing %q", expected)
-		}
 	}
 }
 

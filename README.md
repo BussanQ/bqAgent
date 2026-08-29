@@ -36,11 +36,15 @@ The difference now is that the loop can be wrapped with extra capabilities inspi
 
 ## Install
 
-Install Go 1.22+ and build the CLI:
+Install Go 1.22+, Node.js 24+, and npm 11+, then build through the Makefile:
 
 ```bash
-go build -o bqagent ./cmd/agent
+make build
 ```
+
+`make build` installs the locked frontend dependencies from `internal/server/webui/package-lock.json`, runs strict TypeScript checking and the Vite production build, and then embeds `internal/server/webui/dist` into the Go executable. `dist` and `node_modules` are not committed. Runtime distribution still consists of one `bqagent` binary and does not require Node.js, Vite, a CDN, or static files on disk. Use `make build-amd` for Linux amd64 and `make build-windows` for Windows amd64.
+
+For WebUI-only development, run `npm run dev` in `internal/server/webui`; Vite proxies `/api` to `http://127.0.0.1:8080`. On a fresh checkout, do not invoke the raw `go build` command before generating the WebUI. Run `make webui-build` first or use one of the Makefile build targets above.
 
 ## Environment variables
 
