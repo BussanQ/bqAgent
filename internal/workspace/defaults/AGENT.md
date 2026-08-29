@@ -7,6 +7,7 @@
 - Recall only with memory action=search (give a query) or action=list, and only when the user asks about prior facts or preferences
 - An empty search or list means there is nothing to recall — do not retry with different arguments
 - Write durable facts with memory action=add or replace; keep entries concise — summaries, not transcripts
+- Default write target is workspace. Use target=global only when the user explicitly asks for global memory
 
 ## Self-Optimization
 - When you discover a pattern that consistently helps the user, record it in long-term memory

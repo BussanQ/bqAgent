@@ -47,6 +47,7 @@ type ServiceOptions struct {
 	SessionOptions        *session.Options
 	Subagents             *subagent.Manager
 	MemoryStore           *appmemory.Store
+	GlobalMemoryStore     *appmemory.Store
 }
 
 type Service struct {
@@ -76,6 +77,7 @@ type Service struct {
 	traceStore            *apptrace.Store
 	subagents             *subagent.Manager
 	memoryStore           *appmemory.Store
+	globalMemoryStore     *appmemory.Store
 	activeTurns           *activeTurnRegistry
 }
 
@@ -239,6 +241,7 @@ func NewService(options ServiceOptions) *Service {
 		environmentCommands:   newEnvironmentCommandGuard(0),
 		subagents:             options.Subagents,
 		memoryStore:           options.MemoryStore,
+		globalMemoryStore:     options.GlobalMemoryStore,
 		activeTurns:           newActiveTurnRegistry(),
 	}
 	if options.RunTraceEnabled {
@@ -1078,52 +1081,85 @@ func (service *Service) currentSessionContext(query string, initial string) (str
 	if strings.TrimSpace(initial) != "" {
 		parts = append(parts, initial)
 	}
-	if service.memoryStore != nil {
-		results, err := service.memoryStore.Search(query, nil, 12)
-		entries, listErr := service.memoryStore.Active()
-		if err == nil && listErr == nil {
-			sort.Slice(entries, func(left, right int) bool {
-				if entries[left].Kind != entries[right].Kind {
-					return entries[left].Kind < entries[right].Kind
-				}
-				return entries[left].ID < entries[right].ID
-			})
-			sort.SliceStable(results, func(left, right int) bool {
-				if results[left].Score != results[right].Score {
-					return results[left].Score > results[right].Score
-				}
-				return results[left].Entry.ID < results[right].Entry.ID
-			})
-			var memory strings.Builder
-			memory.WriteString("# Relevant structured memory\n")
-			seen := map[string]bool{}
-			for _, entry := range entries {
-				if entry.Kind != appmemory.KindDecision && entry.Kind != appmemory.KindUserPreference {
-					continue
-				}
-				line := fmt.Sprintf("- [%s/%s] %s\n", entry.ID, entry.Kind, entry.Content)
-				if memory.Len()+len(line) > 6000 {
-					break
-				}
-				memory.WriteString(line)
-				seen[entry.ID] = true
-			}
-			for _, result := range results {
-				if seen[result.Entry.ID] {
-					continue
-				}
-				line := fmt.Sprintf("- [%s/%s] %s\n", result.Entry.ID, result.Entry.Kind, result.Entry.Content)
-				if memory.Len()+len(line) > 6000 {
-					break
-				}
-				memory.WriteString(line)
-			}
-			if memory.Len() > len("# Relevant structured memory\n") {
-				parts = append(parts, strings.TrimSpace(memory.String()))
-			}
-		}
+	if snapshot := service.relevantStructuredMemory(query); snapshot != "" {
+		parts = append(parts, snapshot)
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+func (service *Service) relevantStructuredMemory(query string) string {
+	stores := uniqueMemoryStores(service.globalMemoryStore, service.memoryStore)
+	if len(stores) == 0 {
+		return ""
+	}
+	var entries []appmemory.Entry
+	var results []appmemory.Result
+	for _, store := range stores {
+		active, err := store.Active()
+		if err != nil {
+			return ""
+		}
+		entries = append(entries, active...)
+		found, err := store.Search(query, nil, 12)
+		if err != nil {
+			return ""
+		}
+		results = append(results, found...)
+	}
+	sort.Slice(entries, func(left, right int) bool {
+		if entries[left].Kind != entries[right].Kind {
+			return entries[left].Kind < entries[right].Kind
+		}
+		return entries[left].ID < entries[right].ID
+	})
+	sort.SliceStable(results, func(left, right int) bool {
+		if results[left].Score != results[right].Score {
+			return results[left].Score > results[right].Score
+		}
+		return results[left].Entry.ID < results[right].Entry.ID
+	})
+	var memory strings.Builder
+	memory.WriteString("# Relevant structured memory\n")
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		if entry.Kind != appmemory.KindDecision && entry.Kind != appmemory.KindUserPreference {
+			continue
+		}
+		line := fmt.Sprintf("- [%s/%s] %s\n", entry.ID, entry.Kind, entry.Content)
+		if memory.Len()+len(line) > 6000 {
+			break
+		}
+		memory.WriteString(line)
+		seen[entry.ID] = true
+	}
+	for _, result := range results {
+		if seen[result.Entry.ID] {
+			continue
+		}
+		line := fmt.Sprintf("- [%s/%s] %s\n", result.Entry.ID, result.Entry.Kind, result.Entry.Content)
+		if memory.Len()+len(line) > 6000 {
+			break
+		}
+		memory.WriteString(line)
+		seen[result.Entry.ID] = true
+	}
+	if memory.Len() <= len("# Relevant structured memory\n") {
+		return ""
+	}
+	return strings.TrimSpace(memory.String())
+}
+
+func uniqueMemoryStores(stores ...*appmemory.Store) []*appmemory.Store {
+	seen := map[*appmemory.Store]bool{}
+	out := make([]*appmemory.Store, 0, len(stores))
+	for _, store := range stores {
+		if store == nil || seen[store] {
+			continue
+		}
+		seen[store] = true
+		out = append(out, store)
+	}
+	return out
 }
 
 type RuntimeLLMInfo struct {

@@ -36,7 +36,7 @@ It is guidance only — the tools exposed in the current request are the source 
 
 ## Memory
 
-- **memory**: Structured persistent memory. Recall only with `action=search` (provide `query`) or `action=list`. Write with `action=add` or `action=replace` and a `kind` of `user_preference`, `project_fact`, `lesson`, or `decision`. Other actions: `remove`, `confirm`, `compact`. Do not call this tool at session start or before exploring a repository.
+- **memory**: Structured persistent memory. Recall only with `action=search` (provide `query`) or `action=list`. Write with `action=add` or `action=replace` and a `kind` of `user_preference`, `project_fact`, `lesson`, or `decision`. Optional `target` is `workspace` (default) or `global`; use `global` only when the user asks for global memory. Other actions: `remove`, `confirm`, `compact`. Do not call this tool at session start or before exploring a repository.
 - **mem_save**: Write-only fallback. Provide `target` (`daily` or `longterm`) and `content`. Prefer **memory** `action=add` when that tool is exposed.
 
 ## Best Practices

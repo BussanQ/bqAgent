@@ -72,6 +72,7 @@ type Options struct {
 	SearchBaseURL      string
 	MemoryDir          string
 	MemoryStore        *appmemory.Store
+	GlobalMemoryStore  *appmemory.Store
 	// Todos backs the todo_write tool. When nil a fresh store is created so the
 	// tool still works (its list is just not shared with the caller).
 	Todos *TodoStore
@@ -121,7 +122,7 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"mem_save":      MemSaveInDir(options.MemoryDir),
 	}
 	if options.MemoryStore != nil {
-		registry["memory"] = StructuredMemory(options.MemoryStore)
+		registry["memory"] = StructuredMemory(options.MemoryStore, options.GlobalMemoryStore)
 		registry["mem_save"] = StructuredMemSave(options.MemoryStore)
 	}
 	for name, function := range options.ExtraFunctions {

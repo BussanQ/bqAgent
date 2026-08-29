@@ -52,6 +52,9 @@ type Factory struct {
 	WorkspaceRoot string
 	AgentDir      string
 	MemoryDir     string
+	// GlobalMemoryDir is ~/.agent/memory when the workspace has a distinct
+	// global agent directory. Empty falls back to AgentDir/memory, then MemoryDir.
+	GlobalMemoryDir string
 	// Getenv resolves environment variables for MCP config ${VAR} expansion.
 	// Nil falls back to os.Getenv inside the MCP loader.
 	Getenv func(string) string
@@ -77,6 +80,7 @@ type Runtime struct {
 	WorkspaceRoot   string
 	Context         agent.ContextConfig
 	Memory          *appmemory.Store
+	GlobalMemory    *appmemory.Store
 }
 
 func ConfigFromEnv(getenv func(string) string) Config {
@@ -228,12 +232,11 @@ func (factory Factory) Build(includePlan bool) Runtime {
 	}
 
 	mcpDefinitions, mcpFunctions := factory.discoverMCPTools()
-	memoryStore := appmemory.NewStore(factory.MemoryDir,
-		filepath.Join(factory.MemoryDir, "MEMORY.md"),
-		filepath.Join(factory.MemoryDir, time.Now().Format("2006-01-02")+".md"),
-		filepath.Join(factory.MemoryDir, time.Now().AddDate(0, 0, -1).Format("2006-01-02")+".md"),
-	)
-	_ = memoryStore.Migrate()
+	memoryStore := openMemoryStore(factory.MemoryDir)
+	globalMemoryStore := memoryStore
+	if globalDir := factory.resolvedGlobalMemoryDir(); globalDir != "" && !sameMemoryPath(globalDir, factory.MemoryDir) {
+		globalMemoryStore = openMemoryStore(globalDir)
+	}
 
 	catalog := tools.NewCatalog(tools.Options{
 		WorkspaceRoot:      factory.WorkspaceRoot,
@@ -246,6 +249,7 @@ func (factory Factory) Build(includePlan bool) Runtime {
 		SearchBaseURL:      factory.Config.SearchBaseURL,
 		MemoryDir:          factory.MemoryDir,
 		MemoryStore:        memoryStore,
+		GlobalMemoryStore:  globalMemoryStore,
 		ExtraDefinitions:   mcpDefinitions,
 		ExtraFunctions:     mcpFunctions,
 	})
@@ -277,8 +281,36 @@ func (factory Factory) Build(includePlan bool) Runtime {
 			SummaryTriggerTokens:     factory.Config.ContextSummaryTriggerTokens,
 			SummaryModel:             factory.Config.ContextSummaryModel,
 		},
-		Memory: memoryStore,
+		Memory:       memoryStore,
+		GlobalMemory: globalMemoryStore,
 	}
+}
+
+func (factory Factory) resolvedGlobalMemoryDir() string {
+	if dir := strings.TrimSpace(factory.GlobalMemoryDir); dir != "" {
+		return dir
+	}
+	if dir := strings.TrimSpace(factory.AgentDir); dir != "" {
+		return filepath.Join(dir, "memory")
+	}
+	return ""
+}
+
+func openMemoryStore(dir string) *appmemory.Store {
+	store := appmemory.NewStore(dir,
+		filepath.Join(dir, "MEMORY.md"),
+		filepath.Join(dir, time.Now().Format("2006-01-02")+".md"),
+		filepath.Join(dir, time.Now().AddDate(0, 0, -1).Format("2006-01-02")+".md"),
+	)
+	_ = store.Migrate()
+	return store
+}
+
+func sameMemoryPath(left, right string) bool {
+	if strings.TrimSpace(left) == "" || strings.TrimSpace(right) == "" {
+		return false
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
 }
 
 // discoverMCPTools loads .agent/mcp.json and, when it lists enabled servers,
