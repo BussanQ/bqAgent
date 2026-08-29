@@ -119,12 +119,10 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"web_fetch":     WebFetch,
 		"install_skill": InstallSkillToRoots(skillRoot, options.WorkspaceRoot),
 		"mem_save":      MemSaveInDir(options.MemoryDir),
-		"mem_get":       MemGetInDir(options.MemoryDir),
 	}
 	if options.MemoryStore != nil {
 		registry["memory"] = StructuredMemory(options.MemoryStore)
 		registry["mem_save"] = StructuredMemSave(options.MemoryStore)
-		registry["mem_get"] = StructuredMemGet(options.MemoryStore)
 	}
 	for name, function := range options.ExtraFunctions {
 		if _, exists := registry[name]; exists {
@@ -368,20 +366,6 @@ func builtinDefinitions() []Definition {
 						"content": {Type: "string", Description: "The knowledge or note to save"},
 					},
 					Required: []string{"target", "content"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: FunctionDefinition{
-				Name:        "mem_get",
-				Description: "Read memory contents. Use to recall saved knowledge and context.",
-				Parameters: JSONSchema{
-					Type: "object",
-					Properties: map[string]JSONSchemaProperty{
-						"target": {Type: "string", Description: "Which memory to read: \"daily\", \"longterm\", or \"yesterday\""},
-					},
-					Required: []string{"target"},
 				},
 			},
 		},

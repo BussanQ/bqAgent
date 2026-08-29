@@ -30,7 +30,7 @@ const memoryTailLines = 50
 
 const sessionMemoryPolicy = `# Session Memory Policy
 
-Memory included after the stable instructions is a snapshot taken when the conversation starts. Do not expect later memory writes or LastUsedAt updates to rewrite that snapshot. When a new topic needs current memory, query it with the available memory tool.`
+Memory included after the stable instructions is a snapshot taken when the conversation starts. Do not expect later memory writes or LastUsedAt updates to rewrite that snapshot. Do not prefetch memory at the start of a turn. To refresh recall, call memory with action=search or action=list only when the user asks about prior facts or preferences; an empty result means there is nothing further to load.`
 
 var nowFunc = time.Now
 

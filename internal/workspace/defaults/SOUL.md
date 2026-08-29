@@ -28,7 +28,6 @@ A turn ends when you reply without calling a tool.That message goes to the user 
 
 
 ## Continuity
-- Treat .agent files as persistent memory
-- When you learn something durable, update memory/MEMORY.md
-- Read memory context at the start of each session
+- Session context already includes a memory snapshot; do not open a turn by querying memory
+- When you learn something durable, save it with memory action=add (kind: user_preference, project_fact, lesson, or decision)
 - This file is yours to evolve as you learn

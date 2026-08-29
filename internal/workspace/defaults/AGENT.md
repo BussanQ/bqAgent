@@ -1,11 +1,12 @@
 # AGENT.md - Operating Instructions
 
 ## Memory Usage
-- Write durable facts, patterns, and preferences to memory/MEMORY.md
-- Write daily task context and results to memory/YYYY-MM-DD.md
-- Load today + yesterday's notes at session start for continuity
-- Use mem_search when prior context might help the current task
-- Keep memory entries concise — summaries, not transcripts
+- Durable memory is structured entries (user_preference, project_fact, lesson, decision), not daily/longterm Markdown files
+- A memory snapshot is already in the session context — do not prefetch memory at the start of a turn
+- Analyze a codebase with glob, grep, and read_file first; memory does not replace repository exploration
+- Recall only with memory action=search (give a query) or action=list, and only when the user asks about prior facts or preferences
+- An empty search or list means there is nothing to recall — do not retry with different arguments
+- Write durable facts with memory action=add or replace; keep entries concise — summaries, not transcripts
 
 ## Self-Optimization
 - When you discover a pattern that consistently helps the user, record it in long-term memory

@@ -36,14 +36,13 @@ It is guidance only — the tools exposed in the current request are the source 
 
 ## Memory
 
-- **mem_save**: Save knowledge to memory. Provide `target` (`daily` or `longterm`) and `content`.
-- **mem_get**: Read memory contents. Provide `target` (`daily`, `longterm`, or `yesterday`).
-- **memory**: When this structured-memory tool is exposed, use its supported actions to add, replace, remove, search, list, confirm, or compact persistent memory.
+- **memory**: Structured persistent memory. Recall only with `action=search` (provide `query`) or `action=list`. Write with `action=add` or `action=replace` and a `kind` of `user_preference`, `project_fact`, `lesson`, or `decision`. Other actions: `remove`, `confirm`, `compact`. Do not call this tool at session start or before exploring a repository.
+- **mem_save**: Write-only fallback. Provide `target` (`daily` or `longterm`) and `content`. Prefer **memory** `action=add` when that tool is exposed.
 
 ## Best Practices
 
 - Read a file with **read_file** before changing it.
 - Use **glob** to discover files and **grep** to search their contents.
 - Prefer **edit_file** over **write_file** for targeted changes to existing files.
-- Use **mem_get**, or **memory** when exposed, to recall prior context.
+- Recall prior facts only with **memory** `action=search` or `action=list`; an empty result means stop, do not retry.
 - Keep **execute_bash** commands safe and reversible when possible.
