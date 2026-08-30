@@ -377,12 +377,17 @@ func TestCompletedTurnUpdatesDisplayedMode(t *testing.T) {
 	}
 }
 
-func TestStartupShowsCurrentMode(t *testing.T) {
+func TestStartupOmitsDynamicModelAndModeLines(t *testing.T) {
 	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.runtime.Provider = "provider"
+	model.runtime.Model = "dynamic-model"
 	model.runtime.Mode = "ask"
 	startup := strings.Join(model.startupLines(), "\n")
-	if !strings.Contains(startup, "模式    Ask") || !strings.Contains(startup, "Ask 模式仅用于只读问答") {
-		t.Fatalf("ask startup = %q", startup)
+	if strings.Contains(startup, "模型    ") || strings.Contains(startup, "模式    ") {
+		t.Fatalf("startup contains stale dynamic lines: %q", startup)
+	}
+	if !strings.Contains(startup, "工作区  "+model.config.Workspace) {
+		t.Fatalf("startup omits workspace: %q", startup)
 	}
 }
 

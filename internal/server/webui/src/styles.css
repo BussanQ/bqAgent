@@ -1673,7 +1673,7 @@
   .attachment-file .attachment-remove:hover { color: #fff; background: rgba(var(--danger-rgb),.86); }
   .attachment-error { color: var(--danger); font-size: 11px; padding: 0 10px; }
   .attachment-actions { position: relative; flex: 0 0 auto; margin-bottom: 5px; }
-  .attachment-trigger { width: auto; min-width: 62px; padding: 0 9px; display: flex; place-items: initial; align-items: center; justify-content: center; gap: 5px; color: var(--text-soft); font-size: 11px; font-weight: 700; }
+  .attachment-trigger { color: var(--text-soft); }
   .attachment-trigger[aria-expanded="true"] { color: var(--bg); border-color: var(--signal); background: var(--signal); box-shadow: none; }
   .attachment-trigger svg { width: 18px; height: 18px; transition: transform .18s ease; }
   .attachment-menu[hidden] { display: none; }
