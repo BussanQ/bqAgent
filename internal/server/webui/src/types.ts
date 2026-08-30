@@ -47,6 +47,12 @@ export interface ConversationMessage {
   role: string;
   content: string;
   tools?: ConversationHistoryTool[];
+  files?: ConversationHistoryFile[];
+}
+
+export interface ConversationHistoryFile {
+  name: string;
+  path: string;
 }
 
 export interface ConversationHistory {

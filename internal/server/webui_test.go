@@ -383,6 +383,7 @@ func TestWebUIConversationListAndHistory(t *testing.T) {
 		map[string]any{"role": "assistant", "content": "这是项目说明。"},
 		map[string]any{"role": "tool", "content": "private tool output"},
 		map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "查看图片"}, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,AA=="}}}},
+		map[string]any{"role": "user", "content": "查看\n\n<attachment name=\"TODO.md\" path=\"docs/TODO.md\">\n# TODO\n</attachment>"},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -411,11 +412,19 @@ func TestWebUIConversationListAndHistory(t *testing.T) {
 		Messages []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
+			Files   []struct {
+				Name string `json:"name"`
+				Path string `json:"path"`
+			} `json:"files"`
 		} `json:"messages"`
 	}
 	getWebUIJSON(t, apiServer.URL, "/api/v1/webui/conversations/"+saved.ID(), &history)
-	if history.ID != saved.ID() || len(history.Messages) != 3 || history.Messages[0].Content != "请介绍项目" || history.Messages[1].Content != "这是项目说明。" || history.Messages[2].Content != "查看图片\n[图片]" {
+	if history.ID != saved.ID() || len(history.Messages) != 4 || history.Messages[0].Content != "请介绍项目" || history.Messages[1].Content != "这是项目说明。" || history.Messages[2].Content != "查看图片\n[图片]" {
 		t.Fatalf("conversation history = %#v", history)
+	}
+	attachmentMessage := history.Messages[3]
+	if attachmentMessage.Content != "查看" || len(attachmentMessage.Files) != 1 || attachmentMessage.Files[0].Name != "TODO.md" || attachmentMessage.Files[0].Path != "docs/TODO.md" {
+		t.Fatalf("attachment history = %#v", attachmentMessage)
 	}
 }
 

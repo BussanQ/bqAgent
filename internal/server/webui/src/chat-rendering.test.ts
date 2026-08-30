@@ -80,4 +80,19 @@ describe("历史工具摘要解析", () => {
     });
     expect(view.tools[0]).toMatchObject({ id: "call-1", name: "memory", preview: "saved" });
   });
+
+  it("保留历史用户消息的文件附件", () => {
+    const messages = normalizeHistoryMessages([{
+      role: "user",
+      content: "查看",
+      files: [{ name: "TODO.md", path: "docs/TODO.md" }],
+    }]);
+
+    expect(messages).toEqual([{
+      role: "user",
+      content: "查看",
+      tools: [],
+      files: [{ name: "TODO.md", path: "docs/TODO.md" }],
+    }]);
+  });
 });

@@ -541,7 +541,7 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
         if (message.role === "assistant") {
           renderRestoredAssistant(bubble, message);
         } else {
-          renderUserMessage(bubble, message.content, [], []);
+          renderUserMessage(bubble, message.content, [], message.files || []);
         }
       });
       if (!payload.messages || !payload.messages.length) thread.innerHTML = emptyMarkup();
