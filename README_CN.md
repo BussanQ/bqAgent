@@ -22,8 +22,6 @@ bqagent 的核心仍然很简单：
 
 - 基于 workspace 的 system prompt 装配
 - 以 `.agent/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md` 作为主布局
-- 兼容旧版 `workspace/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md`
-- 兼容旧版 `workspace/memory/MEMORY.md` 和 `workspace/memory/YYYY-MM-DD.md`
 - 继续支持 `.agent/rules/*.md` 和 `.agent/skills/*/SKILL.md`
 - 使用 `--plan` 先拆步骤再执行
 - 默认启动始终流式的内联终端 TUI（也可显式使用 `--chat`）
@@ -36,7 +34,7 @@ bqagent 的核心仍然很简单：
 
 ## 安装
 
-安装 Go 1.22+、Node.js 24+ 和 npm 11+，然后通过 Makefile 构建 CLI：
+安装 Go 1.24+、Node.js 24+ 和 npm 11+，然后通过 Makefile 构建 CLI：
 
 ```bash
 make build
