@@ -146,11 +146,26 @@
   <footer>
     <div class="composer">
       <div class="attachment-actions" id="attachment-actions">
-        <button class="icon-button attachment-trigger" id="add-attachment" type="button" title="添加文件" aria-label="添加文件" aria-expanded="false" aria-controls="attachment-menu">
-          <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-paperclip"></use></svg>
+        <button class="icon-button attachment-trigger" id="add-attachment" type="button" title="模式与附件" aria-label="选择模式或添加文件" aria-expanded="false" aria-controls="attachment-menu">
+          <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg>
+          <span id="chat-mode-label">Run</span>
         </button>
         <input id="file-input" type="file" multiple hidden>
-        <div class="attachment-menu" id="attachment-menu" role="dialog" aria-label="添加文件" hidden>
+        <div class="attachment-menu" id="attachment-menu" role="dialog" aria-label="选择模式或添加文件" hidden>
+          <div class="attachment-menu-heading">模式</div>
+          <div class="chat-mode-options" role="radiogroup" aria-label="对话模式">
+            <button class="attachment-menu-action chat-mode-option selected" id="mode-run" type="button" role="radio" aria-checked="true" data-mode="run">
+              <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-bot"></use></svg>
+              <span><strong>Run</strong><span>完整能力，可修改文件和执行命令</span></span>
+              <svg class="ui-icon chat-mode-check" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-check"></use></svg>
+            </button>
+            <button class="attachment-menu-action chat-mode-option" id="mode-ask" type="button" role="radio" aria-checked="false" data-mode="ask">
+              <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-brain-circuit"></use></svg>
+              <span><strong>Ask</strong><span>只读问答，不修改文件或执行命令</span></span>
+              <svg class="ui-icon chat-mode-check" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-check"></use></svg>
+            </button>
+          </div>
+          <div class="attachment-menu-separator" aria-hidden="true"></div>
           <button class="attachment-menu-action" id="upload-file" type="button">
             <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-upload"></use></svg>
             <span><strong>上传本地文件</strong><span>保存到当前会话的 workspace</span></span>

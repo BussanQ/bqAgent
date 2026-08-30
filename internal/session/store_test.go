@@ -128,6 +128,25 @@ func TestSessionCurrentModelPersists(t *testing.T) {
 	}
 }
 
+func TestSessionCurrentModePersists(t *testing.T) {
+	store := NewStore(t.TempDir())
+	savedSession, err := store.Create(CreateOptions{Task: "ask questions", Chat: true})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if err := savedSession.SetCurrentMode(" ask "); err != nil {
+		t.Fatalf("SetCurrentMode returned error: %v", err)
+	}
+
+	reopened, err := store.Open(savedSession.ID())
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	if reopened.Meta().CurrentMode != "ask" {
+		t.Fatalf("CurrentMode = %q, want ask", reopened.Meta().CurrentMode)
+	}
+}
+
 func TestSessionStoreDeleteRemovesOnlyRequestedOwnedSession(t *testing.T) {
 	agentDir := filepath.Join(t.TempDir(), ".agent")
 	options := DefaultOptions()

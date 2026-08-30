@@ -38,6 +38,7 @@ type TurnResult struct {
 	SessionID string
 	Reply     string
 	Model     string
+	Mode      string
 	Streamed  bool
 	Metrics   *GenerationMetrics
 }
@@ -68,6 +69,7 @@ type RuntimeInfo struct {
 	Provider string
 	APIType  string
 	Model    string
+	Mode     string
 }
 
 type History struct {

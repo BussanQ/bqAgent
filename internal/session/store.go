@@ -41,6 +41,7 @@ type Meta struct {
 	LastError           string    `json:"last_error,omitempty"`
 	LastRunID           string    `json:"last_run_id,omitempty"`
 	CurrentModel        string    `json:"current_model,omitempty"`
+	CurrentMode         string    `json:"current_mode,omitempty"`
 	PromptSchemaVersion int       `json:"prompt_schema_version,omitempty"`
 	PromptStableHash    string    `json:"prompt_stable_hash,omitempty"`
 	PromptMessageCount  int       `json:"prompt_message_count,omitempty"`
@@ -583,6 +584,12 @@ func (session *Session) SetLastRunID(runID string) error {
 
 func (session *Session) SetCurrentModel(model string) error {
 	session.meta.CurrentModel = strings.TrimSpace(model)
+	session.meta.UpdatedAt = time.Now().UTC()
+	return session.persistMeta()
+}
+
+func (session *Session) SetCurrentMode(mode string) error {
+	session.meta.CurrentMode = strings.TrimSpace(mode)
 	session.meta.UpdatedAt = time.Now().UTC()
 	return session.persistMeta()
 }

@@ -141,6 +141,61 @@ func TestEscapeCancelsActiveTurn(t *testing.T) {
 	}
 }
 
+func TestClipboardShortcutsAndCtrlQExit(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.input.setValue("copy me")
+	model.input.area.SelectAll()
+	cancelled := false
+	model.active = &activeTurn{cancel: func() { cancelled = true }}
+
+	copyCommands := model.handleKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if len(copyCommands) != 1 || copyCommands[0] == nil {
+		t.Fatalf("Ctrl+C commands = %#v, want clipboard copy command", copyCommands)
+	}
+	if cancelled || model.active.cancelled {
+		t.Fatal("Ctrl+C must copy instead of cancelling the active turn")
+	}
+
+	pasteCommands := model.handleKey(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
+	if len(pasteCommands) != 1 || pasteCommands[0] == nil {
+		t.Fatalf("Ctrl+V commands = %#v, want clipboard read command", pasteCommands)
+	}
+
+	quitCommands := model.handleKey(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
+	if len(quitCommands) != 0 || !cancelled || !model.active.cancelled || !model.pendingQuit {
+		t.Fatalf("Ctrl+Q active exit: commands=%d cancelled=%v active=%#v pendingQuit=%v", len(quitCommands), cancelled, model.active, model.pendingQuit)
+	}
+	if model.progress != "正在安全退出" {
+		t.Fatalf("Ctrl+Q progress = %q", model.progress)
+	}
+}
+
+func TestClipboardPasteMessageReachesPromptInput(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	updated, _ := model.Update(tea.PasteMsg{Content: "来自剪贴板"})
+	model = updated.(Model)
+	if model.input.value() != "来自剪贴板" {
+		t.Fatalf("input after paste = %q", model.input.value())
+	}
+}
+
+func TestCtrlQExitsImmediatelyWhenIdle(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	commands := model.handleKey(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
+	foundQuit := false
+	for _, command := range commands {
+		if command == nil {
+			continue
+		}
+		if _, ok := command().(tea.QuitMsg); ok {
+			foundQuit = true
+		}
+	}
+	if !foundQuit {
+		t.Fatalf("Ctrl+Q commands = %#v, want tea.Quit", commands)
+	}
+}
+
 func TestPromptChipHistoryMarkdownAndNarrowResize(t *testing.T) {
 	input := newPromptInput()
 	input.update(tea.KeyPressMsg{Code: tea.KeyExtended, Text: "输入"})
@@ -280,5 +335,110 @@ func TestCompletedStatusShowsCacheHitRate(t *testing.T) {
 	status := model.renderStatus(model.contentWidth())
 	if !strings.Contains(status, "缓存命中 25%") || strings.Contains(status, "缓存命中 75%") {
 		t.Fatalf("status = %q", status)
+	}
+}
+
+func TestMergeCommandsIncludesRunAndAskModes(t *testing.T) {
+	commands := mergeCommands(nil)
+	found := map[string]bool{}
+	for _, command := range commands {
+		if command.Name == "/ask" && strings.Contains(command.Description, "只读问答") {
+			found["ask"] = true
+		}
+		if command.Name == "/run" && strings.Contains(command.Description, "完整工具") {
+			found["run"] = true
+		}
+	}
+	if !found["ask"] || !found["run"] {
+		t.Fatalf("mode commands = %#v, want /run and /ask", found)
+	}
+}
+
+func TestRenderStatusShowsCurrentMode(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.width = 100
+	model.runtime.Mode = "ask"
+	if status := model.renderStatus(model.contentWidth()); !strings.Contains(status, "Ask") {
+		t.Fatalf("ask status = %q", status)
+	}
+	model.runtime.Mode = "run"
+	if status := model.renderStatus(model.contentWidth()); !strings.Contains(status, "Run") {
+		t.Fatalf("run status = %q", status)
+	}
+}
+
+func TestCompletedTurnUpdatesDisplayedMode(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.sequence = 1
+	model.active = &activeTurn{sequence: 1, cancel: func() {}}
+	model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Mode: "ask"}})
+	if model.runtime.Mode != "ask" {
+		t.Fatalf("runtime mode = %q, want ask", model.runtime.Mode)
+	}
+}
+
+func TestStartupShowsCurrentMode(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.runtime.Mode = "ask"
+	startup := strings.Join(model.startupLines(), "\n")
+	if !strings.Contains(startup, "模式    Ask") || !strings.Contains(startup, "Ask 模式仅用于只读问答") {
+		t.Fatalf("ask startup = %q", startup)
+	}
+}
+
+func TestMergeCommandsRefreshReplacesExistingCommand(t *testing.T) {
+	commands := mergeCommands([]Command{
+		{Name: " /ASK ", Description: "第一次刷新", Arguments: []CommandArgument{{Value: "old"}}},
+		{Name: "/ask", Description: "最新刷新"},
+	})
+	count := 0
+	for _, command := range commands {
+		if normalizedCommandName(command.Name) != "/ask" {
+			continue
+		}
+		count++
+		if command.Description != "最新刷新" || len(command.Arguments) != 0 {
+			t.Fatalf("ask command = %#v, want latest complete replacement", command)
+		}
+	}
+	if count != 1 {
+		t.Fatalf("ask command count = %d, want 1", count)
+	}
+}
+
+func TestRefreshSuggestionsDeduplicatesEquivalentCommands(t *testing.T) {
+	backend := &fakeBackend{commands: []Command{
+		{Name: "/ASK", Description: "第一次刷新"},
+		{Name: " /ask ", Description: "最新刷新"},
+	}}
+	model := NewModel(backend, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir()})
+	model.input.setValue("/ask")
+	model.refreshSuggestions()
+
+	if len(model.suggestions) != 1 || model.suggestions[0].value != "/ask" || model.suggestions[0].description != "最新刷新" {
+		t.Fatalf("suggestions = %#v, want one latest /ask entry", model.suggestions)
+	}
+}
+
+func TestSuggestionFrameHeightStaysStableWhileTypingCommand(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.width = 100
+	wantLines := 0
+	for _, input := range []string{"/", "/a", "/as", "/ask"} {
+		model.input.setValue(input)
+		model.refreshSuggestions()
+		if !model.panelOpen {
+			t.Fatalf("panel is closed for %q", input)
+		}
+		content := model.View().Content
+		if count := strings.Count(content, "命令与参数"); count != 1 {
+			t.Fatalf("heading count for %q = %d, want 1", input, count)
+		}
+		lines := strings.Count(content, "\n") + 1
+		if wantLines == 0 {
+			wantLines = lines
+		} else if lines != wantLines {
+			t.Fatalf("view line count for %q = %d, want stable %d", input, lines, wantLines)
+		}
 	}
 }

@@ -74,6 +74,7 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 		SessionID: response.SessionID,
 		Reply:     response.Reply,
 		Model:     response.Model,
+		Mode:      string(response.Mode),
 		Streamed:  response.Streamed,
 	}
 	if response.Generation != nil {
@@ -104,7 +105,7 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 
 func (backend *tuiBackend) RuntimeInfo(sessionID string) apptui.RuntimeInfo {
 	info := backend.service.RuntimeLLMInfoForSession(sessionID)
-	return apptui.RuntimeInfo{Provider: info.ProviderID, APIType: string(info.APIType), Model: info.Model}
+	return apptui.RuntimeInfo{Provider: info.ProviderID, APIType: string(info.APIType), Model: info.Model, Mode: string(info.Mode)}
 }
 
 func (backend *tuiBackend) History(sessionID string, budget int) (apptui.History, error) {

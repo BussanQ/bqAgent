@@ -1,4 +1,5 @@
 export type ReasoningEffort = "auto" | "low" | "medium" | "high";
+export type ChatMode = "run" | "ask";
 
 export interface ProviderView {
   id: string;
@@ -20,6 +21,7 @@ export interface RuntimeLLMInfo {
   provider_id?: string;
   api_type: string;
   model: string;
+  mode: ChatMode;
 }
 
 export interface StatusResponse {
@@ -57,6 +59,7 @@ export interface ConversationHistoryFile {
 
 export interface ConversationHistory {
   id?: string;
+  mode?: ChatMode;
   messages: ConversationMessage[];
 }
 
@@ -146,6 +149,7 @@ export interface WebUIDoneEvent {
   reply: string;
   api_type: string;
   model: string;
+  mode: ChatMode;
   generation?: GenerationMetrics;
 }
 
