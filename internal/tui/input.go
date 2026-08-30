@@ -40,6 +40,8 @@ func newPromptInput(noColor ...bool) promptInput {
 	area.SetHeight(1)
 	area.ShowLineNumbers = false
 	area.SetVirtualCursor(false)
+	area.KeyMap.CopySelection.SetKeys("ctrl+c")
+	area.KeyMap.Paste.SetKeys("ctrl+v")
 	area.Focus()
 	return promptInput{area: area}
 }

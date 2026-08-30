@@ -39,6 +39,8 @@ type suggestion struct {
 	description string
 }
 
+const maxSuggestions = 8
+
 type Model struct {
 	backend Backend
 	config  Config
@@ -80,7 +82,6 @@ type Model struct {
 	initialTask  string
 	initialSent  bool
 	printQueue   []string
-	quitArmedAt  time.Time
 	statusNotice string
 }
 
@@ -169,13 +170,14 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.spinner, command = model.spinner.Update(message)
 		commands = append(commands, command)
 	case tickMsg:
-		if !model.quitArmedAt.IsZero() && time.Since(model.quitArmedAt) > 3*time.Second {
-			model.quitArmedAt = time.Time{}
-			if model.statusNotice == "再按一次 Ctrl+C 退出" {
-				model.statusNotice = ""
-			}
-		}
 		commands = append(commands, tickCommand())
+	default:
+		// Textarea clipboard reads complete asynchronously. Forward messages
+		// unknown to the model so Ctrl+V and bracketed paste reach the input.
+		command := model.input.update(message)
+		commands = append(commands, command)
+		model.refreshSuggestions()
+		model.resizeInput()
 	}
 	if len(model.printQueue) > 0 {
 		text := strings.Join(model.printQueue, "\n")
@@ -227,27 +229,16 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	case "ctrl+t":
 		model.toggleToolGroup()
 		return nil
-	case "ctrl+c":
+	case "ctrl+q":
 		if model.active != nil {
-			model.cancelActiveTurn()
+			model.pendingQuit = true
+			model.active.cancelled = true
+			model.active.cancel()
+			model.phase = phaseCancelling
+			model.progress = "正在安全退出"
 			return nil
 		}
-		if model.panelOpen {
-			model.panelOpen = false
-			return nil
-		}
-		now := time.Now()
-		if !model.quitArmedAt.IsZero() && now.Sub(model.quitArmedAt) <= 3*time.Second {
-			return []tea.Cmd{model.commitToolGroup(), tea.Quit}
-		}
-		model.quitArmedAt = now
-		model.statusNotice = "再按一次 Ctrl+C 退出"
-		return nil
-	case "ctrl+d":
-		if model.active == nil && strings.TrimSpace(model.input.value()) == "" {
-			return []tea.Cmd{model.commitToolGroup(), tea.Quit}
-		}
-		return nil
+		return []tea.Cmd{model.commitToolGroup(), tea.Quit}
 	case "ctrl+l":
 		disableMouse := model.discardToolGroup()
 		model.input.reset()
@@ -471,6 +462,9 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	} else {
 		model.runtime = model.backend.RuntimeInfo(model.sessionID)
 	}
+	if event.result.Mode != "" {
+		model.runtime.Mode = event.result.Mode
+	}
 	model.metrics = event.result.Metrics
 	model.phase = phaseIdle
 	model.progress = ""
@@ -639,10 +633,22 @@ func (model *Model) refreshSuggestions() {
 	fields := strings.Fields(value)
 	trailingSpace := strings.HasSuffix(rawValue, " ")
 	suggestions := make([]suggestion, 0)
+	seenSuggestions := make(map[string]struct{})
+	appendSuggestion := func(item suggestion) {
+		key := strings.ToLower(strings.TrimSpace(item.value))
+		if key == "" {
+			return
+		}
+		if _, exists := seenSuggestions[key]; exists {
+			return
+		}
+		seenSuggestions[key] = struct{}{}
+		suggestions = append(suggestions, item)
+	}
 	if len(fields) <= 1 && !trailingSpace {
 		for _, command := range model.commands {
 			if strings.HasPrefix(strings.ToLower(command.Name), strings.ToLower(value)) {
-				suggestions = append(suggestions, suggestion{value: command.Name, description: command.Description})
+				appendSuggestion(suggestion{value: command.Name, description: command.Description})
 			}
 		}
 	} else if len(fields) >= 1 {
@@ -656,13 +662,13 @@ func (model *Model) refreshSuggestions() {
 			}
 			for _, argument := range command.Arguments {
 				if strings.HasPrefix(strings.ToLower(argument.Value), strings.ToLower(prefix)) {
-					suggestions = append(suggestions, suggestion{value: command.Name + " " + argument.Value, description: argument.Description})
+					appendSuggestion(suggestion{value: command.Name + " " + argument.Value, description: argument.Description})
 				}
 			}
 		}
 	}
-	if len(suggestions) > 8 {
-		suggestions = suggestions[:8]
+	if len(suggestions) > maxSuggestions {
+		suggestions = suggestions[:maxSuggestions]
 	}
 	model.suggestions = suggestions
 	model.panelOpen = len(suggestions) > 0
@@ -695,7 +701,10 @@ func (model *Model) closePanel() {
 }
 
 func (model Model) renderSuggestions(width int) string {
-	lines := make([]string, 0, len(model.suggestions)+1)
+	// Keep the inline frame height stable while the completion panel is open.
+	// Bubble Tea's Windows inline renderer otherwise resizes the frame for every
+	// narrower match and can leave each previous panel in terminal scrollback.
+	lines := make([]string, 0, maxSuggestions+1)
 	lines = append(lines, model.styles.accent.Render("命令与参数"))
 	for index, item := range model.suggestions {
 		pointer := "  "
@@ -707,6 +716,9 @@ func (model Model) renderSuggestions(width int) string {
 			line += model.styles.dim.Render("  " + item.description)
 		}
 		lines = append(lines, line)
+	}
+	for len(lines) < maxSuggestions+1 {
+		lines = append(lines, "")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -720,6 +732,7 @@ func (model Model) renderStatus(width int) string {
 		left = "provider"
 	}
 	left += "/" + model.runtime.Model
+	left += " · " + displayMode(model.runtime.Mode)
 	if model.sessionID != "" {
 		id := model.sessionID
 		if len(id) > 8 {
@@ -798,10 +811,15 @@ func (model Model) startupLines() []string {
 	if provider == "" {
 		provider = "未配置"
 	}
+	mode := displayMode(model.runtime.Mode)
+	notice := "Run 模式可修改文件或运行命令，请留意工具摘要与工作区边界。"
+	if mode == "Ask" {
+		notice = "Ask 模式仅用于只读问答，不会修改文件或执行命令。"
+	}
 	return []string{
 		model.styles.accent.Render("bqAgent") + "  Harness",
-		model.styles.dim.Render("工具可能修改文件或运行命令，请留意工具摘要与工作区边界。"),
-		fmt.Sprintf("工作区  %s\n模型    %s/%s", model.config.Workspace, provider, modelName),
+		model.styles.dim.Render(notice),
+		fmt.Sprintf("工作区  %s\n模型    %s/%s\n模式    %s", model.config.Workspace, provider, modelName, mode),
 	}
 }
 
@@ -843,7 +861,8 @@ func (model Model) renderHistory(history History) []string {
 func (model Model) helpText() string {
 	return `快捷键
   Enter 发送    Alt+Enter 换行    Tab/Shift+Tab 补全
-  ↑/↓ 历史      Ctrl+C 取消/双击退出    Ctrl+D 空闲退出
+  ↑/↓ 历史      Ctrl+C 复制选中文本    Ctrl+V 粘贴
+  Ctrl+Q 安全退出
   Esc 打断当前回复；空闲时关闭面板/收起工具详情
   Ctrl+L 清理当前视口和草稿（保留 Session）
   Ctrl+T 展开/收起已合并的工具详情（也可点击工具汇总行）
@@ -852,15 +871,17 @@ func (model Model) helpText() string {
   /help 帮助    /clear 新建会话并清理显示    /exit 安全退出
 
 后端命令
-  /model  /skill  /memory  /feedback  /agent
+  /run（完整工具）  /ask（只读问答）  /model  /skill  /memory  /feedback  /agent
   /claude  /codex  /cursor  /opencode  /default  /stop`
 }
 
 func mergeCommands(dynamic []Command) []Command {
-	base := []Command{
+	commands := []Command{
 		{Name: "/help", Description: "显示快捷键和命令帮助"},
 		{Name: "/clear", Description: "清理显示并在下一条消息创建新会话"},
 		{Name: "/exit", Description: "安全退出"},
+		{Name: "/run", Description: "切换到 Run 模式（完整工具能力）"},
+		{Name: "/ask", Description: "切换到 Ask 模式（只读问答，不修改文件或执行命令）"},
 		{Name: "/model", Description: "查看或切换模型"},
 		{Name: "/skill", Description: "使用 Skill 或 alias"},
 		{Name: "/memory", Description: "管理记忆", Arguments: []CommandArgument{{Value: "list", Description: "列出记忆"}, {Value: "search", Description: "搜索记忆"}, {Value: "confirm", Description: "确认候选记忆"}, {Value: "compact", Description: "压缩记忆"}}},
@@ -873,25 +894,36 @@ func mergeCommands(dynamic []Command) []Command {
 		{Name: "/default", Description: "恢复默认 Agent"},
 		{Name: "/stop", Description: "停止当前外部 Agent 进程"},
 	}
-	byName := make(map[string]int, len(base))
-	for index, command := range base {
-		byName[strings.ToLower(command.Name)] = index
+	byName := make(map[string]int, len(commands))
+	for index, command := range commands {
+		byName[normalizedCommandName(command.Name)] = index
 	}
 	for _, command := range dynamic {
-		key := strings.ToLower(command.Name)
-		if index, ok := byName[key]; ok {
-			if len(command.Arguments) > 0 {
-				base[index].Arguments = command.Arguments
-			}
-			if command.Description != "" {
-				base[index].Description = command.Description
-			}
+		key := normalizedCommandName(command.Name)
+		if key == "" {
 			continue
 		}
-		byName[key] = len(base)
-		base = append(base, command)
+		if index, ok := byName[key]; ok {
+			command.Name = commands[index].Name
+			commands[index] = command
+			continue
+		}
+		command.Name = strings.TrimSpace(command.Name)
+		byName[key] = len(commands)
+		commands = append(commands, command)
 	}
-	return base
+	return commands
+}
+
+func normalizedCommandName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func displayMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), "ask") {
+		return "Ask"
+	}
+	return "Run"
 }
 
 func estimateTokens(value string) int { return estimateTokensFromRunes(utf8.RuneCountInString(value)) }

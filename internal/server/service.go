@@ -107,6 +107,8 @@ type TurnRequest struct {
 	// ReasoningEffort controls the main model loop for this turn. The empty value
 	// keeps the provider or model default.
 	ReasoningEffort agent.ReasoningEffort `json:"reasoning_effort,omitempty"`
+	// Mode selects the session capability profile. Empty defaults to run mode.
+	Mode ChatMode `json:"mode,omitempty"`
 }
 
 // Attachment placeholders keep session bookkeeping and memory readable for
@@ -144,6 +146,7 @@ type TurnResponse struct {
 	Reply      string             `json:"reply"`
 	RunID      string             `json:"run_id,omitempty"`
 	Model      string             `json:"model,omitempty"`
+	Mode       ChatMode           `json:"mode"`
 	Generation *GenerationMetrics `json:"generation,omitempty"`
 	Streamed   bool               `json:"-"`
 }
@@ -338,11 +341,26 @@ func commandFromArgs(args map[string]any) string {
 func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnRequest, options TurnOptions) (response TurnResponse, err error) {
 	message := strings.TrimSpace(request.Message)
 	if isStopCommand(message) {
+		mode := ChatModeRun
+		if strings.TrimSpace(string(request.Mode)) != "" {
+			var modeErr error
+			mode, modeErr = parseChatMode(string(request.Mode))
+			if modeErr != nil {
+				return TurnResponse{}, modeErr
+			}
+		} else if sessionID := strings.TrimSpace(request.SessionID); sessionID != "" {
+			if savedSession, openErr := service.store.Open(sessionID); openErr == nil {
+				mode = storedChatMode(savedSession.Meta().CurrentMode)
+			}
+		}
 		reply := service.stopProcessGroupReply(request.PeerKey, request.SessionID)
-		return TurnResponse{SessionID: strings.TrimSpace(request.SessionID), Reply: reply}, nil
+		return TurnResponse{SessionID: strings.TrimSpace(request.SessionID), Reply: reply, Mode: mode}, nil
 	}
 	if message == "" && len(request.Images) == 0 && len(request.Files) == 0 {
 		return TurnResponse{}, fmt.Errorf("message or attachments are required")
+	}
+	if _, isModeCommand := chatModeCommand(message); isModeCommand && (len(request.Images) > 0 || len(request.Files) > 0) {
+		return TurnResponse{}, fmt.Errorf("模式切换命令不能携带图片或文件附件")
 	}
 	turnID := strings.TrimSpace(request.TurnID)
 	if turnID != "" {
@@ -386,30 +404,49 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		defer unlock()
 	}
 	effectiveModel := service.model
+	mode := ChatModeRun
 	if sessionID != "" {
 		savedSession, openErr := service.store.Open(sessionID)
 		switch {
 		case openErr == nil:
 			effectiveModel = service.effectiveModel(savedSession)
+			mode = storedChatMode(savedSession.Meta().CurrentMode)
 		case !errors.Is(openErr, os.ErrNotExist):
 			return TurnResponse{}, openErr
 		}
+	}
+	if strings.TrimSpace(string(request.Mode)) != "" {
+		mode, err = parseChatMode(string(request.Mode))
+		if err != nil {
+			return TurnResponse{}, err
+		}
+	}
+	if commandMode, isModeCommand := chatModeCommand(message); isModeCommand {
+		mode = commandMode
 	}
 	createOptions := &session.CreateOptions{Task: effectiveText, Planned: service.planner != nil, Chat: true}
 	stablePrompt, initialSessionContext, err := service.currentPromptSnapshot(effectiveModel)
 	if err != nil {
 		return TurnResponse{}, err
 	}
+	stablePrompt = promptForChatMode(stablePrompt, mode)
 	conversation, err := appruntime.PrepareConversationWithPrompt(service.store, sessionID, createOptions, stablePrompt, func() (string, error) {
 		return service.currentSessionContext(effectiveText, initialSessionContext)
 	})
 	if err != nil {
 		return TurnResponse{}, err
 	}
+	if conversation.Session.Meta().CurrentMode != persistedChatMode(mode) {
+		if err := conversation.Session.SetCurrentMode(persistedChatMode(mode)); err != nil {
+			markConversationFailed(conversation, err)
+			return TurnResponse{}, err
+		}
+	}
 	systemPrompt := conversation.Prompt.Combined()
 	defer func() {
 		if response.SessionID != "" {
 			response.Model = service.effectiveModel(conversation.Session)
+			response.Mode = storedChatMode(conversation.Session.Meta().CurrentMode)
 		}
 	}()
 	effectiveModel = service.effectiveModel(conversation.Session)
@@ -433,6 +470,23 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 	logWriter := service.turnLogWriter(sessionLogWriter, options.OutputWriter)
 	turnErrorWriter := service.turnErrorWriter(sessionLogWriter, options.OutputWriter)
+
+	if _, isModeCommand := chatModeCommand(message); isModeCommand {
+		reply := chatModeCommandReply(mode)
+		userMessage := map[string]any{"role": "user", "content": message}
+		assistantMessage := map[string]any{"role": "assistant", "content": reply}
+		if recordErr := conversation.Session.RecordMessages(userMessage, assistantMessage); recordErr != nil {
+			markConversationFailed(conversation, recordErr)
+			return TurnResponse{}, recordErr
+		}
+		conversation.Messages = append(conversation.Messages, userMessage, assistantMessage)
+		if completeErr := service.completeConversation(conversation); completeErr != nil {
+			markConversationFailed(conversation, completeErr)
+			return TurnResponse{}, completeErr
+		}
+		writeTurnReply(logWriter, reply, false)
+		return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply, Mode: mode}, nil
+	}
 
 	if feedbackReply, handled, feedbackErr := service.handleFeedbackCommand(message, conversation.Session); handled {
 		if feedbackErr != nil {
@@ -488,7 +542,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	var runRecorder *apptrace.Recorder
 	if service.traceStore != nil {
 		var traceErr error
-		runRecorder, traceErr = service.traceStore.Create(conversation.Session.ID(), apptrace.NewID("turn"), "", "agent", effectiveModel, systemPrompt)
+		runRecorder, traceErr = service.traceStore.Create(conversation.Session.ID(), apptrace.NewID("turn"), "", string(mode), effectiveModel, systemPrompt)
 		if traceErr != nil {
 			fmt.Fprintf(turnErrorWriter, "trace create failed: %v\n", traceErr)
 		}
@@ -540,6 +594,20 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		markConversationFailed(conversation, err)
 		return TurnResponse{}, err
 	}
+	if mode == ChatModeAsk && askModeBlockedCommand(message) {
+		reply := askModeBlockedCommandReply()
+		assistantMessage := map[string]any{"role": "assistant", "content": reply}
+		if recordErr := conversation.Session.RecordMessage(assistantMessage); recordErr != nil {
+			return TurnResponse{}, recordErr
+		}
+		conversation.Messages = append(conversation.Messages, assistantMessage)
+		if completeErr := service.completeConversation(conversation); completeErr != nil {
+			return TurnResponse{}, completeErr
+		}
+		writeTurnReply(logWriter, reply, false)
+		return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply, RunID: runID, Mode: mode}, nil
+	}
+
 	if reply, handled, memoryErr := service.handleMemoryCommand(message, runID); handled {
 		if memoryErr != nil {
 			markConversationFailed(conversation, memoryErr)
@@ -573,7 +641,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply, RunID: runID}, nil
 	}
 
-	if service.externalBroker != nil && skillInvocation == nil {
+	if mode == ChatModeRun && service.externalBroker != nil && skillInvocation == nil {
 		routedAgent, routedPrompt, _, routeErr := service.externalBroker.Resolve(message, conversation.Session.ID())
 		if routeErr != nil {
 			writeTurnError(turnErrorWriter, routeErr)
@@ -634,15 +702,16 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 
 	functions := service.functionsForTurn(request.PeerKey, conversation.Session.ID())
+	toolDefinitions, functions := toolsetForChatMode(mode, service.toolDefinitions, functions)
 	var planner *agent.Planner
-	if service.planner != nil {
+	if mode == ChatModeRun && service.planner != nil {
 		planner = agent.NewPlanner(service.client, effectiveModel)
 	}
 	app := agent.NewWithOptions(service.client, effectiveModel, agent.Options{
 		Prompt:          conversation.Prompt,
 		APIType:         service.apiType,
 		LogWriter:       logWriter,
-		ToolDefinitions: service.toolDefinitions,
+		ToolDefinitions: toolDefinitions,
 		Functions:       functions,
 		Planner:         planner,
 		Recorder:        conversation.Recorder(),
@@ -676,13 +745,16 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		writeTurnError(turnErrorWriter, err)
 		return TurnResponse{}, err
 	}
-	service.appendMemory(effectiveText, result)
+	if mode == ChatModeRun {
+		service.appendMemory(effectiveText, result)
+	}
 	writeTurnReply(logWriter, result, options.Stream)
 
 	return TurnResponse{
 		SessionID:  conversation.Session.ID(),
 		Reply:      result,
 		RunID:      runID,
+		Mode:       mode,
 		Generation: generationMetricsFromAgent(generation),
 		Streamed:   options.Stream,
 	}, nil
@@ -1166,13 +1238,14 @@ type RuntimeLLMInfo struct {
 	ProviderID string        `json:"provider_id,omitempty"`
 	APIType    agent.APIType `json:"api_type"`
 	Model      string        `json:"model"`
+	Mode       ChatMode      `json:"mode"`
 }
 
 func (service *Service) RuntimeLLMInfo() RuntimeLLMInfo {
 	if service == nil {
 		return RuntimeLLMInfo{}
 	}
-	return RuntimeLLMInfo{ProviderID: service.providerID, APIType: service.apiType, Model: service.model}
+	return RuntimeLLMInfo{ProviderID: service.providerID, APIType: service.apiType, Model: service.model, Mode: ChatModeRun}
 }
 
 func (service *Service) RuntimeLLMInfoForSession(sessionID string) RuntimeLLMInfo {
@@ -1189,6 +1262,7 @@ func (service *Service) RuntimeLLMInfoForSession(sessionID string) RuntimeLLMInf
 	savedSession, err := service.store.Open(canonicalID)
 	if err == nil {
 		info.Model = service.effectiveModel(savedSession)
+		info.Mode = storedChatMode(savedSession.Meta().CurrentMode)
 	}
 	return info
 }

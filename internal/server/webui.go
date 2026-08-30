@@ -47,6 +47,7 @@ type webUIChatRequest struct {
 	TurnID          string              `json:"turn_id"`
 	Message         string              `json:"message"`
 	ReasoningEffort string              `json:"reasoning_effort,omitempty"`
+	Mode            string              `json:"mode,omitempty"`
 	Images          []webUIImagePayload `json:"images,omitempty"`
 	Files           []webUIFilePayload  `json:"files,omitempty"`
 }
@@ -58,6 +59,7 @@ type webUIDoneEvent struct {
 	Reply       string             `json:"reply"`
 	APIType     string             `json:"api_type"`
 	Model       string             `json:"model"`
+	Mode        ChatMode           `json:"mode"`
 	Generation  *GenerationMetrics `json:"generation,omitempty"`
 }
 
@@ -306,6 +308,13 @@ func decodeWebUIChatRequest(writer http.ResponseWriter, request *http.Request) (
 	if err != nil {
 		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: err}
 	}
+	var mode ChatMode
+	if strings.TrimSpace(payload.Mode) != "" {
+		mode, err = parseChatMode(payload.Mode)
+		if err != nil {
+			return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: err}
+		}
+	}
 	if len(payload.Images) > maxWebUIImages {
 		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("at most %d images are allowed", maxWebUIImages)}
 	}
@@ -349,6 +358,7 @@ func decodeWebUIChatRequest(writer http.ResponseWriter, request *http.Request) (
 		Images:          images,
 		Files:           files,
 		ReasoningEffort: reasoningEffort,
+		Mode:            mode,
 	}, nil
 }
 
@@ -468,6 +478,7 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		Images:          turnRequest.Images,
 		Files:           turnRequest.Files,
 		ReasoningEffort: turnRequest.ReasoningEffort,
+		Mode:            turnRequest.Mode,
 	}, TurnOptions{
 		Stream:         true,
 		TokenSink:      sseEventWriter{stream: stream, event: "message"},
@@ -497,6 +508,7 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		Reply:       sanitizeChannelReply(response.Reply),
 		APIType:     string(service.apiType),
 		Model:       response.Model,
+		Mode:        response.Mode,
 		Generation:  response.Generation,
 	})
 }

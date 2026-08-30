@@ -46,6 +46,7 @@ type ConversationHistoryMessage struct {
 type ConversationHistory struct {
 	ID       string
 	Title    string
+	Mode     ChatMode
 	Messages []ConversationHistoryMessage
 	Omitted  int
 }
@@ -127,7 +128,7 @@ func (handler *handler) handleConversationHistory(writer http.ResponseWriter, re
 			Files:   files,
 		})
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"id": history.ID, "title": history.Title, "messages": webMessages})
+	writeJSON(writer, http.StatusOK, map[string]any{"id": history.ID, "title": history.Title, "mode": history.Mode, "messages": webMessages})
 }
 
 func splitHistoryAttachments(content string) (string, []conversationFile) {
@@ -240,7 +241,7 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 			filtered = append(filtered, ConversationHistoryMessage{Role: role, Content: content})
 		}
 	}
-	result := ConversationHistory{ID: saved.ID(), Title: saved.Meta().Task, Messages: filtered}
+	result := ConversationHistory{ID: saved.ID(), Title: saved.Meta().Task, Mode: storedChatMode(saved.Meta().CurrentMode), Messages: filtered}
 	if maxBytes <= 0 || historyBytes(filtered) <= maxBytes {
 		return result, nil
 	}

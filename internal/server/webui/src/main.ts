@@ -2,6 +2,7 @@ import "./styles.css";
 import { errorMessage, parseJSONEvent, responseJSON } from "./api";
 import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
 import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
+import { chatModeLabel as displayChatMode, chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 import { formatConversationTime } from "./conversations";
 import { byId, eventElement } from "./dom";
 import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
@@ -15,7 +16,7 @@ import { initialTheme } from "./theme";
 import { shouldGroupToolCalls } from "./tool-groups";
 import { loadWorkspaceSessions, migrateLegacySession, persistWorkspaceSession, workspaceURL } from "./workspace";
 import type { SentFile, SentImage } from "./attachments";
-import type { ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, GenerationMetrics, PendingFile, PendingImage, ProviderModelsResponse, ProviderSelectionResponse, ProviderSettings, ReasoningEffort, StatusResponse, ToolEventPayload, WorkspaceCurrentPreview, WorkspaceDirectoryPage, WorkspaceDirectoryResponse, WorkspaceDirectoryState, WorkspaceEntry, WorkspaceInfo, WorkspaceListResponse, WorkspacePreview, WorkspaceRoot, WorkspacesResponse, WebUIDoneEvent } from "./types";
+import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, GenerationMetrics, PendingFile, PendingImage, ProviderModelsResponse, ProviderSelectionResponse, ProviderSettings, ReasoningEffort, StatusResponse, ToolEventPayload, WorkspaceCurrentPreview, WorkspaceDirectoryPage, WorkspaceDirectoryResponse, WorkspaceDirectoryState, WorkspaceEntry, WorkspaceInfo, WorkspaceListResponse, WorkspacePreview, WorkspaceRoot, WorkspacesResponse, WebUIDoneEvent } from "./types";
 
 (function () {
   "use strict";
@@ -82,6 +83,9 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
   const attachmentActions = byId<HTMLDivElement>("attachment-actions");
   const addAttachmentBtn = byId<HTMLButtonElement>("add-attachment");
   const attachmentMenu = byId<HTMLDivElement>("attachment-menu");
+  const modeRunBtn = byId<HTMLButtonElement>("mode-run");
+  const modeAskBtn = byId<HTMLButtonElement>("mode-ask");
+  const chatModeLabel = byId<HTMLElement>("chat-mode-label");
   const uploadFileBtn = byId<HTMLButtonElement>("upload-file");
   const fileInput = byId<HTMLInputElement>("file-input");
   const serverFilePath = byId<HTMLInputElement>("server-file-path");
@@ -138,6 +142,7 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
   var pickerNextOffset: number | null = null;
   var workspaceReady = false;
   var reasoningEffort: ReasoningEffort = "auto";
+  var chatMode: ChatMode = "run";
   var busy = false;
   var currentTurnId = "";
   var currentController: AbortController | null = null;
@@ -494,6 +499,7 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
       conversations = conversations.filter(function (item) { return item.id !== conversation.id; });
       if (sessionId === conversation.id) {
         setCurrentWorkspaceSession("");
+        setChatMode("run");
         clearPendingAttachments();
         thread.innerHTML = emptyMarkup();
         loadRuntimeModel();
@@ -535,6 +541,7 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
       if (!response.ok) throw new Error(payload.error || "读取历史失败");
       if (loadID !== conversationLoadID) return;
       setCurrentWorkspaceSession(payload.id || id);
+      setChatMode(payload.mode);
       thread.innerHTML = "";
       normalizeHistoryMessages(payload.messages || []).forEach(function (message) {
         var bubble = addMessage(message.role);
@@ -585,6 +592,7 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
       localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ root_id: info.root_id, path: info.relative_path || "" }));
     } catch (_) {}
     if (switching && changed) {
+      setChatMode("run");
       clearPendingAttachments();
       setAttachmentMenu(false);
       thread.innerHTML = emptyMarkup();
@@ -644,6 +652,7 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
       var payload = await responseJSON<StatusResponse>(response);
       if (loadID !== runtimeModelLoadID || !payload || !payload.llm) return;
       updateRuntimeModel(payload.llm.api_type, payload.llm.model, payload.llm.provider_id);
+      setChatMode(payload.llm.mode);
     } catch (_) {
       // Status display is best-effort and must never block chat startup.
     }
@@ -1558,7 +1567,20 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
     if (open) setReasoningEffortMenu(false);
     attachmentMenu.hidden = !open;
     addAttachmentBtn.setAttribute("aria-expanded", open ? "true" : "false");
-    if (open) setTimeout(function () { uploadFileBtn.focus(); }, 0);
+    if (open) setTimeout(function () { (chatMode === "ask" ? modeAskBtn : modeRunBtn).focus(); }, 0);
+  }
+
+  function setChatMode(value: unknown): void {
+    chatMode = normalizeChatMode(value);
+    [modeRunBtn, modeAskBtn].forEach(function (button) {
+      var selected = button.dataset.mode === chatMode;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-checked", selected ? "true" : "false");
+    });
+    chatModeLabel.textContent = displayChatMode(chatMode);
+    input.placeholder = chatModePlaceholder(chatMode);
+    addAttachmentBtn.title = chatMode === "ask" ? "Ask 模式与附件" : "Run 模式与附件";
+    addAttachmentBtn.setAttribute("aria-label", chatMode === "ask" ? "Ask 模式：选择模式或添加文件" : "Run 模式：选择模式或添加文件");
   }
 
   function normalizeReasoningEffort(value: unknown): ReasoningEffort {
@@ -1657,6 +1679,8 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
     input.disabled = on || !workspaceReady;
     addAttachmentBtn.disabled = on;
     uploadFileBtn.disabled = on;
+    modeRunBtn.disabled = on;
+    modeAskBtn.disabled = on;
     serverFilePath.disabled = on;
     addServerPathBtn.disabled = on;
     reasoningEffortToggle.disabled = on;
@@ -1903,6 +1927,7 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
           files: sentFiles,
           session_id: sessionId,
           turn_id: currentTurnId,
+          mode: chatMode,
           reasoning_effort: reasoningEffort === "auto" ? "" : reasoningEffort
         }),
         signal: currentController.signal
@@ -1937,6 +1962,7 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
               runtimeModelLoadID++;
               updateRuntimeModel(done.api_type, done.model, providerSettingsState.active_provider);
             }
+            setChatMode(done.mode);
             refreshConversations(false);
             bubble.classList.add("rendered");
             var finalReply = typeof done.reply === "string" ? done.reply : "";
@@ -2036,6 +2062,7 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
   function newChat(): void {
     if (busy) return;
     setCurrentWorkspaceSession("");
+    setChatMode("run");
     clearPendingAttachments();
     setAttachmentMenu(false);
     setReasoningEffortMenu(false);
@@ -2157,6 +2184,16 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
   });
   addAttachmentBtn.addEventListener("click", function () {
     setAttachmentMenu(Boolean(attachmentMenu.hidden));
+  });
+  modeRunBtn.addEventListener("click", function () {
+    setChatMode("run");
+    setAttachmentMenu(false);
+    input.focus();
+  });
+  modeAskBtn.addEventListener("click", function () {
+    setChatMode("ask");
+    setAttachmentMenu(false);
+    input.focus();
   });
   reasoningEffortToggle.addEventListener("click", function () {
     setReasoningEffortMenu(Boolean(reasoningEffortMenu.hidden));

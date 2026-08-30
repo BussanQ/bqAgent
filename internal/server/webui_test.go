@@ -787,6 +787,36 @@ func TestDecodeWebUIChatRequestReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestDecodeWebUIChatRequestMode(t *testing.T) {
+	for _, test := range []struct {
+		raw  string
+		want ChatMode
+	}{
+		{raw: `{"message":"hi"}`, want: ""},
+		{raw: `{"message":"hi","mode":"run"}`, want: ChatModeRun},
+		{raw: `{"message":"hi","mode":"agent"}`, want: ChatModeRun},
+		{raw: `{"message":"hi","mode":"ask"}`, want: ChatModeAsk},
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/webui/chat", strings.NewReader(test.raw))
+		request.Header.Set("Content-Type", "application/json")
+		turn, err := decodeWebUIChatRequest(httptest.NewRecorder(), request)
+		if err != nil {
+			t.Fatalf("decode %s returned error: %v", test.raw, err)
+		}
+		if turn.Mode != test.want {
+			t.Fatalf("decode %s mode = %q, want %q", test.raw, turn.Mode, test.want)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/webui/chat", strings.NewReader(`{"message":"hi","mode":"write"}`))
+	request.Header.Set("Content-Type", "application/json")
+	_, err := decodeWebUIChatRequest(httptest.NewRecorder(), request)
+	requestErr, ok := err.(*webUIRequestError)
+	if !ok || requestErr.Status != http.StatusBadRequest {
+		t.Fatalf("invalid mode error = %#v, want HTTP 400 request error", err)
+	}
+}
+
 func TestDecodeWebUIChatRequestAcceptsUploadedAndWorkspaceFiles(t *testing.T) {
 	encoded := base64.StdEncoding.EncodeToString([]byte("hello attachment"))
 	body := fmt.Sprintf(`{"files":[{"name":"notes.txt","data_base64":%q},{"path":"docs/design.md"}]}`, encoded)
