@@ -805,6 +805,21 @@ func (model Model) startupLines() []string {
 	}
 }
 
+func historyToolGroup(tools []ToolEvent) toolGroup {
+	group := toolGroup{}
+	for _, tool := range tools {
+		if strings.TrimSpace(tool.Name) == "" && strings.TrimSpace(tool.Preview) == "" {
+			continue
+		}
+		group.add(ToolEvent{Kind: "tool_start", ID: tool.ID, Name: tool.Name, Arguments: tool.Arguments})
+		group.add(ToolEvent{
+			Kind: "tool_result", ID: tool.ID, Name: tool.Name, Status: tool.Status,
+			Arguments: tool.Arguments, Preview: tool.Preview, Truncated: tool.Truncated,
+		})
+	}
+	return group
+}
+
 func (model Model) renderHistory(history History) []string {
 	lines := []string{model.styles.dim.Render("恢复会话 " + history.ID)}
 	if history.Omitted > 0 {
@@ -813,7 +828,12 @@ func (model Model) renderHistory(history History) []string {
 	for _, message := range history.Messages {
 		if message.Role == "user" {
 			lines = append(lines, model.renderTurnSeparator(), model.renderUserMessage(message.Content))
-		} else {
+			continue
+		}
+		if rendered := historyToolGroup(message.Tools).render(model.styles, false); rendered != "" {
+			lines = append(lines, rendered)
+		}
+		if strings.TrimSpace(message.Content) != "" {
 			lines = append(lines, renderMarkdown(message.Content, model.contentWidth(), model.config.NoColor))
 		}
 	}

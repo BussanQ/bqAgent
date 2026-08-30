@@ -1516,6 +1516,7 @@
   .bubble th { color: var(--text); background: var(--table-head); font-weight: 700; }
   .bubble tr:last-child td { border-bottom: 0; }
   .bubble th:last-child, .bubble td:last-child { border-right: 0; }
+  .bubble.is-empty { display: none; }
   .tool-timeline {
     width: 100%;
     margin: 0 0 8px;

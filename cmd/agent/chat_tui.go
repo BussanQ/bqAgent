@@ -114,7 +114,14 @@ func (backend *tuiBackend) History(sessionID string, budget int) (apptui.History
 	}
 	result := apptui.History{ID: history.ID, Title: history.Title, Omitted: history.Omitted, Messages: make([]apptui.HistoryMessage, 0, len(history.Messages))}
 	for _, message := range history.Messages {
-		result.Messages = append(result.Messages, apptui.HistoryMessage{Role: message.Role, Content: message.Content})
+		tools := make([]apptui.ToolEvent, 0, len(message.Tools))
+		for _, tool := range message.Tools {
+			tools = append(tools, apptui.ToolEvent{
+				ID: tool.ID, Name: tool.Name, Status: tool.Status,
+				Arguments: tool.Arguments, Preview: tool.Result, Truncated: tool.Truncated,
+			})
+		}
+		result.Messages = append(result.Messages, apptui.HistoryMessage{Role: message.Role, Content: message.Content, Tools: tools})
 	}
 	return result, nil
 }

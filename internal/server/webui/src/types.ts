@@ -34,9 +34,19 @@ export interface ConversationSummary {
   updated_at: string;
 }
 
+export interface ConversationHistoryTool {
+  id?: string;
+  name: string;
+  arguments?: Record<string, unknown>;
+  result?: string;
+  status?: string;
+  truncated?: boolean;
+}
+
 export interface ConversationMessage {
   role: string;
   content: string;
+  tools?: ConversationHistoryTool[];
 }
 
 export interface ConversationHistory {

@@ -1727,7 +1727,7 @@ func sanitizeCompletedToolHistory(messages []map[string]any) []map[string]any {
 }
 
 func summarizeCompletedToolBatch(assistant map[string]any, results []map[string]any) map[string]any {
-	parts := []string{"Completed tool activity (retain this evidence for later reasoning):"}
+	parts := []string{CompletedToolActivityLead}
 	if content, _ := assistant["content"].(string); strings.TrimSpace(content) != "" {
 		parts = append(parts, "Assistant note: "+strings.TrimSpace(content))
 	}
