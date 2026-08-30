@@ -35,6 +35,8 @@ const (
 	truncatedToolBatchError             = "Error: Tool batch was not executed because the model output reached its token limit. No side effects occurred. Resend the complete tool-call batch with complete JSON arguments."
 	truncatedToolRecoveryStoppedMessage = "Tool-call recovery stopped after repeated output-token truncation. Increase the model output-token limit or request a smaller tool-call batch; no tools from the truncated batches were executed."
 	emptyFinalRecoveryPrompt            = "The previous assistant response contained no usable final content. Continue the task from the existing conversation and completed tool results. If additional work or verification is needed, call the required tools now. Otherwise provide a concise final answer stating what was completed and any verification limitations. Do not return an empty response."
+	todoNoProgressRecoveryPrompt        = "The todo list did not change. Planning and rewriting todos are not task progress. Continue this same turn now with a substantive tool such as read_file, glob, grep, execute_bash, or the tool directly required by the task. If a previous search returned no matches, change its arguments or use a different exploration tool instead of repeating it. Do not call todo_write again until task content or status actually changes."
+	emptySearchRecoveryPrompt           = "The same search returned no results again. Repeating it cannot advance the task. Continue this same turn with different search arguments or another exploration tool such as read_file or execute_bash."
 )
 
 var errEmptyFinalResponse = errors.New("model returned an empty final response")
@@ -528,6 +530,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		// Some tools recurse or mutate state that later tool calls may depend on, so
 		// a turn containing them runs sequentially. A turn of only independent tools
 		// runs concurrently and appends results in the original order.
+		guardAction := loopGuardAction{}
 		if a.hasSpecialToolCalls(message.ToolCalls, allowPlan) {
 			for _, toolCall := range message.ToolCalls {
 				parsedArguments, err := parseArguments(toolCall.Function.Arguments)
@@ -578,15 +581,20 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 
 				_, toolResult := a.runRegularToolCall(explorationCtx, toolCall)
+				action := loopGuard.observeTool(toolCall, toolResult)
+				if action.recoveryPrompt != "" {
+					toolResult = toolResult + "\n\nRecovery instruction: " + action.recoveryPrompt
+				}
 				updatedToolMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, toolResult)
 				updatedMessages = updatedToolMessages
 				messages = updatedMessages
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
 				}
-				if reason := loopGuard.observeTool(toolCall, toolResult); reason != "" {
-					return a.finishStageCheckpoint(ctx, updatedMessages, reason, actualIterations)
+				if action.checkpointReason != "" && !action.todoCheckpoint {
+					return a.finishStageCheckpoint(ctx, updatedMessages, action.checkpointReason, actualIterations)
 				}
+				guardAction = guardAction.merge(action)
 			}
 		} else {
 			results := make([]string, len(message.ToolCalls))
@@ -604,21 +612,25 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 			waitGroup.Wait()
 
-			loopReason := ""
 			for index, toolCall := range message.ToolCalls {
+				action := loopGuard.observeTool(toolCall, results[index])
+				if action.recoveryPrompt != "" {
+					results[index] = results[index] + "\n\nRecovery instruction: " + action.recoveryPrompt
+				}
 				updatedToolMessages, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, results[index])
 				updatedMessages = updatedToolMessages
 				messages = updatedMessages
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
 				}
-				if reason := loopGuard.observeTool(toolCall, results[index]); reason != "" && loopReason == "" {
-					loopReason = reason
-				}
+				guardAction = guardAction.merge(action)
 			}
-			if loopReason != "" {
-				return a.finishStageCheckpoint(ctx, updatedMessages, loopReason, actualIterations)
-			}
+		}
+		if guardAction.checkpointReason != "" && (!guardAction.todoCheckpoint || loopGuard.todoNoProgressCount > 1) {
+			return a.finishStageCheckpoint(ctx, updatedMessages, guardAction.checkpointReason, actualIterations)
+		}
+		if guardAction.recoveryPrompt != "" && loopGuard.todoNoProgressCount > 0 {
+			a.writeStageProgress("Recovering from a no-progress tool loop")
 		}
 		a.writeStageProgress(fmt.Sprintf("Completed analysis iteration %d", actualIterations))
 	}
@@ -715,36 +727,168 @@ func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string
 }
 
 type loopGuard struct {
-	config        StageConfig
-	callCounts    map[string]int
-	failureCounts map[string]int
-	pathFailures  map[string]int
+	config              StageConfig
+	callCounts          map[string]int
+	failureCounts       map[string]int
+	pathFailures        map[string]int
+	lastTodoProgress    string
+	hasLastTodoProgress bool
+	todoNoProgressCount int
+	lastEmptySearch     string
+	emptySearchCount    int
+}
+
+type loopGuardAction struct {
+	recoveryPrompt   string
+	checkpointReason string
+	todoCheckpoint   bool
+}
+
+func (action loopGuardAction) merge(next loopGuardAction) loopGuardAction {
+	if action.checkpointReason == "" || (action.todoCheckpoint && next.checkpointReason != "" && !next.todoCheckpoint) {
+		action.checkpointReason = next.checkpointReason
+		action.todoCheckpoint = next.todoCheckpoint
+	}
+	if action.recoveryPrompt == "" {
+		action.recoveryPrompt = next.recoveryPrompt
+	}
+	return action
 }
 
 func newLoopGuard(config StageConfig) *loopGuard {
 	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, pathFailures: map[string]int{}}
 }
 
-func (guard *loopGuard) observeTool(call ToolCall, result string) string {
-	if guard == nil || !guard.config.LoopProtection {
-		return ""
+func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardAction {
+	if guard == nil {
+		return loopGuardAction{}
+	}
+	failed := strings.HasPrefix(strings.TrimSpace(result), "Error:")
+	if progress, ok := todoProgressSignature(call); ok {
+		if guard.hasLastTodoProgress && guard.lastTodoProgress == progress {
+			guard.todoNoProgressCount++
+			if guard.todoNoProgressCount == 1 {
+				return loopGuardAction{recoveryPrompt: todoNoProgressRecoveryPrompt}
+			}
+			return loopGuardAction{checkpointReason: "loop protection: repeated todo_write without task progress after recovery", todoCheckpoint: true}
+		}
+		guard.lastTodoProgress = progress
+		guard.hasLastTodoProgress = true
+		guard.todoNoProgressCount = 0
+	} else if emptySearch := emptySearchSignature(call, result); emptySearch != "" {
+		if guard.lastEmptySearch == emptySearch {
+			guard.emptySearchCount++
+			if guard.emptySearchCount == 2 {
+				return loopGuardAction{recoveryPrompt: emptySearchRecoveryPrompt}
+			}
+			if guard.emptySearchCount >= 3 {
+				return loopGuardAction{checkpointReason: fmt.Sprintf("loop protection: repeated empty search in %s after recovery", call.Function.Name)}
+			}
+		} else {
+			guard.lastEmptySearch = emptySearch
+			guard.emptySearchCount = 1
+		}
+	} else if toolResultMadeProgress(call, result) {
+		guard.lastTodoProgress = ""
+		guard.hasLastTodoProgress = false
+		guard.todoNoProgressCount = 0
+		guard.lastEmptySearch = ""
+		guard.emptySearchCount = 0
+	}
+	if !guard.config.LoopProtection {
+		return loopGuardAction{}
 	}
 	signature := call.Function.Name + "\x00" + strings.TrimSpace(call.Function.Arguments)
 	guard.callCounts[signature]++
-	if strings.HasPrefix(strings.TrimSpace(result), "Error:") {
+	if failed {
 		guard.failureCounts[signature]++
 		if guard.failureCounts[signature] >= guard.config.RepeatedFailureLimit {
-			return fmt.Sprintf("loop protection: repeated failing tool call %s", call.Function.Name)
+			return loopGuardAction{checkpointReason: fmt.Sprintf("loop protection: repeated failing tool call %s", call.Function.Name)}
 		}
 		if pathSignature := failedPathSignature(call); pathSignature != "" {
 			guard.pathFailures[pathSignature]++
 			if guard.pathFailures[pathSignature] >= guard.config.RepeatedFailureLimit {
-				return fmt.Sprintf("loop protection: repeated failing path in %s", call.Function.Name)
+				return loopGuardAction{checkpointReason: fmt.Sprintf("loop protection: repeated failing path in %s", call.Function.Name)}
 			}
 		}
 	}
 	if guard.callCounts[signature] >= guard.config.DuplicateCallLimit {
-		return fmt.Sprintf("loop protection: repeated tool call %s", call.Function.Name)
+		return loopGuardAction{checkpointReason: fmt.Sprintf("loop protection: repeated tool call %s", call.Function.Name)}
+	}
+	return loopGuardAction{}
+}
+
+func todoProgressSignature(call ToolCall) (string, bool) {
+	if call.Function.Name != "todo_write" {
+		return "", false
+	}
+	fallback := strings.TrimSpace(call.Function.Arguments)
+	parsed, err := parseArguments(call.Function.Arguments)
+	if err != nil {
+		return fallback, true
+	}
+	arguments, ok := parsed.(map[string]any)
+	if !ok {
+		return fallback, true
+	}
+	raw, ok := arguments["todos"]
+	if !ok {
+		return fallback, true
+	}
+	var encoded []byte
+	if text, isString := raw.(string); isString {
+		encoded = []byte(strings.TrimSpace(text))
+	} else {
+		encoded, err = json.Marshal(raw)
+		if err != nil {
+			return fallback, true
+		}
+	}
+	var items []tools.TodoItem
+	if err := json.Unmarshal(encoded, &items); err != nil {
+		return fallback, true
+	}
+	type todoProgress struct {
+		Content string `json:"content"`
+		Status  string `json:"status"`
+	}
+	progress := make([]todoProgress, 0, len(items))
+	for _, item := range items {
+		progress = append(progress, todoProgress{Content: strings.TrimSpace(item.Content), Status: item.Status})
+	}
+	encoded, err = json.Marshal(progress)
+	if err != nil {
+		return fallback, true
+	}
+	return string(encoded), true
+}
+
+func toolResultMadeProgress(call ToolCall, result string) bool {
+	trimmed := strings.TrimSpace(result)
+	if trimmed == "" || strings.HasPrefix(trimmed, "Error:") {
+		return false
+	}
+	switch call.Function.Name {
+	case "glob":
+		return trimmed != "No files matched."
+	case "grep":
+		return trimmed != "No matches found."
+	default:
+		return true
+	}
+}
+
+func emptySearchSignature(call ToolCall, result string) string {
+	trimmed := strings.TrimSpace(result)
+	switch call.Function.Name {
+	case "glob":
+		if trimmed == "No files matched." {
+			return call.Function.Name + "\x00" + strings.TrimSpace(call.Function.Arguments)
+		}
+	case "grep":
+		if trimmed == "No matches found." {
+			return call.Function.Name + "\x00" + strings.TrimSpace(call.Function.Arguments)
+		}
 	}
 	return ""
 }
@@ -1777,7 +1921,7 @@ func (a *Agent) appendToolError(messages []map[string]any, toolCallID, format st
 func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall, allowPlan bool) bool {
 	for _, toolCall := range toolCalls {
 		switch toolCall.Function.Name {
-		case "write_file", "edit_file":
+		case "write_file", "edit_file", "todo_write":
 			return true
 		case "plan":
 			if allowPlan && a.planner != nil {

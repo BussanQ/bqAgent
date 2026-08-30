@@ -297,6 +297,30 @@ func TestGlobMatchesDoubleStar(t *testing.T) {
 	}
 }
 
+func TestGlobMatchesBraceAlternatives(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"main.go":   "package main",
+		"README.md": "# project",
+		"notes.txt": "notes",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, err := GlobInRoot(dir)(context.Background(), map[string]any{"pattern": "**/*.{go,md}"})
+	if err != nil {
+		t.Fatalf("glob error: %v", err)
+	}
+	if !strings.Contains(out, "main.go") || !strings.Contains(out, "README.md") {
+		t.Fatalf("glob output = %q, want Go and Markdown files", out)
+	}
+	if strings.Contains(out, "notes.txt") {
+		t.Fatalf("glob output = %q, should exclude txt files", out)
+	}
+}
+
 func TestTodoWriteUpdatesStore(t *testing.T) {
 	store := NewTodoStore()
 	todo := TodoWriteWithStore(store)
@@ -308,8 +332,30 @@ func TestTodoWriteUpdatesStore(t *testing.T) {
 	if !strings.Contains(out, "do A") || !strings.Contains(out, "[~]") {
 		t.Fatalf("rendered output = %q", out)
 	}
+	if !strings.Contains(out, "continue now with substantive work") {
+		t.Fatalf("updated output = %q", out)
+	}
 	if len(store.items) != 2 {
 		t.Fatalf("store items = %d, want 2", len(store.items))
+	}
+
+	unchanged, err := todo(context.Background(), map[string]any{"todos": `[{"content":"do A","status":"in_progress","activeForm":"Still doing A"},{"content":"do B","status":"pending"}]`})
+	if err != nil {
+		t.Fatalf("unchanged todo_write error: %v", err)
+	}
+	if !strings.Contains(unchanged, "unchanged") {
+		t.Fatalf("unchanged output = %q", unchanged)
+	}
+
+	nativeArray, err := todo(context.Background(), map[string]any{"todos": []any{
+		map[string]any{"content": "do A", "status": "completed", "activeForm": "Did A"},
+		map[string]any{"content": "do B", "status": "in_progress", "activeForm": "Doing B"},
+	}})
+	if err != nil {
+		t.Fatalf("native array todo_write error: %v", err)
+	}
+	if !strings.Contains(nativeArray, "[x] do A") || !strings.Contains(nativeArray, "[~] do B") {
+		t.Fatalf("native array output = %q", nativeArray)
 	}
 
 	if _, err := todo(context.Background(), map[string]any{"todos": "not json"}); err == nil {

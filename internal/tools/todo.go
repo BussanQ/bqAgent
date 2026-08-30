@@ -26,23 +26,48 @@ func NewTodoStore() *TodoStore {
 	return &TodoStore{}
 }
 
-func (store *TodoStore) set(items []TodoItem) {
+func (store *TodoStore) set(items []TodoItem) (progressChanged bool) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	progressChanged = !sameTodoProgress(store.items, items)
 	store.items = items
+	return progressChanged
 }
 
-// TodoWriteWithStore replaces the task list with the provided todos (a JSON
-// array string) and returns a rendered view. The JSON-string parameter sidesteps
-// the flat schema, matching the codebase's string-arg convention.
+func sameTodoProgress(left, right []TodoItem) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if strings.TrimSpace(left[index].Content) != strings.TrimSpace(right[index].Content) || left[index].Status != right[index].Status {
+			return false
+		}
+	}
+	return true
+}
+
+// TodoWriteWithStore replaces the task list with the provided todos and returns
+// a rendered view. The public schema uses a JSON array string to match the
+// codebase's flat string-arg convention, but native arrays are accepted as a
+// compatibility fallback for providers that decode nested tool arguments.
 func TodoWriteWithStore(store *TodoStore) Function {
 	return func(ctx context.Context, args map[string]any) (string, error) {
-		raw, err := requireString(args, "todos")
-		if err != nil {
-			return "", err
+		raw, ok := args["todos"]
+		if !ok {
+			return "", fmt.Errorf("missing required argument %q", "todos")
+		}
+		var encoded []byte
+		if text, isString := raw.(string); isString {
+			encoded = []byte(strings.TrimSpace(text))
+		} else {
+			var err error
+			encoded, err = json.Marshal(raw)
+			if err != nil {
+				return "", fmt.Errorf("todos must be a JSON array of {content,status,activeForm}: %w", err)
+			}
 		}
 		var items []TodoItem
-		if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &items); err != nil {
+		if err := json.Unmarshal(encoded, &items); err != nil {
 			return "", fmt.Errorf("todos must be a JSON array of {content,status,activeForm}: %w", err)
 		}
 		for index, item := range items {
@@ -55,10 +80,15 @@ func TodoWriteWithStore(store *TodoStore) Function {
 				return "", fmt.Errorf("todo %d has invalid status %q (want pending|in_progress|completed)", index+1, item.Status)
 			}
 		}
+		progressChanged := true
 		if store != nil {
-			store.set(items)
+			progressChanged = store.set(items)
 		}
-		return renderTodos(items), nil
+		rendered := renderTodos(items)
+		if !progressChanged {
+			return "Todo list unchanged: no task content or status changed. Continue with substantive work; do not call todo_write again until progress changes.\n" + rendered, nil
+		}
+		return "Todo list updated. Planning is recorded; continue now with substantive work using another tool. Do not call todo_write again until task content or status changes.\n" + rendered, nil
 	}
 }
 

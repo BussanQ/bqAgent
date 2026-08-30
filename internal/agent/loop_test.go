@@ -433,6 +433,243 @@ func TestRunConversationLoopProtectionAllowsConsecutiveToolOnlyRounds(t *testing
 	}
 }
 
+func TestRunConversationRecoversConsecutiveTodoWithoutStageProtection(t *testing.T) {
+	todoArguments := func(activeForm string) string {
+		items, err := json.Marshal([]tools.TodoItem{
+			{Content: "inspect TODO.md", Status: "in_progress", ActiveForm: activeForm},
+			{Content: "report findings", Status: "pending"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		arguments, err := json.Marshal(map[string]string{"todos": string(items)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(arguments)
+	}
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "todo-1", Function: FunctionCall{Name: "todo_write", Arguments: todoArguments("Inspecting TODO")}}}},
+		{ToolCalls: []ToolCall{{ID: "todo-2", Function: FunctionCall{Name: "todo_write", Arguments: todoArguments("Still inspecting TODO")}}}},
+		{ToolCalls: []ToolCall{{ID: "read-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"docs/TODO.md"}`}}}},
+		{Content: "分析完成"},
+	}}
+	store := tools.NewTodoStore()
+	todo := tools.TodoWriteWithStore(store)
+	todoCalls := 0
+	readCalls := 0
+	app := NewWithOptions(client, "", Options{
+		Context: ContextConfig{Enabled: false},
+		Functions: map[string]tools.Function{
+			"todo_write": func(ctx context.Context, arguments map[string]any) (string, error) {
+				todoCalls++
+				return todo(ctx, arguments)
+			},
+			"read_file": func(context.Context, map[string]any) (string, error) {
+				readCalls++
+				return "TODO contents", nil
+			},
+		},
+		ToolDefinitions: []tools.Definition{
+			{Type: "function", Function: tools.FunctionDefinition{Name: "todo_write"}},
+			{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}},
+		},
+	})
+
+	result, _, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "inspect"}}, 20)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if todoCalls != 2 || readCalls != 1 {
+		t.Fatalf("tool calls = todo:%d read:%d, want todo:2 read:1", todoCalls, readCalls)
+	}
+	if result != "分析完成" {
+		t.Fatalf("result = %q", result)
+	}
+	if len(client.messages) != 4 {
+		t.Fatalf("model requests = %d, want two todo rounds, recovery work, and final", len(client.messages))
+	}
+	recoveryMessage := client.messages[2][len(client.messages[2])-1]
+	recoveryPrompt, _ := recoveryMessage["content"].(string)
+	if !strings.Contains(recoveryPrompt, "Continue this same turn") || !strings.Contains(recoveryPrompt, "substantive tool") {
+		t.Fatalf("recovery prompt = %q", recoveryPrompt)
+	}
+	if role, _ := recoveryMessage["role"].(string); role != "tool" {
+		t.Fatalf("recovery role = %q, want tool so provider request has a compatible tail", role)
+	}
+}
+
+func TestRunConversationStopsTodoWhenRecoveryIsIgnored(t *testing.T) {
+	arguments := `{"todos":"[{\"content\":\"inspect\",\"status\":\"in_progress\"}]"}`
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "todo-1", Function: FunctionCall{Name: "todo_write", Arguments: arguments}}}},
+		{ToolCalls: []ToolCall{{ID: "todo-2", Function: FunctionCall{Name: "todo_write", Arguments: arguments}}}},
+		{ToolCalls: []ToolCall{{ID: "todo-3", Function: FunctionCall{Name: "todo_write", Arguments: arguments}}}},
+		{Content: "已发现\n- 模型忽略纠偏\n\n未完成\n- 实质分析\n\n建议下一步\n- 回复“继续”"},
+	}}
+	store := tools.NewTodoStore()
+	todoCalls := 0
+	todo := tools.TodoWriteWithStore(store)
+	app := NewWithOptions(client, "", Options{
+		Context: ContextConfig{Enabled: false},
+		Functions: map[string]tools.Function{"todo_write": func(ctx context.Context, arguments map[string]any) (string, error) {
+			todoCalls++
+			return todo(ctx, arguments)
+		}},
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "todo_write"}}},
+	})
+
+	result, _, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "inspect"}}, 20)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if todoCalls != 3 {
+		t.Fatalf("todo calls = %d, want 3", todoCalls)
+	}
+	if !strings.Contains(result, "忽略纠偏") {
+		t.Fatalf("checkpoint result = %q", result)
+	}
+	checkpointPrompt, _ := client.messages[3][len(client.messages[3])-1]["content"].(string)
+	if !strings.Contains(checkpointPrompt, "must stop now") || !strings.Contains(checkpointPrompt, "todo") {
+		t.Fatalf("checkpoint prompt = %q", checkpointPrompt)
+	}
+}
+
+func TestRunConversationContinuesWhenRepeatedTodoBatchDoesSubstantiveWork(t *testing.T) {
+	arguments := `{"todos":"[{\"content\":\"inspect\",\"status\":\"in_progress\"}]"}`
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "todo-1", Function: FunctionCall{Name: "todo_write", Arguments: arguments}}}},
+		{ToolCalls: []ToolCall{{ID: "todo-2", Function: FunctionCall{Name: "todo_write", Arguments: arguments}}}},
+		{ToolCalls: []ToolCall{
+			{ID: "todo-3", Function: FunctionCall{Name: "todo_write", Arguments: arguments}},
+			{ID: "read-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"docs/TODO.md"}`}},
+		}},
+		{Content: "分析完成"},
+	}}
+	store := tools.NewTodoStore()
+	todo := tools.TodoWriteWithStore(store)
+	todoCalls := 0
+	readCalls := 0
+	app := NewWithOptions(client, "", Options{
+		Context: ContextConfig{Enabled: false},
+		Functions: map[string]tools.Function{
+			"todo_write": func(ctx context.Context, arguments map[string]any) (string, error) {
+				todoCalls++
+				return todo(ctx, arguments)
+			},
+			"read_file": func(context.Context, map[string]any) (string, error) {
+				readCalls++
+				return "TODO contents", nil
+			},
+		},
+		ToolDefinitions: []tools.Definition{
+			{Type: "function", Function: tools.FunctionDefinition{Name: "todo_write"}},
+			{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}},
+		},
+	})
+
+	result, _, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "inspect"}}, 20)
+	if err != nil {
+		t.Fatalf("RunConversationTurn returned error: %v", err)
+	}
+	if result != "分析完成" || todoCalls != 3 || readCalls != 1 {
+		t.Fatalf("result = %q, calls = todo:%d read:%d", result, todoCalls, readCalls)
+	}
+}
+
+func TestLoopGuardTodoProgressResetsAfterSubstantiveTool(t *testing.T) {
+	guard := newLoopGuard(StageConfig{})
+	todo := ToolCall{Function: FunctionCall{Name: "todo_write", Arguments: `{"todos":"[{\"content\":\"inspect\",\"status\":\"in_progress\",\"activeForm\":\"Inspecting\"}]"}`}}
+	if action := guard.observeTool(todo, "Todos:\n[~] inspect"); action != (loopGuardAction{}) {
+		t.Fatalf("first todo action = %#v", action)
+	}
+	read := ToolCall{Function: FunctionCall{Name: "read_file", Arguments: `{"path":"README.md"}`}}
+	if action := guard.observeTool(read, "contents"); action != (loopGuardAction{}) {
+		t.Fatalf("read action = %#v", action)
+	}
+	todo.Function.Arguments = `{"todos":"[{\"content\":\"inspect\",\"status\":\"in_progress\",\"activeForm\":\"Still inspecting\"}]"}`
+	if action := guard.observeTool(todo, "Todo list unchanged"); action != (loopGuardAction{}) {
+		t.Fatalf("todo after substantive tool action = %#v", action)
+	}
+}
+
+func TestLoopGuardAllowsConsecutiveTodoStatusProgress(t *testing.T) {
+	guard := newLoopGuard(StageConfig{})
+	todo := ToolCall{Function: FunctionCall{Name: "todo_write", Arguments: `{"todos":"[{\"content\":\"inspect\",\"status\":\"in_progress\"},{\"content\":\"report\",\"status\":\"pending\"}]"}`}}
+	if action := guard.observeTool(todo, "Todos:\n[~] inspect\n[ ] report"); action != (loopGuardAction{}) {
+		t.Fatalf("initial todo action = %#v", action)
+	}
+	todo.Function.Arguments = `{"todos":"[{\"content\":\"inspect\",\"status\":\"completed\"},{\"content\":\"report\",\"status\":\"in_progress\"}]"}`
+	if action := guard.observeTool(todo, "Todos:\n[x] inspect\n[~] report"); action != (loopGuardAction{}) {
+		t.Fatalf("progressed todo action = %#v", action)
+	}
+}
+
+func TestLoopGuardFailedToolDoesNotResetTodoProgress(t *testing.T) {
+	guard := newLoopGuard(StageConfig{})
+	todo := ToolCall{Function: FunctionCall{Name: "todo_write", Arguments: `{"todos":"[{\"content\":\"inspect\",\"status\":\"in_progress\",\"activeForm\":\"Inspecting\"}]"}`}}
+	if action := guard.observeTool(todo, "Todos:\n[~] inspect"); action != (loopGuardAction{}) {
+		t.Fatalf("first todo action = %#v", action)
+	}
+	read := ToolCall{Function: FunctionCall{Name: "read_file", Arguments: `{"path":"missing.md"}`}}
+	if action := guard.observeTool(read, "Error: missing"); action != (loopGuardAction{}) {
+		t.Fatalf("failed read action = %#v", action)
+	}
+	todo.Function.Arguments = `{"todos":"[{\"content\":\"inspect\",\"status\":\"in_progress\",\"activeForm\":\"Still inspecting\"}]"}`
+	if action := guard.observeTool(todo, "Todo list unchanged"); !strings.Contains(action.recoveryPrompt, "substantive tool") || action.checkpointReason != "" {
+		t.Fatalf("repeated todo action = %#v", action)
+	}
+}
+
+func TestLoopGuardEmptySearchDoesNotResetTodoProgress(t *testing.T) {
+	guard := newLoopGuard(StageConfig{})
+	todo := ToolCall{Function: FunctionCall{Name: "todo_write", Arguments: `{"todos":[{"content":"inspect","status":"in_progress","activeForm":"Inspecting"}]}`}}
+	if action := guard.observeTool(todo, "Todos:\n[~] inspect"); action != (loopGuardAction{}) {
+		t.Fatalf("first todo action = %#v", action)
+	}
+	glob := ToolCall{Function: FunctionCall{Name: "glob", Arguments: `{"pattern":"**/*.missing"}`}}
+	if action := guard.observeTool(glob, "No files matched."); action != (loopGuardAction{}) {
+		t.Fatalf("empty glob action = %#v", action)
+	}
+	todo.Function.Arguments = `{"todos":[{"content":"inspect","status":"in_progress","activeForm":"Still inspecting"}]}`
+	if action := guard.observeTool(todo, "Todo list unchanged"); !strings.Contains(action.recoveryPrompt, "previous search returned no matches") || action.checkpointReason != "" {
+		t.Fatalf("repeated todo action = %#v", action)
+	}
+}
+
+func TestLoopGuardRecoversRepeatedEmptySearchBeforeCheckpoint(t *testing.T) {
+	guard := newLoopGuard(StageConfig{})
+	glob := ToolCall{Function: FunctionCall{Name: "glob", Arguments: `{"pattern":"**/*.missing"}`}}
+	if action := guard.observeTool(glob, "No files matched."); action != (loopGuardAction{}) {
+		t.Fatalf("first empty glob action = %#v", action)
+	}
+	if action := guard.observeTool(glob, "No files matched."); !strings.Contains(action.recoveryPrompt, "different search arguments") || action.checkpointReason != "" {
+		t.Fatalf("second empty glob action = %#v", action)
+	}
+	if action := guard.observeTool(glob, "No files matched."); action.recoveryPrompt != "" || !strings.Contains(action.checkpointReason, "repeated empty search") {
+		t.Fatalf("third empty glob action = %#v", action)
+	}
+}
+
+func TestLoopGuardChangedEmptySearchGetsAnotherAttempt(t *testing.T) {
+	guard := newLoopGuard(StageConfig{})
+	glob := ToolCall{Function: FunctionCall{Name: "glob", Arguments: `{"pattern":"**/*.missing"}`}}
+	if action := guard.observeTool(glob, "No files matched."); action != (loopGuardAction{}) {
+		t.Fatalf("first empty glob action = %#v", action)
+	}
+	glob.Function.Arguments = `{"pattern":"docs/*.missing"}`
+	if action := guard.observeTool(glob, "No files matched."); action != (loopGuardAction{}) {
+		t.Fatalf("changed empty glob action = %#v", action)
+	}
+}
+
+func TestHasSpecialToolCallsTreatsTodoAsStateMutation(t *testing.T) {
+	app := &Agent{}
+	if !app.hasSpecialToolCalls([]ToolCall{{Function: FunctionCall{Name: "todo_write"}}}, false) {
+		t.Fatal("todo_write should run sequentially because it mutates shared todo state")
+	}
+}
+
 func TestRunConversationLoopProtectionStopsRepeatedFailures(t *testing.T) {
 	toolResponse := func(id string) AssistantMessage {
 		return AssistantMessage{ToolCalls: []ToolCall{{ID: id, Function: FunctionCall{Name: "read_file", Arguments: `{"path":"missing.go"}`}}}}
