@@ -800,17 +800,6 @@ func (model *Model) resizeInput() {
 func (model Model) contentWidth() int { return max(10, model.width-2) }
 
 func (model Model) startupLines() []string {
-	modelName := model.runtime.Model
-	if modelName == "" {
-		modelName = "未配置"
-	}
-	provider := model.runtime.Provider
-	if provider == "" {
-		provider = model.runtime.APIType
-	}
-	if provider == "" {
-		provider = "未配置"
-	}
 	mode := displayMode(model.runtime.Mode)
 	notice := "Run 模式可修改文件或运行命令，请留意工具摘要与工作区边界。"
 	if mode == "Ask" {
@@ -819,7 +808,7 @@ func (model Model) startupLines() []string {
 	return []string{
 		model.styles.accent.Render("bqAgent") + "  Harness",
 		model.styles.dim.Render(notice),
-		fmt.Sprintf("工作区  %s\n模型    %s/%s\n模式    %s", model.config.Workspace, provider, modelName, mode),
+		fmt.Sprintf("工作区  %s", model.config.Workspace),
 	}
 }
 

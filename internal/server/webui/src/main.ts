@@ -2,7 +2,7 @@ import "./styles.css";
 import { errorMessage, parseJSONEvent, responseJSON } from "./api";
 import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
 import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
-import { chatModeLabel as displayChatMode, chatModePlaceholder, normalizeChatMode } from "./chat-mode";
+import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 import { formatConversationTime } from "./conversations";
 import { byId, eventElement } from "./dom";
 import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
@@ -85,7 +85,6 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
   const attachmentMenu = byId<HTMLDivElement>("attachment-menu");
   const modeRunBtn = byId<HTMLButtonElement>("mode-run");
   const modeAskBtn = byId<HTMLButtonElement>("mode-ask");
-  const chatModeLabel = byId<HTMLElement>("chat-mode-label");
   const uploadFileBtn = byId<HTMLButtonElement>("upload-file");
   const fileInput = byId<HTMLInputElement>("file-input");
   const serverFilePath = byId<HTMLInputElement>("server-file-path");
@@ -1577,7 +1576,6 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
       button.classList.toggle("selected", selected);
       button.setAttribute("aria-checked", selected ? "true" : "false");
     });
-    chatModeLabel.textContent = displayChatMode(chatMode);
     input.placeholder = chatModePlaceholder(chatMode);
     addAttachmentBtn.title = chatMode === "ask" ? "Ask 模式与附件" : "Run 模式与附件";
     addAttachmentBtn.setAttribute("aria-label", chatMode === "ask" ? "Ask 模式：选择模式或添加文件" : "Run 模式：选择模式或添加文件");

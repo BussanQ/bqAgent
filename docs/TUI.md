@@ -5,7 +5,6 @@
 ```text
 bqAgent  Harness
 工作区  D:\Dev\my-project
-模型    openai/gpt-5
 
 ────────────────────────────────────────────────────────
 ▸ 请检查测试失败原因
@@ -17,10 +16,10 @@ bqAgent  Harness
 
 ────────────────────────────────────────────────────────
 ❯ 输入消息，/ 查看命令
-openai/gpt-5 · 20260827   Enter 发送 · Alt+Enter 换行 · / 命令
+openai/gpt-5 · Run · 20260827   Enter 发送 · Alt+Enter 换行 · / 命令
 ```
 
-实时 token 会先显示在底部活动区域，块结束后再用 Glamour 渲染 Markdown 并写入 scrollback。状态栏显示 Provider、模型、短 Session ID、当前阶段、耗时和实时 token 估算；完成后显示首 token 延迟、token 数及 TPS。工具调用按 Tool ID 合并开始/完成事件，显示序号、关键参数、状态和耗时；前 5 次逐项展示，从第 6 次开始自动合并为成功/失败/运行中汇总，点击汇总行或按 `Ctrl+T` 可展开/收起详情。失败预览限制为 2 KiB/8 行，`todo_write` 会显示任务进度。
+实时 token 会先显示在底部活动区域，块结束后再用 Glamour 渲染 Markdown 并写入 scrollback。状态栏动态显示 Provider、模型、当前模式、短 Session ID、当前阶段、耗时和实时 token 估算；完成后显示首 token 延迟、token 数及 TPS。工具调用按 Tool ID 合并开始/完成事件，显示序号、关键参数、状态和耗时；前 5 次逐项展示，从第 6 次开始自动合并为成功/失败/运行中汇总，点击汇总行或按 `Ctrl+T` 可展开/收起详情。失败预览限制为 2 KiB/8 行，`todo_write` 会显示任务进度。
 
 ## 输入与快捷键
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chatModeLabel, chatModePlaceholder, normalizeChatMode } from "./chat-mode";
+import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 
 describe("chat mode", () => {
   it("defaults unknown and legacy agent values to run and accepts ask case-insensitively", () => {
@@ -12,10 +12,5 @@ describe("chat mode", () => {
   it("describes the read-only boundary in ask mode", () => {
     expect(chatModePlaceholder("ask")).toContain("只读问答");
     expect(chatModePlaceholder("run")).toContain("完整工具能力");
-  });
-
-  it("provides an explicit current-mode label", () => {
-    expect(chatModeLabel("run")).toBe("Run");
-    expect(chatModeLabel("ask")).toBe("Ask");
   });
 });

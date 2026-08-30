@@ -146,6 +146,24 @@ func TestWebUIEmbeddedAssetContract(t *testing.T) {
 	}
 }
 
+func TestWebUIAttachmentTriggerShowsOnlyPlusIcon(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("webui", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pattern := regexp.MustCompile(`(?s)<button[^>]+id="add-attachment"[^>]*>(.*?)</button>`)
+	match := pattern.FindSubmatch(page)
+	if len(match) != 2 {
+		t.Fatal("add attachment trigger not found")
+	}
+	if !bytes.Contains(match[1], []byte(`href="#icon-plus"`)) {
+		t.Fatalf("attachment trigger does not contain plus icon: %s", match[1])
+	}
+	if bytes.Contains(match[1], []byte("<span")) || bytes.Contains(page, []byte(`id="chat-mode-label"`)) {
+		t.Fatalf("attachment trigger still displays a mode label: %s", match[1])
+	}
+}
+
 func TestWebUIServesFavicon(t *testing.T) {
 	root := t.TempDir()
 	service := newTestService(root, "http://example.invalid")
