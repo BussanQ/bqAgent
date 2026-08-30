@@ -1,6 +1,6 @@
 import "./styles.css";
 import { errorMessage, parseJSONEvent, responseJSON } from "./api";
-import { ATTACHMENT_LIMITS, showTemporaryError, validateFileAttachment, validateImageAttachment } from "./attachments";
+import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
 import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { formatConversationTime } from "./conversations";
 import { byId, eventElement } from "./dom";
@@ -14,12 +14,11 @@ import { SSEBuffer } from "./stream";
 import { initialTheme } from "./theme";
 import { shouldGroupToolCalls } from "./tool-groups";
 import { loadWorkspaceSessions, migrateLegacySession, persistWorkspaceSession, workspaceURL } from "./workspace";
+import type { SentFile, SentImage } from "./attachments";
 import type { ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, GenerationMetrics, PendingFile, PendingImage, ProviderModelsResponse, ProviderSelectionResponse, ProviderSettings, ReasoningEffort, StatusResponse, ToolEventPayload, WorkspaceCurrentPreview, WorkspaceDirectoryPage, WorkspaceDirectoryResponse, WorkspaceDirectoryState, WorkspaceEntry, WorkspaceInfo, WorkspaceListResponse, WorkspacePreview, WorkspaceRoot, WorkspacesResponse, WebUIDoneEvent } from "./types";
 
 (function () {
   "use strict";
-  interface SentImage { mime_type: string; data_base64: string }
-  interface SentFile { name?: string; path?: string; data_base64?: string }
   interface ToolCard {
     root: HTMLDivElement;
     status: HTMLSpanElement;
@@ -1863,13 +1862,11 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
       return;
     }
     var text = input.value.trim();
-    var sentImages = pendingImages.filter(function (image) { return !image.loading && image.dataBase64; }).map(function (image) {
-      return { mime_type: image.mimeType, data_base64: image.dataBase64 };
-    });
-    var sentFiles = pendingFiles.filter(function (file) { return !file.loading; }).map(function (file) {
-      return file.kind === "path" ? { path: file.path } : { name: file.name, data_base64: file.dataBase64 };
-    });
+    var sentAttachments = takePendingAttachmentsForSend(pendingImages, pendingFiles);
+    var sentImages = sentAttachments.images;
+    var sentFiles = sentAttachments.files;
     if (!text && !sentImages.length && !sentFiles.length) {
+      renderPendingAttachments();
       preparingSend = false;
       return;
     }
@@ -1881,6 +1878,8 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
     renderUserMessage(addMessage("user"), text, sentImages, sentFiles);
     input.value = "";
     autoGrow();
+    renderPendingAttachments();
+    clearAttachmentError();
 
     var bubble = addMessage("assistant");
     var toolCards = {};
@@ -1938,7 +1937,6 @@ import type { ConversationHistory, ConversationMessage, ConversationSummary, Con
               runtimeModelLoadID++;
               updateRuntimeModel(done.api_type, done.model, providerSettingsState.active_provider);
             }
-            clearPendingAttachments();
             refreshConversations(false);
             bubble.classList.add("rendered");
             var finalReply = typeof done.reply === "string" ? done.reply : "";
