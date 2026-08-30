@@ -22,8 +22,6 @@ The difference now is that the loop can be wrapped with extra capabilities inspi
 
 - workspace-rooted system prompt assembly
 - primary `.agent/` workspace layout with `AGENT.md`, `SOUL.md`, `TOOLS.md`, and `USER.md`
-- compatibility with legacy `workspace/AGENT.md`, `SOUL.md`, `TOOLS.md`, and `USER.md`
-- compatibility with legacy `workspace/memory/MEMORY.md` and `workspace/memory/YYYY-MM-DD.md`
 - continued support for `.agent/rules/*.md` and `.agent/skills/*/SKILL.md`
 - optional planning with `--plan`
 - inline, always-streaming terminal TUI by default (also available with `--chat`); see the [TUI guide](./docs/TUI.md)
@@ -36,7 +34,7 @@ The difference now is that the loop can be wrapped with extra capabilities inspi
 
 ## Install
 
-Install Go 1.22+, Node.js 24+, and npm 11+, then build through the Makefile:
+Install Go 1.24+, Node.js 24+, and npm 11+, then build through the Makefile:
 
 ```bash
 make build
