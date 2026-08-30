@@ -209,21 +209,21 @@
     <section class="workspace-picker" role="dialog" aria-modal="true" aria-labelledby="workspace-picker-title">
       <div class="workspace-picker-header">
         <strong id="workspace-picker-title">选择服务端工作区</strong>
-        <button class="workspace-tool" id="workspace-picker-close" type="button" aria-label="关闭工作区选择器">
+        <button class="ui-btn ui-btn-ghost ui-btn-icon" id="workspace-picker-close" type="button" aria-label="关闭工作区选择器">
           <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-x"></use></svg>
         </button>
       </div>
       <div class="workspace-picker-body">
         <select class="workspace-picker-root" id="workspace-picker-root" aria-label="允许访问的根目录"></select>
         <div class="workspace-picker-path">
-          <button class="workspace-tool" id="workspace-picker-up" type="button" title="上级目录" aria-label="上级目录"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-arrow-up"></use></svg></button>
+          <button class="ui-btn ui-btn-outline ui-btn-icon" id="workspace-picker-up" type="button" title="上级目录" aria-label="上级目录"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-arrow-up"></use></svg></button>
           <code id="workspace-picker-path"></code>
         </div>
         <div class="workspace-picker-list" id="workspace-picker-list" role="listbox" aria-label="目录列表"></div>
       </div>
       <div class="workspace-picker-footer">
-        <button type="button" id="workspace-picker-cancel">取消</button>
-        <button class="workspace-picker-select button-with-icon" type="button" id="workspace-picker-confirm"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-check"></use></svg><span>选择当前目录</span></button>
+        <button class="ui-btn ui-btn-outline" type="button" id="workspace-picker-cancel">取消</button>
+        <button class="ui-btn ui-btn-primary" type="button" id="workspace-picker-confirm"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-check"></use></svg><span>选择当前目录</span></button>
       </div>
     </section>
   </div>

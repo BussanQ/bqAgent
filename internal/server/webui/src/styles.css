@@ -834,7 +834,6 @@
   }
   .workspace-picker-row:hover { transform: none; border-color: var(--line); background: var(--surface-hover); box-shadow: none; }
   .workspace-picker-state { padding: 24px 12px; color: var(--text-muted); text-align: center; }
-  .workspace-picker-select { color: var(--bg); background: var(--signal); }
   .provider-settings {
     width: min(920px, 100%);
     height: min(720px, calc(100vh - 40px));
