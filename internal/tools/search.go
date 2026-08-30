@@ -16,6 +16,7 @@ const (
 	defaultGrepMaxResults = 200
 	defaultGlobMaxResults = 1000
 	grepMaxFileBytes      = 5 << 20 // skip files larger than 5 MiB
+	maxGlobAlternatives   = 64
 )
 
 func Grep(ctx context.Context, args map[string]any) (string, error) {
@@ -106,7 +107,8 @@ func Glob(ctx context.Context, args map[string]any) (string, error) {
 }
 
 // GlobInRoot returns file paths matching a glob pattern (supports ** for any
-// depth), most-recently-modified first, skipping .git and capping results.
+// depth and brace alternatives such as *.{go,md}), most-recently-modified first,
+// skipping .git and capping results.
 func GlobInRoot(root string) Function {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		pattern, err := requireString(args, "pattern")
@@ -234,10 +236,46 @@ func displayPath(root, absPath string) string {
 }
 
 // matchDoubleStar matches a slash-separated glob pattern against a slash-separated
-// path, where ** matches zero or more path segments and other segments use
-// filepath.Match semantics.
+// path, where ** matches zero or more path segments, {a,b} expands alternatives,
+// and other segments use filepath.Match semantics.
 func matchDoubleStar(pattern, name string) bool {
-	return matchSegments(strings.Split(pattern, "/"), strings.Split(name, "/"))
+	for _, alternative := range expandGlobAlternatives(pattern, maxGlobAlternatives) {
+		if matchSegments(strings.Split(alternative, "/"), strings.Split(name, "/")) {
+			return true
+		}
+	}
+	return false
+}
+
+func expandGlobAlternatives(pattern string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	open := strings.IndexByte(pattern, '{')
+	if open < 0 {
+		return []string{pattern}
+	}
+	closeOffset := strings.IndexByte(pattern[open+1:], '}')
+	if closeOffset < 0 {
+		return []string{pattern}
+	}
+	closeIndex := open + 1 + closeOffset
+	choices := strings.Split(pattern[open+1:closeIndex], ",")
+	if len(choices) < 2 {
+		return []string{pattern}
+	}
+
+	results := make([]string, 0, len(choices))
+	for _, choice := range choices {
+		expanded := pattern[:open] + choice + pattern[closeIndex+1:]
+		for _, alternative := range expandGlobAlternatives(expanded, limit-len(results)) {
+			results = append(results, alternative)
+			if len(results) >= limit {
+				return results
+			}
+		}
+	}
+	return results
 }
 
 func matchSegments(pattern, name []string) bool {

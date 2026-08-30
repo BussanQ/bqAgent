@@ -15,12 +15,12 @@ It is guidance only — the tools exposed in the current request are the source 
 
 ## Search
 
-- **glob**: Find workspace files by relative glob pattern. Provide `pattern`; use optional `path` to narrow the base directory.
+- **glob**: Find workspace files by relative glob pattern. Supports `**` and brace alternatives such as `**/*.{go,md}`. Provide `pattern`; use optional `path` to narrow the base directory. If nothing matches, change the pattern or use another exploration tool instead of repeating the same call.
 - **grep**: Search workspace file contents with a Go regular expression. Provide `pattern`; optional arguments include `path`, `glob`, `ignore_case`, and `max_results`.
 
 ## Task Management
 
-- **todo_write**: Create or update the current task list. Provide `todos` as a JSON array string containing `content`, `status`, and `activeForm`; keep at most one item `in_progress`.
+- **todo_write**: Create or update the current task list. This records a plan but does not perform the task. Provide `todos` as a JSON array string containing `content`, `status`, and `activeForm`; keep at most one item `in_progress`. After updating it, immediately use another tool to do substantive work. Do not call `todo_write` again until task content or status changes.
 - **plan**: When this tool is exposed, break a complex task into sequential steps. Provide `task`.
 
 ## Web

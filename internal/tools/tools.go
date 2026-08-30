@@ -283,11 +283,11 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "glob",
-				Description: "Find workspace files by a relative glob pattern (supports **, e.g. **/*.go). Returns workspace-relative paths; reuse those paths in file tools.",
+				Description: "Find workspace files by a relative glob pattern (supports ** and brace alternatives, e.g. **/*.{go,md}). Returns workspace-relative paths; reuse those paths in file tools. If no files match, change the pattern or use another exploration tool instead of repeating the same call.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
-						"pattern": {Type: "string", Description: "Glob pattern, e.g. **/*.go"},
+						"pattern": {Type: "string", Description: "Glob pattern, e.g. **/*.go or **/*.{go,md}"},
 						"path":    {Type: "string", Description: "Optional base directory (defaults to the workspace root)"},
 					},
 					Required: []string{"pattern"},
@@ -298,7 +298,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "todo_write",
-				Description: "Create or update the task list for the current work. Pass todos as a JSON array string of {content, status, activeForm}, status in pending|in_progress|completed. Keep one item in_progress at a time.",
+				Description: "Create or update the task list for the current work. This records a plan but does not perform any task. Pass todos as a JSON array string of {content, status, activeForm}, status in pending|in_progress|completed. Keep one item in_progress at a time. After updating, immediately use another tool for substantive work; do not call todo_write again until task content or status changes.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
