@@ -298,7 +298,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "todo_write",
-				Description: "Create or update the task list for the current work. This records a plan but does not perform any task. Pass todos as a JSON array string of {content, status, activeForm}, status in pending|in_progress|completed. Keep one item in_progress at a time. After updating, immediately use another tool for substantive work; do not call todo_write again until task content or status changes.",
+				Description: "Optional checklist for genuinely long, multi-step work. It is not part of the standard workflow: for ordinary tasks, do not call todo_write and start substantive work directly. Use it only when you independently decide persistent progress tracking is useful; never call it merely to restate the request, announce a plan, or before routine code analysis. Pass todos as a JSON array string of {content, status, activeForm}, status in pending|in_progress|completed, with at most one item in_progress. After using it, immediately continue with another substantive tool and do not call it again until task content or status changes.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{

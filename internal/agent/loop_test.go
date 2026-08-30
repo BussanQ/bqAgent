@@ -670,6 +670,21 @@ func TestHasSpecialToolCallsTreatsTodoAsStateMutation(t *testing.T) {
 	}
 }
 
+func TestToolDefinitionsForRunPlacesOptionalTodoLast(t *testing.T) {
+	app := &Agent{toolDefinitions: []tools.Definition{
+		{Type: "function", Function: tools.FunctionDefinition{Name: "todo_write"}},
+		{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}},
+		{Type: "function", Function: tools.FunctionDefinition{Name: "grep"}},
+	}}
+	definitions := app.toolDefinitionsForRun(false)
+	if len(definitions) != 3 {
+		t.Fatalf("definitions = %d, want 3", len(definitions))
+	}
+	if definitions[0].Function.Name != "read_file" || definitions[1].Function.Name != "grep" || definitions[2].Function.Name != "todo_write" {
+		t.Fatalf("tool order = %q, %q, %q", definitions[0].Function.Name, definitions[1].Function.Name, definitions[2].Function.Name)
+	}
+}
+
 func TestRunConversationLoopProtectionStopsRepeatedFailures(t *testing.T) {
 	toolResponse := func(id string) AssistantMessage {
 		return AssistantMessage{ToolCalls: []ToolCall{{ID: id, Function: FunctionCall{Name: "read_file", Arguments: `{"path":"missing.go"}`}}}}

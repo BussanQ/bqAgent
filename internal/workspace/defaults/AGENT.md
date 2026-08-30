@@ -18,6 +18,7 @@
 ## Tool Usage
 - Always read a file before editing it
 - Use plan mode (--plan) for complex multi-step tasks
+- Start substantive work directly in the standard workflow. `todo_write` is optional; use it only when a genuinely long, multi-step task benefits from persistent progress tracking, never as a prerequisite or merely to restate the request.
 - Keep shell commands safe and reversible — avoid destructive operations without confirmation
 - Prefer edit over write for existing files to minimize diff surface
 - Use glob/grep to understand the codebase before making changes
