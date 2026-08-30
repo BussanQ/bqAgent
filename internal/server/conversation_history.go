@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"os"
 	"strings"
@@ -24,6 +25,12 @@ type conversationMessage struct {
 	Role    string              `json:"role"`
 	Content string              `json:"content"`
 	Tools   []agent.HistoryTool `json:"tools,omitempty"`
+	Files   []conversationFile  `json:"files,omitempty"`
+}
+
+type conversationFile struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
 }
 
 // ConversationHistoryMessage is the provider-neutral text representation used by
@@ -108,9 +115,93 @@ func (handler *handler) handleConversationHistory(writer http.ResponseWriter, re
 	}
 	webMessages := make([]conversationMessage, 0, len(history.Messages))
 	for _, message := range history.Messages {
-		webMessages = append(webMessages, conversationMessage(message))
+		content := message.Content
+		var files []conversationFile
+		if message.Role == "user" {
+			content, files = splitHistoryAttachments(content)
+		}
+		webMessages = append(webMessages, conversationMessage{
+			Role:    message.Role,
+			Content: content,
+			Tools:   message.Tools,
+			Files:   files,
+		})
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"id": history.ID, "title": history.Title, "messages": webMessages})
+}
+
+func splitHistoryAttachments(content string) (string, []conversationFile) {
+	const opening = "\n\n<attachment name=\""
+	const imagePlaceholder = "\n[图片]"
+	attachmentContent := content
+	hasImagePlaceholder := strings.HasSuffix(attachmentContent, imagePlaceholder)
+	if hasImagePlaceholder {
+		attachmentContent = strings.TrimSuffix(attachmentContent, imagePlaceholder)
+	}
+	for searchAt := 0; searchAt < len(attachmentContent); {
+		relativeStart := strings.Index(attachmentContent[searchAt:], opening)
+		if relativeStart < 0 {
+			break
+		}
+		start := searchAt + relativeStart
+		files, ok := parseHistoryAttachmentTail(attachmentContent[start:])
+		if ok {
+			text := strings.TrimSpace(attachmentContent[:start])
+			if hasImagePlaceholder {
+				if text != "" {
+					text += "\n"
+				}
+				text += "[图片]"
+			}
+			return text, files
+		}
+		searchAt = start + len(opening)
+	}
+	return content, nil
+}
+
+func parseHistoryAttachmentTail(tail string) ([]conversationFile, bool) {
+	const opening = "\n\n<attachment name=\""
+	const pathSeparator = "\" path=\""
+	const closing = "\n</attachment>"
+	files := make([]conversationFile, 0, 1)
+	for tail != "" {
+		if !strings.HasPrefix(tail, opening) {
+			return nil, false
+		}
+		headerEnd := strings.IndexByte(tail[len(opening):], '\n')
+		if headerEnd < 0 {
+			return nil, false
+		}
+		headerEnd += len(opening)
+		header := tail[len(opening):headerEnd]
+		separatorAt := strings.Index(header, pathSeparator)
+		if separatorAt < 0 || !strings.HasSuffix(header, "\">") {
+			return nil, false
+		}
+		name := html.UnescapeString(header[:separatorAt])
+		path := html.UnescapeString(header[separatorAt+len(pathSeparator) : len(header)-2])
+		if name == "" || path == "" {
+			return nil, false
+		}
+
+		next := strings.Index(tail[headerEnd+1:], opening)
+		if next >= 0 {
+			next += headerEnd + 1
+			if !strings.HasSuffix(tail[:next], closing) {
+				return nil, false
+			}
+			files = append(files, conversationFile{Name: name, Path: path})
+			tail = tail[next:]
+			continue
+		}
+		if !strings.HasSuffix(tail, closing) {
+			return nil, false
+		}
+		files = append(files, conversationFile{Name: name, Path: path})
+		return files, true
+	}
+	return nil, false
 }
 
 // ConversationHistory returns recent user and assistant text. When maxBytes is

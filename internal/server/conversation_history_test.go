@@ -156,3 +156,28 @@ func TestConversationHistoryBudgetTruncatesToolResults(t *testing.T) {
 		t.Fatalf("tool result = %#v", tool)
 	}
 }
+
+func TestSplitHistoryAttachments(t *testing.T) {
+	content := "查看\n\n" +
+		`<attachment name="TODO.md" path="docs/TODO.md">` + "\n# TODO\n</attachment>\n\n" +
+		`<attachment name="A&amp;B.txt" path="docs/A&amp;B.txt">` + "\n第二个文件\n</attachment>"
+
+	text, files := splitHistoryAttachments(content)
+
+	if text != "查看" {
+		t.Fatalf("text = %q, want 查看", text)
+	}
+	if len(files) != 2 || files[0].Name != "TODO.md" || files[0].Path != "docs/TODO.md" || files[1].Name != "A&B.txt" || files[1].Path != "docs/A&B.txt" {
+		t.Fatalf("files = %#v", files)
+	}
+	text, files = splitHistoryAttachments(content + "\n[图片]")
+	if text != "查看\n[图片]" || len(files) != 2 {
+		t.Fatalf("image and file history = text %q, files %#v", text, files)
+	}
+
+	malformed := "保留原文\n\n<attachment name=\"bad\">\ncontent"
+	text, files = splitHistoryAttachments(malformed)
+	if text != malformed || len(files) != 0 {
+		t.Fatalf("malformed attachment changed: text = %q, files = %#v", text, files)
+	}
+}
