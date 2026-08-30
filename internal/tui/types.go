@@ -80,6 +80,7 @@ type History struct {
 type HistoryMessage struct {
 	Role    string
 	Content string
+	Tools   []ToolEvent
 }
 
 type Command struct {

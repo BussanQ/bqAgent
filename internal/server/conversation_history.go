@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"bqagent/internal/agent"
 	"bqagent/internal/session"
 )
 
@@ -19,15 +21,18 @@ type conversationListItem struct {
 }
 
 type conversationMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string              `json:"role"`
+	Content string              `json:"content"`
+	Tools   []agent.HistoryTool `json:"tools,omitempty"`
 }
 
 // ConversationHistoryMessage is the provider-neutral text representation used by
-// terminal and web clients. Tool and system messages are intentionally omitted.
+// terminal and web clients. Raw tool and system messages are omitted; compact
+// tool summaries are returned as structured Tools.
 type ConversationHistoryMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string              `json:"role"`
+	Content string              `json:"content"`
+	Tools   []agent.HistoryTool `json:"tools,omitempty"`
 }
 
 // ConversationHistory is a read-only view of a persisted chat session.
@@ -110,8 +115,9 @@ func (handler *handler) handleConversationHistory(writer http.ResponseWriter, re
 
 // ConversationHistory returns recent user and assistant text. When maxBytes is
 // positive, complete messages are selected from newest to oldest until the
-// budget is exhausted. A single oversized newest message is truncated only in
-// this returned view; the persisted session is never modified.
+// budget is exhausted. Message size includes structured tool fields. A single
+// oversized newest message is truncated (arguments/results first, then text)
+// only in this returned view; the persisted session is never modified.
 func (service *Service) ConversationHistory(id string, maxBytes int) (ConversationHistory, error) {
 	canonicalID, err := session.CanonicalID(id)
 	if err != nil {
@@ -131,6 +137,14 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 	for _, message := range messages {
 		role, _ := message["role"].(string)
 		content := conversationMessageText(message["content"])
+		if role == "assistant" {
+			if note, tools, ok := agent.ParseCompletedToolActivity(content); ok {
+				if strings.TrimSpace(note) != "" || len(tools) > 0 {
+					filtered = append(filtered, ConversationHistoryMessage{Role: role, Content: note, Tools: tools})
+				}
+				continue
+			}
+		}
 		if (role == "user" || role == "assistant") && strings.TrimSpace(content) != "" {
 			filtered = append(filtered, ConversationHistoryMessage{Role: role, Content: content})
 		}
@@ -143,11 +157,10 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 	used := 0
 	for index := len(filtered) - 1; index >= 0; index-- {
 		message := filtered[index]
-		size := len(message.Role) + len(message.Content)
+		size := historyMessageBytes(message)
 		if used+size > maxBytes {
 			if len(selected) == 0 {
-				message.Content = truncateHistoryText(message.Content, maxBytes-len(message.Role))
-				selected = append(selected, message)
+				selected = append(selected, truncateHistoryMessage(message, maxBytes))
 				result.Omitted = index
 			} else {
 				result.Omitted = index + 1
@@ -167,9 +180,81 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 func historyBytes(messages []ConversationHistoryMessage) int {
 	total := 0
 	for _, message := range messages {
-		total += len(message.Role) + len(message.Content)
+		total += historyMessageBytes(message)
 	}
 	return total
+}
+
+func historyMessageBytes(message ConversationHistoryMessage) int {
+	total := len(message.Role) + len(message.Content)
+	for _, tool := range message.Tools {
+		total += historyToolBytes(tool)
+	}
+	return total
+}
+
+func historyToolBytes(tool agent.HistoryTool) int {
+	return len(tool.ID) + len(tool.Name) + len(tool.Status) + len(tool.Result) + historyValueBytes(tool.Arguments)
+}
+
+func historyValueBytes(value any) int {
+	if value == nil {
+		return 0
+	}
+	if object, ok := value.(map[string]any); ok && len(object) == 0 {
+		return 0
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return 0
+	}
+	return len(encoded)
+}
+
+func truncateHistoryMessage(message ConversationHistoryMessage, budget int) ConversationHistoryMessage {
+	if budget <= 0 {
+		return ConversationHistoryMessage{Role: message.Role}
+	}
+	if historyMessageBytes(message) <= budget {
+		return message
+	}
+	message.Tools = cloneHistoryTools(message.Tools)
+	for index := range message.Tools {
+		if len(message.Tools[index].Arguments) == 0 {
+			continue
+		}
+		message.Tools[index].Arguments = nil
+		message.Tools[index].Truncated = true
+		if historyMessageBytes(message) <= budget {
+			return message
+		}
+	}
+	for index := len(message.Tools) - 1; index >= 0 && historyMessageBytes(message) > budget; index-- {
+		over := historyMessageBytes(message) - budget
+		message.Tools[index].Result = truncateHistoryText(message.Tools[index].Result, max(0, len(message.Tools[index].Result)-over))
+		message.Tools[index].Truncated = true
+	}
+	for len(message.Tools) > 0 && historyMessageBytes(message) > budget {
+		if len(message.Tools) == 1 {
+			message.Tools = nil
+			break
+		}
+		message.Tools = message.Tools[1:]
+	}
+	if historyMessageBytes(message) <= budget {
+		return message
+	}
+	message.Content = truncateHistoryText(message.Content, max(0, budget-len(message.Role)))
+	return message
+}
+
+func cloneHistoryTools(tools []agent.HistoryTool) []agent.HistoryTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	cloned := make([]agent.HistoryTool, len(tools))
+	copy(cloned, tools)
+	return cloned
 }
 
 func truncateHistoryText(value string, budget int) string {

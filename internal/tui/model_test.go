@@ -240,6 +240,15 @@ func TestTurnPresentationUsesSeparatorsWithoutRepeatedBrand(t *testing.T) {
 	if !strings.Contains(restored, separator+"\n▸ 历史问题") || strings.Contains(restored, "bqAgent") {
 		t.Fatalf("restored history = %q", restored)
 	}
+
+	tools := model.renderHistory(History{ID: "session-2", Messages: []HistoryMessage{
+		{Role: "user", Content: "写入全局记忆"},
+		{Role: "assistant", Tools: []ToolEvent{{ID: "call-1", Name: "memory", Status: "succeeded", Preview: `{"target":"global"}`}}},
+	}})
+	restoredTools := strings.Join(tools, "\n")
+	if strings.Contains(restoredTools, "Completed tool activity") || !strings.Contains(restoredTools, "工具活动") || !strings.Contains(restoredTools, "memory") {
+		t.Fatalf("restored tool history = %q", restoredTools)
+	}
 }
 
 func TestUserMessageTriangleStyle(t *testing.T) {

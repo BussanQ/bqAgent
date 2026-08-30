@@ -1,7 +1,7 @@
 import "./styles.css";
 import { errorMessage, parseJSONEvent, responseJSON } from "./api";
 import { ATTACHMENT_LIMITS, showTemporaryError, validateFileAttachment, validateImageAttachment } from "./attachments";
-import { complexTaskNotice } from "./chat-rendering";
+import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { formatConversationTime } from "./conversations";
 import { byId, eventElement } from "./dom";
 import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
@@ -14,7 +14,7 @@ import { SSEBuffer } from "./stream";
 import { initialTheme } from "./theme";
 import { shouldGroupToolCalls } from "./tool-groups";
 import { loadWorkspaceSessions, migrateLegacySession, persistWorkspaceSession, workspaceURL } from "./workspace";
-import type { ConversationHistory, ConversationSummary, ConversationsResponse, GenerationMetrics, PendingFile, PendingImage, ProviderModelsResponse, ProviderSelectionResponse, ProviderSettings, ReasoningEffort, StatusResponse, ToolEventPayload, WorkspaceCurrentPreview, WorkspaceDirectoryPage, WorkspaceDirectoryResponse, WorkspaceDirectoryState, WorkspaceEntry, WorkspaceInfo, WorkspaceListResponse, WorkspacePreview, WorkspaceRoot, WorkspacesResponse, WebUIDoneEvent } from "./types";
+import type { ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, GenerationMetrics, PendingFile, PendingImage, ProviderModelsResponse, ProviderSelectionResponse, ProviderSettings, ReasoningEffort, StatusResponse, ToolEventPayload, WorkspaceCurrentPreview, WorkspaceDirectoryPage, WorkspaceDirectoryResponse, WorkspaceDirectoryState, WorkspaceEntry, WorkspaceInfo, WorkspaceListResponse, WorkspacePreview, WorkspaceRoot, WorkspacesResponse, WebUIDoneEvent } from "./types";
 
 (function () {
   "use strict";
@@ -537,11 +537,10 @@ import type { ConversationHistory, ConversationSummary, ConversationsResponse, G
       if (loadID !== conversationLoadID) return;
       setCurrentWorkspaceSession(payload.id || id);
       thread.innerHTML = "";
-      (payload.messages || []).forEach(function (message) {
+      normalizeHistoryMessages(payload.messages || []).forEach(function (message) {
         var bubble = addMessage(message.role);
         if (message.role === "assistant") {
-          bubble.innerHTML = renderMarkdown(message.content);
-          bubble.classList.add("rendered");
+          renderRestoredAssistant(bubble, message);
         } else {
           renderUserMessage(bubble, message.content, [], []);
         }
@@ -1607,6 +1606,37 @@ import type { ConversationHistory, ConversationSummary, ConversationsResponse, G
       '<button class="prompt" type="button">' + iconMarkup("list-todo") + '<strong>制定计划</strong><span>把这个想法拆成执行步骤</span></button>' +
       '<button class="prompt" type="button">' + iconMarkup("code-xml") + '<strong>审查代码</strong><span>检查一段代码里的风险</span></button>' +
       '</div></div>';
+  }
+
+  function renderRestoredAssistant(bubble: HTMLDivElement, message: ConversationMessage): void {
+    var view = historyAssistantView(message);
+    if (view.tools.length) {
+      var cards: ToolCards = {};
+      view.tools.forEach(function (tool, index) {
+        var payload: ToolEventPayload = {
+          id: tool.id || ("history-tool-" + (index + 1)),
+          name: tool.name,
+          arguments: tool.arguments,
+          status: tool.status,
+          preview: tool.preview,
+          truncated: tool.truncated,
+        };
+        updateToolTimeline(bubble, cards, "tool_call", payload);
+        updateToolTimeline(bubble, cards, "tool_result", payload);
+      });
+    }
+    if (view.content) {
+      renderReply(bubble, view.content);
+      bubble.classList.add("rendered");
+      return;
+    }
+    if (view.tools.length) {
+      bubble.hidden = true;
+      bubble.classList.add("is-empty");
+      return;
+    }
+    bubble.innerHTML = renderMarkdown(message.content || "");
+    bubble.classList.add("rendered");
   }
 
   function renderReply(bubble: HTMLDivElement, reply: string): void {
