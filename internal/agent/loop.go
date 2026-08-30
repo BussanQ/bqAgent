@@ -1659,11 +1659,22 @@ func requireStringArgument(toolName string, args map[string]any, key string) (st
 
 func (a *Agent) toolDefinitionsForRun(allowPlan bool) []tools.Definition {
 	filtered := make([]tools.Definition, 0, len(a.toolDefinitions))
+	var optionalTodo *tools.Definition
 	for _, definition := range a.toolDefinitions {
 		if definition.Function.Name == "plan" && (!allowPlan || a.planner == nil) {
 			continue
 		}
+		if definition.Function.Name == "todo_write" {
+			copy := definition
+			optionalTodo = &copy
+			continue
+		}
 		filtered = append(filtered, definition)
+	}
+	// todo_write remains available, but placing the optional planning aid last
+	// keeps standard execution and exploration tools prominent for the model.
+	if optionalTodo != nil {
+		filtered = append(filtered, *optionalTodo)
 	}
 	return filtered
 }
