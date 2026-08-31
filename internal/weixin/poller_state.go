@@ -1,10 +1,13 @@
 package weixin
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"time"
+
+	"bqagent/internal/atomicfile"
 )
 
 type PollerState struct {
@@ -29,6 +32,9 @@ func (store *PollerStateStore) Load() (PollerState, error) {
 	if err != nil {
 		return PollerState{}, err
 	}
+	if len(bytes.TrimSpace(content)) == 0 {
+		return PollerState{}, nil
+	}
 	var state PollerState
 	if err := json.Unmarshal(content, &state); err != nil {
 		return PollerState{}, err
@@ -38,13 +44,10 @@ func (store *PollerStateStore) Load() (PollerState, error) {
 
 func (store *PollerStateStore) Save(state PollerState) error {
 	state.UpdatedAt = time.Now().UTC()
-	if err := os.MkdirAll(filepath.Dir(store.path), 0o755); err != nil {
-		return err
-	}
 	content, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
 	content = append(content, '\n')
-	return os.WriteFile(store.path, content, 0o644)
+	return atomicfile.Write(store.path, content, 0o644)
 }
