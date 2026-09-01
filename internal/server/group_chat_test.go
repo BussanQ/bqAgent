@@ -199,7 +199,7 @@ func TestGroupChatWithoutMentionIsHandledDirectlyByBqagent(t *testing.T) {
 	}
 }
 
-func TestWebUIAddsAvailableParticipantToExistingGroup(t *testing.T) {
+func TestWebUIMutatesParticipantsInExistingGroup(t *testing.T) {
 	root := t.TempDir()
 	log := &groupACPLog{prompts: map[string][]string{}}
 	broker := newGroupTestBroker(root, log, extagent.AgentCodex, extagent.AgentOpenCode)
@@ -253,6 +253,36 @@ func TestWebUIAddsAvailableParticipantToExistingGroup(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("unavailable participant status = %d", response.StatusCode)
+	}
+
+	deleteRequest, err := http.NewRequest(http.MethodDelete, server.URL+"/api/v1/webui/group/participants", strings.NewReader(requestBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteRequest.Header.Set("Content-Type", "application/json")
+	response, err = http.DefaultClient.Do(deleteRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || strings.Contains(string(body), `"id":"opencode"`) {
+		t.Fatalf("remove participant status=%d body=%s", response.StatusCode, body)
+	}
+	config, _ = saved.LoadGroupConfig()
+	if len(config.Participants) != 2 || config.Participants[1] != "codex" {
+		t.Fatalf("participants after remove = %#v", config.Participants)
+	}
+
+	deleteRequest, _ = http.NewRequest(http.MethodDelete, server.URL+"/api/v1/webui/group/participants", strings.NewReader(`{"session_id":"`+saved.ID()+`","participant":"bqagent"}`))
+	deleteRequest.Header.Set("Content-Type", "application/json")
+	response, err = http.DefaultClient.Do(deleteRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("remove scheduler status = %d", response.StatusCode)
 	}
 }
 

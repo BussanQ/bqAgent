@@ -533,9 +533,15 @@
   .group-bar > div:first-child span { color: var(--text-muted); font-size: var(--font-tiny); }
   .group-member-controls { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
   .group-participants { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
-  .group-participant { padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-soft); background: var(--panel); font-size: var(--font-tiny); }
+  .group-participant { min-height: 24px; display: inline-flex; align-items: center; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-soft); background: var(--panel); font-size: var(--font-tiny); }
   .group-participant.scheduler { color: var(--signal); border-color: rgba(var(--signal-rgb), .35); }
-  .group-participant.unavailable { opacity: .45; text-decoration: line-through; }
+  .group-participant.unavailable { opacity: .55; }
+  .group-participant.unavailable > span:first-child { text-decoration: line-through; }
+  .group-participant-remove { width: 0; min-width: 0; height: 16px; overflow: hidden; padding: 0; border: 0; border-radius: 50%; opacity: 0; pointer-events: none; color: var(--text-muted); background: transparent; box-shadow: none; font: 700 14px/16px ui-sans-serif, system-ui, sans-serif; transition: width .14s ease, margin-left .14s ease, opacity .14s ease; }
+  .group-participant.removable:hover .group-participant-remove, .group-participant.removable:focus-within .group-participant-remove { width: 16px; min-width: 16px; margin-left: 3px; opacity: 1; pointer-events: auto; }
+  .group-participant-remove:hover, .group-participant-remove:focus-visible { color: var(--danger); background: rgba(var(--danger-rgb), .12); transform: none; box-shadow: none; }
+  .group-participant-remove:disabled { cursor: not-allowed; }
+  @media (hover: none) { .group-participant.removable .group-participant-remove { width: 16px; min-width: 16px; margin-left: 3px; opacity: 1; pointer-events: auto; } }
   .group-add-wrap { position: relative; flex: 0 0 auto; }
   .group-add { min-height: 26px; display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-color: var(--line); border-radius: 999px; color: var(--signal); background: var(--panel); font-size: var(--font-tiny); box-shadow: none; }
   .group-add:hover, .group-add[aria-expanded="true"] { border-color: rgba(var(--signal-rgb), .38); background: var(--surface-active); transform: none; box-shadow: none; }

@@ -4,7 +4,7 @@ import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, v
 import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 import { formatConversationTime } from "./conversations";
-import { addableGroupParticipants, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldCloseCoordinatorSegment, shouldRenderFinalReply, type MentionQuery } from "./group-chat";
+import { addableGroupParticipants, canRemoveGroupParticipant, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldCloseCoordinatorSegment, shouldRenderFinalReply, type MentionQuery } from "./group-chat";
 import { byId, eventElement } from "./dom";
 import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
 import { renderMarkdown } from "./markdown";
@@ -534,6 +534,32 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     }
   }
 
+  async function removeGroupParticipant(participant: string): Promise<void> {
+    if (busy || !sessionId) return;
+    closeGroupAddMenu();
+    groupAddBtn.disabled = true;
+    groupParticipants.querySelectorAll<HTMLButtonElement>("button").forEach(function (button) { button.disabled = true; });
+    try {
+      var response = await fetch("/api/v1/webui/group/participants", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ workspace_id: currentWorkspace ? currentWorkspace.id : "", session_id: sessionId, participant: participant }),
+      });
+      var payload = await responseJSON<GroupInfo & { error?: string }>(response);
+      if (!response.ok) throw new Error(payload.error || "删除群聊成员失败");
+      currentGroup = payload;
+      renderGroupBar();
+      statusEl.textContent = "已移除 @" + participant;
+      statusEl.classList.remove("error");
+    } catch (error) {
+      statusEl.textContent = errorMessage(error);
+      statusEl.classList.add("error");
+      groupParticipants.querySelectorAll<HTMLButtonElement>("button").forEach(function (button) { button.disabled = false; });
+    } finally {
+      groupAddBtn.disabled = busy || !sessionId;
+    }
+  }
+
   function renderGroupBar(): void {
     groupBar.hidden = conversationType !== "group";
     groupParticipants.textContent = "";
@@ -546,8 +572,25 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     currentGroup.participants.forEach(function (participant) {
       var chip = document.createElement("span");
       chip.className = "group-participant" + (participant.id === currentGroup!.scheduler ? " scheduler" : "") + (participant.available ? "" : " unavailable");
-      chip.textContent = "@" + participant.id;
+      var name = document.createElement("span");
+      name.textContent = "@" + participant.id;
+      chip.appendChild(name);
       chip.title = participant.available ? (participant.transport || participant.kind) : "当前不可用";
+      if (canRemoveGroupParticipant(currentGroup, participant)) {
+        chip.classList.add("removable");
+        var remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "group-participant-remove";
+        remove.textContent = "×";
+        remove.title = "移除 @" + participant.id;
+        remove.setAttribute("aria-label", "移除群聊成员 @" + participant.id);
+        remove.disabled = busy || !sessionId;
+        remove.addEventListener("click", function (event) {
+          event.stopPropagation();
+          removeGroupParticipant(participant.id);
+        });
+        chip.appendChild(remove);
+      }
       groupParticipants.appendChild(chip);
     });
   }
@@ -1881,6 +1924,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     modelSelect.disabled = on || modelSelect.options.length === 0;
     providerSettingsTrigger.disabled = on;
     groupAddBtn.disabled = on || !sessionId;
+    groupParticipants.querySelectorAll<HTMLButtonElement>("button").forEach(function (button) { button.disabled = on || !sessionId; });
     workspaceSelect.disabled = on || !workspaceReady;
     workspaceCreateAgent.disabled = on || !workspaceReady;
     if (on) {

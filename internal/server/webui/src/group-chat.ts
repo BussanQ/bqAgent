@@ -19,6 +19,10 @@ export function addableGroupParticipants(available: GroupInfo, current: GroupInf
   });
 }
 
+export function canRemoveGroupParticipant(group: GroupInfo | null, participant: GroupParticipant): boolean {
+  return Boolean(group && participant && participant.id !== group.scheduler);
+}
+
 export interface MentionQuery {
   start: number;
   end: number;

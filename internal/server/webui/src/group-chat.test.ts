@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addableGroupParticipants, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldCloseCoordinatorSegment, shouldRenderFinalReply } from "./group-chat";
+import { addableGroupParticipants, canRemoveGroupParticipant, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldCloseCoordinatorSegment, shouldRenderFinalReply } from "./group-chat";
 
 describe("群聊输入", () => {
   const participants = [
@@ -35,6 +35,13 @@ describe("群聊输入", () => {
       { scheduler: "bqagent", participants: participants.map(function (participant) { return participant.id === "opencode" ? { ...participant, available: true } : participant; }) },
       { scheduler: "bqagent", participants: participants.slice(0, 2) },
     ).map(function (participant) { return participant.id; })).toEqual(["opencode"]);
+  });
+
+  it("只允许删除非调度员成员", () => {
+    const group = { scheduler: "bqagent", participants: participants };
+    expect(canRemoveGroupParticipant(group, participants[0])).toBe(false);
+    expect(canRemoveGroupParticipant(group, participants[1])).toBe(true);
+    expect(canRemoveGroupParticipant(group, participants[2])).toBe(true);
   });
 
   it("识别光标前的 @ 查询并替换", () => {

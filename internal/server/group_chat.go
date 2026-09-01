@@ -52,7 +52,7 @@ type GroupEventSink interface {
 	EmitGroupEvent(GroupEvent)
 }
 
-type groupParticipantAddRequest struct {
+type groupParticipantMutationRequest struct {
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	SessionID   string `json:"session_id"`
 	Participant string `json:"participant"`
@@ -189,9 +189,53 @@ func (service *Service) AddGroupParticipant(sessionID, participantID string) (Gr
 	return groupInfo(config, service), nil
 }
 
+func (service *Service) RemoveGroupParticipant(sessionID, participantID string) (GroupInfo, error) {
+	canonicalID, err := session.CanonicalID(sessionID)
+	if err != nil {
+		return GroupInfo{}, err
+	}
+	participantID = strings.ToLower(strings.TrimSpace(participantID))
+	if participantID == "" {
+		return GroupInfo{}, fmt.Errorf("participant is required")
+	}
+	if participantID == groupScheduler {
+		return GroupInfo{}, fmt.Errorf("群聊调度员 @%s 不能删除", groupScheduler)
+	}
+	unlock := service.locker.Lock(canonicalID)
+	defer unlock()
+	saved, err := service.store.Open(canonicalID)
+	if err != nil {
+		return GroupInfo{}, err
+	}
+	if storedConversationType(saved.Meta().ConversationType) != ConversationTypeGroup {
+		return GroupInfo{}, fmt.Errorf("conversation is not a group")
+	}
+	config, err := saved.LoadGroupConfig()
+	if err != nil {
+		return GroupInfo{}, err
+	}
+	participants := make([]string, 0, len(config.Participants))
+	removed := false
+	for _, existing := range config.Participants {
+		if strings.EqualFold(existing, participantID) {
+			removed = true
+			continue
+		}
+		participants = append(participants, existing)
+	}
+	if !removed {
+		return groupInfo(config, service), nil
+	}
+	config.Participants = participants
+	if err := saved.SaveGroupConfig(config); err != nil {
+		return GroupInfo{}, err
+	}
+	return groupInfo(config, service), nil
+}
+
 func (handler *handler) handleGroupParticipants(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Cache-Control", "no-store")
-	if request.Method != http.MethodGet && request.Method != http.MethodPost {
+	if request.Method != http.MethodGet && request.Method != http.MethodPost && request.Method != http.MethodDelete {
 		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
 		return
 	}
@@ -212,7 +256,7 @@ func (handler *handler) handleGroupParticipants(writer http.ResponseWriter, requ
 	request.Body = http.MaxBytesReader(writer, request.Body, 64<<10)
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
-	var payload groupParticipantAddRequest
+	var payload groupParticipantMutationRequest
 	if err := decoder.Decode(&payload); err != nil {
 		writeError(writer, http.StatusBadRequest, chatResponse{Error: "invalid JSON request: " + err.Error()})
 		return
@@ -227,7 +271,12 @@ func (handler *handler) handleGroupParticipants(writer http.ResponseWriter, requ
 		writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
 		return
 	}
-	info, err := service.AddGroupParticipant(payload.SessionID, payload.Participant)
+	var info GroupInfo
+	if request.Method == http.MethodDelete {
+		info, err = service.RemoveGroupParticipant(payload.SessionID, payload.Participant)
+	} else {
+		info, err = service.AddGroupParticipant(payload.SessionID, payload.Participant)
+	}
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
 		return
