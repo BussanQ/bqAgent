@@ -234,6 +234,20 @@ func TestACPCollectsOnlyAgentMessageChunks(t *testing.T) {
 	}
 }
 
+func TestACPReadLoopExitWakesPendingRequest(t *testing.T) {
+	responseCh := make(chan rpcEnvelope, 1)
+	client := &stdioACPClient{responses: map[string]chan rpcEnvelope{"1": responseCh}}
+	client.readLoop(strings.NewReader(""))
+	select {
+	case response := <-responseCh:
+		if response.Error == nil || !strings.Contains(response.Error.Message, "ACP process exited") {
+			t.Fatalf("response = %#v, want process exit error", response)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pending request was not woken after ACP stdout closed")
+	}
+}
+
 func TestBrokerReusesACPClientAcrossTurns(t *testing.T) {
 	root := t.TempDir()
 	startLog := filepath.Join(root, "starts.log")
@@ -730,6 +744,61 @@ func (client *blockingInitializeACPClient) Close() error {
 
 type trackingACPClient struct {
 	closeCount int
+}
+
+type reconnectingACPClient struct {
+	sessionID  string
+	failLoad   bool
+	loadCount  int
+	closeCount int
+}
+
+func (client *reconnectingACPClient) Initialize(context.Context) error { return nil }
+func (client *reconnectingACPClient) LoadSessionSupported() bool       { return true }
+func (client *reconnectingACPClient) NewSession(context.Context, string) (string, error) {
+	return client.sessionID, nil
+}
+func (client *reconnectingACPClient) LoadSession(_ context.Context, sessionID, _ string) (string, error) {
+	client.loadCount++
+	if client.failLoad {
+		return "", errors.New("write |1: broken pipe")
+	}
+	return sessionID, nil
+}
+func (client *reconnectingACPClient) Prompt(_ context.Context, _ string, prompt string) (string, error) {
+	return "reply:" + prompt, nil
+}
+func (client *reconnectingACPClient) Close() error {
+	client.closeCount++
+	return nil
+}
+
+func TestBrokerReconnectsOnceAfterCachedACPProcessExits(t *testing.T) {
+	root := t.TempDir()
+	first := &reconnectingACPClient{sessionID: "cursor-session", failLoad: true}
+	second := &reconnectingACPClient{sessionID: "unused"}
+	clients := []*reconnectingACPClient{first, second}
+	factoryCalls := 0
+	broker := NewBroker(NewStateStore(root), map[AgentName]DetectionResult{
+		AgentCursor: {Agent: AgentCursor, Preferred: &AgentTransport{Agent: AgentCursor, Kind: TransportACP, Command: CommandSpec{Command: "cursor-agent"}}},
+	}, func(CommandSpec, string) (ACPClient, error) {
+		client := clients[factoryCalls]
+		factoryCalls++
+		return client, nil
+	})
+	defer broker.Close()
+
+	firstResponse, err := broker.SendGroupTurn(context.Background(), TurnRequest{BQSessionID: "group-1", Agent: AgentCursor, Prompt: "first", CWD: root})
+	if err != nil || firstResponse.Reply != "reply:first" {
+		t.Fatalf("first turn response = %#v, error = %v", firstResponse, err)
+	}
+	secondResponse, err := broker.SendGroupTurn(context.Background(), TurnRequest{BQSessionID: "group-1", Agent: AgentCursor, Prompt: "second", CWD: root})
+	if err != nil || secondResponse.Reply != "reply:second" {
+		t.Fatalf("reconnected turn response = %#v, error = %v", secondResponse, err)
+	}
+	if factoryCalls != 2 || first.closeCount != 1 || second.loadCount != 1 {
+		t.Fatalf("factory calls = %d, first closes = %d, second loads = %d", factoryCalls, first.closeCount, second.loadCount)
+	}
 }
 
 type permissionRecordingSink struct {

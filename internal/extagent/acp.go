@@ -33,9 +33,11 @@ type rpcEnvelope struct {
 	Method string          `json:"method,omitempty"`
 	Params json.RawMessage `json:"params,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
-	Error  *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
+	Error  *rpcError       `json:"error,omitempty"`
+}
+
+type rpcError struct {
+	Message string `json:"message"`
 }
 
 type acpPermissionParams struct {
@@ -269,6 +271,13 @@ func (c *stdioACPClient) writePayload(payload []byte) error {
 
 func (c *stdioACPClient) readLoop(stdout io.Reader) {
 	scanner := bufio.NewScanner(stdout)
+	defer func() {
+		err := scanner.Err()
+		if err == nil {
+			err = io.EOF
+		}
+		c.failPendingRequests(fmt.Errorf("ACP process exited: %w", err))
+	}()
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -294,6 +303,25 @@ func (c *stdioACPClient) readLoop(stdout io.Reader) {
 		}
 		if envelope.Method == "session/update" {
 			c.handleSessionUpdate(envelope.Params)
+		}
+	}
+}
+
+func (c *stdioACPClient) failPendingRequests(err error) {
+	if c == nil || err == nil {
+		return
+	}
+	c.mu.Lock()
+	channels := make([]chan rpcEnvelope, 0, len(c.responses))
+	for _, responseCh := range c.responses {
+		channels = append(channels, responseCh)
+	}
+	c.mu.Unlock()
+	failure := rpcEnvelope{Error: &rpcError{Message: err.Error()}}
+	for _, responseCh := range channels {
+		select {
+		case responseCh <- failure:
+		default:
 		}
 	}
 }

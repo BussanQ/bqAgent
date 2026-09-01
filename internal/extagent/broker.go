@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -362,13 +364,17 @@ func (broker *Broker) sendTurn(ctx context.Context, request TurnRequest, group b
 }
 
 func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state SessionState, cwd, prompt string, permissionSink ACPPermissionSink, generation uint64) (TurnResponse, error) {
+	return broker.sendACPAttempt(ctx, spec, state, cwd, prompt, permissionSink, generation, false, true)
+}
+
+func (broker *Broker) sendACPAttempt(ctx context.Context, spec CommandSpec, state SessionState, cwd, prompt string, permissionSink ACPPermissionSink, generation uint64, forceNewSession, allowReconnect bool) (TurnResponse, error) {
 	client, err := broker.acpClient(ctx, state.BQSessionID, state.Agent, spec, cwd, generation)
 	if err != nil {
 		return TurnResponse{}, err
 	}
 	sessionID := state.ExternalSessionID
 	switch {
-	case sessionID == "":
+	case sessionID == "" || (forceNewSession && !client.LoadSessionSupported()):
 		sessionID, err = client.NewSession(ctx, cwd)
 	case client.LoadSessionSupported():
 		sessionID, err = client.LoadSession(ctx, sessionID, cwd)
@@ -376,6 +382,10 @@ func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state Sessi
 		// Keep using the active in-memory process for the session if load isn't supported.
 	}
 	if err != nil {
+		if allowReconnect && ctx.Err() == nil && broker.generationCurrent(state.BQSessionID, generation) && isACPConnectionError(err) {
+			broker.discardACPClient(state.BQSessionID, state.Agent, client)
+			return broker.sendACPAttempt(ctx, spec, state, cwd, prompt, permissionSink, generation, true, false)
+		}
 		return TurnResponse{}, err
 	}
 	if !broker.generationCurrent(state.BQSessionID, generation) {
@@ -389,6 +399,10 @@ func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state Sessi
 	}
 	reply, err := client.Prompt(ctx, sessionID, prompt)
 	if err != nil {
+		if allowReconnect && ctx.Err() == nil && broker.generationCurrent(state.BQSessionID, generation) && isACPConnectionError(err) {
+			broker.discardACPClient(state.BQSessionID, state.Agent, client)
+			return broker.sendACPAttempt(ctx, spec, state, cwd, prompt, permissionSink, generation, true, false)
+		}
 		return TurnResponse{}, err
 	}
 	if !broker.generationCurrent(state.BQSessionID, generation) {
@@ -396,6 +410,38 @@ func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state Sessi
 	}
 	state.ExternalSessionID = sessionID
 	return TurnResponse{Reply: reply, State: state}, nil
+}
+
+func (broker *Broker) discardACPClient(sessionID string, agent AgentName, expected ACPClient) {
+	key := acpClientKey{sessionID: sessionID, agent: agent}
+	broker.mu.Lock()
+	client := broker.acpClients[key]
+	if client == expected {
+		delete(broker.acpClients, key)
+	} else {
+		client = nil
+	}
+	for requestID, pending := range broker.pendingPermissions {
+		if pending.request.BQSessionID == sessionID && pending.request.Agent == agent {
+			delete(broker.pendingPermissions, requestID)
+			pending.response <- acpPermissionOutcome{Outcome: "cancelled"}
+		}
+	}
+	broker.mu.Unlock()
+	if client != nil {
+		_ = client.Close()
+	}
+}
+
+func isACPConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, os.ErrClosed) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "broken pipe") || strings.Contains(message, "closed pipe") || strings.Contains(message, "acp process exited")
 }
 
 func (broker *Broker) awaitPermission(ctx context.Context, bqSessionID string, agent AgentName, params acpPermissionParams, sink ACPPermissionSink, generation uint64) acpPermissionOutcome {
