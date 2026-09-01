@@ -712,13 +712,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			markConversationFailed(conversation, mentionErr)
 			return TurnResponse{}, mentionErr
 		}
-		if len(mentions) == 0 {
-			mentionErr = fmt.Errorf("群聊任务请明确 @bqagent 或其他群聊成员")
-			writeTurnError(turnErrorWriter, mentionErr)
-			markConversationFailed(conversation, mentionErr)
-			return TurnResponse{}, mentionErr
-		}
-		coordinatorRequested := hasGroupMention(mentions, groupScheduler)
+		coordinatorRequested := len(mentions) == 0 || hasGroupMention(mentions, groupScheduler)
 		groupCoordinator = newGroupTurnCoordinator(service, conversation.Session.ID(), groupConfig, mentions, conversation.Messages, options.GroupEventSink)
 		for index, participant := range mentions {
 			if participant == groupScheduler {

@@ -472,7 +472,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     if (conversationType === "group") {
       setChatMode("run");
       modeAskBtn.hidden = true;
-      input.placeholder = "群聊模式：@成员直接交互，@bqagent 调度汇总";
+      input.placeholder = "群聊模式：无 @ 由 bqagent 处理，@成员可定向交互";
     } else {
       modeAskBtn.hidden = false;
       input.placeholder = chatModePlaceholder(chatMode);
@@ -1684,7 +1684,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
       button.classList.toggle("selected", selected);
       button.setAttribute("aria-checked", selected ? "true" : "false");
     });
-    input.placeholder = conversationType === "group" ? "群聊模式：@成员直接交互，@bqagent 调度汇总" : chatModePlaceholder(chatMode);
+    input.placeholder = conversationType === "group" ? "群聊模式：无 @ 由 bqagent 处理，@成员可定向交互" : chatModePlaceholder(chatMode);
     addAttachmentBtn.title = chatMode === "ask" ? "Ask 模式与附件" : "Run 模式与附件";
     addAttachmentBtn.setAttribute("aria-label", chatMode === "ask" ? "Ask 模式：选择模式或添加文件" : "Run 模式：选择模式或添加文件");
   }

@@ -11,6 +11,7 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
+	"bqagent/internal/session"
 	"bqagent/internal/tools"
 )
 
@@ -165,20 +166,36 @@ func TestGroupChatBqagentMentionLetsCoordinatorConsultAndSummarize(t *testing.T)
 	}
 }
 
-func TestGroupChatWithoutMentionDoesNotInvokeCoordinator(t *testing.T) {
+func TestGroupChatWithoutMentionIsHandledDirectlyByBqagent(t *testing.T) {
 	root := t.TempDir()
-	client := &groupTestClient{}
-	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: client, SystemPrompt: "base"})
+	log := &groupACPLog{prompts: map[string][]string{}}
+	broker := newGroupTestBroker(root, log, extagent.AgentCodex)
+	defer broker.Close()
+	client := &groupTestClient{responses: []agent.AssistantMessage{{Role: "assistant", Content: "bqagent 直接处理完成"}}}
+	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: client, SystemPrompt: "base", ExternalBroker: broker})
 
-	_, err := service.HandleTurn(context.Background(), TurnRequest{Message: "分析当前实现", ConversationType: ConversationTypeGroup})
-	if err == nil || !strings.Contains(err.Error(), "请明确 @bqagent") {
-		t.Fatalf("error = %v", err)
+	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "分析当前实现", ConversationType: ConversationTypeGroup})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Reply != "bqagent 直接处理完成" || response.ReplyKind != groupReplyKindCoordinator {
+		t.Fatalf("response = %#v", response)
 	}
 	client.mu.Lock()
 	coordinatorCalls := len(client.messages)
 	client.mu.Unlock()
-	if coordinatorCalls != 0 {
-		t.Fatalf("bqagent calls = %d, want 0", coordinatorCalls)
+	if coordinatorCalls != 1 {
+		t.Fatalf("bqagent calls = %d, want 1", coordinatorCalls)
+	}
+	log.mu.Lock()
+	externalCalls := len(log.prompts["codex"])
+	log.mu.Unlock()
+	if externalCalls != 0 {
+		t.Fatalf("codex calls = %d, want 0", externalCalls)
+	}
+	coordinator := newGroupTurnCoordinator(service, response.SessionID, session.GroupConfig{Participants: []string{"bqagent", "codex"}}, nil, nil, nil)
+	if _, ok := coordinator.toolDefinition(); ok {
+		t.Fatal("no-mention turn must not expose external consultation")
 	}
 }
 
