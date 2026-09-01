@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"bqagent/internal/extagent"
 	"bqagent/internal/providerconfig"
 )
 
@@ -43,6 +44,12 @@ type chatResponse struct {
 	ConversationType   ConversationType `json:"conversation_type,omitempty"`
 }
 
+type acpPermissionResponseRequest struct {
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	RequestID   string `json:"request_id"`
+	OptionID    string `json:"option_id"`
+}
+
 type statusResponse struct {
 	Status string         `json:"status"`
 	LLM    RuntimeLLMInfo `json:"llm"`
@@ -63,6 +70,7 @@ func NewHandler(options HandlerOptions) http.Handler {
 	mux.HandleFunc("/api/v1/webui/conversations", handler.handleConversations)
 	mux.HandleFunc("/api/v1/webui/conversations/", handler.handleConversationHistory)
 	mux.HandleFunc("/api/v1/webui/group/participants", handler.handleGroupParticipants)
+	mux.HandleFunc("/api/v1/webui/acp/permissions", handler.handleACPPermissionResponse)
 	mux.HandleFunc("/api/v1/chat", handler.handleChat)
 	mux.HandleFunc("/api/v1/chat/stop", handler.handleStopTurn)
 	mux.HandleFunc("/api/v1/runs/", handler.handleRun)
@@ -73,6 +81,39 @@ func NewHandler(options HandlerOptions) http.Handler {
 		channel.RegisterRoutes(mux)
 	}
 	return withRequestLogging(mux)
+}
+
+func (handler *handler) handleACPPermissionResponse(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, 64<<10)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	var payload acpPermissionResponseRequest
+	if err := decoder.Decode(&payload); err != nil {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: "invalid JSON request: " + err.Error()})
+		return
+	}
+	if strings.TrimSpace(payload.RequestID) == "" || strings.TrimSpace(payload.OptionID) == "" {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: "request_id and option_id are required"})
+		return
+	}
+	service, err := handler.serviceForWorkspace(payload.WorkspaceID)
+	if err != nil {
+		writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
+		return
+	}
+	if err := service.RespondACPPermission(payload.RequestID, payload.OptionID); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, extagent.ErrPermissionNotFound) {
+			status = http.StatusGone
+		}
+		writeError(writer, status, chatResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"accepted": true})
 }
 
 func (handler *handler) serviceForWorkspace(workspaceID string) (*Service, error) {

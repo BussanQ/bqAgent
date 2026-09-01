@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/extagent"
 )
 
 const (
@@ -486,11 +487,12 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		Mode:             turnRequest.Mode,
 		ConversationType: turnRequest.ConversationType,
 	}, TurnOptions{
-		Stream:         true,
-		TokenSink:      sseEventWriter{stream: stream, event: "message"},
-		ProgressWriter: sseEventWriter{stream: stream, event: "progress"},
-		ToolEventSink:  sseToolEventSink{stream: stream},
-		GroupEventSink: sseGroupEventSink{stream: stream},
+		Stream:            true,
+		TokenSink:         sseEventWriter{stream: stream, event: "message"},
+		ProgressWriter:    sseEventWriter{stream: stream, event: "progress"},
+		ToolEventSink:     sseToolEventSink{stream: stream},
+		GroupEventSink:    sseGroupEventSink{stream: stream},
+		ACPPermissionSink: sseACPPermissionSink{stream: stream},
 		Stage: agent.StageConfig{
 			MaxIterations:     WebUIStageMaxIterations(),
 			Timeout:           WebUIStageTimeout(),
@@ -546,6 +548,17 @@ type sseToolEventSink struct {
 
 type sseGroupEventSink struct {
 	stream *sseStream
+}
+
+type sseACPPermissionSink struct {
+	stream *sseStream
+}
+
+func (sink sseACPPermissionSink) EmitACPPermissionRequest(request extagent.ACPPermissionRequest) {
+	if sink.stream == nil {
+		return
+	}
+	_ = sink.stream.writeEvent("acp_permission", request)
 }
 
 func (sink sseGroupEventSink) EmitGroupEvent(event GroupEvent) {

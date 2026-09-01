@@ -732,6 +732,69 @@ type trackingACPClient struct {
 	closeCount int
 }
 
+type permissionRecordingSink struct {
+	requests chan ACPPermissionRequest
+}
+
+func (sink permissionRecordingSink) EmitACPPermissionRequest(request ACPPermissionRequest) {
+	sink.requests <- request
+}
+
+func TestBrokerForwardsACPRequestPermissionAndReturnsSelection(t *testing.T) {
+	root := t.TempDir()
+	broker := NewBroker(NewStateStore(root), map[AgentName]DetectionResult{
+		AgentCursor: {Agent: AgentCursor, Preferred: &AgentTransport{Agent: AgentCursor, Kind: TransportACP, Command: helperSpec(t, "acp-permission")}},
+	}, NewACPClient)
+	defer broker.Close()
+	sink := permissionRecordingSink{requests: make(chan ACPPermissionRequest, 1)}
+	type turnResult struct {
+		response TurnResponse
+		err      error
+	}
+	done := make(chan turnResult, 1)
+	go func() {
+		response, err := broker.SendGroupTurn(context.Background(), TurnRequest{
+			BQSessionID: "group-1", Agent: AgentCursor, Prompt: "edit files", CWD: root, PermissionSink: sink,
+		})
+		done <- turnResult{response: response, err: err}
+	}()
+
+	var request ACPPermissionRequest
+	select {
+	case request = <-sink.requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ACP permission request")
+	}
+	if request.Agent != AgentCursor || request.ExternalSessionID != "acp-session-1" || len(request.Options) != 2 {
+		t.Fatalf("permission request = %#v", request)
+	}
+	if err := broker.RespondPermission(request.RequestID, "allow-once"); err != nil {
+		t.Fatal(err)
+	}
+	result := <-done
+	if result.err != nil || result.response.Reply != "permission:allow-once" {
+		t.Fatalf("turn response = %#v, error = %v", result.response, result.err)
+	}
+	if err := broker.RespondPermission(request.RequestID, "allow-once"); !errors.Is(err, ErrPermissionNotFound) {
+		t.Fatalf("second response error = %v, want ErrPermissionNotFound", err)
+	}
+
+	go func() {
+		response, err := broker.SendGroupTurn(context.Background(), TurnRequest{
+			BQSessionID: "group-1", Agent: AgentCursor, Prompt: "reject edit", CWD: root, PermissionSink: sink,
+		})
+		done <- turnResult{response: response, err: err}
+	}()
+	request = <-sink.requests
+	if err := broker.RespondPermission(request.RequestID, "reject-once"); err != nil {
+		t.Fatal(err)
+	}
+	result = <-done
+	if result.err != nil || result.response.Reply != "permission:reject-once" {
+		t.Fatalf("rejected turn response = %#v, error = %v", result.response, result.err)
+	}
+}
+
 func (client *trackingACPClient) Initialize(context.Context) error {
 	return nil
 }
@@ -783,8 +846,57 @@ func TestExternalHelperProcess(t *testing.T) {
 		runHelperACP(false, false, nil)
 	case "acp-fail-request":
 		runHelperACP(true, true, nil)
+	case "acp-permission":
+		runHelperACPPermission()
 	}
 	os.Exit(0)
+}
+
+func runHelperACPPermission() {
+	scanner := bufio.NewScanner(os.Stdin)
+	var promptID int64
+	for scanner.Scan() {
+		var envelope map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &envelope); err != nil {
+			continue
+		}
+		id, _ := envelope["id"].(float64)
+		method, _ := envelope["method"].(string)
+		switch method {
+		case "initialize":
+			writeHelperEnvelope(map[string]any{"id": int64(id), "result": map[string]any{"agentCapabilities": map[string]any{"loadSession": true}}})
+		case "session/new":
+			writeHelperEnvelope(map[string]any{"id": int64(id), "result": map[string]any{"sessionId": "acp-session-1"}})
+		case "session/load":
+			writeHelperEnvelope(map[string]any{"id": int64(id), "result": map[string]any{"sessionId": "acp-session-1"}})
+		case "session/prompt":
+			promptID = int64(id)
+			writeHelperEnvelope(map[string]any{
+				"id":     900,
+				"method": "session/request_permission",
+				"params": map[string]any{
+					"sessionId": "acp-session-1",
+					"toolCall":  map[string]any{"toolCallId": "tool-1", "title": "修改文件", "kind": "edit", "rawInput": map[string]any{"path": "main.go"}},
+					"options": []map[string]any{
+						{"optionId": "allow-once", "name": "允许一次", "kind": "allow_once"},
+						{"optionId": "reject-once", "name": "拒绝", "kind": "reject_once"},
+					},
+				},
+			})
+		case "":
+			if int64(id) != 900 || promptID == 0 {
+				continue
+			}
+			result, _ := envelope["result"].(map[string]any)
+			outcome, _ := result["outcome"].(map[string]any)
+			optionID, _ := outcome["optionId"].(string)
+			writeHelperEnvelope(map[string]any{"method": "session/update", "params": map[string]any{
+				"sessionId": "acp-session-1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"text": "permission:" + optionID}},
+			}})
+			writeHelperEnvelope(map[string]any{"id": promptID, "result": map[string]any{"stopReason": "end_turn"}})
+			promptID = 0
+		}
+	}
 }
 
 func runHelperCLIClaude() {

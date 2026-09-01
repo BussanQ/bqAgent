@@ -2,6 +2,7 @@ package extagent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,7 +13,13 @@ import (
 var (
 	errBrokerClosed         = errors.New("external agent broker is closed")
 	errBrokerSessionCleared = errors.New("external agent session was cleared")
+	ErrPermissionNotFound   = errors.New("ACP permission request was not found or is no longer active")
 )
+
+type pendingPermission struct {
+	request  ACPPermissionRequest
+	response chan acpPermissionOutcome
+}
 
 type acpClientKey struct {
 	sessionID string
@@ -45,6 +52,8 @@ type Broker struct {
 	acpInFlight        map[acpClientKey]*acpClientFuture
 	sessionGenerations map[string]uint64
 	sessionLocks       map[string]*sync.Mutex
+	pendingPermissions map[string]*pendingPermission
+	permissionSequence uint64
 	closed             bool
 }
 
@@ -87,6 +96,7 @@ func newBroker(store *StateStore, factory ACPClientFactory) *Broker {
 		acpInFlight:        map[acpClientKey]*acpClientFuture{},
 		sessionGenerations: map[string]uint64{},
 		sessionLocks:       map[string]*sync.Mutex{},
+		pendingPermissions: map[string]*pendingPermission{},
 	}
 }
 
@@ -261,6 +271,13 @@ func (broker *Broker) invalidateSession(sessionID string) []ACPClient {
 		}
 		delete(broker.acpInFlight, key)
 	}
+	for requestID, pending := range broker.pendingPermissions {
+		if pending.request.BQSessionID != sessionID {
+			continue
+		}
+		delete(broker.pendingPermissions, requestID)
+		pending.response <- acpPermissionOutcome{Outcome: "cancelled"}
+	}
 	return clients
 }
 
@@ -320,7 +337,7 @@ func (broker *Broker) sendTurn(ctx context.Context, request TurnRequest, group b
 	var response TurnResponse
 	switch detection.Preferred.Kind {
 	case TransportACP:
-		response, err = broker.sendACP(ctx, detection.Preferred.Command, state, request.CWD, request.Prompt, generation)
+		response, err = broker.sendACP(ctx, detection.Preferred.Command, state, request.CWD, request.Prompt, request.PermissionSink, generation)
 	case TransportCLI:
 		response, err = broker.cli.SendTurn(ctx, detection.Preferred.Command, state, request.CWD, request.Prompt)
 	default:
@@ -344,7 +361,7 @@ func (broker *Broker) sendTurn(ctx context.Context, request TurnRequest, group b
 	return response, nil
 }
 
-func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state SessionState, cwd, prompt string, generation uint64) (TurnResponse, error) {
+func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state SessionState, cwd, prompt string, permissionSink ACPPermissionSink, generation uint64) (TurnResponse, error) {
 	client, err := broker.acpClient(ctx, state.BQSessionID, state.Agent, spec, cwd, generation)
 	if err != nil {
 		return TurnResponse{}, err
@@ -364,6 +381,12 @@ func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state Sessi
 	if !broker.generationCurrent(state.BQSessionID, generation) {
 		return TurnResponse{}, errBrokerSessionCleared
 	}
+	if aware, ok := client.(acpPermissionAware); ok {
+		aware.setPermissionHandler(func(params acpPermissionParams) acpPermissionOutcome {
+			return broker.awaitPermission(ctx, state.BQSessionID, state.Agent, params, permissionSink, generation)
+		})
+		defer aware.setPermissionHandler(nil)
+	}
 	reply, err := client.Prompt(ctx, sessionID, prompt)
 	if err != nil {
 		return TurnResponse{}, err
@@ -373,6 +396,71 @@ func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state Sessi
 	}
 	state.ExternalSessionID = sessionID
 	return TurnResponse{Reply: reply, State: state}, nil
+}
+
+func (broker *Broker) awaitPermission(ctx context.Context, bqSessionID string, agent AgentName, params acpPermissionParams, sink ACPPermissionSink, generation uint64) acpPermissionOutcome {
+	if sink == nil || len(params.Options) == 0 {
+		return acpPermissionOutcome{Outcome: "cancelled"}
+	}
+	broker.mu.Lock()
+	if broker.closed || broker.sessionGenerations[bqSessionID] != generation {
+		broker.mu.Unlock()
+		return acpPermissionOutcome{Outcome: "cancelled"}
+	}
+	broker.permissionSequence++
+	requestID := fmt.Sprintf("acp-permission-%d", broker.permissionSequence)
+	request := ACPPermissionRequest{
+		RequestID: requestID, BQSessionID: bqSessionID, Agent: agent,
+		ExternalSessionID: params.SessionID, ToolCall: append(json.RawMessage(nil), params.ToolCall...),
+		Options: append([]ACPPermissionOption(nil), params.Options...),
+	}
+	pending := &pendingPermission{request: request, response: make(chan acpPermissionOutcome, 1)}
+	broker.pendingPermissions[requestID] = pending
+	broker.mu.Unlock()
+
+	sink.EmitACPPermissionRequest(request)
+	defer func() {
+		broker.mu.Lock()
+		if broker.pendingPermissions[requestID] == pending {
+			delete(broker.pendingPermissions, requestID)
+		}
+		broker.mu.Unlock()
+	}()
+	select {
+	case <-ctx.Done():
+		return acpPermissionOutcome{Outcome: "cancelled"}
+	case outcome := <-pending.response:
+		return outcome
+	}
+}
+
+func (broker *Broker) RespondPermission(requestID, optionID string) error {
+	if broker == nil {
+		return ErrPermissionNotFound
+	}
+	requestID = strings.TrimSpace(requestID)
+	optionID = strings.TrimSpace(optionID)
+	broker.mu.Lock()
+	pending := broker.pendingPermissions[requestID]
+	if pending == nil {
+		broker.mu.Unlock()
+		return ErrPermissionNotFound
+	}
+	valid := false
+	for _, option := range pending.request.Options {
+		if option.OptionID == optionID {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		broker.mu.Unlock()
+		return fmt.Errorf("permission option %q was not offered", optionID)
+	}
+	delete(broker.pendingPermissions, requestID)
+	broker.mu.Unlock()
+	pending.response <- acpPermissionOutcome{Outcome: "selected", OptionID: optionID}
+	return nil
 }
 
 func (broker *Broker) sessionGeneration(sessionID string) (uint64, error) {
@@ -500,6 +588,10 @@ func (broker *Broker) Close() error {
 			future.clientClaimed = true
 		}
 		delete(broker.acpInFlight, key)
+	}
+	for requestID, pending := range broker.pendingPermissions {
+		delete(broker.pendingPermissions, requestID)
+		pending.response <- acpPermissionOutcome{Outcome: "cancelled"}
 	}
 	broker.mu.Unlock()
 	if detectionCancel != nil {

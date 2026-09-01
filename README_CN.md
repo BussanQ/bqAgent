@@ -164,6 +164,7 @@ LLM_MODEL=claude-sonnet-4-5
 | `CHANNEL_STAGE_TIMEOUT` | `90s` | QQ/iLink 阶段时间预算。 |
 | `WEBUI_STAGE_MAX_ITERATIONS` | `0`（默认禁用） | 可选的 WebUI 阶段 checkpoint 迭代预算；仅正值启用。 |
 | `WEBUI_STAGE_TIMEOUT` | `0`（默认禁用） | 可选的 WebUI 阶段时间预算；仅正 duration 启用。 |
+| `GROUP_EXTERNAL_AGENT_TIMEOUT` | `10m` | 群聊中每次外部 Agent 调用的独立超时；超时后取消并作废该群聊的 ACP session。 |
 | `WEBUI_WORKSPACE_ROOTS` | — | WebUI 可额外浏览和选择的服务端目录根列表，使用操作系统路径列表分隔符（Unix/macOS 为 `:`，Windows 为 `;`）；用户主目录和启动工作区始终允许。 |
 | `CONTEXT_MANAGEMENT_ENABLED` | `true` | 启用请求时上下文预算管理。 |
 | `CONTEXT_MAX_INPUT_TOKENS` | `132000` | 上下文 token 估算总预算，包含回复预留。 |

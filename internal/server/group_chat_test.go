@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
@@ -49,6 +51,38 @@ type groupACPLog struct {
 type groupFakeACP struct {
 	name string
 	log  *groupACPLog
+}
+
+type blockingGroupACP struct {
+	started   chan struct{}
+	startOnce sync.Once
+	mu        sync.Mutex
+	closed    int
+}
+
+func (client *blockingGroupACP) Initialize(context.Context) error { return nil }
+func (client *blockingGroupACP) LoadSessionSupported() bool       { return true }
+func (client *blockingGroupACP) NewSession(context.Context, string) (string, error) {
+	return "blocking-session", nil
+}
+func (client *blockingGroupACP) LoadSession(_ context.Context, id, _ string) (string, error) {
+	return id, nil
+}
+func (client *blockingGroupACP) Prompt(ctx context.Context, _ string, _ string) (string, error) {
+	client.startOnce.Do(func() { close(client.started) })
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+func (client *blockingGroupACP) Close() error {
+	client.mu.Lock()
+	client.closed++
+	client.mu.Unlock()
+	return nil
+}
+func (client *blockingGroupACP) closeCount() int {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.closed
 }
 
 func (client *groupFakeACP) Initialize(context.Context) error { return nil }
@@ -193,9 +227,72 @@ func TestGroupChatWithoutMentionIsHandledDirectlyByBqagent(t *testing.T) {
 	if externalCalls != 0 {
 		t.Fatalf("codex calls = %d, want 0", externalCalls)
 	}
-	coordinator := newGroupTurnCoordinator(service, response.SessionID, session.GroupConfig{Participants: []string{"bqagent", "codex"}}, nil, nil, nil)
+	coordinator := newGroupTurnCoordinator(service, response.SessionID, session.GroupConfig{Participants: []string{"bqagent", "codex"}}, nil, nil, nil, nil)
 	if _, ok := coordinator.toolDefinition(); ok {
 		t.Fatal("no-mention turn must not expose external consultation")
+	}
+}
+
+func TestGroupChatExternalAgentHasExplicitTimeout(t *testing.T) {
+	root := t.TempDir()
+	external := &blockingGroupACP{started: make(chan struct{})}
+	broker := extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{
+		extagent.AgentCursor: {Agent: extagent.AgentCursor, Preferred: &extagent.AgentTransport{Agent: extagent.AgentCursor, Kind: extagent.TransportACP, Command: extagent.CommandSpec{Command: "cursor-agent"}}},
+	}, func(extagent.CommandSpec, string) (extagent.ACPClient, error) { return external, nil })
+	defer broker.Close()
+	service := NewService(ServiceOptions{WorkspaceRoot: root, ExternalBroker: broker, GroupExternalAgentTimeout: 20 * time.Millisecond})
+
+	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "@cursor 检查项目", ConversationType: ConversationTypeGroup})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(response.Reply, "执行超时") || external.closeCount() != 1 {
+		t.Fatalf("reply = %q, close count = %d", response.Reply, external.closeCount())
+	}
+}
+
+func TestStoppingGroupTurnInvalidatesACPSession(t *testing.T) {
+	root := t.TempDir()
+	external := &blockingGroupACP{started: make(chan struct{})}
+	broker := extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{
+		extagent.AgentCursor: {Agent: extagent.AgentCursor, Preferred: &extagent.AgentTransport{Agent: extagent.AgentCursor, Kind: extagent.TransportACP, Command: extagent.CommandSpec{Command: "cursor-agent"}}},
+	}, func(extagent.CommandSpec, string) (extagent.ACPClient, error) { return external, nil })
+	defer broker.Close()
+	service := NewService(ServiceOptions{WorkspaceRoot: root, ExternalBroker: broker, GroupExternalAgentTimeout: time.Minute})
+	saved, err := service.store.Create(session.CreateOptions{Task: "group", Chat: true, ConversationType: string(ConversationTypeGroup)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saved.SaveGroupConfig(session.GroupConfig{Version: session.GroupConfigVersion, Scheduler: groupScheduler, Participants: []string{groupScheduler, "cursor"}}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, turnErr := service.HandleTurn(context.Background(), TurnRequest{SessionID: saved.ID(), TurnID: "cancel-group-turn", Message: "@cursor 检查项目"})
+		done <- turnErr
+	}()
+	select {
+	case <-external.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for external ACP prompt")
+	}
+	if !service.StopTurn("cancel-group-turn") {
+		t.Fatal("StopTurn reported no active group turn")
+	}
+	select {
+	case turnErr := <-done:
+		if !errors.Is(turnErr, context.Canceled) {
+			t.Fatalf("turn error = %v, want context.Canceled", turnErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("group turn did not stop")
+	}
+	if external.closeCount() != 1 {
+		t.Fatalf("ACP close count = %d, want 1", external.closeCount())
+	}
+	state, err := extagent.NewStateStore(root).LoadGroup(saved.ID(), extagent.AgentCursor)
+	if err != nil || state.ExternalSessionID != "" {
+		t.Fatalf("group ACP state after stop = %#v, error = %v", state, err)
 	}
 }
 

@@ -26,59 +26,61 @@ import (
 )
 
 type ServiceOptions struct {
-	WorkspaceRoot         string
-	AgentDir              string
-	Client                agent.ChatCompletionClient
-	ClientOptions         *agent.ClientOptions
-	APIType               agent.APIType
-	Model                 string
-	Models                []string
-	SystemPrompt          string
-	SystemPromptBuilder   func() (string, error)
-	PromptSectionsBuilder func() (workspace.PromptSections, error)
-	Planner               *agent.Planner
-	ToolDefinitions       []tools.Definition
-	Functions             map[string]tools.Function
-	DefaultMaxTurns       int
-	ExternalBroker        *extagent.Broker
-	MemoryAppend          func(task, result string) error
-	Context               agent.ContextConfig
-	RunTraceEnabled       bool
-	SessionOptions        *session.Options
-	Subagents             *subagent.Manager
-	MemoryStore           *appmemory.Store
-	GlobalMemoryStore     *appmemory.Store
+	WorkspaceRoot             string
+	AgentDir                  string
+	Client                    agent.ChatCompletionClient
+	ClientOptions             *agent.ClientOptions
+	APIType                   agent.APIType
+	Model                     string
+	Models                    []string
+	SystemPrompt              string
+	SystemPromptBuilder       func() (string, error)
+	PromptSectionsBuilder     func() (workspace.PromptSections, error)
+	Planner                   *agent.Planner
+	ToolDefinitions           []tools.Definition
+	Functions                 map[string]tools.Function
+	DefaultMaxTurns           int
+	ExternalBroker            *extagent.Broker
+	GroupExternalAgentTimeout time.Duration
+	MemoryAppend              func(task, result string) error
+	Context                   agent.ContextConfig
+	RunTraceEnabled           bool
+	SessionOptions            *session.Options
+	Subagents                 *subagent.Manager
+	MemoryStore               *appmemory.Store
+	GlobalMemoryStore         *appmemory.Store
 }
 
 type Service struct {
-	store                 *session.Store
-	workspaceRoot         string
-	agentDir              string
-	client                agent.ChatCompletionClient
-	clientOptions         agent.ClientOptions
-	apiType               agent.APIType
-	model                 string
-	models                []configuredModel
-	systemPrompt          string
-	systemPromptBuilder   func() (string, error)
-	promptSectionsBuilder func() (workspace.PromptSections, error)
-	planner               *agent.Planner
-	plannerEnabled        bool
-	providerID            string
-	toolDefinitions       []tools.Definition
-	functions             map[string]tools.Function
-	maxTurns              int
-	locker                *KeyedLocker
-	externalBroker        *extagent.Broker
-	memoryAppend          func(task, result string) error
-	context               agent.ContextConfig
-	processGroupStops     *processGroupStopRegistry
-	environmentCommands   *environmentCommandGuard
-	traceStore            *apptrace.Store
-	subagents             *subagent.Manager
-	memoryStore           *appmemory.Store
-	globalMemoryStore     *appmemory.Store
-	activeTurns           *activeTurnRegistry
+	store                     *session.Store
+	workspaceRoot             string
+	agentDir                  string
+	client                    agent.ChatCompletionClient
+	clientOptions             agent.ClientOptions
+	apiType                   agent.APIType
+	model                     string
+	models                    []configuredModel
+	systemPrompt              string
+	systemPromptBuilder       func() (string, error)
+	promptSectionsBuilder     func() (workspace.PromptSections, error)
+	planner                   *agent.Planner
+	plannerEnabled            bool
+	providerID                string
+	toolDefinitions           []tools.Definition
+	functions                 map[string]tools.Function
+	maxTurns                  int
+	locker                    *KeyedLocker
+	externalBroker            *extagent.Broker
+	groupExternalAgentTimeout time.Duration
+	memoryAppend              func(task, result string) error
+	context                   agent.ContextConfig
+	processGroupStops         *processGroupStopRegistry
+	environmentCommands       *environmentCommandGuard
+	traceStore                *apptrace.Store
+	subagents                 *subagent.Manager
+	memoryStore               *appmemory.Store
+	globalMemoryStore         *appmemory.Store
+	activeTurns               *activeTurnRegistry
 }
 
 type FileAttachment struct {
@@ -195,14 +197,15 @@ func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *Generation
 }
 
 type TurnOptions struct {
-	OutputWriter   io.Writer
-	ProgressWriter io.Writer
-	TokenSink      io.Writer
-	ToolEventSink  agent.ToolEventSink
-	GroupEventSink GroupEventSink
-	Stream         bool
-	MaxIterations  int
-	Stage          agent.StageConfig
+	OutputWriter      io.Writer
+	ProgressWriter    io.Writer
+	TokenSink         io.Writer
+	ToolEventSink     agent.ToolEventSink
+	GroupEventSink    GroupEventSink
+	ACPPermissionSink extagent.ACPPermissionSink
+	Stream            bool
+	MaxIterations     int
+	Stage             agent.StageConfig
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -218,6 +221,10 @@ func NewService(options ServiceOptions) *Service {
 	if options.ClientOptions != nil {
 		clientOptions = *options.ClientOptions
 	}
+	groupExternalAgentTimeout := options.GroupExternalAgentTimeout
+	if groupExternalAgentTimeout <= 0 {
+		groupExternalAgentTimeout = defaultGroupExternalAgentTimeout
+	}
 	if strings.TrimSpace(options.AgentDir) != "" {
 		sessionOptions.AgentDir = options.AgentDir
 	}
@@ -226,32 +233,33 @@ func NewService(options ServiceOptions) *Service {
 		log.Printf("session maintenance: %v", maintenanceErr)
 	}
 	service := &Service{
-		store:                 store,
-		workspaceRoot:         options.WorkspaceRoot,
-		agentDir:              options.AgentDir,
-		client:                options.Client,
-		clientOptions:         clientOptions,
-		apiType:               agent.NormalizeAPIType(string(options.APIType)),
-		model:                 agent.EffectiveModel(options.Model),
-		models:                parseConfiguredModels(options.Models),
-		systemPrompt:          options.SystemPrompt,
-		systemPromptBuilder:   options.SystemPromptBuilder,
-		promptSectionsBuilder: options.PromptSectionsBuilder,
-		planner:               options.Planner,
-		plannerEnabled:        options.Planner != nil,
-		toolDefinitions:       append(append([]tools.Definition{}, options.ToolDefinitions...), subagentToolDefinitions(options.Subagents != nil)...),
-		functions:             cloneFunctions(options.Functions),
-		maxTurns:              maxTurns,
-		locker:                NewKeyedLocker(),
-		externalBroker:        options.ExternalBroker,
-		memoryAppend:          options.MemoryAppend,
-		context:               options.Context,
-		processGroupStops:     newProcessGroupStopRegistry(),
-		environmentCommands:   newEnvironmentCommandGuard(0),
-		subagents:             options.Subagents,
-		memoryStore:           options.MemoryStore,
-		globalMemoryStore:     options.GlobalMemoryStore,
-		activeTurns:           newActiveTurnRegistry(),
+		store:                     store,
+		workspaceRoot:             options.WorkspaceRoot,
+		agentDir:                  options.AgentDir,
+		client:                    options.Client,
+		clientOptions:             clientOptions,
+		apiType:                   agent.NormalizeAPIType(string(options.APIType)),
+		model:                     agent.EffectiveModel(options.Model),
+		models:                    parseConfiguredModels(options.Models),
+		systemPrompt:              options.SystemPrompt,
+		systemPromptBuilder:       options.SystemPromptBuilder,
+		promptSectionsBuilder:     options.PromptSectionsBuilder,
+		planner:                   options.Planner,
+		plannerEnabled:            options.Planner != nil,
+		toolDefinitions:           append(append([]tools.Definition{}, options.ToolDefinitions...), subagentToolDefinitions(options.Subagents != nil)...),
+		functions:                 cloneFunctions(options.Functions),
+		maxTurns:                  maxTurns,
+		locker:                    NewKeyedLocker(),
+		externalBroker:            options.ExternalBroker,
+		groupExternalAgentTimeout: groupExternalAgentTimeout,
+		memoryAppend:              options.MemoryAppend,
+		context:                   options.Context,
+		processGroupStops:         newProcessGroupStopRegistry(),
+		environmentCommands:       newEnvironmentCommandGuard(0),
+		subagents:                 options.Subagents,
+		memoryStore:               options.MemoryStore,
+		globalMemoryStore:         options.GlobalMemoryStore,
+		activeTurns:               newActiveTurnRegistry(),
 	}
 	if options.RunTraceEnabled {
 		service.traceStore = apptrace.NewStore(options.WorkspaceRoot)
@@ -285,6 +293,13 @@ func (service *Service) StopTurn(turnID string) bool {
 		return false
 	}
 	return service.activeTurns.Stop(turnID)
+}
+
+func (service *Service) RespondACPPermission(requestID, optionID string) error {
+	if service == nil || service.externalBroker == nil {
+		return extagent.ErrPermissionNotFound
+	}
+	return service.externalBroker.RespondPermission(requestID, optionID)
 }
 
 func (service *Service) stopProcessGroupReply(peerKey string, sessionID string) string {
@@ -485,6 +500,17 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			markConversationFailed(conversation, loadErr)
 			return TurnResponse{}, loadErr
 		}
+	}
+	if conversationType == ConversationTypeGroup && service.externalBroker != nil {
+		groupSessionID := conversation.Session.ID()
+		defer func() {
+			if ctx.Err() == nil {
+				return
+			}
+			if clearErr := service.externalBroker.ClearGroup(groupSessionID); clearErr != nil && err == nil {
+				err = clearErr
+			}
+		}()
 	}
 	if conversation.Session.Meta().CurrentMode != persistedChatMode(mode) {
 		if err := conversation.Session.SetCurrentMode(persistedChatMode(mode)); err != nil {
@@ -713,16 +739,20 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			return TurnResponse{}, mentionErr
 		}
 		coordinatorRequested := len(mentions) == 0 || hasGroupMention(mentions, groupScheduler)
-		groupCoordinator = newGroupTurnCoordinator(service, conversation.Session.ID(), groupConfig, mentions, conversation.Messages, options.GroupEventSink)
+		groupCoordinator = newGroupTurnCoordinator(service, conversation.Session.ID(), groupConfig, mentions, conversation.Messages, options.GroupEventSink, options.ACPPermissionSink)
 		for index, participant := range mentions {
 			if participant == groupScheduler {
 				continue
 			}
-			consultResult, _ := groupCoordinator.consult(ctx, participant, modelMessage)
+			consultResult, consultErr := groupCoordinator.consult(ctx, participant, modelMessage)
 			callID := fmt.Sprintf("group-explicit-%d", index+1)
 			if recordErr := recordSyntheticGroupConsult(&conversation.Messages, conversation.Session, callID, participant, consultResult); recordErr != nil {
 				markConversationFailed(conversation, recordErr)
 				return TurnResponse{}, recordErr
+			}
+			if consultErr != nil && ctx.Err() != nil {
+				markConversationFailed(conversation, ctx.Err())
+				return TurnResponse{}, ctx.Err()
 			}
 		}
 		if !coordinatorRequested {
@@ -773,10 +803,11 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		}
 		if routedAgent != "" {
 			result, err := service.externalBroker.SendTurn(ctx, extagent.TurnRequest{
-				BQSessionID: conversation.Session.ID(),
-				Agent:       routedAgent,
-				Prompt:      routedPrompt,
-				CWD:         service.workspaceRoot,
+				BQSessionID:    conversation.Session.ID(),
+				Agent:          routedAgent,
+				Prompt:         routedPrompt,
+				CWD:            service.workspaceRoot,
+				PermissionSink: options.ACPPermissionSink,
 			})
 			if err != nil {
 				writeTurnError(turnErrorWriter, err)

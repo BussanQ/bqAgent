@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
@@ -19,12 +21,13 @@ import (
 type ConversationType string
 
 const (
-	ConversationTypeDefault    ConversationType = "default"
-	ConversationTypeGroup      ConversationType = "group"
-	groupScheduler                              = "bqagent"
-	groupConsultTool                            = "consult_group_agent"
-	groupReplyKindCoordinator                   = "coordinator"
-	groupReplyKindParticipants                  = "participant_results"
+	ConversationTypeDefault          ConversationType = "default"
+	ConversationTypeGroup            ConversationType = "group"
+	groupScheduler                                    = "bqagent"
+	groupConsultTool                                  = "consult_group_agent"
+	groupReplyKindCoordinator                         = "coordinator"
+	groupReplyKindParticipants                        = "participant_results"
+	defaultGroupExternalAgentTimeout                  = 10 * time.Minute
 )
 
 type GroupParticipant struct {
@@ -321,13 +324,14 @@ func parseGroupMentions(message string, config session.GroupConfig) ([]string, e
 }
 
 type groupTurnCoordinator struct {
-	service      *Service
-	sessionID    string
-	allowed      map[string]bool
-	baseMessages []map[string]any
-	replies      []groupVisibleReply
-	eventSink    GroupEventSink
-	callSequence atomic.Uint64
+	service        *Service
+	sessionID      string
+	allowed        map[string]bool
+	baseMessages   []map[string]any
+	replies        []groupVisibleReply
+	eventSink      GroupEventSink
+	permissionSink extagent.ACPPermissionSink
+	callSequence   atomic.Uint64
 }
 
 type groupVisibleReply struct {
@@ -336,7 +340,7 @@ type groupVisibleReply struct {
 	Failed      bool
 }
 
-func newGroupTurnCoordinator(service *Service, sessionID string, config session.GroupConfig, mentions []string, messages []map[string]any, sink GroupEventSink) *groupTurnCoordinator {
+func newGroupTurnCoordinator(service *Service, sessionID string, config session.GroupConfig, mentions []string, messages []map[string]any, sink GroupEventSink, permissionSink extagent.ACPPermissionSink) *groupTurnCoordinator {
 	allowed := map[string]bool{}
 	if len(mentions) != 1 || mentions[0] != groupScheduler {
 		for _, participant := range mentions {
@@ -351,7 +355,7 @@ func newGroupTurnCoordinator(service *Service, sessionID string, config session.
 			}
 		}
 	}
-	return &groupTurnCoordinator{service: service, sessionID: sessionID, allowed: allowed, baseMessages: messages, eventSink: sink}
+	return &groupTurnCoordinator{service: service, sessionID: sessionID, allowed: allowed, baseMessages: messages, eventSink: sink, permissionSink: permissionSink}
 }
 
 func hasGroupMention(mentions []string, participant string) bool {
@@ -406,13 +410,21 @@ func (coordinator *groupTurnCoordinator) consult(ctx context.Context, participan
 	}
 	callID := fmt.Sprintf("group-%d", coordinator.callSequence.Add(1))
 	coordinator.emit(GroupEvent{Kind: "participant_start", CallID: callID, Participant: participant})
-	result, err := coordinator.service.externalBroker.SendGroupTurn(ctx, extagent.TurnRequest{
-		BQSessionID: coordinator.sessionID,
-		Agent:       extagent.AgentName(participant),
-		Prompt:      coordinator.participantPrompt(participant, task),
-		CWD:         coordinator.service.workspaceRoot,
+	timeout := coordinator.service.groupExternalAgentTimeout
+	agentCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	result, err := coordinator.service.externalBroker.SendGroupTurn(agentCtx, extagent.TurnRequest{
+		BQSessionID:    coordinator.sessionID,
+		Agent:          extagent.AgentName(participant),
+		Prompt:         coordinator.participantPrompt(participant, task),
+		CWD:            coordinator.service.workspaceRoot,
+		PermissionSink: coordinator.permissionSink,
 	})
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			_ = coordinator.service.externalBroker.ClearGroup(coordinator.sessionID)
+			err = fmt.Errorf("群聊外部 Agent @%s 执行超时（%s）", participant, timeout)
+		}
 		coordinator.replies = append(coordinator.replies, groupVisibleReply{Participant: participant, Content: err.Error(), Failed: true})
 		coordinator.emit(GroupEvent{Kind: "participant_error", CallID: callID, Participant: participant, Error: err.Error()})
 		return fmt.Sprintf("Group participant @%s failed: %v", participant, err), err

@@ -183,6 +183,29 @@ export interface GroupEventPayload {
   error?: string;
 }
 
+export interface ACPPermissionOption {
+  option_id: string;
+  name: string;
+  kind: "allow_once" | "allow_always" | "reject_once" | "reject_always" | string;
+}
+
+export interface ACPPermissionToolCall {
+  toolCallId?: string;
+  title?: string;
+  kind?: string;
+  rawInput?: unknown;
+  [key: string]: unknown;
+}
+
+export interface ACPPermissionPayload {
+  request_id: string;
+  session_id: string;
+  agent: string;
+  external_session_id: string;
+  tool_call: ACPPermissionToolCall;
+  options: ACPPermissionOption[];
+}
+
 export interface ToolEventPayload {
   kind?: string;
   id?: string;

@@ -1,6 +1,9 @@
 package extagent
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 type AgentName string
 
@@ -58,15 +61,35 @@ type SessionState struct {
 }
 
 type TurnRequest struct {
-	BQSessionID string
-	Agent       AgentName
-	Prompt      string
-	CWD         string
+	BQSessionID    string
+	Agent          AgentName
+	Prompt         string
+	CWD            string
+	PermissionSink ACPPermissionSink
 }
 
 type TurnResponse struct {
 	Reply string
 	State SessionState
+}
+
+type ACPPermissionOption struct {
+	OptionID string `json:"option_id"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+}
+
+type ACPPermissionRequest struct {
+	RequestID         string                `json:"request_id"`
+	BQSessionID       string                `json:"session_id"`
+	Agent             AgentName             `json:"agent"`
+	ExternalSessionID string                `json:"external_session_id"`
+	ToolCall          json.RawMessage       `json:"tool_call"`
+	Options           []ACPPermissionOption `json:"options"`
+}
+
+type ACPPermissionSink interface {
+	EmitACPPermissionRequest(ACPPermissionRequest)
 }
 
 type ACPClient interface {

@@ -1448,6 +1448,31 @@
     border-color: rgba(var(--progress-rgb), .45);
   }
   .bubble.notice::after { background: var(--progress); }
+  .bubble.acp-permission-card {
+    max-width: 720px;
+    padding: 15px 16px;
+    border: 1px solid rgba(var(--progress-rgb), .32);
+    border-radius: var(--radius-sm);
+    background: var(--surface-progress);
+  }
+  .acp-permission-heading { display: block; color: var(--progress); font-size: var(--font-small); }
+  .acp-permission-title { margin-top: 6px; color: var(--text); font-weight: 650; }
+  .bubble .acp-permission-input {
+    max-height: 180px;
+    margin: 10px 0 0;
+    padding: 10px 12px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--code-bg);
+    font-size: 12px;
+    white-space: pre-wrap;
+  }
+  .acp-permission-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .acp-permission-status { display: block; min-height: 18px; margin-top: 8px; color: var(--text-muted); font-size: var(--font-tiny); }
+  .acp-permission-status.error { color: var(--danger); }
+  .bubble.acp-permission-card.resolved { border-color: var(--line); background: var(--surface-subtle); }
+  .bubble.acp-permission-card.expired { opacity: .72; }
   .bubble.rendered { white-space: normal; }
   .bubble.rendered { width: 100%; padding: 17px 19px; }
   .msg.assistant .bubble.rendered { padding: 3px 7px 12px; }

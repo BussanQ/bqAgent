@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"time"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
@@ -66,19 +67,36 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		PromptSectionsBuilder: func() (workspace.PromptSections, error) {
 			return ws.BuildPromptSections("")
 		},
-		Planner:           runtime.Planner,
-		ToolDefinitions:   runtime.Catalog.Definitions(),
-		Functions:         runtime.Catalog.Registry(),
-		ExternalBroker:    externalBroker,
-		MemoryAppend:      memoryAppend,
-		Context:           runtime.Context,
-		RunTraceEnabled:   runtime.RunTraceEnabled,
-		SessionOptions:    &runtime.SessionOptions,
-		Subagents:         subagentManager,
-		MemoryStore:       runtime.Memory,
-		GlobalMemoryStore: runtime.GlobalMemory,
+		Planner:                   runtime.Planner,
+		ToolDefinitions:           runtime.Catalog.Definitions(),
+		Functions:                 runtime.Catalog.Registry(),
+		ExternalBroker:            externalBroker,
+		GroupExternalAgentTimeout: groupExternalAgentTimeoutFromEnv(getenv),
+		MemoryAppend:              memoryAppend,
+		Context:                   runtime.Context,
+		RunTraceEnabled:           runtime.RunTraceEnabled,
+		SessionOptions:            &runtime.SessionOptions,
+		Subagents:                 subagentManager,
+		MemoryStore:               runtime.Memory,
+		GlobalMemoryStore:         runtime.GlobalMemory,
 	})
 	return service, externalBroker
+}
+
+func groupExternalAgentTimeoutFromEnv(getenv func(string) string) time.Duration {
+	const fallback = 10 * time.Minute
+	if getenv == nil {
+		return fallback
+	}
+	raw := strings.TrimSpace(getenv("GROUP_EXTERNAL_AGENT_TIMEOUT"))
+	if raw == "" {
+		return fallback
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil || timeout <= 0 {
+		return fallback
+	}
+	return timeout
 }
 
 func runtimeConfigFromSources(getenv func(string) string, agentDir string) appruntime.Config {

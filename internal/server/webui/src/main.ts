@@ -1,5 +1,6 @@
 import "./styles.css";
 import { errorMessage, parseJSONEvent, responseJSON } from "./api";
+import { acpPermissionTitle, formatACPPermissionInput, isRejectPermissionOption } from "./acp-permission";
 import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
 import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
@@ -17,7 +18,7 @@ import { initialTheme } from "./theme";
 import { shouldGroupToolCalls } from "./tool-groups";
 import { loadWorkspaceSessions, migrateLegacySession, persistWorkspaceSession, workspaceURL } from "./workspace";
 import type { SentFile, SentImage } from "./attachments";
-import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, ConversationType, GenerationMetrics, GroupEventPayload, GroupInfo, PendingFile, PendingImage, ProviderModelsResponse, ProviderSelectionResponse, ProviderSettings, ReasoningEffort, StatusResponse, ToolEventPayload, WorkspaceCurrentPreview, WorkspaceDirectoryPage, WorkspaceDirectoryResponse, WorkspaceDirectoryState, WorkspaceEntry, WorkspaceInfo, WorkspaceListResponse, WorkspacePreview, WorkspaceRoot, WorkspacesResponse, WebUIDoneEvent } from "./types";
+import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, ConversationType, GenerationMetrics, GroupEventPayload, GroupInfo, PendingFile, PendingImage, ProviderModelsResponse, ProviderSelectionResponse, ProviderSettings, ReasoningEffort, StatusResponse, ToolEventPayload, WorkspaceCurrentPreview, WorkspaceDirectoryPage, WorkspaceDirectoryResponse, WorkspaceDirectoryState, WorkspaceEntry, WorkspaceInfo, WorkspaceListResponse, WorkspacePreview, WorkspaceRoot, WorkspacesResponse, WebUIDoneEvent } from "./types";
 
 (function () {
   "use strict";
@@ -1388,6 +1389,80 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     return bubble;
   }
 
+  function addACPPermissionCard(payload: ACPPermissionPayload, pending: Record<string, HTMLElement>): void {
+    var bubble = addMessage("assistant", payload.agent || "外部 Agent");
+    bubble.classList.add("rendered", "acp-permission-card");
+
+    var heading = document.createElement("strong");
+    heading.className = "acp-permission-heading";
+    heading.textContent = "需要你的权限";
+    bubble.appendChild(heading);
+
+    var title = document.createElement("div");
+    title.className = "acp-permission-title";
+    title.textContent = acpPermissionTitle(payload.tool_call);
+    bubble.appendChild(title);
+
+    var inputText = formatACPPermissionInput(payload.tool_call && payload.tool_call.rawInput);
+    if (inputText) {
+      var inputPreview = document.createElement("pre");
+      inputPreview.className = "acp-permission-input";
+      inputPreview.textContent = inputText;
+      bubble.appendChild(inputPreview);
+    }
+
+    var actions = document.createElement("div");
+    actions.className = "acp-permission-actions";
+    var status = document.createElement("span");
+    status.className = "acp-permission-status";
+    payload.options.forEach(function (option) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "ui-btn ui-btn-sm " + (isRejectPermissionOption(option.kind) ? "ui-btn-danger" : "ui-btn-primary");
+      button.textContent = option.name;
+      button.addEventListener("click", async function () {
+        var buttons = Array.prototype.slice.call(actions.querySelectorAll<HTMLButtonElement>("button")) as HTMLButtonElement[];
+        buttons.forEach(function (item) { item.disabled = true; });
+        status.textContent = "正在提交…";
+        try {
+          var response = await fetch("/api/v1/webui/acp/permissions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Accept": "application/json" },
+            body: JSON.stringify({
+              workspace_id: currentWorkspace ? currentWorkspace.id : "",
+              request_id: payload.request_id,
+              option_id: option.option_id
+            })
+          });
+          var result = await responseJSON<{ accepted?: boolean; error?: string }>(response);
+          if (!response.ok || !result.accepted) throw new Error(result.error || "提交权限选择失败");
+          delete pending[payload.request_id];
+          bubble.classList.add("resolved");
+          status.textContent = "已选择：" + option.name;
+        } catch (error) {
+          buttons.forEach(function (item) { item.disabled = false; });
+          status.textContent = errorMessage(error);
+          status.classList.add("error");
+        }
+      });
+      actions.appendChild(button);
+    });
+    bubble.appendChild(actions);
+    bubble.appendChild(status);
+    pending[payload.request_id] = bubble;
+  }
+
+  function expireACPPermissionCards(pending: Record<string, HTMLElement>): void {
+    Object.keys(pending).forEach(function (requestID) {
+      var bubble = pending[requestID];
+      Array.prototype.forEach.call(bubble.querySelectorAll("button"), function (button: HTMLButtonElement) { button.disabled = true; });
+      var status = bubble.querySelector<HTMLElement>(".acp-permission-status");
+      if (status) status.textContent = "请求已取消或失效";
+      bubble.classList.add("expired");
+      delete pending[requestID];
+    });
+  }
+
   function renderUserMessage(bubble: HTMLDivElement, text: string, images: SentImage[], files: SentFile[]): void {
     bubble.textContent = "";
     if (text) {
@@ -2147,6 +2222,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     var bubble: HTMLDivElement | null = conversationType === "group" ? null : addMessage("assistant");
     var toolCards: ToolCards = {};
     var participantBubbles: Record<string, HTMLDivElement> = Object.create(null) as Record<string, HTMLDivElement>;
+    var pendingPermissions: Record<string, HTMLElement> = Object.create(null) as Record<string, HTMLElement>;
     preparingSend = false;
     var caret = document.createElement("span");
     caret.className = "caret";
@@ -2221,6 +2297,9 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
           if (evt.event === "tool_start" || evt.event === "tool_result") {
             var toolPayload = parseJSONEvent<ToolEventPayload>(evt.data);
             if (toolPayload.name !== "consult_group_agent") updateToolTimeline(ensureCoordinatorBubble(), toolCards, evt.event, toolPayload);
+          } else if (evt.event === "acp_permission") {
+            var permission = parseJSONEvent<ACPPermissionPayload>(evt.data);
+            addACPPermissionCard(permission, pendingPermissions);
           } else if (evt.event === "participant_start" || evt.event === "participant_message" || evt.event === "participant_error") {
             var groupEvent = parseJSONEvent<GroupEventPayload>(evt.data);
             if (shouldCloseCoordinatorSegment(evt.event)) closeCoordinatorSegment();
@@ -2280,6 +2359,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
             }
           } else if (evt.event === "stopped") {
             finished = true;
+            expireACPPermissionCards(pendingPermissions);
             var stoppedBubble = ensureCoordinatorBubble();
             clearStreamingState(stoppedBubble);
             caret.remove();
@@ -2291,6 +2371,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
             statusEl.classList.remove("busy", "error");
           } else if (evt.event === "error") {
             finished = true;
+            expireACPPermissionCards(pendingPermissions);
             var errorBubble = ensureCoordinatorBubble();
             clearStreamingState(errorBubble);
             var errPayload = parseJSONEvent<{ error?: string }>(evt.data);
@@ -2340,6 +2421,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
         statusEl.classList.add("error");
       }
     } catch (err) {
+      expireACPPermissionCards(pendingPermissions);
       var caughtBubble = ensureCoordinatorBubble();
       clearStreamingState(caughtBubble);
       caret.remove();
