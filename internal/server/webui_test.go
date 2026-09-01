@@ -164,6 +164,16 @@ func TestWebUIAttachmentTriggerShowsOnlyPlusIcon(t *testing.T) {
 	}
 }
 
+func TestWebUIGroupAskOptionHonorsHiddenState(t *testing.T) {
+	styles, err := os.ReadFile(filepath.Join("webui", "src", "styles.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(styles, []byte(".chat-mode-option[hidden] { display: none; }")) {
+		t.Fatal("chat mode option display styles override the group-mode hidden state")
+	}
+}
+
 func TestWebUIServesFavicon(t *testing.T) {
 	root := t.TempDir()
 	service := newTestService(root, "http://example.invalid")
