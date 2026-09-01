@@ -18,10 +18,12 @@ import (
 type ConversationType string
 
 const (
-	ConversationTypeDefault ConversationType = "default"
-	ConversationTypeGroup   ConversationType = "group"
-	groupScheduler                           = "bqagent"
-	groupConsultTool                         = "consult_group_agent"
+	ConversationTypeDefault    ConversationType = "default"
+	ConversationTypeGroup      ConversationType = "group"
+	groupScheduler                              = "bqagent"
+	groupConsultTool                            = "consult_group_agent"
+	groupReplyKindCoordinator                   = "coordinator"
+	groupReplyKindParticipants                  = "participant_results"
 )
 
 type GroupParticipant struct {
@@ -157,9 +159,9 @@ func promptForGroup(prompt agent.PromptSnapshot, config session.GroupConfig) age
 	}
 	stable += `# Group conversation
 
-You are bqagent, the coordinator and final synthesizer of a shared-workspace group conversation.
+You are bqagent, the coordinator and final synthesizer of a shared-workspace group conversation. The server invokes you only when the user explicitly mentions @bqagent for the current task.
 The fixed participant roster is: ` + participants + `.
-Use consult_group_agent when another participant's independent work would improve the answer. You may consult an allowed participant more than once when useful. Every consultation runs in the same workspace and returns into this conversation. Read prior participant conclusions, reconcile conflicts, attribute important findings, and always provide the final consolidated answer yourself. Do not invent participant conclusions or claim a consultation that did not occur.`
+Use consult_group_agent when another participant's independent work would improve the answer. You may consult an allowed participant more than once when useful. Every consultation runs in the same workspace and returns into this conversation. Wait for requested consultations, read prior participant conclusions, reconcile conflicts, attribute important findings, and then provide the final consolidated answer yourself. Do not invent participant conclusions or claim a consultation that did not occur. Tasks addressed only to other participants are handled directly by the server and must not be analyzed or summarized by you.`
 	return agent.NewFrozenPromptSnapshot(stable, prompt.SessionContext)
 }
 
@@ -203,7 +205,7 @@ type groupVisibleReply struct {
 
 func newGroupTurnCoordinator(service *Service, sessionID string, config session.GroupConfig, mentions []string, messages []map[string]any, sink GroupEventSink) *groupTurnCoordinator {
 	allowed := map[string]bool{}
-	if len(mentions) > 0 {
+	if len(mentions) != 1 || mentions[0] != groupScheduler {
 		for _, participant := range mentions {
 			if participant != groupScheduler {
 				allowed[participant] = true
@@ -217,6 +219,15 @@ func newGroupTurnCoordinator(service *Service, sessionID string, config session.
 		}
 	}
 	return &groupTurnCoordinator{service: service, sessionID: sessionID, allowed: allowed, baseMessages: messages, eventSink: sink}
+}
+
+func hasGroupMention(mentions []string, participant string) bool {
+	for _, mention := range mentions {
+		if mention == participant {
+			return true
+		}
+	}
+	return false
 }
 
 func (coordinator *groupTurnCoordinator) toolDefinition() (tools.Definition, bool) {
@@ -296,6 +307,18 @@ func (coordinator *groupTurnCoordinator) emit(event GroupEvent) {
 	if coordinator.eventSink != nil {
 		coordinator.eventSink.EmitGroupEvent(event)
 	}
+}
+
+func directGroupReply(replies []groupVisibleReply) string {
+	parts := make([]string, 0, len(replies))
+	for _, reply := range replies {
+		heading := "@" + reply.Participant
+		if reply.Failed {
+			heading += " 执行失败"
+		}
+		parts = append(parts, heading+":\n"+strings.TrimSpace(reply.Content))
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func sharedGroupContext(messages []map[string]any, replies []groupVisibleReply) string {

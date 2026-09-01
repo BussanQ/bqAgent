@@ -166,6 +166,7 @@ export interface WebUIDoneEvent {
   session_id: string;
   run_id?: string;
   reply: string;
+  reply_kind?: "coordinator" | "participant_results";
   api_type: string;
   model: string;
   mode: ChatMode;

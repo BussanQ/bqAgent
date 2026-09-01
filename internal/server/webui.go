@@ -58,6 +58,7 @@ type webUIDoneEvent struct {
 	SessionID        string             `json:"session_id"`
 	RunID            string             `json:"run_id,omitempty"`
 	Reply            string             `json:"reply"`
+	ReplyKind        string             `json:"reply_kind,omitempty"`
 	APIType          string             `json:"api_type"`
 	Model            string             `json:"model"`
 	Mode             ChatMode           `json:"mode"`
@@ -518,6 +519,7 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		SessionID:        response.SessionID,
 		RunID:            response.RunID,
 		Reply:            sanitizeChannelReply(response.Reply),
+		ReplyKind:        response.ReplyKind,
 		APIType:          string(service.apiType),
 		Model:            response.Model,
 		Mode:             response.Mode,

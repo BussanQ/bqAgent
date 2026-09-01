@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention } from "./group-chat";
+import { groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldRenderFinalReply } from "./group-chat";
 
 describe("群聊输入", () => {
   const participants = [
@@ -11,6 +11,12 @@ describe("群聊输入", () => {
   it("规范化会话类型", () => {
     expect(normalizeConversationType("group")).toBe("group");
     expect(normalizeConversationType("unknown")).toBe("default");
+  });
+
+  it("外部成员直达结果不再渲染 bqagent 最终气泡", () => {
+    expect(shouldRenderFinalReply("group", "participant_results")).toBe(false);
+    expect(shouldRenderFinalReply("group", "coordinator")).toBe(true);
+    expect(shouldRenderFinalReply("default", "participant_results")).toBe(true);
   });
 
   it("识别光标前的 @ 查询并替换", () => {

@@ -147,6 +147,7 @@ type CacheMetrics struct {
 type TurnResponse struct {
 	SessionID        string             `json:"session_id"`
 	Reply            string             `json:"reply"`
+	ReplyKind        string             `json:"reply_kind,omitempty"`
 	RunID            string             `json:"run_id,omitempty"`
 	Model            string             `json:"model,omitempty"`
 	Mode             ChatMode           `json:"mode"`
@@ -711,6 +712,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			markConversationFailed(conversation, mentionErr)
 			return TurnResponse{}, mentionErr
 		}
+		if len(mentions) == 0 {
+			mentionErr = fmt.Errorf("群聊任务请明确 @bqagent 或其他群聊成员")
+			writeTurnError(turnErrorWriter, mentionErr)
+			markConversationFailed(conversation, mentionErr)
+			return TurnResponse{}, mentionErr
+		}
+		coordinatorRequested := hasGroupMention(mentions, groupScheduler)
 		groupCoordinator = newGroupTurnCoordinator(service, conversation.Session.ID(), groupConfig, mentions, conversation.Messages, options.GroupEventSink)
 		for index, participant := range mentions {
 			if participant == groupScheduler {
@@ -722,6 +730,22 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 				markConversationFailed(conversation, recordErr)
 				return TurnResponse{}, recordErr
 			}
+		}
+		if !coordinatorRequested {
+			reply := directGroupReply(groupCoordinator.replies)
+			if completeErr := service.completeConversation(conversation); completeErr != nil {
+				writeTurnError(turnErrorWriter, completeErr)
+				return TurnResponse{}, completeErr
+			}
+			writeTurnReply(logWriter, reply, false)
+			return TurnResponse{
+				SessionID:        conversation.Session.ID(),
+				Reply:            reply,
+				ReplyKind:        groupReplyKindParticipants,
+				RunID:            runID,
+				Mode:             mode,
+				ConversationType: conversationType,
+			}, nil
 		}
 	}
 
@@ -840,9 +864,14 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 	writeTurnReply(logWriter, result, options.Stream)
 
+	replyKind := ""
+	if conversationType == ConversationTypeGroup {
+		replyKind = groupReplyKindCoordinator
+	}
 	return TurnResponse{
 		SessionID:        conversation.Session.ID(),
 		Reply:            result,
+		ReplyKind:        replyKind,
 		RunID:            runID,
 		Mode:             mode,
 		ConversationType: conversationType,

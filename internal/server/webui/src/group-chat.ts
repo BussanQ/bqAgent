@@ -4,6 +4,10 @@ export function normalizeConversationType(value: unknown): ConversationType {
   return String(value || "").toLowerCase() === "group" ? "group" : "default";
 }
 
+export function shouldRenderFinalReply(conversationType: unknown, replyKind: unknown): boolean {
+  return normalizeConversationType(conversationType) !== "group" || String(replyKind || "") !== "participant_results";
+}
+
 export interface MentionQuery {
   start: number;
   end: number;

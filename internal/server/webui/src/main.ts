@@ -4,7 +4,7 @@ import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, v
 import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 import { formatConversationTime } from "./conversations";
-import { groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, type MentionQuery } from "./group-chat";
+import { groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldRenderFinalReply, type MentionQuery } from "./group-chat";
 import { byId, eventElement } from "./dom";
 import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
 import { renderMarkdown } from "./markdown";
@@ -472,7 +472,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     if (conversationType === "group") {
       setChatMode("run");
       modeAskBtn.hidden = true;
-      input.placeholder = "群聊模式：输入 @ 选择成员，或由 bqagent 自主调度";
+      input.placeholder = "群聊模式：@成员直接交互，@bqagent 调度汇总";
     } else {
       modeAskBtn.hidden = false;
       input.placeholder = chatModePlaceholder(chatMode);
@@ -1684,7 +1684,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
       button.classList.toggle("selected", selected);
       button.setAttribute("aria-checked", selected ? "true" : "false");
     });
-    input.placeholder = conversationType === "group" ? "群聊模式：输入 @ 选择成员，或由 bqagent 自主调度" : chatModePlaceholder(chatMode);
+    input.placeholder = conversationType === "group" ? "群聊模式：@成员直接交互，@bqagent 调度汇总" : chatModePlaceholder(chatMode);
     addAttachmentBtn.title = chatMode === "ask" ? "Ask 模式与附件" : "Run 模式与附件";
     addAttachmentBtn.setAttribute("aria-label", chatMode === "ask" ? "Ask 模式：选择模式或添加文件" : "Run 模式：选择模式或添加文件");
   }
@@ -2086,8 +2086,6 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
             }
           } else if (evt.event === "done") {
             finished = true;
-            var finalBubble = ensureCoordinatorBubble();
-            clearStreamingState(finalBubble);
             var done = parseJSONEvent<WebUIDoneEvent>(evt.data);
             if (done.session_id) {
               setCurrentWorkspaceSession(done.session_id);
@@ -2099,6 +2097,14 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
             setConversationType(done.conversation_type, done.group || currentGroup);
             setChatMode(done.mode);
             refreshConversations(false);
+            if (!shouldRenderFinalReply(done.conversation_type, done.reply_kind)) {
+              caret.remove();
+              if (bubble) bubble.remove();
+              bubble = null;
+              continue;
+            }
+            var finalBubble = ensureCoordinatorBubble();
+            clearStreamingState(finalBubble);
             finalBubble.classList.add("rendered");
             var finalReply = typeof done.reply === "string" ? done.reply : "";
             if (!finalReply.trim()) {

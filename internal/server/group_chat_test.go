@@ -84,12 +84,12 @@ func newGroupTestBroker(root string, log *groupACPLog, names ...extagent.AgentNa
 	})
 }
 
-func TestGroupChatExplicitMentionsShareConclusionsAndHistory(t *testing.T) {
+func TestGroupChatExternalMentionsReturnDirectlyWithoutCoordinator(t *testing.T) {
 	root := t.TempDir()
 	log := &groupACPLog{prompts: map[string][]string{}}
 	broker := newGroupTestBroker(root, log, extagent.AgentCodex, extagent.AgentOpenCode)
 	defer broker.Close()
-	client := &groupTestClient{responses: []agent.AssistantMessage{{Role: "assistant", Content: "bqagent 汇总结论"}}}
+	client := &groupTestClient{}
 	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: client, SystemPrompt: "base", ExternalBroker: broker})
 	sink := &recordingGroupSink{}
 
@@ -99,8 +99,17 @@ func TestGroupChatExplicitMentionsShareConclusionsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.ConversationType != ConversationTypeGroup || response.Reply != "bqagent 汇总结论" {
+	if response.ConversationType != ConversationTypeGroup || response.ReplyKind != groupReplyKindParticipants {
 		t.Fatalf("response = %#v", response)
+	}
+	if !strings.Contains(response.Reply, "@codex:\ncodex 结论") || !strings.Contains(response.Reply, "@opencode:\nopencode 结论") {
+		t.Fatalf("direct reply = %q", response.Reply)
+	}
+	client.mu.Lock()
+	coordinatorCalls := len(client.messages)
+	client.mu.Unlock()
+	if coordinatorCalls != 0 {
+		t.Fatalf("bqagent calls = %d, want 0", coordinatorCalls)
 	}
 	if len(sink.events) != 4 || sink.events[0].Participant != "codex" || sink.events[2].Participant != "opencode" {
 		t.Fatalf("events = %#v", sink.events)
@@ -119,7 +128,7 @@ func TestGroupChatExplicitMentionsShareConclusionsAndHistory(t *testing.T) {
 	if history.ConversationType != ConversationTypeGroup || history.Group == nil {
 		t.Fatalf("history metadata = %#v", history)
 	}
-	wantSenders := []string{"user", "codex", "opencode", "bqagent"}
+	wantSenders := []string{"user", "codex", "opencode"}
 	if len(history.Messages) != len(wantSenders) {
 		t.Fatalf("history messages = %#v", history.Messages)
 	}
@@ -130,7 +139,7 @@ func TestGroupChatExplicitMentionsShareConclusionsAndHistory(t *testing.T) {
 	}
 }
 
-func TestGroupChatWithoutMentionsLetsCoordinatorConsult(t *testing.T) {
+func TestGroupChatBqagentMentionLetsCoordinatorConsultAndSummarize(t *testing.T) {
 	root := t.TempDir()
 	log := &groupACPLog{prompts: map[string][]string{}}
 	broker := newGroupTestBroker(root, log, extagent.AgentCodex)
@@ -141,11 +150,11 @@ func TestGroupChatWithoutMentionsLetsCoordinatorConsult(t *testing.T) {
 	}}
 	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: client, SystemPrompt: "base", ExternalBroker: broker})
 
-	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "分析当前实现", ConversationType: ConversationTypeGroup})
+	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "@bqagent 分析当前实现", ConversationType: ConversationTypeGroup})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Reply != "综合完成" {
+	if response.Reply != "综合完成" || response.ReplyKind != groupReplyKindCoordinator {
 		t.Fatalf("reply = %q", response.Reply)
 	}
 	log.mu.Lock()
@@ -153,6 +162,23 @@ func TestGroupChatWithoutMentionsLetsCoordinatorConsult(t *testing.T) {
 	log.mu.Unlock()
 	if count != 1 {
 		t.Fatalf("codex calls = %d, want 1", count)
+	}
+}
+
+func TestGroupChatWithoutMentionDoesNotInvokeCoordinator(t *testing.T) {
+	root := t.TempDir()
+	client := &groupTestClient{}
+	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: client, SystemPrompt: "base"})
+
+	_, err := service.HandleTurn(context.Background(), TurnRequest{Message: "分析当前实现", ConversationType: ConversationTypeGroup})
+	if err == nil || !strings.Contains(err.Error(), "请明确 @bqagent") {
+		t.Fatalf("error = %v", err)
+	}
+	client.mu.Lock()
+	coordinatorCalls := len(client.messages)
+	client.mu.Unlock()
+	if coordinatorCalls != 0 {
+		t.Fatalf("bqagent calls = %d, want 0", coordinatorCalls)
 	}
 }
 
@@ -169,7 +195,7 @@ func TestWebUIGroupParticipantsAndSSE(t *testing.T) {
 	log := &groupACPLog{prompts: map[string][]string{}}
 	broker := newGroupTestBroker(root, log, extagent.AgentCodex)
 	defer broker.Close()
-	client := &groupTestClient{responses: []agent.AssistantMessage{{Role: "assistant", Content: "最终汇总"}}}
+	client := &groupTestClient{}
 	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: client, SystemPrompt: "base", ExternalBroker: broker})
 	server := httptest.NewServer(NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}}))
 	defer server.Close()
@@ -191,7 +217,7 @@ func TestWebUIGroupParticipantsAndSSE(t *testing.T) {
 	body, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	text := string(body)
-	if response.StatusCode != http.StatusOK || !strings.Contains(text, "event: participant_start") || !strings.Contains(text, `"conversation_type":"group"`) {
+	if response.StatusCode != http.StatusOK || !strings.Contains(text, "event: participant_start") || !strings.Contains(text, `"conversation_type":"group"`) || !strings.Contains(text, `"reply_kind":"participant_results"`) {
 		t.Fatalf("SSE status=%d body=%s", response.StatusCode, text)
 	}
 }
