@@ -26,7 +26,7 @@ func defaultACPConfig(agent AgentName, command, args string) CommandSpec {
 	if command == "" {
 		switch agent {
 		case AgentCursor:
-			command = "cursor"
+			command = "cursor-agent"
 		case AgentOpenCode:
 			command = "opencode"
 		}
@@ -36,7 +36,7 @@ func defaultACPConfig(agent AgentName, command, args string) CommandSpec {
 	}
 	switch agent {
 	case AgentCursor:
-		return CommandSpec{Command: command, Args: []string{"agent", "acp"}}
+		return CommandSpec{Command: command, Args: []string{"acp"}}
 	case AgentOpenCode:
 		return CommandSpec{Command: command, Args: []string{"acp"}}
 	default:
