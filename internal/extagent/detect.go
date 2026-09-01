@@ -22,7 +22,7 @@ func Detect(ctx context.Context, config Config, factory ACPClientFactory) map[Ag
 		}
 
 		if looksExecutable(cfg.ACP.Command) {
-			probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			client, err := factory(cfg.ACP, config.WorkspaceRoot)
 			if err == nil {
 				err = client.Initialize(probeCtx)

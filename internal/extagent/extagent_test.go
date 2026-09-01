@@ -99,6 +99,53 @@ func TestDetectFallsBackToCLIOnACPStartupFailure(t *testing.T) {
 	}
 }
 
+func TestNewDetectingBrokerReturnsBeforeProbeCompletes(t *testing.T) {
+	root := t.TempDir()
+	client := &blockingInitializeACPClient{started: make(chan struct{}), release: make(chan struct{})}
+	config := Config{
+		WorkspaceRoot: root,
+		Agents: map[AgentName]AgentConfig{
+			AgentCodex: {ACP: CommandSpec{Command: os.Args[0]}},
+		},
+	}
+	constructed := make(chan *Broker, 1)
+	go func() {
+		constructed <- NewDetectingBroker(context.Background(), NewStateStore(root), config, func(CommandSpec, string) (ACPClient, error) {
+			return client, nil
+		}, nil)
+	}()
+
+	var broker *Broker
+	select {
+	case broker = <-constructed:
+	case <-time.After(time.Second):
+		t.Fatal("broker construction waited for external-agent detection")
+	}
+	defer broker.Close()
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("background detection did not start")
+	}
+
+	detected := make(chan DetectionResult, 1)
+	go func() { detected <- broker.Detection(AgentCodex) }()
+	select {
+	case result := <-detected:
+		t.Fatalf("detection returned before probe completed: %#v", result)
+	case <-time.After(20 * time.Millisecond):
+	}
+	_ = client.Close()
+	select {
+	case result := <-detected:
+		if result.Preferred == nil || result.Preferred.Kind != TransportACP {
+			t.Fatalf("detection = %#v, want ACP", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detection result was not published")
+	}
+}
+
 func TestCLIAdapterPersistsCodexResumeID(t *testing.T) {
 	adapter := CLIAdapter{}
 	state := SessionState{Agent: AgentCodex}

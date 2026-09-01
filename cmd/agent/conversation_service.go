@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 
 	"bqagent/internal/agent"
@@ -29,14 +30,16 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	}.Build(includePlan)
 
 	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
-	detections := extagent.Detect(ctx, externalConfig, nil)
 	if statusWriter != nil {
-		for _, status := range extagent.FormatStatuses(detections) {
-			fmt.Fprintf(statusWriter, "external-agent %s\n", status)
-		}
+		fmt.Fprintln(statusWriter, "external-agent detection=background")
 	}
-
-	externalBroker := extagent.NewBroker(extagent.NewStateStore(ws.Root), detections, nil)
+	externalBroker := extagent.NewDetectingBroker(ctx, extagent.NewStateStore(ws.Root), externalConfig, nil, func(detections map[extagent.AgentName]extagent.DetectionResult) {
+		if statusWriter != nil {
+			for _, status := range extagent.FormatStatuses(detections) {
+				log.Printf("external-agent %s", status)
+			}
+		}
+	})
 	subagentManager := subagent.NewManager(ws.Root, externalBroker, runtime.RunTraceEnabled)
 	var memoryAppend func(task, result string) error
 	if ws.MemoryEnabled() {

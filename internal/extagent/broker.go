@@ -32,10 +32,13 @@ type acpClientFuture struct {
 }
 
 type Broker struct {
-	store      *StateStore
-	detections map[AgentName]DetectionResult
-	acpFactory ACPClientFactory
-	cli        CLIAdapter
+	store           *StateStore
+	detections      map[AgentName]DetectionResult
+	acpFactory      ACPClientFactory
+	cli             CLIAdapter
+	detectionReady  chan struct{}
+	detectionDone   sync.Once
+	detectionCancel context.CancelFunc
 
 	mu                 sync.Mutex
 	acpClients         map[acpClientKey]ACPClient
@@ -46,13 +49,40 @@ type Broker struct {
 }
 
 func NewBroker(store *StateStore, detections map[AgentName]DetectionResult, factory ACPClientFactory) *Broker {
+	broker := newBroker(store, factory)
+	broker.publishDetections(detections)
+	return broker
+}
+
+// NewDetectingBroker returns immediately and probes external agents in the
+// background. Detection-dependent operations wait for the probe, so callers do
+// not observe a transient "unavailable" result merely because startup is still
+// in progress.
+func NewDetectingBroker(ctx context.Context, store *StateStore, config Config, factory ACPClientFactory, onDetected func(map[AgentName]DetectionResult)) *Broker {
+	broker := newBroker(store, factory)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	probeCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	broker.detectionCancel = cancel
+	go func() {
+		results := Detect(probeCtx, config, factory)
+		if broker.publishDetections(results) && onDetected != nil {
+			onDetected(results)
+		}
+	}()
+	return broker
+}
+
+func newBroker(store *StateStore, factory ACPClientFactory) *Broker {
 	if factory == nil {
 		factory = NewACPClient
 	}
 	return &Broker{
 		store:              store,
-		detections:         detections,
+		detections:         map[AgentName]DetectionResult{},
 		acpFactory:         factory,
+		detectionReady:     make(chan struct{}),
 		acpClients:         map[acpClientKey]ACPClient{},
 		acpInFlight:        map[acpClientKey]*acpClientFuture{},
 		sessionGenerations: map[string]uint64{},
@@ -60,17 +90,69 @@ func NewBroker(store *StateStore, detections map[AgentName]DetectionResult, fact
 	}
 }
 
+func (broker *Broker) publishDetections(detections map[AgentName]DetectionResult) bool {
+	if broker == nil {
+		return false
+	}
+	broker.mu.Lock()
+	published := !broker.closed
+	if published {
+		broker.detections = cloneDetections(detections)
+	}
+	broker.mu.Unlock()
+	broker.detectionDone.Do(func() { close(broker.detectionReady) })
+	return published
+}
+
+func cloneDetections(source map[AgentName]DetectionResult) map[AgentName]DetectionResult {
+	cloned := make(map[AgentName]DetectionResult, len(source))
+	for agent, result := range source {
+		cloned[agent] = result
+	}
+	return cloned
+}
+
+func (broker *Broker) waitForDetections(ctx context.Context) error {
+	if broker == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-broker.detectionReady:
+	}
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+	if broker.closed {
+		return errBrokerClosed
+	}
+	return nil
+}
+
 func (broker *Broker) Detection(agent AgentName) DetectionResult {
 	if broker == nil {
 		return DetectionResult{Agent: agent}
 	}
-	return broker.detections[agent]
+	<-broker.detectionReady
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+	result, ok := broker.detections[agent]
+	if !ok {
+		result.Agent = agent
+	}
+	return result
 }
 
 func (broker *Broker) AvailableAgents() []AgentName {
+	if broker == nil {
+		return nil
+	}
+	<-broker.detectionReady
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
 	available := make([]AgentName, 0)
 	for _, agent := range SupportedAgents() {
-		if broker != nil && broker.detections[agent].Preferred != nil {
+		if broker.detections[agent].Preferred != nil {
 			available = append(available, agent)
 		}
 	}
@@ -198,6 +280,9 @@ func (broker *Broker) sendTurn(ctx context.Context, request TurnRequest, group b
 	if request.BQSessionID == "" {
 		return TurnResponse{}, fmt.Errorf("session_id is required")
 	}
+	if err := broker.waitForDetections(ctx); err != nil {
+		return TurnResponse{}, err
+	}
 	// Load, external work, generation validation, and Save comprise one session
 	// transaction. This prevents concurrent turns from losing a newly issued
 	// external session ID and makes Clear a durable fencing operation.
@@ -209,7 +294,9 @@ func (broker *Broker) sendTurn(ctx context.Context, request TurnRequest, group b
 	if err != nil {
 		return TurnResponse{}, err
 	}
+	broker.mu.Lock()
 	detection := broker.detections[request.Agent]
+	broker.mu.Unlock()
 	if detection.Preferred == nil {
 		return TurnResponse{}, fmt.Errorf("agent %q is unavailable", request.Agent)
 	}
@@ -399,6 +486,7 @@ func (broker *Broker) Close() error {
 	// must not hold the map lock while a future or waiter needs to make progress.
 	broker.mu.Lock()
 	broker.closed = true
+	detectionCancel := broker.detectionCancel
 	clients := make([]ACPClient, 0, len(broker.acpClients)+len(broker.acpInFlight))
 	for key, client := range broker.acpClients {
 		clients = append(clients, client)
@@ -414,6 +502,10 @@ func (broker *Broker) Close() error {
 		delete(broker.acpInFlight, key)
 	}
 	broker.mu.Unlock()
+	if detectionCancel != nil {
+		detectionCancel()
+	}
+	broker.detectionDone.Do(func() { close(broker.detectionReady) })
 
 	var firstErr error
 	for _, client := range clients {
