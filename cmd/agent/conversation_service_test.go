@@ -3,6 +3,7 @@ package main
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/providerconfig"
@@ -22,5 +23,14 @@ func TestRuntimeConfigFromSourcesPrefersSavedProvider(t *testing.T) {
 	config := runtimeConfigFromSources(func(key string) string { return environment[key] }, agentDir)
 	if config.APIType != agent.APITypeAnthropic || config.APIKey != "saved-key" || config.Model != "claude-saved" || config.BaseURL != "https://saved.example/v1" {
 		t.Fatalf("runtime config = %#v", config)
+	}
+}
+
+func TestGroupExternalAgentTimeoutFromEnv(t *testing.T) {
+	if got := groupExternalAgentTimeoutFromEnv(func(string) string { return "45s" }); got != 45*time.Second {
+		t.Fatalf("configured timeout = %s, want 45s", got)
+	}
+	if got := groupExternalAgentTimeoutFromEnv(func(string) string { return "invalid" }); got != 10*time.Minute {
+		t.Fatalf("invalid timeout fallback = %s, want 10m", got)
 	}
 }

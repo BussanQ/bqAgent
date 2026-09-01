@@ -2,6 +2,7 @@ package extagent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,21 @@ func TestConfigFromEnvDefaultsOpenCodeACP(t *testing.T) {
 	}
 	if openCode.CLI.Command != "" || len(openCode.CLI.Args) != 0 {
 		t.Fatalf("CLI config = %#v, want empty", openCode.CLI)
+	}
+}
+
+func TestConfigFromEnvDefaultsCursorACP(t *testing.T) {
+	config := ConfigFromEnv(func(string) string { return "" }, t.TempDir())
+	cursor := config.Agents[AgentCursor]
+	if cursor.ACP.Command != "cursor-agent" {
+		t.Fatalf("ACP command = %q, want %q", cursor.ACP.Command, "cursor-agent")
+	}
+	wantArgs := []string{"acp"}
+	if len(cursor.ACP.Args) != len(wantArgs) || cursor.ACP.Args[0] != wantArgs[0] {
+		t.Fatalf("ACP args = %#v, want %#v", cursor.ACP.Args, wantArgs)
+	}
+	if cursor.CLI.Command != "" || len(cursor.CLI.Args) != 0 {
+		t.Fatalf("CLI config = %#v, want empty", cursor.CLI)
 	}
 }
 
@@ -99,6 +115,53 @@ func TestDetectFallsBackToCLIOnACPStartupFailure(t *testing.T) {
 	}
 }
 
+func TestNewDetectingBrokerReturnsBeforeProbeCompletes(t *testing.T) {
+	root := t.TempDir()
+	client := &blockingInitializeACPClient{started: make(chan struct{}), release: make(chan struct{})}
+	config := Config{
+		WorkspaceRoot: root,
+		Agents: map[AgentName]AgentConfig{
+			AgentCodex: {ACP: CommandSpec{Command: os.Args[0]}},
+		},
+	}
+	constructed := make(chan *Broker, 1)
+	go func() {
+		constructed <- NewDetectingBroker(context.Background(), NewStateStore(root), config, func(CommandSpec, string) (ACPClient, error) {
+			return client, nil
+		}, nil)
+	}()
+
+	var broker *Broker
+	select {
+	case broker = <-constructed:
+	case <-time.After(time.Second):
+		t.Fatal("broker construction waited for external-agent detection")
+	}
+	defer broker.Close()
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("background detection did not start")
+	}
+
+	detected := make(chan DetectionResult, 1)
+	go func() { detected <- broker.Detection(AgentCodex) }()
+	select {
+	case result := <-detected:
+		t.Fatalf("detection returned before probe completed: %#v", result)
+	case <-time.After(20 * time.Millisecond):
+	}
+	_ = client.Close()
+	select {
+	case result := <-detected:
+		if result.Preferred == nil || result.Preferred.Kind != TransportACP {
+			t.Fatalf("detection = %#v, want ACP", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detection result was not published")
+	}
+}
+
 func TestCLIAdapterPersistsCodexResumeID(t *testing.T) {
 	adapter := CLIAdapter{}
 	state := SessionState{Agent: AgentCodex}
@@ -169,6 +232,49 @@ func TestACPCollectsOnlyAgentMessageChunks(t *testing.T) {
 	}
 	if got := collector.String(); got != "visible reply" {
 		t.Fatalf("collected reply = %q, want only agent message content", got)
+	}
+}
+
+func TestACPReadLoopExitWakesPendingRequest(t *testing.T) {
+	responseCh := make(chan rpcEnvelope, 1)
+	client := &stdioACPClient{responses: map[string]chan rpcEnvelope{"1": responseCh}}
+	client.readLoop(strings.NewReader(""))
+	select {
+	case response := <-responseCh:
+		if response.Error == nil || !strings.Contains(response.Error.Message, "ACP process exited") {
+			t.Fatalf("response = %#v, want process exit error", response)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pending request was not woken after ACP stdout closed")
+	}
+}
+
+func TestACPReadLoopAcceptsLargeProtocolMessage(t *testing.T) {
+	visibleReply := strings.Repeat("large ACP message ", 8<<10)
+	payload, err := json.Marshal(map[string]any{
+		"method": "session/update",
+		"params": map[string]any{
+			"sessionId": "session-1",
+			"update": map[string]any{
+				"sessionUpdate": "agent_message_chunk",
+				"content":       map[string]any{"text": visibleReply},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) <= bufio.MaxScanTokenSize {
+		t.Fatalf("test payload = %d bytes, want more than Scanner default %d", len(payload), bufio.MaxScanTokenSize)
+	}
+	collector := &strings.Builder{}
+	client := &stdioACPClient{
+		responses:  map[string]chan rpcEnvelope{},
+		collectors: map[string]*strings.Builder{"session-1": collector},
+	}
+	client.readLoop(bytes.NewReader(append(payload, '\n')))
+	if got := collector.String(); got != visibleReply {
+		t.Fatalf("collected reply length = %d, want %d", len(got), len(visibleReply))
 	}
 }
 
@@ -670,6 +776,124 @@ type trackingACPClient struct {
 	closeCount int
 }
 
+type reconnectingACPClient struct {
+	sessionID  string
+	failLoad   bool
+	loadCount  int
+	closeCount int
+}
+
+func (client *reconnectingACPClient) Initialize(context.Context) error { return nil }
+func (client *reconnectingACPClient) LoadSessionSupported() bool       { return true }
+func (client *reconnectingACPClient) NewSession(context.Context, string) (string, error) {
+	return client.sessionID, nil
+}
+func (client *reconnectingACPClient) LoadSession(_ context.Context, sessionID, _ string) (string, error) {
+	client.loadCount++
+	if client.failLoad {
+		return "", errors.New("write |1: broken pipe")
+	}
+	return sessionID, nil
+}
+func (client *reconnectingACPClient) Prompt(_ context.Context, _ string, prompt string) (string, error) {
+	return "reply:" + prompt, nil
+}
+func (client *reconnectingACPClient) Close() error {
+	client.closeCount++
+	return nil
+}
+
+func TestBrokerReconnectsOnceAfterCachedACPProcessExits(t *testing.T) {
+	root := t.TempDir()
+	first := &reconnectingACPClient{sessionID: "cursor-session", failLoad: true}
+	second := &reconnectingACPClient{sessionID: "unused"}
+	clients := []*reconnectingACPClient{first, second}
+	factoryCalls := 0
+	broker := NewBroker(NewStateStore(root), map[AgentName]DetectionResult{
+		AgentCursor: {Agent: AgentCursor, Preferred: &AgentTransport{Agent: AgentCursor, Kind: TransportACP, Command: CommandSpec{Command: "cursor-agent"}}},
+	}, func(CommandSpec, string) (ACPClient, error) {
+		client := clients[factoryCalls]
+		factoryCalls++
+		return client, nil
+	})
+	defer broker.Close()
+
+	firstResponse, err := broker.SendGroupTurn(context.Background(), TurnRequest{BQSessionID: "group-1", Agent: AgentCursor, Prompt: "first", CWD: root})
+	if err != nil || firstResponse.Reply != "reply:first" {
+		t.Fatalf("first turn response = %#v, error = %v", firstResponse, err)
+	}
+	secondResponse, err := broker.SendGroupTurn(context.Background(), TurnRequest{BQSessionID: "group-1", Agent: AgentCursor, Prompt: "second", CWD: root})
+	if err != nil || secondResponse.Reply != "reply:second" {
+		t.Fatalf("reconnected turn response = %#v, error = %v", secondResponse, err)
+	}
+	if factoryCalls != 2 || first.closeCount != 1 || second.loadCount != 1 {
+		t.Fatalf("factory calls = %d, first closes = %d, second loads = %d", factoryCalls, first.closeCount, second.loadCount)
+	}
+}
+
+type permissionRecordingSink struct {
+	requests chan ACPPermissionRequest
+}
+
+func (sink permissionRecordingSink) EmitACPPermissionRequest(request ACPPermissionRequest) {
+	sink.requests <- request
+}
+
+func TestBrokerForwardsACPRequestPermissionAndReturnsSelection(t *testing.T) {
+	root := t.TempDir()
+	broker := NewBroker(NewStateStore(root), map[AgentName]DetectionResult{
+		AgentCursor: {Agent: AgentCursor, Preferred: &AgentTransport{Agent: AgentCursor, Kind: TransportACP, Command: helperSpec(t, "acp-permission")}},
+	}, NewACPClient)
+	defer broker.Close()
+	sink := permissionRecordingSink{requests: make(chan ACPPermissionRequest, 1)}
+	type turnResult struct {
+		response TurnResponse
+		err      error
+	}
+	done := make(chan turnResult, 1)
+	go func() {
+		response, err := broker.SendGroupTurn(context.Background(), TurnRequest{
+			BQSessionID: "group-1", Agent: AgentCursor, Prompt: "edit files", CWD: root, PermissionSink: sink,
+		})
+		done <- turnResult{response: response, err: err}
+	}()
+
+	var request ACPPermissionRequest
+	select {
+	case request = <-sink.requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ACP permission request")
+	}
+	if request.Agent != AgentCursor || request.ExternalSessionID != "acp-session-1" || len(request.Options) != 2 {
+		t.Fatalf("permission request = %#v", request)
+	}
+	if err := broker.RespondPermission(request.RequestID, "allow-once"); err != nil {
+		t.Fatal(err)
+	}
+	result := <-done
+	if result.err != nil || result.response.Reply != "permission:allow-once" {
+		t.Fatalf("turn response = %#v, error = %v", result.response, result.err)
+	}
+	if err := broker.RespondPermission(request.RequestID, "allow-once"); !errors.Is(err, ErrPermissionNotFound) {
+		t.Fatalf("second response error = %v, want ErrPermissionNotFound", err)
+	}
+
+	go func() {
+		response, err := broker.SendGroupTurn(context.Background(), TurnRequest{
+			BQSessionID: "group-1", Agent: AgentCursor, Prompt: "reject edit", CWD: root, PermissionSink: sink,
+		})
+		done <- turnResult{response: response, err: err}
+	}()
+	request = <-sink.requests
+	if err := broker.RespondPermission(request.RequestID, "reject-once"); err != nil {
+		t.Fatal(err)
+	}
+	result = <-done
+	if result.err != nil || result.response.Reply != "permission:reject-once" {
+		t.Fatalf("rejected turn response = %#v, error = %v", result.response, result.err)
+	}
+}
+
 func (client *trackingACPClient) Initialize(context.Context) error {
 	return nil
 }
@@ -721,8 +945,57 @@ func TestExternalHelperProcess(t *testing.T) {
 		runHelperACP(false, false, nil)
 	case "acp-fail-request":
 		runHelperACP(true, true, nil)
+	case "acp-permission":
+		runHelperACPPermission()
 	}
 	os.Exit(0)
+}
+
+func runHelperACPPermission() {
+	scanner := bufio.NewScanner(os.Stdin)
+	var promptID int64
+	for scanner.Scan() {
+		var envelope map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &envelope); err != nil {
+			continue
+		}
+		id, _ := envelope["id"].(float64)
+		method, _ := envelope["method"].(string)
+		switch method {
+		case "initialize":
+			writeHelperEnvelope(map[string]any{"id": int64(id), "result": map[string]any{"agentCapabilities": map[string]any{"loadSession": true}}})
+		case "session/new":
+			writeHelperEnvelope(map[string]any{"id": int64(id), "result": map[string]any{"sessionId": "acp-session-1"}})
+		case "session/load":
+			writeHelperEnvelope(map[string]any{"id": int64(id), "result": map[string]any{"sessionId": "acp-session-1"}})
+		case "session/prompt":
+			promptID = int64(id)
+			writeHelperEnvelope(map[string]any{
+				"id":     900,
+				"method": "session/request_permission",
+				"params": map[string]any{
+					"sessionId": "acp-session-1",
+					"toolCall":  map[string]any{"toolCallId": "tool-1", "title": "修改文件", "kind": "edit", "rawInput": map[string]any{"path": "main.go"}},
+					"options": []map[string]any{
+						{"optionId": "allow-once", "name": "允许一次", "kind": "allow_once"},
+						{"optionId": "reject-once", "name": "拒绝", "kind": "reject_once"},
+					},
+				},
+			})
+		case "":
+			if int64(id) != 900 || promptID == 0 {
+				continue
+			}
+			result, _ := envelope["result"].(map[string]any)
+			outcome, _ := result["outcome"].(map[string]any)
+			optionID, _ := outcome["optionId"].(string)
+			writeHelperEnvelope(map[string]any{"method": "session/update", "params": map[string]any{
+				"sessionId": "acp-session-1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"text": "permission:" + optionID}},
+			}})
+			writeHelperEnvelope(map[string]any{"id": promptID, "result": map[string]any{"stopReason": "end_turn"}})
+			promptID = 0
+		}
+	}
 }
 
 func runHelperCLIClaude() {

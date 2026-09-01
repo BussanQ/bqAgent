@@ -164,6 +164,7 @@ LLM_MODEL=claude-sonnet-4-5
 | `CHANNEL_STAGE_TIMEOUT` | `90s` | QQ/iLink 阶段时间预算。 |
 | `WEBUI_STAGE_MAX_ITERATIONS` | `0`（默认禁用） | 可选的 WebUI 阶段 checkpoint 迭代预算；仅正值启用。 |
 | `WEBUI_STAGE_TIMEOUT` | `0`（默认禁用） | 可选的 WebUI 阶段时间预算；仅正 duration 启用。 |
+| `GROUP_EXTERNAL_AGENT_TIMEOUT` | `10m` | 群聊中每次外部 Agent 调用的独立超时；超时后取消并作废该群聊的 ACP session。 |
 | `WEBUI_WORKSPACE_ROOTS` | — | WebUI 可额外浏览和选择的服务端目录根列表，使用操作系统路径列表分隔符（Unix/macOS 为 `:`，Windows 为 `;`）；用户主目录和启动工作区始终允许。 |
 | `CONTEXT_MANAGEMENT_ENABLED` | `true` | 启用请求时上下文预算管理。 |
 | `CONTEXT_MAX_INPUT_TOKENS` | `132000` | 上下文 token 估算总预算，包含回复预留。 |
@@ -182,9 +183,11 @@ LLM_MODEL=claude-sonnet-4-5
 
 对 `CLAUDE`、`CODEX`、`CURSOR`、`OPENCODE` 中的每个名称，可使用 `AGENT_<NAME>_ACP_CMD` 和 `AGENT_<NAME>_ACP_ARGS` 覆盖 ACP 启动命令。CLI 传输目前只为 Claude 和 Codex 实现，可通过 `AGENT_<NAME>_CLI_CMD` 和 `AGENT_<NAME>_CLI_ARGS` 覆盖。
 
-Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex exec --json --skip-git-repo-check`。OpenCode 默认通过 `opencode acp` 使用 ACP，Cursor 仍需显式配置 ACP 传输。启动 bqAgent 的进程必须能从 PATH 找到 `opencode`；安装 OpenCode 或修改传输环境变量后，需要重启常驻 chat/server 进程以重新探测。
+Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex exec --json --skip-git-repo-check`。Cursor 默认通过 `cursor-agent acp` 使用 ACP，OpenCode 默认通过 `opencode acp` 使用 ACP。启动 bqAgent 的进程必须能从 PATH 找到对应的可执行文件；安装外部 Agent 或修改传输环境变量后，需要重启常驻 chat/server 进程以重新探测。
 
 在 `--chat` 或 `--server` 会话中，使用 `/opencode <任务>` 将当前轮次路由到 OpenCode；后续普通消息会保持绑定，直到通过 `/default` 返回内置 Agent。OpenCode 仅支持 ACP；配置 `AGENT_OPENCODE_CLI_CMD/ARGS` 不会启用 CLI 传输。
+
+WebUI 的“新会话”菜单还可以创建群聊。外部 Agent 在服务启动后异步检测，不阻塞服务启动；需要检测结果的请求会等待后台探测完成，再将可用 Agent 与 bqagent 一起加入初始成员名单。成员栏的“添加成员”按钮可以把创建时未加入、当前已检测可用的 Agent 追加到现有群聊；鼠标悬停在外部成员上会显示删除按钮。成员变更会持久化，删除成员不会清除其历史发言和外部 session，重新添加后仍可延续上下文；调度员 bqagent 不可删除。未 @ 任何成员的任务由 bqagent 直接处理，不调度外部成员。直接发送给 `@codex`、`@opencode` 等外部成员的任务只由对应成员处理，bqagent 不再参与分析或自动汇总；只有用户明确 `@bqagent` 时，bqagent 才会调度外部成员并在其完成后给出最终汇总，也可以在后续轮次 `@bqagent` 汇总共享上下文里的既有结论。成员顺序共享同一个 workspace 和群聊上下文，各自结论会单独显示。群聊仅支持 Run 模式；普通会话中的 `/codex`、`/opencode` 粘性路由保持不变。群聊编排属于通用服务能力，本期仅 WebUI 提供入口。
 
 ## 文档
 

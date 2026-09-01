@@ -68,7 +68,13 @@
   <div class="app-layout" id="app-layout">
     <button class="workspace-backdrop" id="workspace-backdrop" type="button" aria-label="关闭工作区文件" hidden></button>
     <aside class="conversation-sidebar" id="conversation-sidebar" aria-label="对话历史">
-      <button class="conversation-new" id="conversation-new" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg><span>新会话</span></button>
+      <div class="conversation-new-wrap" id="conversation-new-wrap">
+        <button class="conversation-new" id="conversation-new" type="button" aria-expanded="false" aria-controls="conversation-new-menu"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg><span>新会话</span><svg class="ui-icon conversation-new-chevron" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></button>
+        <div class="conversation-new-menu" id="conversation-new-menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-conversation-type="default"><strong>普通会话</strong><span>与 bqagent 一对一协作</span></button>
+          <button type="button" role="menuitem" data-conversation-type="group"><strong>群聊会话</strong><span>无 @ 由 bqagent 处理，@成员可定向交互</span></button>
+        </div>
+      </div>
       <div class="conversation-sidebar-heading">对话</div>
       <div class="conversation-list" id="conversation-list"><div class="conversation-list-state">正在加载…</div></div>
       <div class="conversation-context-menu" id="conversation-context-menu" role="menu" aria-label="对话操作" hidden>
@@ -129,6 +135,18 @@
       </section>
     </aside>
     <div class="conversation-column">
+  <div class="group-bar" id="group-bar" hidden>
+    <div><strong>群聊</strong><span>bqagent 调度</span></div>
+    <div class="group-member-controls" id="group-member-controls">
+      <div class="group-participants" id="group-participants" aria-label="群聊成员"></div>
+      <div class="group-add-wrap" id="group-add-wrap">
+        <button class="group-add" id="group-add" type="button" aria-label="添加群聊成员" aria-expanded="false" aria-controls="group-add-menu">
+          <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg><span>添加成员</span>
+        </button>
+        <div class="group-add-menu" id="group-add-menu" role="menu" aria-label="选择要添加的群聊成员" hidden></div>
+      </div>
+    </div>
+  </div>
   <main id="main">
     <div class="thread" id="thread">
       <div class="empty" id="empty">
@@ -182,6 +200,7 @@
         <div class="attachment-error" id="attachment-error" role="status" aria-live="polite"></div>
         <div class="input-shell">
           <textarea id="input" rows="1" placeholder="给 bqagent 发送消息，可粘贴图片或添加文件" autofocus></textarea>
+          <div class="mention-menu" id="mention-menu" role="listbox" aria-label="选择群聊成员" hidden></div>
         </div>
       </div>
       <div class="model-controls" aria-label="模型选择">

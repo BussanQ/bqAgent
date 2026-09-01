@@ -164,6 +164,7 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `CHANNEL_STAGE_TIMEOUT` | `90s` | QQ/iLink stage time budget. |
 | `WEBUI_STAGE_MAX_ITERATIONS` | `0` (disabled) | Optional WebUI iteration budget before a stage checkpoint; enabled only by a positive value. |
 | `WEBUI_STAGE_TIMEOUT` | `0` (disabled) | Optional WebUI stage time budget; enabled only by a positive duration. |
+| `GROUP_EXTERNAL_AGENT_TIMEOUT` | `10m` | Independent timeout for each external Agent call in group chat; expiry cancels and invalidates the group's ACP session. |
 | `WEBUI_WORKSPACE_ROOTS` | — | Additional server-side roots the WebUI may browse and select, separated with the OS path-list separator (`:` on Unix/macOS, `;` on Windows). The user home and startup workspace are always allowed. |
 | `CONTEXT_MANAGEMENT_ENABLED` | `true` | Enables request-time context budgeting. |
 | `CONTEXT_MAX_INPUT_TOKENS` | `132000` | Maximum estimated context budget, including the response reserve. |
@@ -182,9 +183,11 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 
 For each name in `CLAUDE`, `CODEX`, `CURSOR`, and `OPENCODE`, `AGENT_<NAME>_ACP_CMD` and `AGENT_<NAME>_ACP_ARGS` override the ACP launch command. CLI transport is currently implemented only for Claude and Codex and can be overridden with `AGENT_<NAME>_CLI_CMD` and `AGENT_<NAME>_CLI_ARGS`.
 
-Claude defaults to `claude -p --output-format json`; Codex defaults to `codex exec --json --skip-git-repo-check`. OpenCode defaults to ACP via `opencode acp`, while Cursor requires an explicitly configured ACP transport. The `opencode` executable must be visible in the PATH of the process that starts bqAgent; restart a long-lived chat/server process after installing OpenCode or changing its transport environment.
+Claude defaults to `claude -p --output-format json`; Codex defaults to `codex exec --json --skip-git-repo-check`. Cursor defaults to ACP via `cursor-agent acp`, and OpenCode defaults to ACP via `opencode acp`. The corresponding executable must be visible in the PATH of the process that starts bqAgent; restart a long-lived chat/server process after installing an external agent or changing its transport environment.
 
 In `--chat` or `--server` sessions, use `/opencode <task>` to route the turn to OpenCode. Later messages remain bound to it until `/default` switches back to the built-in agent. OpenCode is ACP-only; configuring `AGENT_OPENCODE_CLI_CMD/ARGS` does not enable a CLI transport.
+
+The WebUI's **New conversation** menu can also create a group conversation. Available external agents detected asynchronously after startup join bqagent in the initial roster; requests that need detection wait for that background probe without delaying service startup. The member bar can add currently available agents that were not part of the initial roster. Hovering an external member reveals a remove control; membership changes persist while prior messages and external session state remain available if that member is re-added. bqagent is the permanent coordinator and cannot be removed. A group task without a mention is handled directly by bqagent without consulting external members. A task addressed to `@codex`, `@opencode`, or another external member is handled directly by those members without bqagent analysis or synthesis. bqagent coordinates external agents and produces a final synthesis only when the user explicitly mentions `@bqagent`; a later `@bqagent` turn can also synthesize conclusions already in the shared context. Members run sequentially in the same workspace and receive the shared group context. Group conversations are Run-only. Existing sticky `/codex` and `/opencode` routing remains unchanged in ordinary conversations. The orchestration is channel-neutral, although this release exposes it only in the WebUI.
 
 ## Documentation
 

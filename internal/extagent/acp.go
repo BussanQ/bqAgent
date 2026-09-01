@@ -16,24 +16,55 @@ import (
 
 type ACPClientFactory func(CommandSpec, string) (ACPClient, error)
 
+const (
+	acpScannerInitialBufferSize = 64 << 10
+	maxACPProtocolMessageBytes  = 16 << 20
+)
+
 type stdioACPClient struct {
 	cmd                  *exec.Cmd
 	stdin                io.WriteCloser
-	responses            map[int64]chan rpcEnvelope
+	responses            map[string]chan rpcEnvelope
 	loadSessionSupported bool
 	nextID               int64
 	mu                   sync.Mutex
+	writeMu              sync.Mutex
 	collectors           map[string]*strings.Builder
+	permissionHandler    acpPermissionHandler
 }
 
 type rpcEnvelope struct {
-	ID     *int64          `json:"id,omitempty"`
+	ID     json.RawMessage `json:"id,omitempty"`
 	Method string          `json:"method,omitempty"`
 	Params json.RawMessage `json:"params,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
-	Error  *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
+	Error  *rpcError       `json:"error,omitempty"`
+}
+
+type rpcError struct {
+	Message string `json:"message"`
+}
+
+type acpPermissionParams struct {
+	SessionID  string                `json:"sessionId"`
+	ToolCall   json.RawMessage       `json:"toolCall"`
+	Options    []ACPPermissionOption `json:"-"`
+	RawOptions []struct {
+		OptionID string `json:"optionId"`
+		Name     string `json:"name"`
+		Kind     string `json:"kind"`
+	} `json:"options"`
+}
+
+type acpPermissionOutcome struct {
+	Outcome  string `json:"outcome"`
+	OptionID string `json:"optionId,omitempty"`
+}
+
+type acpPermissionHandler func(acpPermissionParams) acpPermissionOutcome
+
+type acpPermissionAware interface {
+	setPermissionHandler(acpPermissionHandler)
 }
 
 func NewACPClient(spec CommandSpec, cwd string) (ACPClient, error) {
@@ -59,7 +90,7 @@ func NewACPClient(spec CommandSpec, cwd string) (ACPClient, error) {
 	client := &stdioACPClient{
 		cmd:        cmd,
 		stdin:      stdin,
-		responses:  map[int64]chan rpcEnvelope{},
+		responses:  map[string]chan rpcEnvelope{},
 		collectors: map[string]*strings.Builder{},
 	}
 	go client.readLoop(stdout)
@@ -152,6 +183,9 @@ func (c *stdioACPClient) Prompt(ctx context.Context, sessionID, prompt string) (
 		},
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			_ = c.notify("session/cancel", map[string]any{"sessionId": sessionID})
+		}
 		return "", err
 	}
 	c.mu.Lock()
@@ -160,6 +194,15 @@ func (c *stdioACPClient) Prompt(ctx context.Context, sessionID, prompt string) (
 		return strings.TrimSpace(collector.String()), nil
 	}
 	return "", nil
+}
+
+func (c *stdioACPClient) setPermissionHandler(handler acpPermissionHandler) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.permissionHandler = handler
+	c.mu.Unlock()
 }
 
 func (c *stdioACPClient) Close() error {
@@ -179,13 +222,14 @@ func (c *stdioACPClient) Close() error {
 
 func (c *stdioACPClient) request(ctx context.Context, method string, params any) (rpcEnvelope, error) {
 	id := atomic.AddInt64(&c.nextID, 1)
+	responseKey := fmt.Sprintf("%d", id)
 	responseCh := make(chan rpcEnvelope, 1)
 	c.mu.Lock()
-	c.responses[id] = responseCh
+	c.responses[responseKey] = responseCh
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
-		delete(c.responses, id)
+		delete(c.responses, responseKey)
 		c.mu.Unlock()
 	}()
 
@@ -198,7 +242,7 @@ func (c *stdioACPClient) request(ctx context.Context, method string, params any)
 	if err != nil {
 		return rpcEnvelope{}, err
 	}
-	if _, err := c.stdin.Write(append(payload, '\n')); err != nil {
+	if err := c.writePayload(payload); err != nil {
 		return rpcEnvelope{}, err
 	}
 	select {
@@ -212,8 +256,34 @@ func (c *stdioACPClient) request(ctx context.Context, method string, params any)
 	}
 }
 
+func (c *stdioACPClient) notify(method string, params any) error {
+	payload, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
+	if err != nil {
+		return err
+	}
+	return c.writePayload(payload)
+}
+
+func (c *stdioACPClient) writePayload(payload []byte) error {
+	if c == nil || c.stdin == nil {
+		return io.ErrClosedPipe
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	_, err := c.stdin.Write(append(payload, '\n'))
+	return err
+}
+
 func (c *stdioACPClient) readLoop(stdout io.Reader) {
 	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, acpScannerInitialBufferSize), maxACPProtocolMessageBytes)
+	defer func() {
+		err := scanner.Err()
+		if err == nil {
+			err = io.EOF
+		}
+		c.failPendingRequests(fmt.Errorf("ACP process exited: %w", err))
+	}()
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -223,9 +293,14 @@ func (c *stdioACPClient) readLoop(stdout io.Reader) {
 		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
 			continue
 		}
-		if envelope.ID != nil {
+		if len(envelope.ID) > 0 && envelope.Method != "" {
+			go c.handleAgentRequest(envelope)
+			continue
+		}
+		if len(envelope.ID) > 0 {
+			responseKey := string(bytes.TrimSpace(envelope.ID))
 			c.mu.Lock()
-			ch := c.responses[*envelope.ID]
+			ch := c.responses[responseKey]
 			c.mu.Unlock()
 			if ch != nil {
 				ch <- envelope
@@ -236,6 +311,68 @@ func (c *stdioACPClient) readLoop(stdout io.Reader) {
 			c.handleSessionUpdate(envelope.Params)
 		}
 	}
+}
+
+func (c *stdioACPClient) failPendingRequests(err error) {
+	if c == nil || err == nil {
+		return
+	}
+	c.mu.Lock()
+	channels := make([]chan rpcEnvelope, 0, len(c.responses))
+	for _, responseCh := range c.responses {
+		channels = append(channels, responseCh)
+	}
+	c.mu.Unlock()
+	failure := rpcEnvelope{Error: &rpcError{Message: err.Error()}}
+	for _, responseCh := range channels {
+		select {
+		case responseCh <- failure:
+		default:
+		}
+	}
+}
+
+func (c *stdioACPClient) handleAgentRequest(envelope rpcEnvelope) {
+	if envelope.Method != "session/request_permission" {
+		_ = c.writeRPCError(envelope.ID, -32601, "method not found")
+		return
+	}
+	var params acpPermissionParams
+	if err := json.Unmarshal(envelope.Params, &params); err != nil {
+		_ = c.writeRPCError(envelope.ID, -32602, "invalid permission request")
+		return
+	}
+	params.Options = make([]ACPPermissionOption, 0, len(params.RawOptions))
+	for _, option := range params.RawOptions {
+		params.Options = append(params.Options, ACPPermissionOption{OptionID: option.OptionID, Name: option.Name, Kind: option.Kind})
+	}
+	c.mu.Lock()
+	handler := c.permissionHandler
+	c.mu.Unlock()
+	outcome := acpPermissionOutcome{Outcome: "cancelled"}
+	if handler != nil {
+		outcome = handler(params)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      json.RawMessage(envelope.ID),
+		"result":  map[string]any{"outcome": outcome},
+	})
+	if err == nil {
+		_ = c.writePayload(payload)
+	}
+}
+
+func (c *stdioACPClient) writeRPCError(id json.RawMessage, code int, message string) error {
+	payload, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      json.RawMessage(id),
+		"error":   map[string]any{"code": code, "message": message},
+	})
+	if err != nil {
+		return err
+	}
+	return c.writePayload(payload)
 }
 
 func (c *stdioACPClient) handleSessionUpdate(raw json.RawMessage) {

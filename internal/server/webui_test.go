@@ -23,9 +23,24 @@ import (
 	"unicode/utf8"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/extagent"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
 )
+
+func TestWebUIStreamsACPPermissionRequest(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	stream := &sseStream{writer: recorder, flusher: recorder}
+	sseACPPermissionSink{stream: stream}.EmitACPPermissionRequest(extagent.ACPPermissionRequest{
+		RequestID: "permission-1", BQSessionID: "group-1", Agent: extagent.AgentCursor, ExternalSessionID: "cursor-session",
+		ToolCall: json.RawMessage(`{"toolCallId":"tool-1","title":"修改文件"}`),
+		Options:  []extagent.ACPPermissionOption{{OptionID: "allow", Name: "允许", Kind: "allow_once"}},
+	})
+	body := recorder.Body.String()
+	if !strings.Contains(body, "event: acp_permission") || !strings.Contains(body, `"option_id":"allow"`) || !strings.Contains(body, `"agent":"cursor"`) {
+		t.Fatalf("SSE body = %s", body)
+	}
+}
 
 func TestWebUIEmbeddedAssetContract(t *testing.T) {
 	root := t.TempDir()
@@ -161,6 +176,16 @@ func TestWebUIAttachmentTriggerShowsOnlyPlusIcon(t *testing.T) {
 	}
 	if bytes.Contains(match[1], []byte("<span")) || bytes.Contains(page, []byte(`id="chat-mode-label"`)) {
 		t.Fatalf("attachment trigger still displays a mode label: %s", match[1])
+	}
+}
+
+func TestWebUIGroupAskOptionHonorsHiddenState(t *testing.T) {
+	styles, err := os.ReadFile(filepath.Join("webui", "src", "styles.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(styles, []byte(".chat-mode-option[hidden] { display: none; }")) {
+		t.Fatal("chat mode option display styles override the group-mode hidden state")
 	}
 }
 

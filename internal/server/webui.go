@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/extagent"
 )
 
 const (
@@ -42,25 +43,29 @@ const (
 )
 
 type webUIChatRequest struct {
-	WorkspaceID     string              `json:"workspace_id,omitempty"`
-	SessionID       string              `json:"session_id"`
-	TurnID          string              `json:"turn_id"`
-	Message         string              `json:"message"`
-	ReasoningEffort string              `json:"reasoning_effort,omitempty"`
-	Mode            string              `json:"mode,omitempty"`
-	Images          []webUIImagePayload `json:"images,omitempty"`
-	Files           []webUIFilePayload  `json:"files,omitempty"`
+	WorkspaceID      string              `json:"workspace_id,omitempty"`
+	SessionID        string              `json:"session_id"`
+	TurnID           string              `json:"turn_id"`
+	Message          string              `json:"message"`
+	ReasoningEffort  string              `json:"reasoning_effort,omitempty"`
+	Mode             string              `json:"mode,omitempty"`
+	ConversationType string              `json:"conversation_type,omitempty"`
+	Images           []webUIImagePayload `json:"images,omitempty"`
+	Files            []webUIFilePayload  `json:"files,omitempty"`
 }
 
 type webUIDoneEvent struct {
-	WorkspaceID string             `json:"workspace_id,omitempty"`
-	SessionID   string             `json:"session_id"`
-	RunID       string             `json:"run_id,omitempty"`
-	Reply       string             `json:"reply"`
-	APIType     string             `json:"api_type"`
-	Model       string             `json:"model"`
-	Mode        ChatMode           `json:"mode"`
-	Generation  *GenerationMetrics `json:"generation,omitempty"`
+	WorkspaceID      string             `json:"workspace_id,omitempty"`
+	SessionID        string             `json:"session_id"`
+	RunID            string             `json:"run_id,omitempty"`
+	Reply            string             `json:"reply"`
+	ReplyKind        string             `json:"reply_kind,omitempty"`
+	APIType          string             `json:"api_type"`
+	Model            string             `json:"model"`
+	Mode             ChatMode           `json:"mode"`
+	ConversationType ConversationType   `json:"conversation_type"`
+	Group            *GroupInfo         `json:"group,omitempty"`
+	Generation       *GenerationMetrics `json:"generation,omitempty"`
 }
 
 type webUIImagePayload struct {
@@ -351,14 +356,15 @@ func decodeWebUIChatRequest(writer http.ResponseWriter, request *http.Request) (
 		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("message, images, or files are required")}
 	}
 	return TurnRequest{
-		WorkspaceID:     strings.TrimSpace(payload.WorkspaceID),
-		SessionID:       strings.TrimSpace(payload.SessionID),
-		TurnID:          strings.TrimSpace(payload.TurnID),
-		Message:         payload.Message,
-		Images:          images,
-		Files:           files,
-		ReasoningEffort: reasoningEffort,
-		Mode:            mode,
+		WorkspaceID:      strings.TrimSpace(payload.WorkspaceID),
+		SessionID:        strings.TrimSpace(payload.SessionID),
+		TurnID:           strings.TrimSpace(payload.TurnID),
+		Message:          payload.Message,
+		Images:           images,
+		Files:            files,
+		ReasoningEffort:  reasoningEffort,
+		Mode:             mode,
+		ConversationType: ConversationType(strings.TrimSpace(payload.ConversationType)),
 	}, nil
 }
 
@@ -472,18 +478,21 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	// WebUI follows the browser request lifetime and the service-wide runaway
 	// valve; the tighter channel budgets are reserved for message delivery paths.
 	response, err := service.HandleTurnWithOptions(request.Context(), TurnRequest{
-		SessionID:       turnRequest.SessionID,
-		Message:         turnRequest.Message,
-		TurnID:          turnRequest.TurnID,
-		Images:          turnRequest.Images,
-		Files:           turnRequest.Files,
-		ReasoningEffort: turnRequest.ReasoningEffort,
-		Mode:            turnRequest.Mode,
+		SessionID:        turnRequest.SessionID,
+		Message:          turnRequest.Message,
+		TurnID:           turnRequest.TurnID,
+		Images:           turnRequest.Images,
+		Files:            turnRequest.Files,
+		ReasoningEffort:  turnRequest.ReasoningEffort,
+		Mode:             turnRequest.Mode,
+		ConversationType: turnRequest.ConversationType,
 	}, TurnOptions{
-		Stream:         true,
-		TokenSink:      sseEventWriter{stream: stream, event: "message"},
-		ProgressWriter: sseEventWriter{stream: stream, event: "progress"},
-		ToolEventSink:  sseToolEventSink{stream: stream},
+		Stream:            true,
+		TokenSink:         sseEventWriter{stream: stream, event: "message"},
+		ProgressWriter:    sseEventWriter{stream: stream, event: "progress"},
+		ToolEventSink:     sseToolEventSink{stream: stream},
+		GroupEventSink:    sseGroupEventSink{stream: stream},
+		ACPPermissionSink: sseACPPermissionSink{stream: stream},
 		Stage: agent.StageConfig{
 			MaxIterations:     WebUIStageMaxIterations(),
 			Timeout:           WebUIStageTimeout(),
@@ -501,15 +510,24 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		return
 	}
 
+	var group *GroupInfo
+	if response.ConversationType == ConversationTypeGroup {
+		if info, infoErr := service.GroupInfoForSession(response.SessionID); infoErr == nil {
+			group = &info
+		}
+	}
 	writeSSEEvent(writer, flusher, "done", webUIDoneEvent{
-		WorkspaceID: workspaceInfo.ID,
-		SessionID:   response.SessionID,
-		RunID:       response.RunID,
-		Reply:       sanitizeChannelReply(response.Reply),
-		APIType:     string(service.apiType),
-		Model:       response.Model,
-		Mode:        response.Mode,
-		Generation:  response.Generation,
+		WorkspaceID:      workspaceInfo.ID,
+		SessionID:        response.SessionID,
+		RunID:            response.RunID,
+		Reply:            sanitizeChannelReply(response.Reply),
+		ReplyKind:        response.ReplyKind,
+		APIType:          string(service.apiType),
+		Model:            response.Model,
+		Mode:             response.Mode,
+		ConversationType: response.ConversationType,
+		Group:            group,
+		Generation:       response.Generation,
 	})
 }
 
@@ -526,6 +544,28 @@ type sseEventWriter struct {
 
 type sseToolEventSink struct {
 	stream *sseStream
+}
+
+type sseGroupEventSink struct {
+	stream *sseStream
+}
+
+type sseACPPermissionSink struct {
+	stream *sseStream
+}
+
+func (sink sseACPPermissionSink) EmitACPPermissionRequest(request extagent.ACPPermissionRequest) {
+	if sink.stream == nil {
+		return
+	}
+	_ = sink.stream.writeEvent("acp_permission", request)
+}
+
+func (sink sseGroupEventSink) EmitGroupEvent(event GroupEvent) {
+	if sink.stream == nil || event.Kind == "" {
+		return
+	}
+	_ = sink.stream.writeEvent(event.Kind, event)
 }
 
 func (sink sseToolEventSink) EmitToolEvent(event agent.ToolEvent) {

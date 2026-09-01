@@ -49,3 +49,34 @@ func TestStateStoreLoadsLegacyServerPath(t *testing.T) {
 		t.Fatalf("external session id = %q, want %q", state.ExternalSessionID, "external-1")
 	}
 }
+
+func TestStateStoreKeepsGroupParticipantsIndependent(t *testing.T) {
+	store := NewStateStore(t.TempDir())
+	if err := store.SaveGroup(SessionState{BQSessionID: "group-session", Agent: AgentCodex, ExternalSessionID: "codex-thread"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveGroup(SessionState{BQSessionID: "group-session", Agent: AgentOpenCode, ExternalSessionID: "opencode-thread"}); err != nil {
+		t.Fatal(err)
+	}
+	codex, err := store.LoadGroup("group-session", AgentCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opencode, err := store.LoadGroup("group-session", AgentOpenCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codex.ExternalSessionID != "codex-thread" || opencode.ExternalSessionID != "opencode-thread" {
+		t.Fatalf("group states = codex:%q opencode:%q", codex.ExternalSessionID, opencode.ExternalSessionID)
+	}
+	if err := store.ClearGroup("group-session"); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := store.LoadGroup("group-session", AgentCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.ExternalSessionID != "" {
+		t.Fatalf("cleared group state = %#v", cleared)
+	}
+}

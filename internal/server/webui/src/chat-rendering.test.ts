@@ -95,4 +95,13 @@ describe("历史工具摘要解析", () => {
       files: [{ name: "TODO.md", path: "docs/TODO.md" }],
     }]);
   });
+
+  it("不合并不同群聊成员的连续回复", () => {
+    const messages = normalizeHistoryMessages([
+      { role: "assistant", sender: "codex", content: "Codex 结论" },
+      { role: "assistant", sender: "opencode", content: "OpenCode 结论" },
+      { role: "assistant", sender: "bqagent", content: "汇总" },
+    ]);
+    expect(messages.map((message) => message.sender)).toEqual(["codex", "opencode", "bqagent"]);
+  });
 });

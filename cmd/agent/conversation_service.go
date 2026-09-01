@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"strings"
+	"time"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
@@ -29,14 +31,16 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	}.Build(includePlan)
 
 	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
-	detections := extagent.Detect(ctx, externalConfig, nil)
 	if statusWriter != nil {
-		for _, status := range extagent.FormatStatuses(detections) {
-			fmt.Fprintf(statusWriter, "external-agent %s\n", status)
-		}
+		fmt.Fprintln(statusWriter, "external-agent detection=background")
 	}
-
-	externalBroker := extagent.NewBroker(extagent.NewStateStore(ws.Root), detections, nil)
+	externalBroker := extagent.NewDetectingBroker(ctx, extagent.NewStateStore(ws.Root), externalConfig, nil, func(detections map[extagent.AgentName]extagent.DetectionResult) {
+		if statusWriter != nil {
+			for _, status := range extagent.FormatStatuses(detections) {
+				log.Printf("external-agent %s", status)
+			}
+		}
+	})
 	subagentManager := subagent.NewManager(ws.Root, externalBroker, runtime.RunTraceEnabled)
 	var memoryAppend func(task, result string) error
 	if ws.MemoryEnabled() {
@@ -63,19 +67,36 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		PromptSectionsBuilder: func() (workspace.PromptSections, error) {
 			return ws.BuildPromptSections("")
 		},
-		Planner:           runtime.Planner,
-		ToolDefinitions:   runtime.Catalog.Definitions(),
-		Functions:         runtime.Catalog.Registry(),
-		ExternalBroker:    externalBroker,
-		MemoryAppend:      memoryAppend,
-		Context:           runtime.Context,
-		RunTraceEnabled:   runtime.RunTraceEnabled,
-		SessionOptions:    &runtime.SessionOptions,
-		Subagents:         subagentManager,
-		MemoryStore:       runtime.Memory,
-		GlobalMemoryStore: runtime.GlobalMemory,
+		Planner:                   runtime.Planner,
+		ToolDefinitions:           runtime.Catalog.Definitions(),
+		Functions:                 runtime.Catalog.Registry(),
+		ExternalBroker:            externalBroker,
+		GroupExternalAgentTimeout: groupExternalAgentTimeoutFromEnv(getenv),
+		MemoryAppend:              memoryAppend,
+		Context:                   runtime.Context,
+		RunTraceEnabled:           runtime.RunTraceEnabled,
+		SessionOptions:            &runtime.SessionOptions,
+		Subagents:                 subagentManager,
+		MemoryStore:               runtime.Memory,
+		GlobalMemoryStore:         runtime.GlobalMemory,
 	})
 	return service, externalBroker
+}
+
+func groupExternalAgentTimeoutFromEnv(getenv func(string) string) time.Duration {
+	const fallback = 10 * time.Minute
+	if getenv == nil {
+		return fallback
+	}
+	raw := strings.TrimSpace(getenv("GROUP_EXTERNAL_AGENT_TIMEOUT"))
+	if raw == "" {
+		return fallback
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil || timeout <= 0 {
+		return fallback
+	}
+	return timeout
 }
 
 func runtimeConfigFromSources(getenv func(string) string, agentDir string) appruntime.Config {

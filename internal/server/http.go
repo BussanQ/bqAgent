@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"bqagent/internal/extagent"
 	"bqagent/internal/providerconfig"
 )
 
@@ -34,11 +35,19 @@ type handler struct {
 }
 
 type chatResponse struct {
-	SessionID          string `json:"session_id,omitempty"`
-	RunID              string `json:"run_id,omitempty"`
-	Reply              string `json:"reply,omitempty"`
-	ServerChanResponse string `json:"serverchan_response,omitempty"`
-	Error              string `json:"error,omitempty"`
+	SessionID          string           `json:"session_id,omitempty"`
+	RunID              string           `json:"run_id,omitempty"`
+	Reply              string           `json:"reply,omitempty"`
+	ReplyKind          string           `json:"reply_kind,omitempty"`
+	ServerChanResponse string           `json:"serverchan_response,omitempty"`
+	Error              string           `json:"error,omitempty"`
+	ConversationType   ConversationType `json:"conversation_type,omitempty"`
+}
+
+type acpPermissionResponseRequest struct {
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	RequestID   string `json:"request_id"`
+	OptionID    string `json:"option_id"`
 }
 
 type statusResponse struct {
@@ -60,6 +69,8 @@ func NewHandler(options HandlerOptions) http.Handler {
 	mux.HandleFunc("/api/v1/webui/provider-models", handler.handleProviderModels)
 	mux.HandleFunc("/api/v1/webui/conversations", handler.handleConversations)
 	mux.HandleFunc("/api/v1/webui/conversations/", handler.handleConversationHistory)
+	mux.HandleFunc("/api/v1/webui/group/participants", handler.handleGroupParticipants)
+	mux.HandleFunc("/api/v1/webui/acp/permissions", handler.handleACPPermissionResponse)
 	mux.HandleFunc("/api/v1/chat", handler.handleChat)
 	mux.HandleFunc("/api/v1/chat/stop", handler.handleStopTurn)
 	mux.HandleFunc("/api/v1/runs/", handler.handleRun)
@@ -70,6 +81,39 @@ func NewHandler(options HandlerOptions) http.Handler {
 		channel.RegisterRoutes(mux)
 	}
 	return withRequestLogging(mux)
+}
+
+func (handler *handler) handleACPPermissionResponse(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, 64<<10)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	var payload acpPermissionResponseRequest
+	if err := decoder.Decode(&payload); err != nil {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: "invalid JSON request: " + err.Error()})
+		return
+	}
+	if strings.TrimSpace(payload.RequestID) == "" || strings.TrimSpace(payload.OptionID) == "" {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: "request_id and option_id are required"})
+		return
+	}
+	service, err := handler.serviceForWorkspace(payload.WorkspaceID)
+	if err != nil {
+		writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
+		return
+	}
+	if err := service.RespondACPPermission(payload.RequestID, payload.OptionID); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, extagent.ErrPermissionNotFound) {
+			status = http.StatusGone
+		}
+		writeError(writer, status, chatResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"accepted": true})
 }
 
 func (handler *handler) serviceForWorkspace(workspaceID string) (*Service, error) {
@@ -168,7 +212,7 @@ func (handler *handler) handleChat(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
 		return
 	}
-	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, RunID: response.RunID, Reply: response.Reply})
+	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, RunID: response.RunID, Reply: response.Reply, ReplyKind: response.ReplyKind, ConversationType: response.ConversationType})
 }
 
 func (handler *handler) handleStopTurn(writer http.ResponseWriter, request *http.Request) {
@@ -253,10 +297,19 @@ func parseTurnRequest(values map[string]string) (TurnRequest, error) {
 	if turnID != "" && !validTurnID(turnID) {
 		return TurnRequest{}, fmt.Errorf("invalid turn_id")
 	}
+	var conversationType ConversationType
+	if rawConversationType := strings.TrimSpace(values["conversation_type"]); rawConversationType != "" {
+		parsedConversationType, parseErr := parseConversationType(rawConversationType)
+		if parseErr != nil {
+			return TurnRequest{}, parseErr
+		}
+		conversationType = parsedConversationType
+	}
 	return TurnRequest{
-		SessionID: strings.TrimSpace(firstNonEmpty(values["session_id"], values["session"])),
-		Message:   message,
-		TurnID:    turnID,
+		SessionID:        strings.TrimSpace(firstNonEmpty(values["session_id"], values["session"])),
+		Message:          message,
+		TurnID:           turnID,
+		ConversationType: conversationType,
 	}, nil
 }
 

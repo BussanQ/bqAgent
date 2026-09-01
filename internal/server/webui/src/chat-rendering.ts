@@ -23,7 +23,7 @@ export function complexTaskNotice(text: string): string {
 export function normalizeHistoryMessages(messages: ConversationMessage[]): ConversationMessage[] {
   return groupHistoryMessages((messages || []).map(function (message) {
     if (message.role !== "assistant") {
-      return { role: message.role, content: message.content || "", tools: [], files: message.files ? message.files.slice() : [] };
+      return { role: message.role, content: message.content || "", tools: [], files: message.files ? message.files.slice() : [], sender: message.sender, kind: message.kind };
     }
     const view = historyAssistantView(message);
     return {
@@ -40,6 +40,8 @@ export function normalizeHistoryMessages(messages: ConversationMessage[]): Conve
         };
       }),
       files: [],
+      sender: message.sender,
+      kind: message.kind,
     };
   }));
 }
@@ -52,9 +54,11 @@ export function groupHistoryMessages(messages: ConversationMessage[]): Conversat
       content: message.content || "",
       tools: message.tools ? message.tools.slice() : [],
       files: message.files ? message.files.slice() : [],
+      sender: message.sender,
+      kind: message.kind,
     };
     const previous = grouped[grouped.length - 1];
-    if (!previous || previous.role !== "assistant" || current.role !== "assistant") {
+    if (!previous || previous.role !== "assistant" || current.role !== "assistant" || previous.sender !== current.sender || previous.kind !== current.kind) {
       grouped.push(current);
       return;
     }
