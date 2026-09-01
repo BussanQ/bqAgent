@@ -16,6 +16,11 @@ import (
 
 type ACPClientFactory func(CommandSpec, string) (ACPClient, error)
 
+const (
+	acpScannerInitialBufferSize = 64 << 10
+	maxACPProtocolMessageBytes  = 16 << 20
+)
+
 type stdioACPClient struct {
 	cmd                  *exec.Cmd
 	stdin                io.WriteCloser
@@ -271,6 +276,7 @@ func (c *stdioACPClient) writePayload(payload []byte) error {
 
 func (c *stdioACPClient) readLoop(stdout io.Reader) {
 	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, acpScannerInitialBufferSize), maxACPProtocolMessageBytes)
 	defer func() {
 		err := scanner.Err()
 		if err == nil {

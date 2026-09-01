@@ -2,6 +2,7 @@ package extagent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -245,6 +246,35 @@ func TestACPReadLoopExitWakesPendingRequest(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("pending request was not woken after ACP stdout closed")
+	}
+}
+
+func TestACPReadLoopAcceptsLargeProtocolMessage(t *testing.T) {
+	visibleReply := strings.Repeat("large ACP message ", 8<<10)
+	payload, err := json.Marshal(map[string]any{
+		"method": "session/update",
+		"params": map[string]any{
+			"sessionId": "session-1",
+			"update": map[string]any{
+				"sessionUpdate": "agent_message_chunk",
+				"content":       map[string]any{"text": visibleReply},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) <= bufio.MaxScanTokenSize {
+		t.Fatalf("test payload = %d bytes, want more than Scanner default %d", len(payload), bufio.MaxScanTokenSize)
+	}
+	collector := &strings.Builder{}
+	client := &stdioACPClient{
+		responses:  map[string]chan rpcEnvelope{},
+		collectors: map[string]*strings.Builder{"session-1": collector},
+	}
+	client.readLoop(bytes.NewReader(append(payload, '\n')))
+	if got := collector.String(); got != visibleReply {
+		t.Fatalf("collected reply length = %d, want %d", len(got), len(visibleReply))
 	}
 }
 
