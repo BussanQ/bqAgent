@@ -1762,12 +1762,42 @@
   .attachment-path-add { flex: 0 0 auto; padding: 7px 10px; border-color: rgba(var(--signal-rgb),.3); border-radius: 8px; color: var(--signal); background: var(--surface-hover); font-size: 11px; }
   .reasoning-effort { position: relative; flex: 0 0 auto; margin-bottom: 5px; }
   .model-controls { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 3px; margin-bottom: 5px; }
-  .model-controls select { height: 36px; min-width: 0; padding: 0 24px 0 8px; border-color: transparent; border-radius: 10px; color: var(--text-soft); background-color: transparent; font-size: 13px; outline: none; }
-  .model-controls select:hover, .model-controls select:focus { border-color: var(--line); color: var(--text); background-color: var(--surface-hover); }
-  .model-controls select option, .provider-field select option, .provider-list option { color: var(--text); background: var(--select-bg); }
-  .model-controls select option:checked, .provider-field select option:checked, .provider-list option:checked { color: var(--text); background: var(--select-active); }
-  .model-controls select optgroup { color: var(--signal); background: var(--select-bg); font-style: normal; font-weight: 700; }
-  #model-select { width: auto; max-width: 320px; overflow: hidden; field-sizing: content; font-weight: 650; text-align: right; text-align-last: right; text-overflow: ellipsis; }
+  .provider-field select option, .provider-list option { color: var(--text); background: var(--select-bg); }
+  .provider-field select option:checked, .provider-list option:checked { color: var(--text); background: var(--select-active); }
+  #model-select {
+    display: inline-block;
+    width: auto;
+    max-width: 320px;
+    color: var(--text-soft);
+    font-size: 13px;
+    --wa-form-control-height: 36px;
+    --wa-form-control-padding-inline: 8px;
+    --wa-form-control-border-width: 1px;
+    --wa-form-control-border-color: transparent;
+    --wa-form-control-background-color: transparent;
+    --wa-form-control-border-radius: 10px;
+    --wa-form-control-value-color: var(--text-soft);
+    --wa-form-control-value-font-weight: 650;
+    --wa-form-control-value-line-height: 1;
+    --wa-color-focus: var(--line-strong);
+    --wa-color-surface-raised: var(--panel-strong);
+    --wa-color-surface-border: var(--line-strong);
+    --wa-color-text-normal: var(--text);
+    --wa-color-text-quiet: var(--text-muted);
+    --wa-color-neutral-on-quiet: var(--text-soft);
+    --wa-shadow-m: var(--overlay-shadow);
+  }
+  #model-select::part(form-control-label) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  #model-select::part(combobox) { width: auto; min-width: 0; border-color: transparent; box-shadow: none; }
+  #model-select::part(display-input) { width: auto; min-width: 0; max-width: 276px; field-sizing: content; color: var(--text-soft); font-size: 13px; font-weight: 650; text-align: right; text-overflow: ellipsis; }
+  #model-select::part(expand-icon) { width: 12px; color: var(--text-soft); }
+  #model-select:not([disabled]):hover::part(combobox), #model-select[open]::part(combobox) { border-color: var(--line); background: var(--surface-hover); }
+  #model-select:not([disabled]):hover::part(display-input), #model-select[open]::part(display-input) { color: var(--text); }
+  #model-select::part(listbox) { min-width: min(320px, calc(100vw - 32px)); max-height: min(420px, calc(100vh - 120px)); padding: 6px; color: var(--text); background: var(--panel-strong); border-color: var(--line-strong); border-radius: 12px; box-shadow: var(--overlay-shadow); }
+  #model-select .model-provider-heading { padding: 8px 10px 5px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+  #model-select wa-option { border-radius: 8px; color: var(--text-soft); font-size: 12px; --current-text-color: var(--text); }
+  #model-select wa-option::part(checked-icon) { color: var(--signal); }
+  #model-select wa-option::part(label) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .reasoning-effort-trigger { height: 36px; min-width: 50px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border-color: transparent; border-radius: 10px; color: var(--text-soft); background: transparent; font-size: 13px; }
   .reasoning-effort-trigger:hover, .reasoning-effort-trigger[aria-expanded="true"] { color: var(--text); border-color: var(--line); background: var(--surface-hover); transform: none; box-shadow: none; }
   .reasoning-effort-trigger .reasoning-chevron { width: 12px; height: 12px; transition: transform .18s ease; }
@@ -1909,7 +1939,8 @@
     .reasoning-effort-trigger .reasoning-chevron { display: none; }
     .send { width: 44px; height: 44px; grid-column: 4; grid-row: 2; }
     textarea { min-height: 44px; padding: 10px 8px; }
-    #model-select { width: 100%; max-width: none; padding-right: 20px; field-sizing: fixed; font-size: 12px; }
+    #model-select { width: 100%; max-width: none; font-size: 12px; }
+    #model-select::part(display-input) { width: 100%; max-width: none; field-sizing: fixed; font-size: 12px; }
     .composer-meta { min-height: 32px; margin-top: 6px; }
     .composer-hints { display: none; }
     #particle-field { display: none; }

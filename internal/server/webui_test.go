@@ -192,6 +192,9 @@ func TestWebUIComposerPrioritizesModelLabel(t *testing.T) {
 	if bytes.Contains(match[1], []byte(`reasoning-icon`)) || !bytes.Contains(match[1], []byte(`id="reasoning-effort-label"`)) {
 		t.Fatalf("reasoning effort trigger should display its label without a leading icon: %s", match[1])
 	}
+	if !bytes.Contains(page, []byte(`<wa-select id="model-select"`)) || bytes.Contains(page, []byte(`<select id="model-select"`)) {
+		t.Fatal("model selector should use the Web Awesome select component")
+	}
 
 	styles, err := os.ReadFile(filepath.Join("webui", "src", "styles.css"))
 	if err != nil {
@@ -200,7 +203,7 @@ func TestWebUIComposerPrioritizesModelLabel(t *testing.T) {
 	for _, rule := range [][]byte{
 		[]byte("field-sizing: content"),
 		[]byte("text-align: right"),
-		[]byte("text-align-last: right"),
+		[]byte("#model-select::part(listbox)"),
 	} {
 		if !bytes.Contains(styles, rule) {
 			t.Fatalf("model selector styles do not contain %q", rule)

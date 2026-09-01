@@ -1,3 +1,7 @@
+import "@awesome.me/webawesome/dist/styles/themes/default.css";
+import "@awesome.me/webawesome/dist/components/select/select.js";
+import type WaOption from "@awesome.me/webawesome/dist/components/option/option.js";
+import type WaSelect from "@awesome.me/webawesome/dist/components/select/select.js";
 import "./styles.css";
 import { errorMessage, parseJSONEvent, responseJSON } from "./api";
 import { acpPermissionTitle, formatACPPermissionInput, isRejectPermissionOption } from "./acp-permission";
@@ -111,7 +115,7 @@ import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationM
   const sendBtn = byId<HTMLButtonElement>("send");
   const themeToggle = byId<HTMLButtonElement>("theme-toggle");
   const statusEl = byId<HTMLDivElement>("status");
-  const modelSelect = byId<HTMLSelectElement>("model-select");
+  const modelSelect = byId<WaSelect>("model-select");
   const providerSettingsTrigger = byId<HTMLButtonElement>("provider-settings-trigger");
   const providerSettingsBackdrop = byId<HTMLDivElement>("provider-settings-backdrop");
   const providerSettingsClose = byId<HTMLButtonElement>("provider-settings-close");
@@ -181,35 +185,64 @@ import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationM
   var workspaceDesktopQuery = window.matchMedia ? window.matchMedia("(min-width: 901px)") : null;
   workspaceExpanded[""] = true;
 
+  function runtimeModelOptions(): WaOption[] {
+    return Array.from(modelSelect.querySelectorAll<WaOption>("wa-option"));
+  }
+
+  function runtimeModelOption(providerID: string, model: string): WaOption | undefined {
+    return runtimeModelOptions().find(function (option) {
+      return option.dataset.providerId === providerID && option.dataset.model === model;
+    });
+  }
+
+  function createRuntimeModelOption(providerID: string, model: string): WaOption {
+    var option = document.createElement("wa-option");
+    var value = encodeURIComponent(providerID || "runtime") + ":" + encodeURIComponent(model);
+    option.setAttribute("value", value);
+    option.dataset.providerId = providerID;
+    option.dataset.model = model;
+    option.textContent = model;
+    return option;
+  }
+
+  function setRuntimeModelOption(option: WaOption): void {
+    runtimeModelOptions().forEach(function (candidate) {
+      candidate.toggleAttribute("selected", candidate === option);
+    });
+    modelSelect.handleDefaultSlotChange();
+  }
+
+  function selectedRuntimeModelOption(): WaOption | undefined {
+    return modelSelect.selectedOptions[0] || runtimeModelOptions().find(function (option) { return option.getAttribute("aria-selected") === "true"; });
+  }
+
   function updateRuntimeModel(apiType: string, model: string, providerID?: string): void {
     if (!model) return;
-    var matched = Array.prototype.find.call(modelSelect.options, function (option) { return option.dataset.providerId === (providerID || "") && option.dataset.model === model; });
+    var matched = runtimeModelOption(providerID || "", model);
     if (!matched) {
-      matched = new Option(model, (providerID || "runtime") + "\u001f" + model);
-      matched.dataset.providerId = providerID || "";
-      matched.dataset.model = model;
-      modelSelect.add(matched);
+      matched = createRuntimeModelOption(providerID || "", model);
+      modelSelect.appendChild(matched);
     }
-    modelSelect.value = matched.value;
+    setRuntimeModelOption(matched);
     modelSelect.title = (providerID || apiType || "llm") + " / " + model;
   }
 
   function renderProviderSelectors(): void {
     modelSelect.innerHTML = "";
     providerSettingsState.providers.forEach(function (provider) {
-      var group = document.createElement("optgroup");
-      group.label = provider.name;
+      var heading = document.createElement("small");
+      heading.className = "model-provider-heading";
+      heading.textContent = provider.name;
+      modelSelect.appendChild(heading);
       provider.models.forEach(function (model) {
-        var option = new Option(model, provider.id + "\u001f" + model);
-        option.dataset.providerId = provider.id;
-        option.dataset.model = model;
-        group.appendChild(option);
+        modelSelect.appendChild(createRuntimeModelOption(provider.id, model));
       });
-      modelSelect.appendChild(group);
     });
     var active = providerSettingsState.providers.find(function (provider) { return provider.id === providerSettingsState.active_provider; });
-    if (active) modelSelect.value = active.id + "\u001f" + active.default_model;
-    modelSelect.disabled = modelSelect.options.length === 0;
+    var activeOption = active ? runtimeModelOption(active.id, active.default_model) : undefined;
+    if (activeOption) setRuntimeModelOption(activeOption);
+    else modelSelect.handleDefaultSlotChange();
+    modelSelect.disabled = runtimeModelOptions().length === 0;
   }
 
   async function loadProviderSettings(): Promise<void> {
@@ -222,17 +255,19 @@ import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationM
   }
 
   async function selectRuntimeModel(): Promise<void> {
-    var option = modelSelect.options[modelSelect.selectedIndex];
+    var option = selectedRuntimeModelOption();
     if (!option || !option.dataset.providerId || !option.dataset.model) return;
+    var providerID = option.dataset.providerId;
+    var model = option.dataset.model;
     var response = await fetch(workspaceScopedURL("/api/v1/webui/provider-selection"), {
       method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ provider_id: option.dataset.providerId, model: option.dataset.model, session_id: sessionId })
+      body: JSON.stringify({ provider_id: providerID, model: model, session_id: sessionId })
     });
     var payload = await responseJSON<ProviderSelectionResponse>(response);
     if (!response.ok) throw new Error(payload.error || "切换模型失败");
-    providerSettingsState.active_provider = option.dataset.providerId;
-    var active = providerSettingsState.providers.find(function (provider) { return provider.id === option.dataset.providerId; });
-    if (active) active.default_model = option.dataset.model;
+    providerSettingsState.active_provider = providerID;
+    var active = providerSettingsState.providers.find(function (provider) { return provider.id === providerID; });
+    if (active) active.default_model = model;
     updateRuntimeModel(payload.api_type, payload.model, payload.provider_id);
   }
 
@@ -250,7 +285,7 @@ import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationM
     selection.then(function () {
       if (runtimeModelSelectionPromise !== selection) return;
       runtimeModelSelectionPromise = null;
-      modelSelect.disabled = busy || modelSelect.options.length === 0;
+      modelSelect.disabled = busy || runtimeModelOptions().length === 0;
     });
   }
 
@@ -1996,7 +2031,7 @@ import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationM
     addServerPathBtn.disabled = on;
     reasoningEffortToggle.disabled = on;
     reasoningEffortRange.disabled = on;
-    modelSelect.disabled = on || modelSelect.options.length === 0;
+    modelSelect.disabled = on || runtimeModelOptions().length === 0;
     providerSettingsTrigger.disabled = on;
     groupAddBtn.disabled = on || !sessionId;
     groupParticipants.querySelectorAll<HTMLButtonElement>("button").forEach(function (button) { button.disabled = on || !sessionId; });
