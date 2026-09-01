@@ -67,6 +67,16 @@ func (broker *Broker) Detection(agent AgentName) DetectionResult {
 	return broker.detections[agent]
 }
 
+func (broker *Broker) AvailableAgents() []AgentName {
+	available := make([]AgentName, 0)
+	for _, agent := range SupportedAgents() {
+		if broker != nil && broker.detections[agent].Preferred != nil {
+			available = append(available, agent)
+		}
+	}
+	return available
+}
+
 func (broker *Broker) Resolve(message, sessionID string) (AgentName, string, bool, error) {
 	agent, prompt, explicit, err := ParseRoute(message)
 	if err != nil {
@@ -86,6 +96,14 @@ func (broker *Broker) Resolve(message, sessionID string) (AgentName, string, boo
 }
 
 func (broker *Broker) Clear(sessionID string) error {
+	return broker.clear(sessionID, false)
+}
+
+func (broker *Broker) ClearGroup(sessionID string) error {
+	return broker.clear(sessionID, true)
+}
+
+func (broker *Broker) clear(sessionID string, group bool) error {
 	if broker == nil || broker.store == nil {
 		return nil
 	}
@@ -111,8 +129,14 @@ func (broker *Broker) Clear(sessionID string) error {
 			firstErr = err
 		}
 	}
-	if err := broker.store.Clear(sessionID); err != nil && firstErr == nil {
-		firstErr = err
+	var storeErr error
+	if group {
+		storeErr = broker.store.ClearGroup(sessionID)
+	} else {
+		storeErr = broker.store.Clear(sessionID)
+	}
+	if storeErr != nil && firstErr == nil {
+		firstErr = storeErr
 	}
 	return firstErr
 }
@@ -159,6 +183,14 @@ func (broker *Broker) invalidateSession(sessionID string) []ACPClient {
 }
 
 func (broker *Broker) SendTurn(ctx context.Context, request TurnRequest) (TurnResponse, error) {
+	return broker.sendTurn(ctx, request, false)
+}
+
+func (broker *Broker) SendGroupTurn(ctx context.Context, request TurnRequest) (TurnResponse, error) {
+	return broker.sendTurn(ctx, request, true)
+}
+
+func (broker *Broker) sendTurn(ctx context.Context, request TurnRequest, group bool) (TurnResponse, error) {
 	if broker == nil || broker.store == nil {
 		return TurnResponse{}, fmt.Errorf("external agent broker is not configured")
 	}
@@ -182,7 +214,12 @@ func (broker *Broker) SendTurn(ctx context.Context, request TurnRequest) (TurnRe
 		return TurnResponse{}, fmt.Errorf("agent %q is unavailable", request.Agent)
 	}
 
-	state, err := broker.store.Load(request.BQSessionID)
+	var state SessionState
+	if group {
+		state, err = broker.store.LoadGroup(request.BQSessionID, request.Agent)
+	} else {
+		state, err = broker.store.Load(request.BQSessionID)
+	}
 	if err != nil {
 		return TurnResponse{}, err
 	}
@@ -208,7 +245,13 @@ func (broker *Broker) SendTurn(ctx context.Context, request TurnRequest) (TurnRe
 	if !broker.generationCurrent(request.BQSessionID, generation) {
 		return TurnResponse{}, errBrokerSessionCleared
 	}
-	if saveErr := broker.store.Save(response.State); saveErr != nil {
+	var saveErr error
+	if group {
+		saveErr = broker.store.SaveGroup(response.State)
+	} else {
+		saveErr = broker.store.Save(response.State)
+	}
+	if saveErr != nil {
 		return TurnResponse{}, saveErr
 	}
 	return response, nil

@@ -15,10 +15,11 @@ import (
 )
 
 type conversationListItem struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID               string           `json:"id"`
+	Title            string           `json:"title"`
+	Status           string           `json:"status"`
+	UpdatedAt        time.Time        `json:"updated_at"`
+	ConversationType ConversationType `json:"conversation_type"`
 }
 
 type conversationMessage struct {
@@ -26,6 +27,8 @@ type conversationMessage struct {
 	Content string              `json:"content"`
 	Tools   []agent.HistoryTool `json:"tools,omitempty"`
 	Files   []conversationFile  `json:"files,omitempty"`
+	Sender  string              `json:"sender,omitempty"`
+	Kind    string              `json:"kind,omitempty"`
 }
 
 type conversationFile struct {
@@ -40,15 +43,19 @@ type ConversationHistoryMessage struct {
 	Role    string              `json:"role"`
 	Content string              `json:"content"`
 	Tools   []agent.HistoryTool `json:"tools,omitempty"`
+	Sender  string              `json:"sender,omitempty"`
+	Kind    string              `json:"kind,omitempty"`
 }
 
 // ConversationHistory is a read-only view of a persisted chat session.
 type ConversationHistory struct {
-	ID       string
-	Title    string
-	Mode     ChatMode
-	Messages []ConversationHistoryMessage
-	Omitted  int
+	ID               string
+	Title            string
+	Mode             ChatMode
+	ConversationType ConversationType
+	Group            *GroupInfo
+	Messages         []ConversationHistoryMessage
+	Omitted          int
 }
 
 type conversationHistoryLoadError struct{ err error }
@@ -80,7 +87,7 @@ func (handler *handler) handleConversations(writer http.ResponseWriter, request 
 		if runes := []rune(title); len(runes) > 48 {
 			title = string(runes[:48]) + "…"
 		}
-		items = append(items, conversationListItem{ID: meta.ID, Title: title, Status: string(meta.Status), UpdatedAt: meta.UpdatedAt})
+		items = append(items, conversationListItem{ID: meta.ID, Title: title, Status: string(meta.Status), UpdatedAt: meta.UpdatedAt, ConversationType: storedConversationType(meta.ConversationType)})
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"conversations": items})
 }
@@ -126,9 +133,11 @@ func (handler *handler) handleConversationHistory(writer http.ResponseWriter, re
 			Content: content,
 			Tools:   message.Tools,
 			Files:   files,
+			Sender:  message.Sender,
+			Kind:    message.Kind,
 		})
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"id": history.ID, "title": history.Title, "mode": history.Mode, "messages": webMessages})
+	writeJSON(writer, http.StatusOK, map[string]any{"id": history.ID, "title": history.Title, "mode": history.Mode, "conversation_type": history.ConversationType, "group": history.Group, "messages": webMessages})
 }
 
 func splitHistoryAttachments(content string) (string, []conversationFile) {
@@ -225,23 +234,72 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 	if err != nil {
 		return ConversationHistory{}, conversationHistoryLoadError{err: fmt.Errorf("load conversation history: %w", err)}
 	}
+	conversationType := storedConversationType(saved.Meta().ConversationType)
 	filtered := make([]ConversationHistoryMessage, 0, len(messages))
+	pendingGroupCalls := map[string]string{}
 	for _, message := range messages {
 		role, _ := message["role"].(string)
 		content := conversationMessageText(message["content"])
 		if role == "assistant" {
-			if note, tools, ok := agent.ParseCompletedToolActivity(content); ok {
-				if strings.TrimSpace(note) != "" || len(tools) > 0 {
-					filtered = append(filtered, ConversationHistoryMessage{Role: role, Content: note, Tools: tools})
+			for _, call := range historyToolCalls(message) {
+				if call.Function.Name != groupConsultTool {
+					continue
+				}
+				var arguments map[string]any
+				if json.Unmarshal([]byte(call.Function.Arguments), &arguments) == nil {
+					participant, _ := arguments["participant"].(string)
+					if strings.TrimSpace(call.ID) != "" && strings.TrimSpace(participant) != "" {
+						pendingGroupCalls[call.ID] = strings.TrimSpace(participant)
+					}
+				}
+			}
+		}
+		if role == "tool" {
+			callID, _ := message["tool_call_id"].(string)
+			if participant := pendingGroupCalls[callID]; participant != "" {
+				text, failed := groupHistoryResult(participant, content)
+				kind := "message"
+				if failed {
+					kind = "error"
+				}
+				filtered = append(filtered, ConversationHistoryMessage{Role: "assistant", Sender: participant, Kind: kind, Content: text})
+				delete(pendingGroupCalls, callID)
+			}
+			continue
+		}
+		if role == "assistant" {
+			if note, historyTools, ok := agent.ParseCompletedToolActivity(content); ok {
+				ordinaryTools := make([]agent.HistoryTool, 0, len(historyTools))
+				for _, historyTool := range historyTools {
+					if historyTool.Name != groupConsultTool {
+						ordinaryTools = append(ordinaryTools, historyTool)
+						continue
+					}
+					participant, _ := historyTool.Arguments["participant"].(string)
+					text, failed := groupHistoryResult(participant, historyTool.Result)
+					kind := "message"
+					if failed {
+						kind = "error"
+					}
+					filtered = append(filtered, ConversationHistoryMessage{Role: role, Sender: participant, Kind: kind, Content: text})
+				}
+				if strings.TrimSpace(note) != "" || len(ordinaryTools) > 0 {
+					filtered = append(filtered, ConversationHistoryMessage{Role: role, Sender: groupHistorySender(conversationType, role), Content: note, Tools: ordinaryTools})
 				}
 				continue
 			}
 		}
 		if (role == "user" || role == "assistant") && strings.TrimSpace(content) != "" {
-			filtered = append(filtered, ConversationHistoryMessage{Role: role, Content: content})
+			filtered = append(filtered, ConversationHistoryMessage{Role: role, Sender: groupHistorySender(conversationType, role), Content: content})
 		}
 	}
-	result := ConversationHistory{ID: saved.ID(), Title: saved.Meta().Task, Mode: storedChatMode(saved.Meta().CurrentMode), Messages: filtered}
+	result := ConversationHistory{ID: saved.ID(), Title: saved.Meta().Task, Mode: storedChatMode(saved.Meta().CurrentMode), ConversationType: conversationType, Messages: filtered}
+	if conversationType == ConversationTypeGroup {
+		if config, configErr := saved.LoadGroupConfig(); configErr == nil {
+			info := groupInfo(config, service)
+			result.Group = &info
+		}
+	}
 	if maxBytes <= 0 || historyBytes(filtered) <= maxBytes {
 		return result, nil
 	}
@@ -269,6 +327,48 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 	return result, nil
 }
 
+func historyToolCalls(message map[string]any) []agent.ToolCall {
+	raw := message["tool_calls"]
+	if raw == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var calls []agent.ToolCall
+	if json.Unmarshal(encoded, &calls) != nil {
+		return nil
+	}
+	return calls
+}
+
+func groupHistoryResult(participant, content string) (string, bool) {
+	content = strings.TrimSpace(content)
+	failedPrefix := fmt.Sprintf("Group participant @%s failed:", participant)
+	replyPrefix := fmt.Sprintf("Group participant @%s replied:", participant)
+	switch {
+	case strings.HasPrefix(content, "Error:"):
+		return strings.TrimSpace(strings.TrimPrefix(content, "Error:")), true
+	case strings.HasPrefix(content, failedPrefix):
+		return strings.TrimSpace(strings.TrimPrefix(content, failedPrefix)), true
+	case strings.HasPrefix(content, replyPrefix):
+		return strings.TrimSpace(strings.TrimPrefix(content, replyPrefix)), false
+	default:
+		return content, false
+	}
+}
+
+func groupHistorySender(conversationType ConversationType, role string) string {
+	if conversationType != ConversationTypeGroup {
+		return ""
+	}
+	if role == "user" {
+		return "user"
+	}
+	return groupScheduler
+}
+
 func historyBytes(messages []ConversationHistoryMessage) int {
 	total := 0
 	for _, message := range messages {
@@ -278,7 +378,7 @@ func historyBytes(messages []ConversationHistoryMessage) int {
 }
 
 func historyMessageBytes(message ConversationHistoryMessage) int {
-	total := len(message.Role) + len(message.Content)
+	total := len(message.Role) + len(message.Content) + len(message.Sender) + len(message.Kind)
 	for _, tool := range message.Tools {
 		total += historyToolBytes(tool)
 	}
@@ -392,6 +492,18 @@ func (handler *handler) deleteConversation(writer http.ResponseWriter, service *
 	if !saved.Meta().Chat {
 		writeError(writer, http.StatusNotFound, chatResponse{Error: "conversation not found"})
 		return
+	}
+	if service.externalBroker != nil {
+		var clearErr error
+		if storedConversationType(saved.Meta().ConversationType) == ConversationTypeGroup {
+			clearErr = service.externalBroker.ClearGroup(canonicalID)
+		} else {
+			clearErr = service.externalBroker.Clear(canonicalID)
+		}
+		if clearErr != nil {
+			writeError(writer, http.StatusInternalServerError, chatResponse{Error: clearErr.Error()})
+			return
+		}
 	}
 	if err := service.store.Delete(canonicalID); err != nil {
 		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})

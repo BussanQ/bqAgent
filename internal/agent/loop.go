@@ -1934,6 +1934,8 @@ func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall, allowPlan bool) bool {
 		switch toolCall.Function.Name {
 		case "write_file", "edit_file", "todo_write":
 			return true
+		case "consult_group_agent":
+			return true
 		case "plan":
 			if allowPlan && a.planner != nil {
 				return true

@@ -4,6 +4,7 @@ import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, v
 import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 import { formatConversationTime } from "./conversations";
+import { groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, type MentionQuery } from "./group-chat";
 import { byId, eventElement } from "./dom";
 import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
 import { renderMarkdown } from "./markdown";
@@ -16,7 +17,7 @@ import { initialTheme } from "./theme";
 import { shouldGroupToolCalls } from "./tool-groups";
 import { loadWorkspaceSessions, migrateLegacySession, persistWorkspaceSession, workspaceURL } from "./workspace";
 import type { SentFile, SentImage } from "./attachments";
-import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, GenerationMetrics, PendingFile, PendingImage, ProviderModelsResponse, ProviderSelectionResponse, ProviderSettings, ReasoningEffort, StatusResponse, ToolEventPayload, WorkspaceCurrentPreview, WorkspaceDirectoryPage, WorkspaceDirectoryResponse, WorkspaceDirectoryState, WorkspaceEntry, WorkspaceInfo, WorkspaceListResponse, WorkspacePreview, WorkspaceRoot, WorkspacesResponse, WebUIDoneEvent } from "./types";
+import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, ConversationType, GenerationMetrics, GroupEventPayload, GroupInfo, PendingFile, PendingImage, ProviderModelsResponse, ProviderSelectionResponse, ProviderSettings, ReasoningEffort, StatusResponse, ToolEventPayload, WorkspaceCurrentPreview, WorkspaceDirectoryPage, WorkspaceDirectoryResponse, WorkspaceDirectoryState, WorkspaceEntry, WorkspaceInfo, WorkspaceListResponse, WorkspacePreview, WorkspaceRoot, WorkspacesResponse, WebUIDoneEvent } from "./types";
 
 (function () {
   "use strict";
@@ -44,6 +45,8 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
   const appLayout = byId<HTMLDivElement>("app-layout");
   const conversationList = byId<HTMLDivElement>("conversation-list");
   const conversationNew = byId<HTMLButtonElement>("conversation-new");
+  const conversationNewWrap = byId<HTMLDivElement>("conversation-new-wrap");
+  const conversationNewMenu = byId<HTMLDivElement>("conversation-new-menu");
   const conversationContextMenu = byId<HTMLDivElement>("conversation-context-menu");
   const conversationDelete = byId<HTMLButtonElement>("conversation-delete");
   const workspaceSidebar = byId<HTMLElement>("workspace-sidebar");
@@ -78,6 +81,9 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
   const workspacePickerCancel = byId<HTMLButtonElement>("workspace-picker-cancel");
   const workspacePickerConfirm = byId<HTMLButtonElement>("workspace-picker-confirm");
   const input = byId<HTMLTextAreaElement>("input");
+  const groupBar = byId<HTMLDivElement>("group-bar");
+  const groupParticipants = byId<HTMLDivElement>("group-participants");
+  const mentionMenu = byId<HTMLDivElement>("mention-menu");
   const attachmentTray = byId<HTMLDivElement>("attachment-tray");
   const attachmentError = byId<HTMLDivElement>("attachment-error");
   const attachmentActions = byId<HTMLDivElement>("attachment-actions");
@@ -142,6 +148,9 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
   var workspaceReady = false;
   var reasoningEffort: ReasoningEffort = "auto";
   var chatMode: ChatMode = "run";
+  var conversationType: ConversationType = "default";
+  var currentGroup: GroupInfo | null = null;
+  var mentionQuery: MentionQuery | null = null;
   var busy = false;
   var currentTurnId = "";
   var currentController: AbortController | null = null;
@@ -437,6 +446,92 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     return workspaceURL(url, currentWorkspace ? currentWorkspace.id : "");
   }
 
+  async function loadAvailableGroup(): Promise<GroupInfo> {
+    var response = await fetch(workspaceScopedURL("/api/v1/webui/group/participants"), { headers: { "Accept": "application/json" } });
+    var payload = await responseJSON<GroupInfo & { error?: string }>(response);
+    if (!response.ok) throw new Error(payload.error || "读取群聊成员失败");
+    return payload;
+  }
+
+  function renderGroupBar(): void {
+    groupBar.hidden = conversationType !== "group";
+    groupParticipants.textContent = "";
+    if (conversationType !== "group" || !currentGroup) return;
+    currentGroup.participants.forEach(function (participant) {
+      var chip = document.createElement("span");
+      chip.className = "group-participant" + (participant.id === currentGroup!.scheduler ? " scheduler" : "") + (participant.available ? "" : " unavailable");
+      chip.textContent = "@" + participant.id;
+      chip.title = participant.available ? (participant.transport || participant.kind) : "当前不可用";
+      groupParticipants.appendChild(chip);
+    });
+  }
+
+  function setConversationType(value: unknown, group?: GroupInfo | null): void {
+    conversationType = normalizeConversationType(value);
+    currentGroup = conversationType === "group" ? (group || currentGroup) : null;
+    if (conversationType === "group") {
+      setChatMode("run");
+      modeAskBtn.hidden = true;
+      input.placeholder = "群聊模式：输入 @ 选择成员，或由 bqagent 自主调度";
+    } else {
+      modeAskBtn.hidden = false;
+      input.placeholder = chatModePlaceholder(chatMode);
+      closeMentionMenu();
+    }
+    renderGroupBar();
+  }
+
+  function setNewConversationMenu(open: boolean): void {
+    open = Boolean(open) && !busy;
+    conversationNewMenu.hidden = !open;
+    conversationNew.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function closeMentionMenu(): void {
+    mentionMenu.hidden = true;
+    mentionMenu.textContent = "";
+    mentionQuery = null;
+  }
+
+  function renderMentionMenu(): void {
+    if (conversationType !== "group" || !currentGroup || busy) {
+      closeMentionMenu();
+      return;
+    }
+    var query = groupMentionQuery(input.value, input.selectionStart || 0);
+    if (!query) {
+      closeMentionMenu();
+      return;
+    }
+    var matches = matchingGroupParticipants(currentGroup.participants, query.query);
+    if (!matches.length) {
+      closeMentionMenu();
+      return;
+    }
+    mentionQuery = query;
+    mentionMenu.textContent = "";
+    matches.forEach(function (participant, index) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("role", "option");
+      button.className = index === 0 ? "active" : "";
+      button.dataset.participant = participant.id;
+      button.textContent = "@" + participant.id + (participant.id === currentGroup!.scheduler ? " · 调度员" : "");
+      mentionMenu.appendChild(button);
+    });
+    mentionMenu.hidden = false;
+  }
+
+  function chooseMention(participant: string): void {
+    if (!mentionQuery) return;
+    var replacement = replaceGroupMention(input.value, mentionQuery, participant);
+    input.value = replacement.text;
+    input.setSelectionRange(replacement.cursor, replacement.cursor);
+    closeMentionMenu();
+    autoGrow();
+    input.focus();
+  }
+
   function renderConversationList(): void {
     closeConversationContextMenu();
     conversationList.innerHTML = "";
@@ -459,6 +554,12 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
       time.className = "conversation-time";
       time.textContent = formatConversationTime(conversation.updated_at);
       button.appendChild(title);
+      if (conversation.conversation_type === "group") {
+        var badge = document.createElement("span");
+        badge.className = "conversation-type-badge";
+        badge.textContent = "群聊";
+        button.appendChild(badge);
+      }
       button.appendChild(time);
       button.addEventListener("click", function () { openConversation(conversation.id); });
       button.addEventListener("contextmenu", function (event) { openConversationContextMenu(event, conversation); });
@@ -499,6 +600,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
       if (sessionId === conversation.id) {
         setCurrentWorkspaceSession("");
         setChatMode("run");
+        setConversationType("default", null);
         clearPendingAttachments();
         thread.innerHTML = emptyMarkup();
         loadRuntimeModel();
@@ -540,10 +642,11 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
       if (!response.ok) throw new Error(payload.error || "读取历史失败");
       if (loadID !== conversationLoadID) return;
       setCurrentWorkspaceSession(payload.id || id);
+      setConversationType(payload.conversation_type, payload.group || null);
       setChatMode(payload.mode);
       thread.innerHTML = "";
       normalizeHistoryMessages(payload.messages || []).forEach(function (message) {
-        var bubble = addMessage(message.role);
+        var bubble = addMessage(message.role, message.sender, message.kind);
         if (message.role === "assistant") {
           renderRestoredAssistant(bubble, message);
         } else {
@@ -582,6 +685,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     workspaceCurrentPath.textContent = info.path || "";
     workspaceCurrentPath.title = info.path || "";
     sessionId = workspaceSessions[info.id] || "";
+    setConversationType("default", null);
     workspaceReady = true;
     input.disabled = false;
     sendBtn.disabled = false;
@@ -1125,20 +1229,24 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     if (empty) empty.remove();
   }
 
-  function addMessage(role: string): HTMLDivElement {
+  function addMessage(role: string, sender?: string, kind?: string): HTMLDivElement {
     removeEmpty();
     var msg = document.createElement("div");
     msg.className = "msg " + role + " msg-enter";
+    var displaySender = sender || (role === "user" ? "你" : "bqagent");
+    if (role === "assistant" && displaySender !== "bqagent") msg.classList.add("participant");
+    if (kind === "error") msg.classList.add("participant-error");
     var avatar = document.createElement("div");
     avatar.className = "avatar";
     avatar.setAttribute("aria-hidden", "true");
     if (role === "user") avatar.textContent = "你";
+    else if (displaySender !== "bqagent") avatar.textContent = displaySender.slice(0, 2).toUpperCase();
     else avatar.appendChild(createIcon("bot"));
     var stack = document.createElement("div");
     stack.className = "message-stack";
     var label = document.createElement("div");
     label.className = "message-label";
-    label.textContent = role === "user" ? "你" : "bqagent";
+    label.textContent = role === "user" ? "你" : (displaySender === "bqagent" && conversationType === "group" ? "bqagent · 调度汇总" : displaySender);
     var bubble = document.createElement("div");
     bubble.className = "bubble";
     msg.appendChild(avatar);
@@ -1570,13 +1678,13 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
   }
 
   function setChatMode(value: unknown): void {
-    chatMode = normalizeChatMode(value);
+    chatMode = conversationType === "group" ? "run" : normalizeChatMode(value);
     [modeRunBtn, modeAskBtn].forEach(function (button) {
       var selected = button.dataset.mode === chatMode;
       button.classList.toggle("selected", selected);
       button.setAttribute("aria-checked", selected ? "true" : "false");
     });
-    input.placeholder = chatModePlaceholder(chatMode);
+    input.placeholder = conversationType === "group" ? "群聊模式：输入 @ 选择成员，或由 bqagent 自主调度" : chatModePlaceholder(chatMode);
     addAttachmentBtn.title = chatMode === "ask" ? "Ask 模式与附件" : "Run 模式与附件";
     addAttachmentBtn.setAttribute("aria-label", chatMode === "ask" ? "Ask 模式：选择模式或添加文件" : "Run 模式：选择模式或添加文件");
   }
@@ -1903,13 +2011,19 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     renderPendingAttachments();
     clearAttachmentError();
 
-    var bubble = addMessage("assistant");
-    var toolCards = {};
+    var bubble: HTMLDivElement | null = conversationType === "group" ? null : addMessage("assistant");
+    var toolCards: ToolCards = {};
+    var participantBubbles: Record<string, HTMLDivElement> = Object.create(null) as Record<string, HTMLDivElement>;
     preparingSend = false;
-    bubble.classList.add("is-streaming");
     var caret = document.createElement("span");
     caret.className = "caret";
-    bubble.appendChild(caret);
+    function ensureCoordinatorBubble(): HTMLDivElement {
+      if (!bubble) bubble = addMessage("assistant", "bqagent");
+      bubble.classList.add("is-streaming");
+      if (!caret.parentElement) bubble.appendChild(caret);
+      return bubble;
+    }
+    if (bubble) ensureCoordinatorBubble();
     var streamed = "";
     var progress = "";
 
@@ -1926,6 +2040,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
           session_id: sessionId,
           turn_id: currentTurnId,
           mode: chatMode,
+          conversation_type: conversationType,
           reasoning_effort: reasoningEffort === "auto" ? "" : reasoningEffort
         }),
         signal: currentController.signal
@@ -1948,10 +2063,31 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
         for (var eventIndex = 0; eventIndex < events.length; eventIndex++) {
           var evt = events[eventIndex];
           if (evt.event === "tool_start" || evt.event === "tool_result") {
-            updateToolTimeline(bubble, toolCards, evt.event, parseJSONEvent<ToolEventPayload>(evt.data));
+            var toolPayload = parseJSONEvent<ToolEventPayload>(evt.data);
+            if (toolPayload.name !== "consult_group_agent") updateToolTimeline(ensureCoordinatorBubble(), toolCards, evt.event, toolPayload);
+          } else if (evt.event === "participant_start" || evt.event === "participant_message" || evt.event === "participant_error") {
+            var groupEvent = parseJSONEvent<GroupEventPayload>(evt.data);
+            var participantBubble = participantBubbles[groupEvent.call_id];
+            if (!participantBubble) {
+              participantBubble = addMessage("assistant", groupEvent.participant, evt.event === "participant_error" ? "error" : "message");
+              participantBubbles[groupEvent.call_id] = participantBubble;
+            }
+            if (evt.event === "participant_start") {
+              participantBubble.classList.add("notice", "is-streaming");
+              participantBubble.textContent = "正在思考并处理共享工作区…";
+            } else if (evt.event === "participant_message") {
+              participantBubble.classList.remove("notice", "is-streaming");
+              participantBubble.classList.add("rendered");
+              renderReply(participantBubble, groupEvent.content || "");
+            } else {
+              participantBubble.classList.remove("notice", "is-streaming");
+              participantBubble.classList.add("rendered", "error");
+              renderReply(participantBubble, "执行失败：" + (groupEvent.error || "未知错误"));
+            }
           } else if (evt.event === "done") {
             finished = true;
-            clearStreamingState(bubble);
+            var finalBubble = ensureCoordinatorBubble();
+            clearStreamingState(finalBubble);
             var done = parseJSONEvent<WebUIDoneEvent>(evt.data);
             if (done.session_id) {
               setCurrentWorkspaceSession(done.session_id);
@@ -1960,57 +2096,62 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
               runtimeModelLoadID++;
               updateRuntimeModel(done.api_type, done.model, providerSettingsState.active_provider);
             }
+            setConversationType(done.conversation_type, done.group || currentGroup);
             setChatMode(done.mode);
             refreshConversations(false);
-            bubble.classList.add("rendered");
+            finalBubble.classList.add("rendered");
             var finalReply = typeof done.reply === "string" ? done.reply : "";
             if (!finalReply.trim()) {
-              bubble.classList.add("error");
-              bubble.textContent = "出错：服务端未返回有效回复";
+              finalBubble.classList.add("error");
+              finalBubble.textContent = "出错：服务端未返回有效回复";
               statusEl.textContent = "回复无效";
               statusEl.classList.remove("busy");
               statusEl.classList.add("error");
             } else {
-              renderReply(bubble, finalReply);
-              addMessageMeta(bubble, done.generation);
-              addMessageControls(bubble, done.run_id || "", finalReply);
+              renderReply(finalBubble, finalReply);
+              addMessageMeta(finalBubble, done.generation);
+              addMessageControls(finalBubble, done.run_id || "", finalReply);
             }
           } else if (evt.event === "stopped") {
             finished = true;
-            clearStreamingState(bubble);
+            var stoppedBubble = ensureCoordinatorBubble();
+            clearStreamingState(stoppedBubble);
             caret.remove();
-            bubble.classList.add("rendered", "notice");
+            stoppedBubble.classList.add("rendered", "notice");
             var stoppedReply = streamed ? streamed + "\n\n> 已停止生成。" : "已停止生成。";
-            renderReply(bubble, stoppedReply);
-            addMessageControls(bubble, "", streamed);
+            renderReply(stoppedBubble, stoppedReply);
+            addMessageControls(stoppedBubble, "", streamed);
             statusEl.textContent = "已停止";
             statusEl.classList.remove("busy", "error");
           } else if (evt.event === "error") {
             finished = true;
-            clearStreamingState(bubble);
+            var errorBubble = ensureCoordinatorBubble();
+            clearStreamingState(errorBubble);
             var errPayload = parseJSONEvent<{ error?: string }>(evt.data);
-            bubble.classList.add("error");
-            bubble.textContent = "出错：" + (errPayload.error || "未知错误");
+            errorBubble.classList.add("error");
+            errorBubble.textContent = "出错：" + (errPayload.error || "未知错误");
             statusEl.textContent = "请求失败";
             statusEl.classList.remove("busy");
             statusEl.classList.add("error");
           } else if (evt.event === "progress") {
             var progressPayload = parseJSONEvent<{ message?: string }>(evt.data);
-            if (progressPayload.message && !streamed) {
+            if (conversationType !== "group" && progressPayload.message && !streamed) {
+              var progressBubble = ensureCoordinatorBubble();
               progress = progressPayload.message;
               caret.remove();
-              bubble.classList.add("notice");
-              bubble.textContent = progress;
-              bubble.appendChild(caret);
+              progressBubble.classList.add("notice");
+              progressBubble.textContent = progress;
+              progressBubble.appendChild(caret);
             }
           } else {
             var payload = parseJSONEvent<{ delta?: string }>(evt.data);
             if (payload.delta) {
+              var streamBubble = ensureCoordinatorBubble();
               streamed += payload.delta;
               caret.remove();
-              bubble.classList.remove("notice");
-              bubble.textContent = streamed;
-              bubble.appendChild(caret);
+              streamBubble.classList.remove("notice");
+              streamBubble.textContent = streamed;
+              streamBubble.appendChild(caret);
             }
           }
           scrollToBottom();
@@ -2020,28 +2161,30 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
       finished = finished || eventBuffer.terminal;
 
       if (!finished) {
-        clearStreamingState(bubble);
+        var incompleteBubble = ensureCoordinatorBubble();
+        clearStreamingState(incompleteBubble);
         caret.remove();
-        bubble.classList.add("rendered", "error");
+        incompleteBubble.classList.add("rendered", "error");
         var incompleteReply = streamed
           ? streamed + "\n\n> 响应在完成事件到达前中断。"
           : "出错：响应未正常完成。";
-        renderReply(bubble, incompleteReply);
+        renderReply(incompleteBubble, incompleteReply);
         statusEl.textContent = "响应中断";
         statusEl.classList.remove("busy");
         statusEl.classList.add("error");
       }
     } catch (err) {
-      clearStreamingState(bubble);
+      var caughtBubble = ensureCoordinatorBubble();
+      clearStreamingState(caughtBubble);
       caret.remove();
       if (stopRequested || (err instanceof Error && err.name === "AbortError")) {
-        bubble.classList.add("rendered", "notice");
+        caughtBubble.classList.add("rendered", "notice");
         var partialReply = streamed ? streamed + "\n\n> 已停止生成。" : "已停止生成。";
-        renderReply(bubble, partialReply);
-        addMessageControls(bubble, "", streamed);
+        renderReply(caughtBubble, partialReply);
+        addMessageControls(caughtBubble, "", streamed);
       } else {
-        bubble.classList.add("error");
-        bubble.textContent = "出错：" + errorMessage(err);
+        caughtBubble.classList.add("error");
+        caughtBubble.textContent = "出错：" + errorMessage(err);
         statusEl.textContent = "连接失败";
         statusEl.classList.remove("busy");
         statusEl.classList.add("error");
@@ -2057,10 +2200,12 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     }
   }
 
-  function newChat(): void {
+  function newChat(type: ConversationType = "default"): void {
     if (busy) return;
+    setNewConversationMenu(false);
     setCurrentWorkspaceSession("");
     setChatMode("run");
+    setConversationType(type, type === "group" ? { scheduler: "bqagent", participants: [{ id: "bqagent", name: "bqagent", kind: "builtin", available: true }] } : null);
     clearPendingAttachments();
     setAttachmentMenu(false);
     setReasoningEffortMenu(false);
@@ -2070,12 +2215,25 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     statusEl.classList.remove("error", "busy");
     loadRuntimeModel();
     input.focus();
+    if (type === "group") {
+      loadAvailableGroup().then(function (group) {
+        if (!sessionId && conversationType === "group") setConversationType("group", group);
+      }).catch(function (error) {
+        statusEl.textContent = errorMessage(error);
+        statusEl.classList.add("error");
+      });
+    }
   }
 
   sendBtn.addEventListener("click", function () {
     if (busy) stopCurrentTurn(); else send();
   });
-  conversationNew.addEventListener("click", newChat);
+  conversationNew.addEventListener("click", function () { setNewConversationMenu(Boolean(conversationNewMenu.hidden)); });
+  conversationNewMenu.addEventListener("click", function (event) {
+    var option = eventElement(event.target)?.closest<HTMLButtonElement>("[data-conversation-type]");
+    if (!option) return;
+    newChat(normalizeConversationType(option.dataset.conversationType));
+  });
   providerSettingsTrigger.addEventListener("click", function () {
     openProviderSettings().catch(function (error) {
       statusEl.textContent = errorMessage(error);
@@ -2223,6 +2381,8 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     if (!attachmentMenu.hidden && !attachmentActions.contains(target)) setAttachmentMenu(false);
     if (!reasoningEffortMenu.hidden && !reasoningEffortControl.contains(target)) setReasoningEffortMenu(false);
     if (!conversationContextMenu.hidden && !conversationContextMenu.contains(target)) closeConversationContextMenu();
+    if (!conversationNewMenu.hidden && !conversationNewWrap.contains(target)) setNewConversationMenu(false);
+    if (!mentionMenu.hidden && target !== input && !mentionMenu.contains(target)) closeMentionMenu();
   });
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape" && !conversationContextMenu.hidden) {
@@ -2275,7 +2435,11 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
       input.focus();
     }
   });
-  input.addEventListener("input", autoGrow);
+  mentionMenu.addEventListener("click", function (event) {
+    var option = eventElement(event.target)?.closest<HTMLButtonElement>("[data-participant]");
+    if (option && option.dataset.participant) chooseMention(option.dataset.participant);
+  });
+  input.addEventListener("input", function () { autoGrow(); renderMentionMenu(); });
   input.addEventListener("paste", function (event) {
     if (busy || !event.clipboardData || !event.clipboardData.items) return;
     var files: File[] = [];
@@ -2295,6 +2459,29 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     addClipboardImages(files);
   });
   input.addEventListener("keydown", function (e) {
+    if (!mentionMenu.hidden) {
+      var options = Array.prototype.slice.call(mentionMenu.querySelectorAll<HTMLButtonElement>("button")) as HTMLButtonElement[];
+      var activeIndex = options.findIndex(function (option) { return option.classList.contains("active"); });
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (options.length) {
+          options[Math.max(0, activeIndex)].classList.remove("active");
+          activeIndex = e.key === "ArrowDown" ? (activeIndex + 1) % options.length : (activeIndex - 1 + options.length) % options.length;
+          options[activeIndex].classList.add("active");
+        }
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey && options.length) {
+        e.preventDefault();
+        chooseMention(options[Math.max(0, activeIndex)].dataset.participant || "");
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeMentionMenu();
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       send();

@@ -186,6 +186,8 @@ Claude defaults to `claude -p --output-format json`; Codex defaults to `codex ex
 
 In `--chat` or `--server` sessions, use `/opencode <task>` to route the turn to OpenCode. Later messages remain bound to it until `/default` switches back to the built-in agent. OpenCode is ACP-only; configuring `AGENT_OPENCODE_CLI_CMD/ARGS` does not enable a CLI transport.
 
+The WebUI's **New conversation** menu can also create a group conversation. bqagent is always the coordinator and automatically includes external agents detected as available at server startup. Without a mention, bqagent chooses whom to consult; `@codex`, `@opencode`, and similar mentions constrain the turn to those members. Members run sequentially in the same workspace, receive the shared group context, post separate conclusions, and bqagent produces the final synthesis. Group conversations are Run-only. Existing sticky `/codex` and `/opencode` routing remains unchanged in ordinary conversations. The orchestration is channel-neutral, although this release exposes it only in the WebUI.
+
 ## Documentation
 
 See the [project documentation](./docs/doc.md#english-documentation) for complete usage instructions and the [inline TUI guide](./docs/TUI.md) for shortcuts, commands, TTY fallback, and scrollback behavior.

@@ -34,11 +34,12 @@ type handler struct {
 }
 
 type chatResponse struct {
-	SessionID          string `json:"session_id,omitempty"`
-	RunID              string `json:"run_id,omitempty"`
-	Reply              string `json:"reply,omitempty"`
-	ServerChanResponse string `json:"serverchan_response,omitempty"`
-	Error              string `json:"error,omitempty"`
+	SessionID          string           `json:"session_id,omitempty"`
+	RunID              string           `json:"run_id,omitempty"`
+	Reply              string           `json:"reply,omitempty"`
+	ServerChanResponse string           `json:"serverchan_response,omitempty"`
+	Error              string           `json:"error,omitempty"`
+	ConversationType   ConversationType `json:"conversation_type,omitempty"`
 }
 
 type statusResponse struct {
@@ -60,6 +61,7 @@ func NewHandler(options HandlerOptions) http.Handler {
 	mux.HandleFunc("/api/v1/webui/provider-models", handler.handleProviderModels)
 	mux.HandleFunc("/api/v1/webui/conversations", handler.handleConversations)
 	mux.HandleFunc("/api/v1/webui/conversations/", handler.handleConversationHistory)
+	mux.HandleFunc("/api/v1/webui/group/participants", handler.handleGroupParticipants)
 	mux.HandleFunc("/api/v1/chat", handler.handleChat)
 	mux.HandleFunc("/api/v1/chat/stop", handler.handleStopTurn)
 	mux.HandleFunc("/api/v1/runs/", handler.handleRun)
@@ -168,7 +170,7 @@ func (handler *handler) handleChat(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
 		return
 	}
-	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, RunID: response.RunID, Reply: response.Reply})
+	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, RunID: response.RunID, Reply: response.Reply, ConversationType: response.ConversationType})
 }
 
 func (handler *handler) handleStopTurn(writer http.ResponseWriter, request *http.Request) {
@@ -253,10 +255,19 @@ func parseTurnRequest(values map[string]string) (TurnRequest, error) {
 	if turnID != "" && !validTurnID(turnID) {
 		return TurnRequest{}, fmt.Errorf("invalid turn_id")
 	}
+	var conversationType ConversationType
+	if rawConversationType := strings.TrimSpace(values["conversation_type"]); rawConversationType != "" {
+		parsedConversationType, parseErr := parseConversationType(rawConversationType)
+		if parseErr != nil {
+			return TurnRequest{}, parseErr
+		}
+		conversationType = parsedConversationType
+	}
 	return TurnRequest{
-		SessionID: strings.TrimSpace(firstNonEmpty(values["session_id"], values["session"])),
-		Message:   message,
-		TurnID:    turnID,
+		SessionID:        strings.TrimSpace(firstNonEmpty(values["session_id"], values["session"])),
+		Message:          message,
+		TurnID:           turnID,
+		ConversationType: conversationType,
 	}, nil
 }
 

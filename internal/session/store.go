@@ -42,6 +42,7 @@ type Meta struct {
 	LastRunID           string    `json:"last_run_id,omitempty"`
 	CurrentModel        string    `json:"current_model,omitempty"`
 	CurrentMode         string    `json:"current_mode,omitempty"`
+	ConversationType    string    `json:"conversation_type,omitempty"`
 	PromptSchemaVersion int       `json:"prompt_schema_version,omitempty"`
 	PromptStableHash    string    `json:"prompt_stable_hash,omitempty"`
 	PromptMessageCount  int       `json:"prompt_message_count,omitempty"`
@@ -129,10 +130,11 @@ func NewStore(workspaceRoot string, configured ...Options) *Store {
 }
 
 type CreateOptions struct {
-	Task       string
-	Planned    bool
-	Background bool
-	Chat       bool
+	Task             string
+	Planned          bool
+	Background       bool
+	Chat             bool
+	ConversationType string
 }
 
 func (s *Store) Create(options CreateOptions) (*Session, error) {
@@ -151,15 +153,16 @@ func (s *Store) Create(options CreateOptions) (*Session, error) {
 		store: s,
 		dir:   dir,
 		meta: Meta{
-			ID:            id,
-			WorkspaceRoot: s.workspaceRoot,
-			Task:          options.Task,
-			Planned:       options.Planned,
-			Background:    options.Background,
-			Chat:          options.Chat,
-			Status:        StatusCreated,
-			CreatedAt:     now,
-			UpdatedAt:     now,
+			ID:               id,
+			WorkspaceRoot:    s.workspaceRoot,
+			Task:             options.Task,
+			Planned:          options.Planned,
+			Background:       options.Background,
+			Chat:             options.Chat,
+			ConversationType: strings.TrimSpace(options.ConversationType),
+			Status:           StatusCreated,
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		},
 	}
 	if err := session.persistMeta(); err != nil {
@@ -590,6 +593,12 @@ func (session *Session) SetCurrentModel(model string) error {
 
 func (session *Session) SetCurrentMode(mode string) error {
 	session.meta.CurrentMode = strings.TrimSpace(mode)
+	session.meta.UpdatedAt = time.Now().UTC()
+	return session.persistMeta()
+}
+
+func (session *Session) SetConversationType(conversationType string) error {
+	session.meta.ConversationType = strings.TrimSpace(conversationType)
 	session.meta.UpdatedAt = time.Now().UTC()
 	return session.persistMeta()
 }

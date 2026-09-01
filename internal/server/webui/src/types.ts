@@ -1,5 +1,19 @@
 export type ReasoningEffort = "auto" | "low" | "medium" | "high";
 export type ChatMode = "run" | "ask";
+export type ConversationType = "default" | "group";
+
+export interface GroupParticipant {
+  id: string;
+  name: string;
+  kind: string;
+  available: boolean;
+  transport?: string;
+}
+
+export interface GroupInfo {
+  scheduler: string;
+  participants: GroupParticipant[];
+}
 
 export interface ProviderView {
   id: string;
@@ -34,6 +48,7 @@ export interface ConversationSummary {
   title: string;
   status: string;
   updated_at: string;
+  conversation_type: ConversationType;
 }
 
 export interface ConversationHistoryTool {
@@ -50,6 +65,8 @@ export interface ConversationMessage {
   content: string;
   tools?: ConversationHistoryTool[];
   files?: ConversationHistoryFile[];
+  sender?: string;
+  kind?: "message" | "error";
 }
 
 export interface ConversationHistoryFile {
@@ -60,6 +77,8 @@ export interface ConversationHistoryFile {
 export interface ConversationHistory {
   id?: string;
   mode?: ChatMode;
+  conversation_type?: ConversationType;
+  group?: GroupInfo;
   messages: ConversationMessage[];
 }
 
@@ -150,7 +169,17 @@ export interface WebUIDoneEvent {
   api_type: string;
   model: string;
   mode: ChatMode;
+  conversation_type: ConversationType;
+  group?: GroupInfo;
   generation?: GenerationMetrics;
+}
+
+export interface GroupEventPayload {
+  kind: string;
+  call_id: string;
+  participant: string;
+  content?: string;
+  error?: string;
 }
 
 export interface ToolEventPayload {

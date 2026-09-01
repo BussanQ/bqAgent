@@ -1,0 +1,32 @@
+import type { ConversationType, GroupParticipant } from "./types";
+
+export function normalizeConversationType(value: unknown): ConversationType {
+  return String(value || "").toLowerCase() === "group" ? "group" : "default";
+}
+
+export interface MentionQuery {
+  start: number;
+  end: number;
+  query: string;
+}
+
+export function groupMentionQuery(text: string, cursor: number): MentionQuery | null {
+  const prefix = String(text || "").slice(0, Math.max(0, cursor));
+  const match = prefix.match(/(?:^|\s)@([A-Za-z0-9_-]*)$/);
+  if (!match || match.index == null) return null;
+  const at = prefix.lastIndexOf("@", match.index + match[0].length);
+  return { start: at, end: cursor, query: match[1].toLowerCase() };
+}
+
+export function matchingGroupParticipants(participants: GroupParticipant[], query: string): GroupParticipant[] {
+  const needle = String(query || "").toLowerCase();
+  return (participants || []).filter(function (participant) {
+    return participant.available && participant.id.toLowerCase().startsWith(needle);
+  });
+}
+
+export function replaceGroupMention(text: string, mention: MentionQuery, participant: string): { text: string; cursor: number } {
+  const replacement = "@" + participant + " ";
+  const updated = text.slice(0, mention.start) + replacement + text.slice(mention.end);
+  return { text: updated, cursor: mention.start + replacement.length };
+}

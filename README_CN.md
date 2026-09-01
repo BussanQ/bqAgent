@@ -186,6 +186,8 @@ Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex
 
 在 `--chat` 或 `--server` 会话中，使用 `/opencode <任务>` 将当前轮次路由到 OpenCode；后续普通消息会保持绑定，直到通过 `/default` 返回内置 Agent。OpenCode 仅支持 ACP；配置 `AGENT_OPENCODE_CLI_CMD/ARGS` 不会启用 CLI 传输。
 
+WebUI 的“新会话”菜单还可以创建群聊。群聊固定由 bqagent 调度，并自动加入服务启动时检测可用的外部 Agent；未指定成员时由 bqagent 自主选择，使用 `@codex`、`@opencode` 等可以把当前轮次限制到指定成员。成员顺序共享同一个 workspace 和群聊上下文，各自结论会单独显示，最后由 bqagent 汇总。群聊仅支持 Run 模式；普通会话中的 `/codex`、`/opencode` 粘性路由保持不变。群聊编排属于通用服务能力，本期仅 WebUI 提供入口。
+
 ## 文档
 
 完整使用说明请参阅[项目文档](./docs/doc.md#中文文档)；终端快捷键、命令面板、TTY 回退与 scrollback 行为请参阅[内联 TUI 指南](./docs/TUI.md)。

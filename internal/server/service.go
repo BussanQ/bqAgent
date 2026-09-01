@@ -109,6 +109,9 @@ type TurnRequest struct {
 	ReasoningEffort agent.ReasoningEffort `json:"reasoning_effort,omitempty"`
 	// Mode selects the session capability profile. Empty defaults to run mode.
 	Mode ChatMode `json:"mode,omitempty"`
+	// ConversationType selects ordinary one-to-one chat or a coordinated group.
+	// It is only authoritative when creating a new session.
+	ConversationType ConversationType `json:"conversation_type,omitempty"`
 }
 
 // Attachment placeholders keep session bookkeeping and memory readable for
@@ -142,13 +145,14 @@ type CacheMetrics struct {
 }
 
 type TurnResponse struct {
-	SessionID  string             `json:"session_id"`
-	Reply      string             `json:"reply"`
-	RunID      string             `json:"run_id,omitempty"`
-	Model      string             `json:"model,omitempty"`
-	Mode       ChatMode           `json:"mode"`
-	Generation *GenerationMetrics `json:"generation,omitempty"`
-	Streamed   bool               `json:"-"`
+	SessionID        string             `json:"session_id"`
+	Reply            string             `json:"reply"`
+	RunID            string             `json:"run_id,omitempty"`
+	Model            string             `json:"model,omitempty"`
+	Mode             ChatMode           `json:"mode"`
+	ConversationType ConversationType   `json:"conversation_type"`
+	Generation       *GenerationMetrics `json:"generation,omitempty"`
+	Streamed         bool               `json:"-"`
 }
 
 func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *GenerationMetrics {
@@ -194,6 +198,7 @@ type TurnOptions struct {
 	ProgressWriter io.Writer
 	TokenSink      io.Writer
 	ToolEventSink  agent.ToolEventSink
+	GroupEventSink GroupEventSink
 	Stream         bool
 	MaxIterations  int
 	Stage          agent.StageConfig
@@ -342,6 +347,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	message := strings.TrimSpace(request.Message)
 	if isStopCommand(message) {
 		mode := ChatModeRun
+		conversationType := ConversationTypeDefault
 		if strings.TrimSpace(string(request.Mode)) != "" {
 			var modeErr error
 			mode, modeErr = parseChatMode(string(request.Mode))
@@ -351,10 +357,11 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		} else if sessionID := strings.TrimSpace(request.SessionID); sessionID != "" {
 			if savedSession, openErr := service.store.Open(sessionID); openErr == nil {
 				mode = storedChatMode(savedSession.Meta().CurrentMode)
+				conversationType = storedConversationType(savedSession.Meta().ConversationType)
 			}
 		}
 		reply := service.stopProcessGroupReply(request.PeerKey, request.SessionID)
-		return TurnResponse{SessionID: strings.TrimSpace(request.SessionID), Reply: reply, Mode: mode}, nil
+		return TurnResponse{SessionID: strings.TrimSpace(request.SessionID), Reply: reply, Mode: mode, ConversationType: conversationType}, nil
 	}
 	if message == "" && len(request.Images) == 0 && len(request.Files) == 0 {
 		return TurnResponse{}, fmt.Errorf("message or attachments are required")
@@ -394,6 +401,12 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 
 	sessionID := strings.TrimSpace(request.SessionID)
+	requestedConversationType, err := parseConversationType(string(request.ConversationType))
+	if err != nil {
+		return TurnResponse{}, err
+	}
+	conversationType := requestedConversationType
+	var groupConfig session.GroupConfig
 	if sessionID != "" {
 		canonicalID, canonicalErr := session.CanonicalID(sessionID)
 		if canonicalErr != nil {
@@ -411,6 +424,16 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		case openErr == nil:
 			effectiveModel = service.effectiveModel(savedSession)
 			mode = storedChatMode(savedSession.Meta().CurrentMode)
+			conversationType = storedConversationType(savedSession.Meta().ConversationType)
+			if strings.TrimSpace(string(request.ConversationType)) != "" && requestedConversationType != conversationType {
+				return TurnResponse{}, fmt.Errorf("conversation_type cannot be changed for an existing session")
+			}
+			if conversationType == ConversationTypeGroup {
+				groupConfig, err = savedSession.LoadGroupConfig()
+				if err != nil {
+					return TurnResponse{}, fmt.Errorf("load group configuration: %w", err)
+				}
+			}
 		case !errors.Is(openErr, os.ErrNotExist):
 			return TurnResponse{}, openErr
 		}
@@ -424,17 +447,43 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if commandMode, isModeCommand := chatModeCommand(message); isModeCommand {
 		mode = commandMode
 	}
-	createOptions := &session.CreateOptions{Task: effectiveText, Planned: service.planner != nil, Chat: true}
+	if conversationType == ConversationTypeGroup && mode != ChatModeRun {
+		return TurnResponse{}, fmt.Errorf("群聊会话仅支持 Run 模式")
+	}
+	if conversationType == ConversationTypeGroup && len(groupConfig.Participants) == 0 {
+		groupConfig = newGroupConfig(service.GroupParticipants())
+	}
+	createOptions := &session.CreateOptions{Task: effectiveText, Planned: service.planner != nil, Chat: true, ConversationType: persistedConversationType(conversationType)}
 	stablePrompt, initialSessionContext, err := service.currentPromptSnapshot(effectiveModel)
 	if err != nil {
 		return TurnResponse{}, err
 	}
 	stablePrompt = promptForChatMode(stablePrompt, mode)
+	if conversationType == ConversationTypeGroup {
+		stablePrompt = promptForGroup(stablePrompt, groupConfig)
+	}
 	conversation, err := appruntime.PrepareConversationWithPrompt(service.store, sessionID, createOptions, stablePrompt, func() (string, error) {
 		return service.currentSessionContext(effectiveText, initialSessionContext)
 	})
 	if err != nil {
 		return TurnResponse{}, err
+	}
+	if conversationType == ConversationTypeGroup {
+		if conversation.Session.Meta().ConversationType != persistedConversationType(conversationType) {
+			if err := conversation.Session.SetConversationType(persistedConversationType(conversationType)); err != nil {
+				markConversationFailed(conversation, err)
+				return TurnResponse{}, err
+			}
+		}
+		if _, loadErr := conversation.Session.LoadGroupConfig(); errors.Is(loadErr, os.ErrNotExist) {
+			if err := conversation.Session.SaveGroupConfig(groupConfig); err != nil {
+				markConversationFailed(conversation, err)
+				return TurnResponse{}, err
+			}
+		} else if loadErr != nil {
+			markConversationFailed(conversation, loadErr)
+			return TurnResponse{}, loadErr
+		}
 	}
 	if conversation.Session.Meta().CurrentMode != persistedChatMode(mode) {
 		if err := conversation.Session.SetCurrentMode(persistedChatMode(mode)); err != nil {
@@ -447,6 +496,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		if response.SessionID != "" {
 			response.Model = service.effectiveModel(conversation.Session)
 			response.Mode = storedChatMode(conversation.Session.Meta().CurrentMode)
+			response.ConversationType = storedConversationType(conversation.Session.Meta().ConversationType)
 		}
 	}()
 	effectiveModel = service.effectiveModel(conversation.Session)
@@ -594,6 +644,18 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		markConversationFailed(conversation, err)
 		return TurnResponse{}, err
 	}
+	if conversationType == ConversationTypeGroup && isExternalRouteCommand(message) {
+		reply := "群聊会话请使用 @成员名 进行交互，例如 @codex 或 @opencode。"
+		assistantMessage := map[string]any{"role": "assistant", "content": reply}
+		if recordErr := conversation.Session.RecordMessage(assistantMessage); recordErr != nil {
+			return TurnResponse{}, recordErr
+		}
+		conversation.Messages = append(conversation.Messages, assistantMessage)
+		if completeErr := service.completeConversation(conversation); completeErr != nil {
+			return TurnResponse{}, completeErr
+		}
+		return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply, RunID: runID}, nil
+	}
 	if mode == ChatModeAsk && askModeBlockedCommand(message) {
 		reply := askModeBlockedCommandReply()
 		assistantMessage := map[string]any{"role": "assistant", "content": reply}
@@ -641,7 +703,29 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply, RunID: runID}, nil
 	}
 
-	if mode == ChatModeRun && service.externalBroker != nil && skillInvocation == nil {
+	var groupCoordinator *groupTurnCoordinator
+	if conversationType == ConversationTypeGroup {
+		mentions, mentionErr := parseGroupMentions(message, groupConfig)
+		if mentionErr != nil {
+			writeTurnError(turnErrorWriter, mentionErr)
+			markConversationFailed(conversation, mentionErr)
+			return TurnResponse{}, mentionErr
+		}
+		groupCoordinator = newGroupTurnCoordinator(service, conversation.Session.ID(), groupConfig, mentions, conversation.Messages, options.GroupEventSink)
+		for index, participant := range mentions {
+			if participant == groupScheduler {
+				continue
+			}
+			consultResult, _ := groupCoordinator.consult(ctx, participant, modelMessage)
+			callID := fmt.Sprintf("group-explicit-%d", index+1)
+			if recordErr := recordSyntheticGroupConsult(&conversation.Messages, conversation.Session, callID, participant, consultResult); recordErr != nil {
+				markConversationFailed(conversation, recordErr)
+				return TurnResponse{}, recordErr
+			}
+		}
+	}
+
+	if conversationType != ConversationTypeGroup && mode == ChatModeRun && service.externalBroker != nil && skillInvocation == nil {
 		routedAgent, routedPrompt, _, routeErr := service.externalBroker.Resolve(message, conversation.Session.ID())
 		if routeErr != nil {
 			writeTurnError(turnErrorWriter, routeErr)
@@ -703,6 +787,12 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 
 	functions := service.functionsForTurn(request.PeerKey, conversation.Session.ID())
 	toolDefinitions, functions := toolsetForChatMode(mode, service.toolDefinitions, functions)
+	if groupCoordinator != nil {
+		if definition, ok := groupCoordinator.toolDefinition(); ok {
+			toolDefinitions = append(toolDefinitions, definition)
+			functions[groupConsultTool] = groupCoordinator.function()
+		}
+	}
 	var planner *agent.Planner
 	if mode == ChatModeRun && service.planner != nil {
 		planner = agent.NewPlanner(service.client, effectiveModel)
@@ -751,12 +841,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	writeTurnReply(logWriter, result, options.Stream)
 
 	return TurnResponse{
-		SessionID:  conversation.Session.ID(),
-		Reply:      result,
-		RunID:      runID,
-		Mode:       mode,
-		Generation: generationMetricsFromAgent(generation),
-		Streamed:   options.Stream,
+		SessionID:        conversation.Session.ID(),
+		Reply:            result,
+		RunID:            runID,
+		Mode:             mode,
+		ConversationType: conversationType,
+		Generation:       generationMetricsFromAgent(generation),
+		Streamed:         options.Stream,
 	}, nil
 }
 
