@@ -1,4 +1,4 @@
-import type { ConversationType, GroupParticipant } from "./types";
+import type { ConversationType, GroupInfo, GroupParticipant } from "./types";
 
 export function normalizeConversationType(value: unknown): ConversationType {
   return String(value || "").toLowerCase() === "group" ? "group" : "default";
@@ -6,6 +6,13 @@ export function normalizeConversationType(value: unknown): ConversationType {
 
 export function shouldRenderFinalReply(conversationType: unknown, replyKind: unknown): boolean {
   return normalizeConversationType(conversationType) !== "group" || String(replyKind || "") !== "participant_results";
+}
+
+export function addableGroupParticipants(available: GroupInfo, current: GroupInfo | null): GroupParticipant[] {
+  const joined = new Set((current?.participants || []).map(function (participant) { return participant.id; }));
+  return (available?.participants || []).filter(function (participant) {
+    return participant.available && participant.id !== available.scheduler && !joined.has(participant.id);
+  });
 }
 
 export interface MentionQuery {

@@ -4,7 +4,7 @@ import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, v
 import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 import { formatConversationTime } from "./conversations";
-import { groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldRenderFinalReply, type MentionQuery } from "./group-chat";
+import { addableGroupParticipants, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldRenderFinalReply, type MentionQuery } from "./group-chat";
 import { byId, eventElement } from "./dom";
 import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
 import { renderMarkdown } from "./markdown";
@@ -83,6 +83,10 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
   const input = byId<HTMLTextAreaElement>("input");
   const groupBar = byId<HTMLDivElement>("group-bar");
   const groupParticipants = byId<HTMLDivElement>("group-participants");
+  const groupMemberControls = byId<HTMLDivElement>("group-member-controls");
+  const groupAddWrap = byId<HTMLDivElement>("group-add-wrap");
+  const groupAddBtn = byId<HTMLButtonElement>("group-add");
+  const groupAddMenu = byId<HTMLDivElement>("group-add-menu");
   const mentionMenu = byId<HTMLDivElement>("mention-menu");
   const attachmentTray = byId<HTMLDivElement>("attachment-tray");
   const attachmentError = byId<HTMLDivElement>("attachment-error");
@@ -453,10 +457,92 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     return payload;
   }
 
+  function closeGroupAddMenu(): void {
+    groupAddMenu.hidden = true;
+    groupAddBtn.setAttribute("aria-expanded", "false");
+  }
+
+  function renderGroupAddMenu(available: GroupInfo): void {
+    var candidates = addableGroupParticipants(available, currentGroup);
+    groupAddMenu.textContent = "";
+    if (!candidates.length) {
+      var empty = document.createElement("div");
+      empty.className = "group-add-empty";
+      empty.textContent = "暂无可添加成员";
+      groupAddMenu.appendChild(empty);
+      return;
+    }
+    candidates.forEach(function (participant) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "group-add-option";
+      button.setAttribute("role", "menuitem");
+      var name = document.createElement("strong");
+      name.textContent = "@" + participant.id;
+      var transport = document.createElement("span");
+      transport.textContent = participant.transport || participant.kind;
+      button.appendChild(name);
+      button.appendChild(transport);
+      button.addEventListener("click", function () { addGroupParticipant(participant.id); });
+      groupAddMenu.appendChild(button);
+    });
+  }
+
+  async function toggleGroupAddMenu(): Promise<void> {
+    if (busy || conversationType !== "group" || !sessionId) return;
+    if (!groupAddMenu.hidden) {
+      closeGroupAddMenu();
+      return;
+    }
+    groupAddBtn.disabled = true;
+    try {
+      var available = await loadAvailableGroup();
+      renderGroupAddMenu(available);
+      groupAddMenu.hidden = false;
+      groupAddBtn.setAttribute("aria-expanded", "true");
+    } catch (error) {
+      statusEl.textContent = errorMessage(error);
+      statusEl.classList.add("error");
+    } finally {
+      groupAddBtn.disabled = busy || !sessionId;
+    }
+  }
+
+  async function addGroupParticipant(participant: string): Promise<void> {
+    if (busy || !sessionId) return;
+    groupAddBtn.disabled = true;
+    groupAddMenu.querySelectorAll<HTMLButtonElement>("button").forEach(function (button) { button.disabled = true; });
+    try {
+      var response = await fetch("/api/v1/webui/group/participants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ workspace_id: currentWorkspace ? currentWorkspace.id : "", session_id: sessionId, participant: participant }),
+      });
+      var payload = await responseJSON<GroupInfo & { error?: string }>(response);
+      if (!response.ok) throw new Error(payload.error || "添加群聊成员失败");
+      currentGroup = payload;
+      closeGroupAddMenu();
+      renderGroupBar();
+      statusEl.textContent = "已添加 @" + participant;
+      statusEl.classList.remove("error");
+    } catch (error) {
+      statusEl.textContent = errorMessage(error);
+      statusEl.classList.add("error");
+      groupAddMenu.querySelectorAll<HTMLButtonElement>("button").forEach(function (button) { button.disabled = false; });
+    } finally {
+      groupAddBtn.disabled = busy || !sessionId;
+    }
+  }
+
   function renderGroupBar(): void {
     groupBar.hidden = conversationType !== "group";
     groupParticipants.textContent = "";
-    if (conversationType !== "group" || !currentGroup) return;
+    groupMemberControls.hidden = conversationType !== "group";
+    groupAddBtn.disabled = busy || !sessionId;
+    if (conversationType !== "group" || !currentGroup) {
+      closeGroupAddMenu();
+      return;
+    }
     currentGroup.participants.forEach(function (participant) {
       var chip = document.createElement("span");
       chip.className = "group-participant" + (participant.id === currentGroup!.scheduler ? " scheduler" : "") + (participant.available ? "" : " unavailable");
@@ -469,6 +555,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
   function setConversationType(value: unknown, group?: GroupInfo | null): void {
     conversationType = normalizeConversationType(value);
     currentGroup = conversationType === "group" ? (group || currentGroup) : null;
+    closeGroupAddMenu();
     if (conversationType === "group") {
       setChatMode("run");
       modeAskBtn.hidden = true;
@@ -1793,11 +1880,13 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     reasoningEffortRange.disabled = on;
     modelSelect.disabled = on || modelSelect.options.length === 0;
     providerSettingsTrigger.disabled = on;
+    groupAddBtn.disabled = on || !sessionId;
     workspaceSelect.disabled = on || !workspaceReady;
     workspaceCreateAgent.disabled = on || !workspaceReady;
     if (on) {
       setAttachmentMenu(false);
       setReasoningEffortMenu(false);
+      closeGroupAddMenu();
     }
     if (on) {
       statusEl.textContent = "处理中";
@@ -2347,6 +2436,9 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
   addAttachmentBtn.addEventListener("click", function () {
     setAttachmentMenu(Boolean(attachmentMenu.hidden));
   });
+  groupAddBtn.addEventListener("click", function () {
+    toggleGroupAddMenu();
+  });
   modeRunBtn.addEventListener("click", function () {
     setChatMode("run");
     setAttachmentMenu(false);
@@ -2389,10 +2481,14 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     if (!conversationContextMenu.hidden && !conversationContextMenu.contains(target)) closeConversationContextMenu();
     if (!conversationNewMenu.hidden && !conversationNewWrap.contains(target)) setNewConversationMenu(false);
     if (!mentionMenu.hidden && target !== input && !mentionMenu.contains(target)) closeMentionMenu();
+    if (!groupAddMenu.hidden && !groupAddWrap.contains(target)) closeGroupAddMenu();
   });
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape" && !conversationContextMenu.hidden) {
       closeConversationContextMenu();
+    } else if (event.key === "Escape" && !groupAddMenu.hidden) {
+      closeGroupAddMenu();
+      groupAddBtn.focus();
     } else if (event.key === "Escape" && !attachmentMenu.hidden) {
       setAttachmentMenu(false);
       addAttachmentBtn.focus();

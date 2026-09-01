@@ -199,6 +199,63 @@ func TestGroupChatWithoutMentionIsHandledDirectlyByBqagent(t *testing.T) {
 	}
 }
 
+func TestWebUIAddsAvailableParticipantToExistingGroup(t *testing.T) {
+	root := t.TempDir()
+	log := &groupACPLog{prompts: map[string][]string{}}
+	broker := newGroupTestBroker(root, log, extagent.AgentCodex, extagent.AgentOpenCode)
+	defer broker.Close()
+	service := NewService(ServiceOptions{WorkspaceRoot: root, SystemPrompt: "base", ExternalBroker: broker})
+	saved, err := service.store.Create(session.CreateOptions{Task: "existing group", Chat: true, ConversationType: string(ConversationTypeGroup)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saved.SaveGroupConfig(session.GroupConfig{Version: session.GroupConfigVersion, Scheduler: groupScheduler, Participants: []string{groupScheduler, "codex"}}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}}))
+	defer server.Close()
+
+	requestBody := `{"session_id":"` + saved.ID() + `","participant":"opencode"}`
+	response, err := http.Post(server.URL+"/api/v1/webui/group/participants", "application/json", strings.NewReader(requestBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"id":"opencode"`) {
+		t.Fatalf("add participant status=%d body=%s", response.StatusCode, body)
+	}
+	config, err := saved.LoadGroupConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Participants) != 3 || config.Participants[2] != "opencode" {
+		t.Fatalf("participants = %#v", config.Participants)
+	}
+
+	response, err = http.Post(server.URL+"/api/v1/webui/group/participants", "application/json", strings.NewReader(requestBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("idempotent add status = %d", response.StatusCode)
+	}
+	config, _ = saved.LoadGroupConfig()
+	if len(config.Participants) != 3 {
+		t.Fatalf("duplicate participant was persisted: %#v", config.Participants)
+	}
+
+	response, err = http.Post(server.URL+"/api/v1/webui/group/participants", "application/json", strings.NewReader(`{"session_id":"`+saved.ID()+`","participant":"cursor"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unavailable participant status = %d", response.StatusCode)
+	}
+}
+
 func TestGroupChatRejectsAskMode(t *testing.T) {
 	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), SystemPrompt: "base"})
 	_, err := service.HandleTurn(context.Background(), TurnRequest{Message: "只读分析", ConversationType: ConversationTypeGroup, Mode: ChatModeAsk})

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldRenderFinalReply } from "./group-chat";
+import { addableGroupParticipants, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldRenderFinalReply } from "./group-chat";
 
 describe("群聊输入", () => {
   const participants = [
@@ -17,6 +17,18 @@ describe("群聊输入", () => {
     expect(shouldRenderFinalReply("group", "participant_results")).toBe(false);
     expect(shouldRenderFinalReply("group", "coordinator")).toBe(true);
     expect(shouldRenderFinalReply("default", "participant_results")).toBe(true);
+  });
+
+  it("只列出当前可用且尚未加入的外部成员", () => {
+    const candidates = addableGroupParticipants(
+      { scheduler: "bqagent", participants: participants },
+      { scheduler: "bqagent", participants: participants.slice(0, 2) },
+    );
+    expect(candidates).toEqual([]);
+    expect(addableGroupParticipants(
+      { scheduler: "bqagent", participants: participants.map(function (participant) { return participant.id === "opencode" ? { ...participant, available: true } : participant; }) },
+      { scheduler: "bqagent", participants: participants.slice(0, 2) },
+    ).map(function (participant) { return participant.id; })).toEqual(["opencode"]);
   });
 
   it("识别光标前的 @ 查询并替换", () => {

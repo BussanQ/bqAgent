@@ -137,7 +137,15 @@
     <div class="conversation-column">
   <div class="group-bar" id="group-bar" hidden>
     <div><strong>群聊</strong><span>bqagent 调度</span></div>
-    <div class="group-participants" id="group-participants" aria-label="群聊成员"></div>
+    <div class="group-member-controls" id="group-member-controls">
+      <div class="group-participants" id="group-participants" aria-label="群聊成员"></div>
+      <div class="group-add-wrap" id="group-add-wrap">
+        <button class="group-add" id="group-add" type="button" aria-label="添加群聊成员" aria-expanded="false" aria-controls="group-add-menu">
+          <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg><span>添加成员</span>
+        </button>
+        <div class="group-add-menu" id="group-add-menu" role="menu" aria-label="选择要添加的群聊成员" hidden></div>
+      </div>
+    </div>
   </div>
   <main id="main">
     <div class="thread" id="thread">

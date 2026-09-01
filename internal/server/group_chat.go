@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -49,6 +50,12 @@ type GroupEvent struct {
 
 type GroupEventSink interface {
 	EmitGroupEvent(GroupEvent)
+}
+
+type groupParticipantAddRequest struct {
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	SessionID   string `json:"session_id"`
+	Participant string `json:"participant"`
 }
 
 func parseConversationType(value string) (ConversationType, error) {
@@ -138,17 +145,94 @@ func (service *Service) GroupInfoForSession(sessionID string) (GroupInfo, error)
 	return groupInfo(config, service), nil
 }
 
+func (service *Service) AddGroupParticipant(sessionID, participantID string) (GroupInfo, error) {
+	canonicalID, err := session.CanonicalID(sessionID)
+	if err != nil {
+		return GroupInfo{}, err
+	}
+	participantID = strings.ToLower(strings.TrimSpace(participantID))
+	if participantID == "" {
+		return GroupInfo{}, fmt.Errorf("participant is required")
+	}
+	unlock := service.locker.Lock(canonicalID)
+	defer unlock()
+	saved, err := service.store.Open(canonicalID)
+	if err != nil {
+		return GroupInfo{}, err
+	}
+	if storedConversationType(saved.Meta().ConversationType) != ConversationTypeGroup {
+		return GroupInfo{}, fmt.Errorf("conversation is not a group")
+	}
+	config, err := saved.LoadGroupConfig()
+	if err != nil {
+		return GroupInfo{}, err
+	}
+	for _, existing := range config.Participants {
+		if strings.EqualFold(existing, participantID) {
+			return groupInfo(config, service), nil
+		}
+	}
+	available := map[string]GroupParticipant{}
+	for _, participant := range service.GroupParticipants() {
+		if participant.Available {
+			available[strings.ToLower(participant.ID)] = participant
+		}
+	}
+	participant, ok := available[participantID]
+	if !ok || participant.ID == groupScheduler {
+		return GroupInfo{}, fmt.Errorf("群聊成员 @%s 不存在或不可用", participantID)
+	}
+	config.Participants = append(config.Participants, participant.ID)
+	if err := saved.SaveGroupConfig(config); err != nil {
+		return GroupInfo{}, err
+	}
+	return groupInfo(config, service), nil
+}
+
 func (handler *handler) handleGroupParticipants(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet {
+	writer.Header().Set("Cache-Control", "no-store")
+	if request.Method != http.MethodGet && request.Method != http.MethodPost {
 		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
 		return
 	}
-	service, err := handler.serviceForWorkspace(request.URL.Query().Get("workspace_id"))
+	if request.Method == http.MethodGet {
+		service, err := handler.serviceForWorkspace(request.URL.Query().Get("workspace_id"))
+		if err != nil {
+			writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(writer, http.StatusOK, GroupInfo{Scheduler: groupScheduler, Participants: service.GroupParticipants()})
+		return
+	}
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(request.Header.Get("Content-Type"), ";")[0]))
+	if contentType != "application/json" {
+		writeError(writer, http.StatusUnsupportedMediaType, chatResponse{Error: "content-type must be application/json"})
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, 64<<10)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	var payload groupParticipantAddRequest
+	if err := decoder.Decode(&payload); err != nil {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: "invalid JSON request: " + err.Error()})
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: "request must contain exactly one JSON object"})
+		return
+	}
+	service, err := handler.serviceForWorkspace(payload.WorkspaceID)
 	if err != nil {
 		writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
 		return
 	}
-	writeJSON(writer, http.StatusOK, GroupInfo{Scheduler: groupScheduler, Participants: service.GroupParticipants()})
+	info, err := service.AddGroupParticipant(payload.SessionID, payload.Participant)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(writer, http.StatusOK, info)
 }
 
 func promptForGroup(prompt agent.PromptSnapshot, config session.GroupConfig) agent.PromptSnapshot {
@@ -160,7 +244,7 @@ func promptForGroup(prompt agent.PromptSnapshot, config session.GroupConfig) age
 	stable += `# Group conversation
 
 You are bqagent in a shared-workspace group conversation. When the user does not mention any participant, handle the task directly yourself without consulting external participants. When the user explicitly mentions @bqagent, act as the coordinator and final synthesizer.
-The fixed participant roster is: ` + participants + `.
+The current participant roster is: ` + participants + `.
 When consult_group_agent is available, use it when another participant's independent work would improve the answer. You may consult an allowed participant more than once when useful. Every consultation runs in the same workspace and returns into this conversation. Wait for requested consultations, read prior participant conclusions, reconcile conflicts, attribute important findings, and then provide the final consolidated answer yourself. Do not invent participant conclusions or claim a consultation that did not occur. Tasks addressed only to other participants are handled directly by the server and must not be analyzed or summarized by you.`
 	return agent.NewFrozenPromptSnapshot(stable, prompt.SessionContext)
 }

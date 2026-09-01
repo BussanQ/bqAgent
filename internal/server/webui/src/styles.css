@@ -531,10 +531,22 @@
   .group-bar { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 20px; border-bottom: 1px solid var(--line); background: var(--surface-subtle); }
   .group-bar > div:first-child { display: flex; align-items: baseline; gap: 8px; }
   .group-bar > div:first-child span { color: var(--text-muted); font-size: var(--font-tiny); }
+  .group-member-controls { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
   .group-participants { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
   .group-participant { padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-soft); background: var(--panel); font-size: var(--font-tiny); }
   .group-participant.scheduler { color: var(--signal); border-color: rgba(var(--signal-rgb), .35); }
   .group-participant.unavailable { opacity: .45; text-decoration: line-through; }
+  .group-add-wrap { position: relative; flex: 0 0 auto; }
+  .group-add { min-height: 26px; display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-color: var(--line); border-radius: 999px; color: var(--signal); background: var(--panel); font-size: var(--font-tiny); box-shadow: none; }
+  .group-add:hover, .group-add[aria-expanded="true"] { border-color: rgba(var(--signal-rgb), .38); background: var(--surface-active); transform: none; box-shadow: none; }
+  .group-add:disabled { opacity: .45; cursor: not-allowed; }
+  .group-add svg { width: 13px; height: 13px; }
+  .group-add-menu[hidden] { display: none; }
+  .group-add-menu { position: absolute; z-index: 24; top: calc(100% + 7px); right: 0; min-width: 180px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); box-shadow: var(--overlay-shadow); }
+  .group-add-option { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 9px; border-color: transparent; border-radius: 8px; color: var(--text); background: transparent; text-align: left; box-shadow: none; }
+  .group-add-option:hover { background: var(--surface-hover); transform: none; box-shadow: none; }
+  .group-add-option span { color: var(--text-muted); font-size: var(--font-tiny); }
+  .group-add-empty { padding: 8px 9px; color: var(--text-muted); font-size: var(--font-tiny); white-space: nowrap; }
   .workspace-sidebar {
     position: relative;
     z-index: 4;
