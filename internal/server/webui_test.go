@@ -179,6 +179,35 @@ func TestWebUIAttachmentTriggerShowsOnlyPlusIcon(t *testing.T) {
 	}
 }
 
+func TestWebUIComposerPrioritizesModelLabel(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("webui", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pattern := regexp.MustCompile(`(?s)<button[^>]+id="reasoning-effort-toggle"[^>]*>(.*?)</button>`)
+	match := pattern.FindSubmatch(page)
+	if len(match) != 2 {
+		t.Fatal("reasoning effort trigger not found")
+	}
+	if bytes.Contains(match[1], []byte(`reasoning-icon`)) || !bytes.Contains(match[1], []byte(`id="reasoning-effort-label"`)) {
+		t.Fatalf("reasoning effort trigger should display its label without a leading icon: %s", match[1])
+	}
+
+	styles, err := os.ReadFile(filepath.Join("webui", "src", "styles.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range [][]byte{
+		[]byte("field-sizing: content"),
+		[]byte("text-align: right"),
+		[]byte("text-align-last: right"),
+	} {
+		if !bytes.Contains(styles, rule) {
+			t.Fatalf("model selector styles do not contain %q", rule)
+		}
+	}
+}
+
 func TestWebUIGroupAskOptionHonorsHiddenState(t *testing.T) {
 	styles, err := os.ReadFile(filepath.Join("webui", "src", "styles.css"))
 	if err != nil {

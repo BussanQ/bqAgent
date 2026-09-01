@@ -1761,16 +1761,15 @@
   .attachment-path-row input:focus { border-color: var(--signal); box-shadow: 0 0 0 2px rgba(var(--signal-rgb),.10); }
   .attachment-path-add { flex: 0 0 auto; padding: 7px 10px; border-color: rgba(var(--signal-rgb),.3); border-radius: 8px; color: var(--signal); background: var(--surface-hover); font-size: 11px; }
   .reasoning-effort { position: relative; flex: 0 0 auto; margin-bottom: 5px; }
-  .model-controls { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 3px; margin-bottom: 5px; }
+  .model-controls { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 3px; margin-bottom: 5px; }
   .model-controls select { height: 36px; min-width: 0; padding: 0 24px 0 8px; border-color: transparent; border-radius: 10px; color: var(--text-soft); background-color: transparent; font-size: 13px; outline: none; }
   .model-controls select:hover, .model-controls select:focus { border-color: var(--line); color: var(--text); background-color: var(--surface-hover); }
   .model-controls select option, .provider-field select option, .provider-list option { color: var(--text); background: var(--select-bg); }
   .model-controls select option:checked, .provider-field select option:checked, .provider-list option:checked { color: var(--text); background: var(--select-active); }
   .model-controls select optgroup { color: var(--signal); background: var(--select-bg); font-style: normal; font-weight: 700; }
-  #model-select { width: 160px; max-width: 160px; overflow: hidden; font-weight: 650; text-overflow: ellipsis; }
-  .reasoning-effort-trigger { height: 36px; min-width: 58px; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border-color: transparent; border-radius: 10px; color: var(--text-soft); background: transparent; font-size: 13px; }
+  #model-select { width: auto; max-width: 320px; overflow: hidden; field-sizing: content; font-weight: 650; text-align: right; text-align-last: right; text-overflow: ellipsis; }
+  .reasoning-effort-trigger { height: 36px; min-width: 50px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border-color: transparent; border-radius: 10px; color: var(--text-soft); background: transparent; font-size: 13px; }
   .reasoning-effort-trigger:hover, .reasoning-effort-trigger[aria-expanded="true"] { color: var(--text); border-color: var(--line); background: var(--surface-hover); transform: none; box-shadow: none; }
-  .reasoning-effort-trigger .reasoning-icon { width: 14px; height: 14px; }
   .reasoning-effort-trigger .reasoning-chevron { width: 12px; height: 12px; transition: transform .18s ease; }
   .reasoning-effort-trigger[aria-expanded="true"] .reasoning-chevron { transform: rotate(180deg); }
   .reasoning-effort-menu[hidden] { display: none; }
@@ -1907,11 +1906,10 @@
     .model-controls { width: 100%; grid-column: 2; grid-row: 2; margin-bottom: 0; overflow: hidden; }
     .reasoning-effort { grid-column: 3; grid-row: 2; margin-bottom: 0; }
     .reasoning-effort-trigger { width: 40px; min-width: 40px; padding: 0; gap: 0; }
-    .reasoning-effort-trigger #reasoning-effort-label,
     .reasoning-effort-trigger .reasoning-chevron { display: none; }
     .send { width: 44px; height: 44px; grid-column: 4; grid-row: 2; }
     textarea { min-height: 44px; padding: 10px 8px; }
-    #model-select { width: 100%; max-width: none; padding-right: 20px; font-size: 12px; }
+    #model-select { width: 100%; max-width: none; padding-right: 20px; field-sizing: fixed; font-size: 12px; }
     .composer-meta { min-height: 32px; margin-top: 6px; }
     .composer-hints { display: none; }
     #particle-field { display: none; }
