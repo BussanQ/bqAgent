@@ -33,8 +33,9 @@ func TestConfigFromEnvDefaultsCursorACP(t *testing.T) {
 	if cursor.ACP.Command != "cursor" {
 		t.Fatalf("ACP command = %q, want %q", cursor.ACP.Command, "cursor")
 	}
-	if len(cursor.ACP.Args) != 1 || cursor.ACP.Args[0] != "agent" {
-		t.Fatalf("ACP args = %#v, want [agent]", cursor.ACP.Args)
+	wantArgs := []string{"agent", "acp"}
+	if len(cursor.ACP.Args) != len(wantArgs) || cursor.ACP.Args[0] != wantArgs[0] || cursor.ACP.Args[1] != wantArgs[1] {
+		t.Fatalf("ACP args = %#v, want %#v", cursor.ACP.Args, wantArgs)
 	}
 	if cursor.CLI.Command != "" || len(cursor.CLI.Args) != 0 {
 		t.Fatalf("CLI config = %#v, want empty", cursor.CLI)
