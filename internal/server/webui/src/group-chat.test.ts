@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addableGroupParticipants, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldRenderFinalReply } from "./group-chat";
+import { addableGroupParticipants, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldCloseCoordinatorSegment, shouldRenderFinalReply } from "./group-chat";
 
 describe("群聊输入", () => {
   const participants = [
@@ -17,6 +17,12 @@ describe("群聊输入", () => {
     expect(shouldRenderFinalReply("group", "participant_results")).toBe(false);
     expect(shouldRenderFinalReply("group", "coordinator")).toBe(true);
     expect(shouldRenderFinalReply("default", "participant_results")).toBe(true);
+  });
+
+  it("成员开始发言时结束当前 bqagent 流式气泡", () => {
+    expect(shouldCloseCoordinatorSegment("participant_start")).toBe(true);
+    expect(shouldCloseCoordinatorSegment("participant_message")).toBe(false);
+    expect(shouldCloseCoordinatorSegment("participant_error")).toBe(false);
   });
 
   it("只列出当前可用且尚未加入的外部成员", () => {

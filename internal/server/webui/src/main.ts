@@ -4,7 +4,7 @@ import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, v
 import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 import { formatConversationTime } from "./conversations";
-import { addableGroupParticipants, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldRenderFinalReply, type MentionQuery } from "./group-chat";
+import { addableGroupParticipants, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldCloseCoordinatorSegment, shouldRenderFinalReply, type MentionQuery } from "./group-chat";
 import { byId, eventElement } from "./dom";
 import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
 import { renderMarkdown } from "./markdown";
@@ -2115,6 +2115,29 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
     if (bubble) ensureCoordinatorBubble();
     var streamed = "";
     var progress = "";
+    function closeCoordinatorSegment(): void {
+      if (!bubble) {
+        streamed = "";
+        progress = "";
+        toolCards = {};
+        return;
+      }
+      clearStreamingState(bubble);
+      caret.remove();
+      var stack = bubble.parentElement;
+      var hasToolTimeline = Boolean(stack && stack.querySelector(".tool-timeline"));
+      if (streamed.trim()) {
+        bubble.classList.add("rendered");
+        renderReply(bubble, streamed);
+      } else if (!hasToolTimeline) {
+        var message = bubble.closest(".msg");
+        if (message) message.remove();
+      }
+      bubble = null;
+      streamed = "";
+      progress = "";
+      toolCards = {};
+    }
 
     setBusy(true);
     try {
@@ -2156,6 +2179,7 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
             if (toolPayload.name !== "consult_group_agent") updateToolTimeline(ensureCoordinatorBubble(), toolCards, evt.event, toolPayload);
           } else if (evt.event === "participant_start" || evt.event === "participant_message" || evt.event === "participant_error") {
             var groupEvent = parseJSONEvent<GroupEventPayload>(evt.data);
+            if (shouldCloseCoordinatorSegment(evt.event)) closeCoordinatorSegment();
             var participantBubble = participantBubbles[groupEvent.call_id];
             if (!participantBubble) {
               participantBubble = addMessage("assistant", groupEvent.participant, evt.event === "participant_error" ? "error" : "message");
@@ -2188,7 +2212,10 @@ import type { ChatMode, ConversationHistory, ConversationMessage, ConversationSu
             refreshConversations(false);
             if (!shouldRenderFinalReply(done.conversation_type, done.reply_kind)) {
               caret.remove();
-              if (bubble) bubble.remove();
+              if (bubble) {
+                var directMessage = bubble.closest(".msg");
+                if (directMessage) directMessage.remove();
+              }
               bubble = null;
               continue;
             }

@@ -8,6 +8,10 @@ export function shouldRenderFinalReply(conversationType: unknown, replyKind: unk
   return normalizeConversationType(conversationType) !== "group" || String(replyKind || "") !== "participant_results";
 }
 
+export function shouldCloseCoordinatorSegment(groupEventKind: unknown): boolean {
+  return String(groupEventKind || "") === "participant_start";
+}
+
 export function addableGroupParticipants(available: GroupInfo, current: GroupInfo | null): GroupParticipant[] {
   const joined = new Set((current?.participants || []).map(function (participant) { return participant.id; }));
   return (available?.participants || []).filter(function (participant) {
