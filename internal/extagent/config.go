@@ -23,16 +23,25 @@ func SupportedAgents() []AgentName {
 
 func defaultACPConfig(agent AgentName, command, args string) CommandSpec {
 	command = strings.TrimSpace(command)
-	if command == "" && agent == AgentOpenCode {
-		command = "opencode"
+	if command == "" {
+		switch agent {
+		case AgentCursor:
+			command = "cursor"
+		case AgentOpenCode:
+			command = "opencode"
+		}
 	}
 	if strings.TrimSpace(args) != "" {
 		return CommandSpec{Command: command, Args: splitArgs(args)}
 	}
-	if agent == AgentOpenCode {
+	switch agent {
+	case AgentCursor:
+		return CommandSpec{Command: command, Args: []string{"agent"}}
+	case AgentOpenCode:
 		return CommandSpec{Command: command, Args: []string{"acp"}}
+	default:
+		return CommandSpec{Command: command}
 	}
-	return CommandSpec{Command: command}
 }
 
 func defaultCLIConfig(agent AgentName, command, args string) CommandSpec {

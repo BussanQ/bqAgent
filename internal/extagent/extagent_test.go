@@ -27,6 +27,20 @@ func TestConfigFromEnvDefaultsOpenCodeACP(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnvDefaultsCursorACP(t *testing.T) {
+	config := ConfigFromEnv(func(string) string { return "" }, t.TempDir())
+	cursor := config.Agents[AgentCursor]
+	if cursor.ACP.Command != "cursor" {
+		t.Fatalf("ACP command = %q, want %q", cursor.ACP.Command, "cursor")
+	}
+	if len(cursor.ACP.Args) != 1 || cursor.ACP.Args[0] != "agent" {
+		t.Fatalf("ACP args = %#v, want [agent]", cursor.ACP.Args)
+	}
+	if cursor.CLI.Command != "" || len(cursor.CLI.Args) != 0 {
+		t.Fatalf("CLI config = %#v, want empty", cursor.CLI)
+	}
+}
+
 func TestConfigFromEnvOverridesOpenCodeACP(t *testing.T) {
 	env := map[string]string{
 		"AGENT_OPENCODE_ACP_CMD":  "custom-opencode",
