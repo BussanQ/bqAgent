@@ -6,189 +6,26 @@
 
 > *"问题不在于你看到了什么，而在于你看见了什么。"* — 梭罗
 
-这是一个面向本地工作流的小型 Go 智能体。现在它在保留极简执行循环的同时，增加了工作区上下文、Markdown 技能定义、轻量记忆、规划、持久会话、请求级上下文管理、基于 checkpoint 的压缩恢复，以及最小后台模式。
+bqagent 是一个为真实本地工作流而生的 Go Agent Runtime：既保留小而清晰的执行核心，也具备多 Agent 编排、长期记忆、完整上下文管理与多通道交互能力。
 
-## 它现在能做什么
+完整使用说明请参阅[项目文档](./docs/doc.md)；终端快捷键、命令面板、TTY 回退与 scrollback 行为请参阅[内联 TUI 指南](./docs/TUI.md)。
 
-bqagent 的核心仍然很简单：
+## 为什么是 bqagent？
 
-1. 通过 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 接口发送消息
-2. 让模型选择工具
-3. 在本地执行工具
-4. 把工具结果回传给模型
-5. 重复直到任务结束
+> **一个二进制，装下一支会协作、会记忆、能长期工作的 Agent 团队。**
+>
+> bqagent 不只是把大模型接到 Shell，而是把模型、工具、技能、记忆、工作区与多种交互通道组装成一套完整的本地 Agent Harness。
 
-新增的能力主要来自对 `agent-claudecode.py` 和 OpenClaw 思路的吸收：
+|  | 核心特性 | 让它与众不同的地方 |
+| :---: | --- | --- |
+| 🧭 | **多 Agent 调度** | 原生编排 Claude、Codex、Cursor 与 OpenCode：既能通过 @ 精确路由，也能由 bqagent 协调成员并汇总结论；还可在隔离 Git worktree 中并行执行子任务，以日志和补丁安全交付结果。 |
+| 🛠️ | **强大的 Agent Harness** | 将规划、工具调用、渐进式 Skill、规则、MCP、网页搜索、取消控制、重试降级与 RunTrace 串成统一执行循环，让模型从“能回答”进化到“能把事情做完”。 |
+| 🖥️ | **TUI + WebUI 双轨体验** | 终端侧提供始终流式的内联 TUI、原生 scrollback、命令面板与任务队列；浏览器侧提供 SSE 流式对话、Markdown、附件、工作区文件树、模型切换和一键停止。 |
+| 🦞 | **龙虾级灵魂与记忆** | 继承 OpenClaw 风格的 `AGENT.md`、`SOUL.md`、`USER.md`、`TOOLS.md`、Rules 与 Skills；结构化 Memory 支持版本、来源、置信度、替代关系、敏感确认和中文检索。 |
+| 📦 | **单一二进制，极简部署** | Go 后端与完整 WebUI 通过 `go:embed` 打进同一个可执行文件；运行时不需要 Node.js、Vite、CDN 或外置静态资源，复制一个 `bqagent` 即可启动。 |
+| 🧠 | **上下文与工作区是一等公民** | 自动识别 workspace root，叠加全局与项目级配置；长对话支持预算裁剪、摘要压缩、checkpoint 和持久恢复，在控制上下文体积的同时保住任务连续性。 |
+| 🌐 | **多 Channel 对话** | 同一套 Agent 能力可运行于 CLI、TUI、WebUI、微信 iLink、QQ Bot 与 ServerChan Bot；渠道不同，工作流、会话和记忆依然连贯。 |
+| 🔌 | **多模型、多协议接入** | 同时支持 OpenAI Chat Completions、OpenAI Responses 与 Anthropic Messages，可配置兼容端点并在会话中切换模型。 |
+| 🔍 | **可观测、可恢复、可评估** | 持久 Session、结构化 RunTrace、反馈与 replay/live eval 让每次执行都有迹可循；流式 idle watchdog、循环保护与错误重试为长期运行兜底。 |
 
-- 基于 workspace 的 system prompt 装配
-- 以 `.agent/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md` 作为主布局
-- 继续支持 `.agent/rules/*.md` 和 `.agent/skills/*/SKILL.md`
-- 使用 `--plan` 先拆步骤再执行
-- 默认启动始终流式的内联终端 TUI（也可显式使用 `--chat`）
-- 使用 `--resume` 恢复持久会话
-- 对长对话做请求时上下文裁剪
-- 可选地对旧对话做请求时摘要压缩
-- 通过 checkpoint 进行紧凑恢复，同时保留原始会话历史
-- 使用 `--background` 启动最小后台会话
-- 使用 `--server` 启动常驻 HTTP 对话服务，并可选通过 ServerChan 推送回复
-
-## 安装
-
-安装 Go 1.24+、Node.js 24+ 和 npm 11+，然后通过 Makefile 构建 CLI：
-
-```bash
-make build
-```
-
-`make build` 会根据 `internal/server/webui/package-lock.json` 安装前端依赖，执行 TypeScript 严格检查和 Vite 生产构建，再把 `internal/server/webui/dist` 嵌入 Go 可执行文件。`dist` 和 `node_modules` 不提交到仓库；最终运行和分发仍只需要一个 `bqagent` 文件，不依赖 Node.js、Vite、CDN 或磁盘静态文件。Linux amd64 和 Windows amd64 分别使用 `make build-amd`、`make build-windows`。
-
-仅开发 WebUI 时，可在 `internal/server/webui` 中运行 `npm run dev`；Vite 会把 `/api` 代理到 `http://127.0.0.1:8080`。全新检出后不要直接运行原始 `go build`，应先执行 `make webui-build` 或直接使用上述 Makefile 构建目标。
-
-## 环境变量配置
-
-bqagent 会读取进程环境变量和工作区根目录的 `.env` 文件；进程中已经存在的同名变量优先于 `.env`。加载到的 `.env` 值也会写入进程环境，使 shell 工具和外部智能体子进程能够继承这些变量。
-
-推荐使用工作区 `.env`：
-
-```dotenv
-LLM_API_TYPE=openai
-LLM_API_KEY=your-key-here
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-4o-mini
-LLM_MODELS=gpt-4o-mini,fast=gpt-5.1
-```
-
-也可以直接在 shell 中设置：
-
-**macOS/Linux:**
-```bash
-export LLM_API_KEY='your-key-here'
-```
-
-**Windows (PowerShell):**
-```powershell
-$env:LLM_API_KEY='your-key-here'
-```
-
-**Windows (CMD):**
-```cmd
-set LLM_API_KEY=your-key-here
-```
-
-### LLM 供应商
-
-单次任务、Chat、后台任务、子任务和 Server 都会优先读取全局 `~/.agent/config.json` 中的当前 Provider；未配置当前 Provider 时才回退到环境变量。
-
-通用 `LLM_*` 配置优先于供应商兼容变量。
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `LLM_API_TYPE` | `openai` | 接口协议：`openai`、`openai-response` 或 `anthropic`。 |
-| `LLM_API_KEY` | — | 通用 API Key；Server 模式必填。 |
-| `LLM_BASE_URL` | 供应商默认值 | 通用供应商端点覆盖。 |
-| `LLM_MODEL` | 空 | 内置 LLM 使用的模型 ID，需要显式配置。 |
-| `LLM_MODELS` | 空 | 同一供应商下可切换的模型列表，逗号分隔；支持 `别名=模型ID`。聊天中使用 `/model` 查看，`/model <名称或别名>` 切换当前会话，`/model default` 恢复默认。 |
-| `LLM_STREAM_IDLE_TIMEOUT` | `2m` | 流式模型请求连续无响应头或响应体字节时的 idle watchdog；使用 Go duration 格式，设为 `0` 禁用。 |
-| `OPENAI_API_TYPE` | — | `LLM_API_TYPE` 的兼容别名。 |
-| `OPENAI_API_KEY` | — | OpenAI 兼容 API Key 回退值。 |
-| `OPENAI_BASE_URL` | 供应商默认值 | OpenAI 兼容端点回退值。 |
-| `OPENAI_MODEL` | — | OpenAI 兼容模型回退值。 |
-| `ANTHROPIC_API_KEY` | — | `anthropic` 协议使用的 Key 回退值。 |
-| `ANTHROPIC_BASE_URL` | 供应商默认值 | Anthropic 端点回退值。 |
-| `ANTHROPIC_MODEL` | — | Anthropic 模型回退值。 |
-
-OpenAI Responses API 示例：
-
-```dotenv
-LLM_API_TYPE=openai-response
-LLM_API_KEY=your-key-here
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-5
-```
-
-Anthropic Messages API 示例：
-
-```dotenv
-LLM_API_TYPE=anthropic
-LLM_API_KEY=your-key-here
-LLM_BASE_URL=https://api.anthropic.com/v1
-LLM_MODEL=claude-sonnet-4-5
-```
-
-有效模型和 API 类型会注入每次内置 LLM 调用的 system prompt，并通过不包含密钥的 `GET /api/v1/status` 返回。
-
-### 搜索
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `SEARCH_API_KEY` | — | Tavily 兼容搜索 Key，优先于 Firecrawl 配置。 |
-| `SEARCH_BASE_URL` | 供应商默认值 | Tavily 兼容端点覆盖。 |
-| `FIRECRAWL_API_KEY` | — | 未配置 `SEARCH_*` 时使用的 Firecrawl Key。 |
-| `FIRECRAWL_BASE_URL` | 供应商默认值 | Firecrawl 端点覆盖。 |
-
-### MCP
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `MCP_ALLOWED_ENV` | 空 | 进程级、逗号分隔的 allowlist，用于 `.agent/mcp.json` header 值中 `${NAME}` / `$NAME` 引用。 |
-
-使用 `.agent/mcp.json` header 中的占位符前，须设置 `MCP_ALLOWED_ENV`，例如 `MCP_ALLOWED_ENV=DASHSCOPE_API_KEY`。URL 值不会展开环境变量；未获授权、未定义或格式错误的占位符只会使对应 MCP server 被跳过。
-
-### Server 与渠道
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `WEBUI_ENABLED` | `true` | 设为 `false`、`0`、`no` 或 `off` 时关闭 `GET /`。 |
-| `SERVERCHAN_BOT_TOKEN` | — | ServerChan Bot webhook 回复使用的 Token。 |
-| `SERVERCHAN_BOT_WEBHOOK_SECRET` | — | 必填且不能全为空白；请求必须携带 `X-Sc3Bot-Webhook-Secret`，否则 bot webhook 端点返回 `503`。 |
-| `QQ_BOT_ENABLED` | 自动 | 凭据存在时自动启用；false-like 值可强制关闭。 |
-| `QQ_BOT_APP_ID` | — | QQ Bot 应用 ID。 |
-| `QQ_BOT_CLIENT_SECRET` | — | QQ Bot Client Secret。 |
-| `QQ_BOT_TOKEN_BASE_URL` | `https://bots.qq.com` | QQ Token 端点覆盖。 |
-| `QQ_BOT_API_BASE_URL` | `https://api.sgroup.qq.com` | QQ API 与 Gateway 端点覆盖。 |
-| `WEIXIN_ILINK_ENABLED` | `true` | 设为 false-like 值时关闭微信 iLink 渠道。 |
-| `WEIXIN_ILINK_BASE_URL` | `https://ilinkai.weixin.qq.com` | iLink API 端点覆盖。 |
-| `WEIXIN_ILINK_CHANNEL_VERSION` | `1.0.2` | iLink 渠道协议版本。 |
-| `WEIXIN_ILINK_CDN_BASE_URL` | `https://novac2c.cdn.weixin.qq.com/c2c` | 入站媒体 CDN 覆盖。 |
-
-### 运行时、上下文、Session 与 Trace
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `AGENT_MAX_ITERATIONS` | `1000` | 全局循环失控保险上限。 |
-| `BASH_OUTPUT_MAX_BYTES` | `1048576` | `execute_bash` 保留的 stdout/stderr 合并输出字节上限；超额输出仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
-| `READ_FILE_MAX_BYTES` | `1048576` | `read_file` 返回的文件内容字节上限；超额内容仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
-| `CHANNEL_AGENT_MAX_ITERATIONS` | `30` | QQ、iLink、ServerChan Bot 等消息渠道的单轮最大迭代数；不限制 WebUI。 |
-| `CHANNEL_TURN_TIMEOUT` | `10m` | QQ、iLink、ServerChan Bot 等消息渠道的整轮超时；不限制 WebUI。 |
-| `CHANNEL_STAGE_MAX_ITERATIONS` | `20` | QQ/iLink 生成阶段 checkpoint 前的迭代预算。 |
-| `CHANNEL_STAGE_TIMEOUT` | `90s` | QQ/iLink 阶段时间预算。 |
-| `WEBUI_STAGE_MAX_ITERATIONS` | `0`（默认禁用） | 可选的 WebUI 阶段 checkpoint 迭代预算；仅正值启用。 |
-| `WEBUI_STAGE_TIMEOUT` | `0`（默认禁用） | 可选的 WebUI 阶段时间预算；仅正 duration 启用。 |
-| `GROUP_EXTERNAL_AGENT_TIMEOUT` | `10m` | 群聊中每次外部 Agent 调用的独立超时；超时后取消并作废该群聊的 ACP session。 |
-| `WEBUI_WORKSPACE_ROOTS` | — | WebUI 可额外浏览和选择的服务端目录根列表，使用操作系统路径列表分隔符（Unix/macOS 为 `:`，Windows 为 `;`）；用户主目录和启动工作区始终允许。 |
-| `CONTEXT_MANAGEMENT_ENABLED` | `true` | 启用请求时上下文预算管理。 |
-| `CONTEXT_MAX_INPUT_TOKENS` | `132000` | 上下文 token 估算总预算，包含回复预留。 |
-| `CONTEXT_TARGET_INPUT_TOKENS` | `128000` | 裁剪或摘要后的目标大小。 |
-| `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | 为模型回复预留的 token。 |
-| `CONTEXT_KEEP_LAST_TURNS` | `6` | 压缩时保留的最近轮次。 |
-| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `80` | 完整请求的本地/usage 估算达到目标预算的该百分比后，尝试调用 Provider 精确计数（OpenAI Responses、Anthropic）；不支持或失败时自动回退估算。 |
-| `CONTEXT_SUMMARIZATION_ENABLED` | `true` | 启用旧对话摘要。 |
-| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `128000` | 触发摘要的输入大小。 |
-| `CONTEXT_SUMMARY_MODEL` | 主模型 | 可选的低成本摘要模型。 |
-| `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` 限制 `messages.jsonl`；`full` 保留 append-only 审计历史。 |
-| `SESSION_OUTPUT_MAX_BYTES` | `1048576` | 每个 `output.log` 保留的尾部大小；`0` 禁用裁剪。 |
-| `RUN_TRACE_ENABLED` | `false` | 保存 `.agent/runs/<run-id>/` Trace 并启用运行反馈接口。 |
-
-### 外部编码 Agent
-
-对 `CLAUDE`、`CODEX`、`CURSOR`、`OPENCODE` 中的每个名称，可使用 `AGENT_<NAME>_ACP_CMD` 和 `AGENT_<NAME>_ACP_ARGS` 覆盖 ACP 启动命令。CLI 传输目前只为 Claude 和 Codex 实现，可通过 `AGENT_<NAME>_CLI_CMD` 和 `AGENT_<NAME>_CLI_ARGS` 覆盖。
-
-Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex exec --json --skip-git-repo-check`。Cursor 默认通过 `cursor-agent acp` 使用 ACP，OpenCode 默认通过 `opencode acp` 使用 ACP。启动 bqAgent 的进程必须能从 PATH 找到对应的可执行文件；安装外部 Agent 或修改传输环境变量后，需要重启常驻 chat/server 进程以重新探测。
-
-在 `--chat` 或 `--server` 会话中，使用 `/opencode <任务>` 将当前轮次路由到 OpenCode；后续普通消息会保持绑定，直到通过 `/default` 返回内置 Agent。OpenCode 仅支持 ACP；配置 `AGENT_OPENCODE_CLI_CMD/ARGS` 不会启用 CLI 传输。
-
-WebUI 的“新会话”菜单还可以创建群聊。外部 Agent 在服务启动后异步检测，不阻塞服务启动；需要检测结果的请求会等待后台探测完成，再将可用 Agent 与 bqagent 一起加入初始成员名单。成员栏的“添加成员”按钮可以把创建时未加入、当前已检测可用的 Agent 追加到现有群聊；鼠标悬停在外部成员上会显示删除按钮。成员变更会持久化，删除成员不会清除其历史发言和外部 session，重新添加后仍可延续上下文；调度员 bqagent 不可删除。未 @ 任何成员的任务由 bqagent 直接处理，不调度外部成员。直接发送给 `@codex`、`@opencode` 等外部成员的任务只由对应成员处理，bqagent 不再参与分析或自动汇总；只有用户明确 `@bqagent` 时，bqagent 才会调度外部成员并在其完成后给出最终汇总，也可以在后续轮次 `@bqagent` 汇总共享上下文里的既有结论。成员顺序共享同一个 workspace 和群聊上下文，各自结论会单独显示。群聊仅支持 Run 模式；普通会话中的 `/codex`、`/opencode` 粘性路由保持不变。群聊编排属于通用服务能力，本期仅 WebUI 提供入口。
-
-## 文档
-
-完整使用说明请参阅[项目文档](./docs/doc.md#中文文档)；终端快捷键、命令面板、TTY 回退与 scrollback 行为请参阅[内联 TUI 指南](./docs/TUI.md)。
+无论是在终端里完成一次代码修改、在 WebUI 中经营长期项目，还是让多个 Agent 与聊天通道共同协作，bqagent 都提供同一套可控、可扩展、可恢复的执行底座。
