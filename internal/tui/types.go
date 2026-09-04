@@ -14,6 +14,9 @@ type Backend interface {
 	RuntimeInfo(string) RuntimeInfo
 	History(string, int) (History, error)
 	Commands() []Command
+	ProviderSettings(context.Context) (ProviderSettings, error)
+	DiscoverProviderModels(context.Context, ProviderInput) ([]string, error)
+	SaveProvider(context.Context, string, ProviderInput) (RuntimeInfo, error)
 }
 
 type TurnEvents struct {
@@ -70,6 +73,33 @@ type RuntimeInfo struct {
 	APIType  string
 	Model    string
 	Mode     string
+}
+
+type ProviderSettings struct {
+	ActiveProvider string
+	Providers      []Provider
+}
+
+type Provider struct {
+	ID               string
+	Name             string
+	APIType          string
+	BaseURL          string
+	Models           []string
+	DefaultModel     string
+	APIKeyConfigured bool
+}
+
+type ProviderInput struct {
+	OriginalID       string
+	ID               string
+	Name             string
+	APIType          string
+	BaseURL          string
+	APIKey           string
+	Models           []string
+	DefaultModel     string
+	APIKeyConfigured bool
 }
 
 type History struct {

@@ -105,6 +105,12 @@ func (service *Service) setSessionModel(sessionID, model string) error {
 	return savedSession.SetCurrentModel(modelID)
 }
 
+// SelectSessionModel applies a configured model to an existing session. It is
+// used by interactive clients after changing the active Provider.
+func (service *Service) SelectSessionModel(sessionID, model string) error {
+	return service.setSessionModel(sessionID, model)
+}
+
 func (service *Service) handleModelCommand(message string, savedSession *session.Session) (string, bool, error) {
 	fields := strings.Fields(strings.TrimSpace(message))
 	if len(fields) == 0 || !strings.EqualFold(fields[0], "/model") {

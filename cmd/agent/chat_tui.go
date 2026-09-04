@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/providerconfig"
 	appserver "bqagent/internal/server"
 	apptui "bqagent/internal/tui"
 	"bqagent/internal/workspace"
@@ -145,6 +146,136 @@ func (backend *tuiBackend) Commands() []apptui.Command {
 		}
 	}
 	return commands
+}
+
+func (backend *tuiBackend) ProviderSettings(context.Context) (apptui.ProviderSettings, error) {
+	store := providerconfig.NewStore(backend.workspace.AgentDir())
+	config, err := store.Load()
+	if err != nil {
+		return apptui.ProviderSettings{}, err
+	}
+	settings := apptui.ProviderSettings{ActiveProvider: config.ActiveProvider, Providers: make([]apptui.Provider, 0, len(config.Providers))}
+	for _, provider := range config.Providers {
+		settings.Providers = append(settings.Providers, apptui.Provider{
+			ID: provider.ID, Name: provider.Name, APIType: provider.APIType, BaseURL: provider.BaseURL,
+			Models: append([]string(nil), provider.Models...), DefaultModel: provider.DefaultModel,
+			APIKeyConfigured: provider.APIKey.Ciphertext != "",
+		})
+	}
+	return settings, nil
+}
+
+func (backend *tuiBackend) DiscoverProviderModels(ctx context.Context, input apptui.ProviderInput) ([]string, error) {
+	apiKey := strings.TrimSpace(input.APIKey)
+	if apiKey == "" {
+		store := providerconfig.NewStore(backend.workspace.AgentDir())
+		config, err := store.Load()
+		if err != nil {
+			return nil, err
+		}
+		providerID := strings.TrimSpace(input.OriginalID)
+		if providerID == "" {
+			providerID = strings.TrimSpace(input.ID)
+		}
+		for _, provider := range config.Providers {
+			if provider.ID != providerID {
+				continue
+			}
+			apiKey, err = store.DecryptAPIKey(provider.APIKey)
+			if err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
+	return appserver.FetchProviderModels(ctx, string(agent.NormalizeAPIType(input.APIType)), strings.TrimSpace(input.BaseURL), apiKey)
+}
+
+func (backend *tuiBackend) SaveProvider(ctx context.Context, sessionID string, input apptui.ProviderInput) (apptui.RuntimeInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return apptui.RuntimeInfo{}, err
+	}
+	store := providerconfig.NewStore(backend.workspace.AgentDir())
+	config, err := store.Load()
+	if err != nil {
+		return apptui.RuntimeInfo{}, err
+	}
+	providerIndex := -1
+	lookupID := strings.TrimSpace(input.OriginalID)
+	if lookupID == "" {
+		lookupID = strings.TrimSpace(input.ID)
+	}
+	secret := providerconfig.Secret{}
+	for index, provider := range config.Providers {
+		if provider.ID == lookupID {
+			providerIndex = index
+			secret = provider.APIKey
+			break
+		}
+	}
+	if apiKey := strings.TrimSpace(input.APIKey); apiKey != "" {
+		secret, err = store.EncryptAPIKey(apiKey)
+		if err != nil {
+			return apptui.RuntimeInfo{}, err
+		}
+	}
+	models := cleanTUIProviderModels(input.Models)
+	defaultModel := strings.TrimSpace(input.DefaultModel)
+	if !containsTUIProviderModel(models, defaultModel) {
+		if len(models) > 0 {
+			defaultModel = models[0]
+		} else {
+			defaultModel = ""
+		}
+	}
+	provider := providerconfig.Provider{
+		ID: strings.TrimSpace(input.ID), Name: strings.TrimSpace(input.Name),
+		APIType: string(agent.NormalizeAPIType(input.APIType)), BaseURL: strings.TrimSpace(input.BaseURL),
+		Models: models, DefaultModel: defaultModel, APIKey: secret,
+	}
+	if providerIndex >= 0 {
+		config.Providers[providerIndex] = provider
+	} else {
+		config.Providers = append(config.Providers, provider)
+	}
+	config.ActiveProvider = provider.ID
+	if err := store.Save(config); err != nil {
+		return apptui.RuntimeInfo{}, err
+	}
+	apiKey, err := store.DecryptAPIKey(provider.APIKey)
+	if err != nil {
+		return apptui.RuntimeInfo{}, err
+	}
+	backend.service.ConfigureLLM(provider.ID, agent.NormalizeAPIType(provider.APIType), apiKey, provider.BaseURL, provider.DefaultModel, provider.Models)
+	if strings.TrimSpace(sessionID) != "" {
+		if err := backend.service.SelectSessionModel(sessionID, provider.DefaultModel); err != nil {
+			return apptui.RuntimeInfo{}, err
+		}
+	}
+	return backend.RuntimeInfo(sessionID), nil
+}
+
+func cleanTUIProviderModels(values []string) []string {
+	models := make([]string, 0, len(values))
+	seen := make(map[string]bool)
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		models = append(models, value)
+	}
+	return models
+}
+
+func containsTUIProviderModel(models []string, target string) bool {
+	for _, model := range models {
+		if model == target {
+			return true
+		}
+	}
+	return false
 }
 
 type eventWriter struct {

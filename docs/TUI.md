@@ -42,9 +42,11 @@ openai/gpt-5 · Run · 20260827   Enter 发送 · Alt+Enter 换行 · / 命令
 
 ## 命令面板
 
-- 本地命令：`/help`、`/clear`、`/exit`。
+- 本地命令：`/help`、`/provider`、`/clear`、`/exit`。
 - Provider/能力命令：`/model`、`/skill`、`/memory`、`/feedback`、`/agent`。
 - 外部 Agent：`/claude`、`/codex`、`/cursor`、`/opencode`、`/default`、`/stop`。
+
+`/provider` 会打开独立的分步配置向导，依次设置 Provider ID、API 协议、API 地址、API Key 和模型；Provider 名称直接使用第一步输入的 ID。模型既可从 Provider 的 `/models` 接口自动获取，也可手工输入；多个自定义模型使用英文逗号分隔，第一个模型自动成为默认模型。API Key 使用密码输入并加密保存到全局 `~/.agent/config.json`；编辑已有 Provider 时留空可保留原密钥。保存后新 Provider 会立即成为当前 Provider，并刷新 `/model` 候选。
 
 `/model` 参数来自当前 Provider 配置；`/skill` 候选会从工作区与全局 Skill/alias 动态刷新。`/clear` 保留旧 Session 文件，但清理当前显示、队列和 Session ID，下一条消息使用默认模型创建新 Session。`/exit` 会先取消并等待活动后台轮次退出。
 
@@ -58,4 +60,4 @@ stdin/stdout 不是 TTY，或 `TERM=dumb` 时，会自动使用原有逐行模�
 
 ## Inline terminal TUI (English summary)
 
-On a real TTY, no-argument startup and `--chat` use an inline, always-streaming Bubble Tea UI without an alternate screen. Mouse tracking is enabled only for a clickable collapsed tool group and disabled when the group is committed or cleared. Redirected input/output and `TERM=dumb` fall back to the legacy line mode. See the tables above for shortcuts, commands, queue behavior, persisted workspace history, resume limits, `NO_COLOR`, and the CodeHamr design acknowledgment.
+On a real TTY, no-argument startup and `--chat` use an inline, always-streaming Bubble Tea UI without an alternate screen. Mouse tracking is enabled only for a clickable collapsed tool group and disabled when the group is committed or cleared. `/provider` opens a sequential Provider setup wizard with encrypted API-key storage and either automatic model discovery or comma-separated custom models; the first custom model becomes the default. Redirected input/output and `TERM=dumb` fall back to the legacy line mode. See the tables above for shortcuts, commands, queue behavior, persisted workspace history, resume limits, `NO_COLOR`, and the CodeHamr design acknowledgment.

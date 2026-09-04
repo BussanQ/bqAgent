@@ -11,8 +11,12 @@ import (
 )
 
 type fakeBackend struct {
-	history  History
-	commands []Command
+	history          History
+	commands         []Command
+	providerSettings ProviderSettings
+	discoveredModels []string
+	savedProvider    ProviderInput
+	savedSessionID   string
 }
 
 func (backend *fakeBackend) RunTurn(context.Context, string, string, TurnEvents) (TurnResult, error) {
@@ -23,6 +27,17 @@ func (backend *fakeBackend) RuntimeInfo(string) RuntimeInfo {
 }
 func (backend *fakeBackend) History(string, int) (History, error) { return backend.history, nil }
 func (backend *fakeBackend) Commands() []Command                  { return backend.commands }
+func (backend *fakeBackend) ProviderSettings(context.Context) (ProviderSettings, error) {
+	return backend.providerSettings, nil
+}
+func (backend *fakeBackend) DiscoverProviderModels(context.Context, ProviderInput) ([]string, error) {
+	return append([]string(nil), backend.discoveredModels...), nil
+}
+func (backend *fakeBackend) SaveProvider(_ context.Context, sessionID string, input ProviderInput) (RuntimeInfo, error) {
+	backend.savedProvider = input
+	backend.savedSessionID = sessionID
+	return RuntimeInfo{Provider: input.ID, APIType: input.APIType, Model: input.DefaultModel, Mode: "run"}, nil
+}
 
 func TestModelStreamingToolQueueAndLateEvents(t *testing.T) {
 	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir()})
@@ -445,5 +460,94 @@ func TestSuggestionFrameHeightStaysStableWhileTypingCommand(t *testing.T) {
 		} else if lines != wantLines {
 			t.Fatalf("view line count for %q = %d, want stable %d", input, lines, wantLines)
 		}
+	}
+}
+
+func TestProviderWizardCustomModelsUseFirstAsDefault(t *testing.T) {
+	backend := &fakeBackend{}
+	model := NewModel(backend, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.sessionID = "session-1"
+	_ = model.submit("/provider")
+	model.handleProviderSettings(providerSettingsMsg{settings: ProviderSettings{}})
+	if model.provider == nil || model.provider.step != providerStepID {
+		t.Fatalf("provider step = %#v, want id", model.provider)
+	}
+
+	enter := tea.KeyPressMsg{Code: tea.KeyEnter}
+	model.provider.input.SetValue("custom")
+	model.handleProviderKey(enter)
+	model.handleProviderKey(enter) // OpenAI Chat Completions
+	model.provider.input.SetValue("https://example.test/v1")
+	model.handleProviderKey(enter)
+	model.provider.input.SetValue("secret-token")
+	if view := model.View().Content; strings.Contains(view, "secret-token") {
+		t.Fatalf("provider view exposed API key: %q", view)
+	}
+	model.handleProviderKey(enter)
+	model.handleProviderKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	model.handleProviderKey(enter) // custom models
+	model.provider.input.SetValue(" model-b, model-a, model-b,  ")
+	model.handleProviderKey(enter)
+	if model.provider.step != providerStepConfirm {
+		t.Fatalf("provider step = %v, want confirm", model.provider.step)
+	}
+	commands := model.handleProviderKey(enter)
+	if len(commands) != 1 || commands[0] == nil {
+		t.Fatalf("save commands = %#v", commands)
+	}
+	message, ok := commands[0]().(providerSavedMsg)
+	if !ok || message.err != nil {
+		t.Fatalf("save message = %#v", message)
+	}
+	model.handleProviderSaved(message)
+
+	if backend.savedSessionID != "session-1" {
+		t.Fatalf("saved session = %q", backend.savedSessionID)
+	}
+	if fmt.Sprint(backend.savedProvider.Models) != "[model-b model-a]" || backend.savedProvider.DefaultModel != "model-b" {
+		t.Fatalf("saved provider = %#v", backend.savedProvider)
+	}
+	if backend.savedProvider.Name != "custom" {
+		t.Fatalf("saved provider name = %q, want Provider ID", backend.savedProvider.Name)
+	}
+	if model.provider != nil || model.runtime.Provider != "custom" || model.runtime.Model != "model-b" {
+		t.Fatalf("provider close/runtime = %#v, %#v", model.provider, model.runtime)
+	}
+}
+
+func TestProviderWizardAutomaticModelDiscovery(t *testing.T) {
+	backend := &fakeBackend{discoveredModels: []string{"model-a", "model-b"}}
+	model := NewModel(backend, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.provider = newProviderWizard(true, model.contentWidth())
+	model.provider.draft = ProviderInput{ID: "auto", Name: "Auto", APIType: "openai", APIKey: "secret"}
+	model.provider.step = providerStepModelSource
+	model.provider.selected = int(providerModelsAutomatic)
+
+	commands := model.handleProviderKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(commands) != 1 || model.provider.step != providerStepDiscovering {
+		t.Fatalf("discover commands=%d step=%v", len(commands), model.provider.step)
+	}
+	message, ok := commands[0]().(providerModelsMsg)
+	if !ok || message.err != nil {
+		t.Fatalf("discover message = %#v", message)
+	}
+	model.handleProviderModels(message)
+	if model.provider.step != providerStepConfirm || fmt.Sprint(model.provider.draft.Models) != "[model-a model-b]" || model.provider.draft.DefaultModel != "model-a" {
+		t.Fatalf("discovered provider = %#v", model.provider)
+	}
+}
+
+func TestProviderWizardLoadsActiveProviderForEditing(t *testing.T) {
+	wizard := newProviderWizard(true, 80)
+	wizard.applySettings(ProviderSettings{ActiveProvider: "second", Providers: []Provider{
+		{ID: "first", Name: "First", APIType: "openai", Models: []string{"m1"}, DefaultModel: "m1"},
+		{ID: "second", Name: "Second", APIType: "anthropic", Models: []string{"m2"}, DefaultModel: "m2", APIKeyConfigured: true},
+	}})
+	if wizard.step != providerStepChoose || wizard.selected != 2 {
+		t.Fatalf("choose step=%v selected=%d", wizard.step, wizard.selected)
+	}
+	wizard.beginSelectedProvider()
+	if wizard.draft.OriginalID != "second" || wizard.draft.APIType != "anthropic" || !wizard.draft.APIKeyConfigured {
+		t.Fatalf("editing draft = %#v", wizard.draft)
 	}
 }

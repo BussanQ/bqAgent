@@ -77,6 +77,7 @@ type Model struct {
 	panelOpen   bool
 	tools       toolGroup
 	toolMouse   bool
+	provider    *providerWizard
 
 	startup      []string
 	initialTask  string
@@ -159,6 +160,12 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, model.handleMouse(message)...)
 	case turnEvent:
 		commands = append(commands, model.handleTurnEvent(message)...)
+	case providerSettingsMsg:
+		commands = append(commands, model.handleProviderSettings(message)...)
+	case providerModelsMsg:
+		commands = append(commands, model.handleProviderModels(message)...)
+	case providerSavedMsg:
+		commands = append(commands, model.handleProviderSaved(message)...)
 	case controlResultMsg:
 		if message.err != nil {
 			model.enqueuePrint(model.styles.error.Render("停止命令失败：" + message.err.Error()))
@@ -172,6 +179,10 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		commands = append(commands, tickCommand())
 	default:
+		if model.provider != nil {
+			commands = append(commands, model.provider.updateInput(message))
+			break
+		}
 		// Textarea clipboard reads complete asynchronously. Forward messages
 		// unknown to the model so Ctrl+V and bracketed paste reach the input.
 		command := model.input.update(message)
@@ -188,6 +199,13 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) View() tea.View {
+	if model.provider != nil {
+		content, cursor := model.provider.render(model.styles)
+		view := tea.NewView(content)
+		view.Cursor = cursor
+		view.ReportFocus = true
+		return view
+	}
 	width := model.contentWidth()
 	sections := make([]string, 0, 7)
 	if tools := model.tools.render(model.styles, true); tools != "" {
@@ -225,6 +243,9 @@ func (model Model) View() tea.View {
 
 func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	name := key.String()
+	if model.provider != nil {
+		return model.handleProviderKey(key)
+	}
 	switch name {
 	case "ctrl+t":
 		model.toggleToolGroup()
@@ -354,6 +375,10 @@ func (model *Model) submit(value string) tea.Cmd {
 	case "/help":
 		model.enqueuePrint(model.helpText())
 		return toolCommand
+	case "/provider":
+		model.provider = newProviderWizard(model.config.NoColor, model.contentWidth())
+		model.input.area.Blur()
+		return tea.Batch(toolCommand, loadProviderSettings(model.backend, model.config.Context))
 	case "/exit":
 		if model.active != nil {
 			model.pendingQuit = true
@@ -795,6 +820,9 @@ func (model *Model) resizeInput() {
 	lines := model.input.area.LineCount()
 	maxHeight := min(6, max(1, model.height-5))
 	model.input.resize(model.contentWidth(), min(maxHeight, max(1, lines)))
+	if model.provider != nil {
+		model.provider.resize(model.contentWidth())
+	}
 }
 
 func (model Model) contentWidth() int { return max(10, model.width-2) }
@@ -857,7 +885,7 @@ func (model Model) helpText() string {
   Ctrl+T 展开/收起已合并的工具详情（也可点击工具汇总行）
 
 本地命令
-  /help 帮助    /clear 新建会话并清理显示    /exit 安全退出
+  /help 帮助    /provider 配置模型 Provider    /clear 新建会话并清理显示    /exit 安全退出
 
 后端命令
   /run（完整工具）  /ask（只读问答）  /model  /skill  /memory  /feedback  /agent
@@ -869,6 +897,7 @@ func mergeCommands(dynamic []Command) []Command {
 		{Name: "/help", Description: "显示快捷键和命令帮助"},
 		{Name: "/clear", Description: "清理显示并在下一条消息创建新会话"},
 		{Name: "/exit", Description: "安全退出"},
+		{Name: "/provider", Description: "分步配置模型 Provider"},
 		{Name: "/run", Description: "切换到 Run 模式（完整工具能力）"},
 		{Name: "/ask", Description: "切换到 Ask 模式（只读问答，不修改文件或执行命令）"},
 		{Name: "/model", Description: "查看或切换模型"},

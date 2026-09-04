@@ -195,7 +195,7 @@ func (handler *handler) handleProviderModels(writer http.ResponseWriter, request
 			return
 		}
 	}
-	models, err := fetchProviderModels(request.Context(), apiType, baseURL, apiKey)
+	models, err := FetchProviderModels(request.Context(), apiType, baseURL, apiKey)
 	if err != nil {
 		writeError(writer, http.StatusBadGateway, chatResponse{Error: err.Error()})
 		return
@@ -203,7 +203,10 @@ func (handler *handler) handleProviderModels(writer http.ResponseWriter, request
 	writeJSON(writer, http.StatusOK, map[string]any{"models": models})
 }
 
-func fetchProviderModels(ctx context.Context, apiType, baseURL, apiKey string) ([]string, error) {
+// FetchProviderModels returns the model IDs exposed by an OpenAI-compatible or
+// Anthropic-compatible Provider. Interactive clients share this implementation
+// so model discovery behaves the same in the WebUI and TUI.
+func FetchProviderModels(ctx context.Context, apiType, baseURL, apiKey string) ([]string, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("API Key 未配置")
 	}

@@ -79,6 +79,8 @@ set LLM_API_KEY=your-key-here
 
 单次任务、Chat、后台任务、子任务和 Server 都会优先读取全局 `~/.agent/config.json` 中的当前 Provider；未配置当前 Provider 时才回退到环境变量。
 
+交互式 TUI 中可使用 `/provider` 打开分步配置向导；WebUI 可通过右下角的 Provider 设置入口完成同样的配置。两者共用加密配置存储和模型自动发现逻辑。
+
 通用 `LLM_*` 配置优先于供应商兼容变量。
 
 | 变量 | 默认值 | 说明 |
