@@ -21,7 +21,7 @@ func TestStoreEncryptsAPIKeyWithRandomSalt(t *testing.T) {
 	if first.Salt == second.Salt || first.Ciphertext == second.Ciphertext {
 		t.Fatal("encrypting the same key should use a fresh salt and nonce")
 	}
-	config := Config{ActiveProvider: "openai", Providers: []Provider{{ID: "openai", Name: "OpenAI", APIType: "openai-responses", Models: []string{"gpt-test"}, DefaultModel: "gpt-test", APIKey: first}}}
+	config := Config{ActiveProvider: "openai", Providers: []Provider{{ID: "openai", Name: "OpenAI", APIType: "openai-responses", Models: []string{"gpt-test"}, DefaultModel: "gpt-test", APIKey: first}}, WebUI: &WebUI{Password: "local-password"}}
 	if err := store.Save(config); err != nil {
 		t.Fatal(err)
 	}
@@ -39,5 +39,8 @@ func TestStoreEncryptsAPIKeyWithRandomSalt(t *testing.T) {
 	plaintext, err := store.DecryptAPIKey(loaded.Providers[0].APIKey)
 	if err != nil || plaintext != "secret-token" {
 		t.Fatalf("decrypted key = %q, err = %v", plaintext, err)
+	}
+	if loaded.WebUI == nil || loaded.WebUI.Password != "local-password" {
+		t.Fatalf("WebUI config = %#v", loaded.WebUI)
 	}
 }

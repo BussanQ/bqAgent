@@ -33,10 +33,15 @@ type Provider struct {
 	APIKey       Secret   `json:"api_key"`
 }
 
+type WebUI struct {
+	Password string `json:"password,omitempty"`
+}
+
 type Config struct {
 	Version        int        `json:"version"`
 	ActiveProvider string     `json:"active_provider,omitempty"`
 	Providers      []Provider `json:"providers"`
+	WebUI          *WebUI     `json:"webui,omitempty"`
 }
 
 type Store struct {

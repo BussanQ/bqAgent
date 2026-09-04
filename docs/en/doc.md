@@ -77,6 +77,20 @@ Single-run tasks, Chat, background tasks, subagent workers, and Server all prefe
 
 In the interactive TUI, use `/provider` to open the sequential setup wizard. The WebUI exposes the same configuration through its Provider settings control. Both interfaces share encrypted configuration storage and automatic model discovery.
 
+On first startup, bqagent creates global `~/.agent/config.json` as its system-wide configuration file, not merely a Provider store. Its default content enables the WebUI password-only login with `admin123`:
+
+```json
+{
+  "version": 1,
+  "providers": [],
+  "webui": {
+    "password": "admin123"
+  }
+}
+```
+
+Initialization creates missing files only and never overwrites an existing `config.json`. When providers already exist, `webui` sits beside `providers`. Change the well-known default password immediately after first use. A successful login creates a 24-hour HttpOnly, SameSite=Strict browser session, and the header exposes a logout action. The password is read only at process startup, so restart bqagent after changing it. `config.json` is created with mode `0600` and contains the login password as plain text, so keep it readable only by the current OS user. Authentication protects the chat, workspace, Provider, status, stop, and trace APIs used by the WebUI; independent WeChat, QQ, and ServerChan channel endpoints are unchanged. Set `webui.password` to an empty string or remove `webui` to disable authentication.
+
 Generic `LLM_*` values take precedence over provider-specific compatibility variables.
 
 | Variable | Default | Description |

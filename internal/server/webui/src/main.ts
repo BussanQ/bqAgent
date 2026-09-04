@@ -44,7 +44,25 @@ import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationM
   const REASONING_EFFORT_KEY = "bqagent.webui.reasoning-effort";
   const REASONING_EFFORT_VALUES: ReasoningEffort[] = ["auto", "low", "medium", "high"];
   const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = { auto: "自动", low: "低", medium: "中", high: "高" };
+  interface AuthStatus { required: boolean; authenticated: boolean }
   let toolDisclosureSequence = 0;
+  let applicationStarted = false;
+  const nativeFetch: typeof window.fetch = window.fetch.bind(window);
+  const loginView = byId<HTMLElement>("login-view");
+  const loginForm = byId<HTMLFormElement>("login-form");
+  const loginPassword = byId<HTMLInputElement>("login-password");
+  const loginPasswordToggle = byId<HTMLButtonElement>("login-password-toggle");
+  const loginSubmit = byId<HTMLButtonElement>("login-submit");
+  const loginError = byId<HTMLDivElement>("login-error");
+  const logoutButton = byId<HTMLButtonElement>("logout");
+  window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    var response = await nativeFetch(input, init);
+    var target = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
+    if (response.status === 401 && !target.includes("/api/v1/webui/auth")) {
+      showLogin("登录已失效，请重新输入密码。");
+    }
+    return response;
+  };
   const thread = byId<HTMLDivElement>("thread");
   const main = byId<HTMLElement>("main");
   const appLayout = byId<HTMLDivElement>("app-layout");
@@ -2780,20 +2798,96 @@ import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationM
   window.addEventListener("beforeunload", function () {
     pendingImages.forEach(function (image) { URL.revokeObjectURL(image.objectURL); });
   });
+
+  function showLogin(message = ""): void {
+    document.body.classList.remove("auth-pending", "auth-ready");
+    document.body.classList.add("auth-login");
+    loginView.hidden = false;
+    loginError.textContent = message;
+    loginPassword.focus();
+  }
+
+  function startApplication(authRequired: boolean): void {
+    logoutButton.hidden = !authRequired;
+    loginView.hidden = true;
+    document.body.classList.remove("auth-pending", "auth-login");
+    document.body.classList.add("auth-ready");
+    if (applicationStarted) return;
+    applicationStarted = true;
+    initializeWorkspaceExplorer();
+    input.disabled = true;
+    sendBtn.disabled = true;
+    workspaceSelect.disabled = true;
+    workspaceCreateAgent.disabled = true;
+    initParticleField();
+    initializeWorkspaceSelection().catch(function (error) {
+      statusEl.textContent = "工作区初始化失败";
+      statusEl.classList.add("error");
+      workspaceTreeStatus.textContent = errorMessage(error);
+      workspaceTreeStatus.classList.add("error");
+    });
+    autoGrow();
+  }
+
+  async function initializeAuthentication(): Promise<void> {
+    try {
+      var response = await fetch("/api/v1/webui/auth", { headers: { "Accept": "application/json" } });
+      if (!response.ok) throw new Error("无法读取登录状态");
+      var status = await responseJSON<AuthStatus>(response);
+      if (status.required && !status.authenticated) {
+        showLogin();
+        return;
+      }
+      startApplication(status.required);
+    } catch (error) {
+      showLogin("无法连接到 bqagent，请确认服务仍在运行。");
+    }
+  }
+
+  loginForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    loginSubmit.disabled = true;
+    loginSubmit.classList.add("loading");
+    loginError.textContent = "";
+    try {
+      var response = await fetch("/api/v1/webui/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ password: loginPassword.value }),
+      });
+      if (!response.ok) {
+        var payload = await responseJSON<{ error?: string }>(response);
+        throw new Error(payload.error || "登录失败");
+      }
+      loginPassword.value = "";
+      startApplication(true);
+    } catch (error) {
+      loginError.textContent = errorMessage(error);
+      loginPassword.select();
+    } finally {
+      loginSubmit.disabled = false;
+      loginSubmit.classList.remove("loading");
+    }
+  });
+  loginPasswordToggle.addEventListener("click", function () {
+    var visible = loginPassword.type === "text";
+    loginPassword.type = visible ? "password" : "text";
+    loginPasswordToggle.setAttribute("aria-pressed", String(!visible));
+    loginPasswordToggle.setAttribute("aria-label", visible ? "显示密码" : "隐藏密码");
+    var icon = loginPasswordToggle.querySelector("use");
+    if (icon) icon.setAttribute("href", visible ? "#icon-eye" : "#icon-eye-off");
+    loginPassword.focus();
+  });
+  logoutButton.addEventListener("click", async function () {
+    logoutButton.disabled = true;
+    try {
+      await fetch("/api/v1/webui/auth", { method: "DELETE", headers: { "Accept": "application/json" } });
+    } finally {
+      window.location.reload();
+    }
+  });
   setReasoningEffort(localStorage.getItem(REASONING_EFFORT_KEY), false);
   setTheme(initialTheme(localStorage.getItem(THEME_KEY),
     Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)));
-  initializeWorkspaceExplorer();
-  input.disabled = true;
-  sendBtn.disabled = true;
-  workspaceSelect.disabled = true;
-  workspaceCreateAgent.disabled = true;
-  initParticleField();
-  initializeWorkspaceSelection().catch(function (error) {
-    statusEl.textContent = "工作区初始化失败";
-    statusEl.classList.add("error");
-    workspaceTreeStatus.textContent = errorMessage(error);
-    workspaceTreeStatus.classList.add("error");
-  });
-  autoGrow();
+  initializeAuthentication();
 })();

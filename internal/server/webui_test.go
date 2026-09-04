@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -24,6 +25,7 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
+	"bqagent/internal/providerconfig"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
 )
@@ -158,6 +160,139 @@ func TestWebUIEmbeddedAssetContract(t *testing.T) {
 		if methodResponse.StatusCode != http.StatusMethodNotAllowed {
 			t.Fatalf("POST %s status = %d, want 405", target, methodResponse.StatusCode)
 		}
+	}
+}
+
+func TestWebUIPasswordLoginProtectsBrowserAPIs(t *testing.T) {
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	store := providerconfig.NewStore(agentDir)
+	if err := store.Save(providerconfig.Config{WebUI: &providerconfig.WebUI{Password: "local-secret"}}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir, Model: "test-model"})
+	apiServer := httptest.NewServer(NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}}))
+	defer apiServer.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	authResponse, err := client.Get(apiServer.URL + "/api/v1/webui/auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status webUIAuthResponse
+	if err := json.NewDecoder(authResponse.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	authResponse.Body.Close()
+	if authResponse.StatusCode != http.StatusOK || !status.Required || status.Authenticated {
+		t.Fatalf("initial auth response = %d %#v", authResponse.StatusCode, status)
+	}
+	if authResponse.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("auth cache control = %q", authResponse.Header.Get("Cache-Control"))
+	}
+
+	protected, err := client.Get(apiServer.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected.Body.Close()
+	if protected.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status endpoint = %d, want 401", protected.StatusCode)
+	}
+	wrong, err := client.Post(apiServer.URL+"/api/v1/webui/auth", "application/json", strings.NewReader(`{"password":"wrong"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong.Body.Close()
+	if wrong.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("wrong password status = %d, want 401", wrong.StatusCode)
+	}
+
+	login, err := client.Post(apiServer.URL+"/api/v1/webui/auth", "application/json", strings.NewReader(`{"password":"local-secret"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	login.Body.Close()
+	if login.StatusCode != http.StatusOK {
+		t.Fatalf("login status = %d, want 200", login.StatusCode)
+	}
+	var sessionCookie *http.Cookie
+	for _, cookie := range login.Cookies() {
+		if cookie.Name == webUIAuthCookie {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie = %#v", sessionCookie)
+	}
+	protected, err = client.Get(apiServer.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected.Body.Close()
+	if protected.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated status endpoint = %d, want 200", protected.StatusCode)
+	}
+	crossOrigin, err := http.NewRequest(http.MethodPost, apiServer.URL+"/api/v1/chat/stop", strings.NewReader(`{"turn_id":"turn-12345678"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossOrigin.Header.Set("Content-Type", "application/json")
+	crossOrigin.Header.Set("Origin", "http://attacker.example")
+	crossOriginResponse, err := client.Do(crossOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossOriginResponse.Body.Close()
+	if crossOriginResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin mutation status = %d, want 403", crossOriginResponse.StatusCode)
+	}
+
+	providerBody := `{"active_provider":"demo","providers":[{"id":"demo","name":"demo","api_type":"openai","models":["model-a"],"default_model":"model-a"}]}`
+	request, err := http.NewRequest(http.MethodPut, apiServer.URL+"/api/v1/webui/providers", strings.NewReader(providerBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	providerResponse, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerResponse.Body.Close()
+	if providerResponse.StatusCode != http.StatusOK {
+		t.Fatalf("provider update status = %d, want 200", providerResponse.StatusCode)
+	}
+	saved, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.WebUI == nil || saved.WebUI.Password != "local-secret" {
+		t.Fatal("provider update removed the configured WebUI password")
+	}
+
+	logoutRequest, err := http.NewRequest(http.MethodDelete, apiServer.URL+"/api/v1/webui/auth", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logout, err := client.Do(logoutRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logout.Body.Close()
+	if logout.StatusCode != http.StatusOK {
+		t.Fatalf("logout status = %d, want 200", logout.StatusCode)
+	}
+	protected, err = client.Get(apiServer.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected.Body.Close()
+	if protected.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("logged-out status endpoint = %d, want 401", protected.StatusCode)
 	}
 }
 

@@ -59,7 +59,11 @@ func (w *Workspace) EnsureDefaults() error {
 		if err := root.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 			return err
 		}
-		return root.WriteFile(targetPath, content, 0o644)
+		mode := fs.FileMode(0o644)
+		if targetPath == "config.json" {
+			mode = 0o600
+		}
+		return root.WriteFile(targetPath, content, mode)
 	})
 }
 

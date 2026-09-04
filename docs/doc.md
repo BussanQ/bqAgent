@@ -81,6 +81,20 @@ set LLM_API_KEY=your-key-here
 
 交互式 TUI 中可使用 `/provider` 打开分步配置向导；WebUI 可通过右下角的 Provider 设置入口完成同样的配置。两者共用加密配置存储和模型自动发现逻辑。
 
+首次启动会自动创建全局 `~/.agent/config.json`，它是 bqagent 的系统级全局配置文件，不局限于 Provider。默认内容如下，WebUI 初始登录密码为 `admin123`：
+
+```json
+{
+  "version": 1,
+  "providers": [],
+  "webui": {
+    "password": "admin123"
+  }
+}
+```
+
+初始化只补充缺失文件，不会覆盖已有的 `config.json`。已有 Provider 配置时，`webui` 与 `providers` 位于同一层。请在首次使用后立即修改默认密码；登录成功后浏览器使用 24 小时有效的 HttpOnly、SameSite=Strict 会话 Cookie，页面右上角提供退出登录按钮。密码仅在服务启动时读取，修改后需要重启 bqagent。`config.json` 默认以 `0600` 权限创建并包含明文登录密码，请始终确保它仅当前用户可读。登录保护覆盖 WebUI 使用的聊天、工作区、Provider、状态、停止和 Trace API，不影响微信、QQ、ServerChan 等独立 Channel 的入口。将 `webui.password` 留空或删除 `webui` 可关闭登录验证。
+
 通用 `LLM_*` 配置优先于供应商兼容变量。
 
 | 变量 | 默认值 | 说明 |

@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -212,13 +213,54 @@ func TestEnsureDefaultsInitializesGlobalAgentDirectoryOnly(t *testing.T) {
 	if err := ws.EnsureDefaults(); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"AGENT.md", "SOUL.md", "TOOLS.md", "USER.md", "mcp.json", filepath.Join("memory", "MEMORY.md")} {
+	for _, path := range []string{"AGENT.md", "SOUL.md", "TOOLS.md", "USER.md", "mcp.json", "config.json", filepath.Join("memory", "MEMORY.md")} {
 		if _, err := os.Stat(filepath.Join(globalAgent, path)); err != nil {
 			t.Fatalf("global defaults missing %s: %v", path, err)
 		}
 	}
+	configPath := filepath.Join(globalAgent, "config.json")
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantConfig := "{\n  \"version\": 1,\n  \"webui\": {\n    \"password\": \"admin123\"\n  },\n  \"providers\": []\n}\n"
+	if string(config) != wantConfig {
+		t.Fatalf("default config.json = %q, want %q", config, wantConfig)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Fatalf("config.json mode = %o, want 600", mode)
+		}
+	}
 	if _, err := os.Stat(filepath.Join(root, ".agent")); !os.IsNotExist(err) {
 		t.Fatalf("global initialization unexpectedly wrote workspace .agent: %v", err)
+	}
+}
+
+func TestEnsureDefaultsPreservesExistingGlobalConfig(t *testing.T) {
+	globalAgent := filepath.Join(t.TempDir(), ".agent")
+	if err := os.MkdirAll(globalAgent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(globalAgent, "config.json")
+	custom := []byte("{\"version\":1,\"webui\":{\"password\":\"changed\"},\"providers\":[]}")
+	if err := os.WriteFile(configPath, custom, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws := &Workspace{Root: t.TempDir(), GlobalAgentDir: globalAgent}
+	if err := ws.EnsureDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(custom) {
+		t.Fatalf("existing config.json was overwritten: %s", got)
 	}
 }
 

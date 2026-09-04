@@ -281,7 +281,7 @@ func (handler *handler) buildProviderConfig(input providerSettingsInput, existin
 	for _, provider := range existing.Providers {
 		secrets[provider.ID] = provider.APIKey
 	}
-	config := providerconfig.Config{ActiveProvider: strings.TrimSpace(input.ActiveProvider), Providers: make([]providerconfig.Provider, 0, len(input.Providers))}
+	config := providerconfig.Config{ActiveProvider: strings.TrimSpace(input.ActiveProvider), Providers: make([]providerconfig.Provider, 0, len(input.Providers)), WebUI: existing.WebUI}
 	for _, value := range input.Providers {
 		secret := secrets[strings.TrimSpace(value.ID)]
 		if strings.TrimSpace(value.APIKey) != "" {

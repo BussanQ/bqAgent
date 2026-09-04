@@ -32,6 +32,7 @@ type handler struct {
 	workspaces *WorkspaceRegistry
 	providers  *providerconfig.Store
 	providerMu sync.Mutex
+	auth       *webUIAuth
 }
 
 type chatResponse struct {
@@ -61,8 +62,10 @@ func NewHandler(options HandlerOptions) http.Handler {
 		handler.providers = providerconfig.NewStore(options.Service.agentDir)
 		handler.applySavedProvider(options.Service)
 	}
+	handler.auth = loadWebUIAuth(handler.providers)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handler.handleHealth)
+	mux.HandleFunc("/api/v1/webui/auth", handler.auth.handle)
 	mux.HandleFunc("/api/v1/status", handler.handleStatus)
 	mux.HandleFunc("/api/v1/webui/providers", handler.handleProviders)
 	mux.HandleFunc("/api/v1/webui/provider-selection", handler.handleProviderSelection)
@@ -80,7 +83,7 @@ func NewHandler(options HandlerOptions) http.Handler {
 		}
 		channel.RegisterRoutes(mux)
 	}
-	return withRequestLogging(mux)
+	return withRequestLogging(handler.auth.protect(mux))
 }
 
 func (handler *handler) handleACPPermissionResponse(writer http.ResponseWriter, request *http.Request) {

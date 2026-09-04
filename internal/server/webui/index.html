@@ -9,7 +9,7 @@
 <title>bqagent</title>
 <script type="module" src="/src/main.ts"></script>
 </head>
-<body>
+<body class="auth-pending">
   <!-- Lucide icons via Iconify (MIT): https://icon-sets.iconify.design/lucide/ -->
   <svg class="icon-sprite" aria-hidden="true" focusable="false">
     <symbol id="icon-folder-open" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></symbol>
@@ -46,6 +46,36 @@
     <symbol id="icon-code-xml" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m18 16 4-4-4-4M6 8l-4 4 4 4m8.5-12-5 16"/></symbol>
     <symbol id="icon-brain-circuit" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M9 13a4.5 4.5 0 0 0 3-4M6.003 5.125A3 3 0 0 0 6.401 6.5m-2.924 4.396a4 4 0 0 1 .585-.396M6 18a4 4 0 0 1-1.967-.516M12 13h4m-4 5h6a2 2 0 0 1 2 2v1M12 8h8m-4 0V5a2 2 0 0 1 2-2"/><circle cx="16" cy="13" r=".5"/><circle cx="18" cy="3" r=".5"/><circle cx="20" cy="21" r=".5"/><circle cx="20" cy="8" r=".5"/></g></symbol>
   </svg>
+  <section class="login-view" id="login-view" aria-labelledby="login-title" hidden>
+    <div class="login-story" aria-hidden="true">
+      <span class="login-kicker">LOCAL AGENT HARNESS</span>
+      <h2>把复杂工作流，<br>交给一个真正懂你的智能体。</h2>
+      <p>多 Agent 调度、工作区上下文与长期记忆，在本地汇聚成一套可掌控的执行系统。</p>
+      <div class="login-capabilities">
+        <span>Multi-Agent</span><span>TUI × WebUI</span><span>Workspace Memory</span>
+      </div>
+    </div>
+    <div class="login-panel-wrap">
+      <form class="login-panel" id="login-form">
+        <div class="login-emblem" aria-hidden="true"><span class="mark"></span></div>
+        <div class="login-heading">
+          <span>WELCOME BACK</span>
+          <h1 id="login-title">进入 bqagent</h1>
+          <p>你的本地智能体工作空间已准备就绪。</p>
+        </div>
+        <label class="login-password-label" for="login-password">访问密码</label>
+        <div class="login-password-wrap">
+          <input id="login-password" type="password" autocomplete="current-password" placeholder="输入密码" required autofocus>
+          <button id="login-password-toggle" type="button" aria-label="显示密码" aria-pressed="false">
+            <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-eye"></use></svg>
+          </button>
+        </div>
+        <div class="login-error" id="login-error" role="alert" aria-live="polite"></div>
+        <button class="login-submit" id="login-submit" type="submit"><span>进入工作区</span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-arrow-up"></use></svg></button>
+        <p class="login-local-note"><span></span>密码仅由当前 bqagent 服务验证</p>
+      </form>
+    </div>
+  </section>
   <canvas id="particle-field" aria-hidden="true"></canvas>
   <div class="scanline" aria-hidden="true"></div>
   <header>
@@ -62,6 +92,9 @@
       <div class="status" id="status" role="status" aria-live="polite" aria-atomic="true">在线</div>
       <button class="icon-button" id="theme-toggle" type="button" title="切换主题" aria-label="切换明暗主题">
         <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-sun"></use></svg>
+      </button>
+      <button class="icon-button" id="logout" type="button" title="退出登录" aria-label="退出登录" hidden>
+        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-arrow-left"></use></svg>
       </button>
     </div>
   </header>
