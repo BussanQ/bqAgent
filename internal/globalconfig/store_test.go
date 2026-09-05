@@ -1,4 +1,4 @@
-package providerconfig
+package globalconfig
 
 import (
 	"os"

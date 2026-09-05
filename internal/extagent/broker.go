@@ -46,6 +46,7 @@ type Broker struct {
 	acpFactory      ACPClientFactory
 	cli             CLIAdapter
 	detectionReady  chan struct{}
+	detectedAt      time.Time
 	detectionDone   sync.Once
 	detectionCancel context.CancelFunc
 
@@ -110,6 +111,7 @@ func (broker *Broker) publishDetections(detections map[AgentName]DetectionResult
 	published := !broker.closed
 	if published {
 		broker.detections = cloneDetections(detections)
+		broker.detectedAt = time.Now().UTC()
 	}
 	broker.mu.Unlock()
 	broker.detectionDone.Do(func() { close(broker.detectionReady) })

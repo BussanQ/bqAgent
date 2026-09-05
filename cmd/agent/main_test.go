@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"bqagent/internal/providerconfig"
+	"bqagent/internal/globalconfig"
 )
 
 func TestRunUsesExplicitHelloTask(t *testing.T) {
@@ -133,10 +133,10 @@ func TestRunModesUseSavedProvider(t *testing.T) {
 
 			home := t.TempDir()
 			agentDir := filepath.Join(home, ".agent")
-			store := providerconfig.NewStore(agentDir)
-			if err := store.Save(providerconfig.Config{
+			store := globalconfig.NewStore(agentDir)
+			if err := store.Save(globalconfig.Config{
 				ActiveProvider: "saved",
-				Providers: []providerconfig.Provider{{
+				Providers: []globalconfig.Provider{{
 					ID:           "saved",
 					Name:         "Saved Provider",
 					APIType:      "openai",

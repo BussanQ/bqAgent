@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"bqagent/internal/globalconfig"
 )
 
 //go:embed defaults
@@ -29,6 +31,9 @@ func (w *Workspace) EnsureDefaults() error {
 		return err
 	}
 	defer root.Close()
+	if err := globalconfig.NewStore(agentDir).EnsureDefaults(); err != nil {
+		return err
+	}
 
 	return fs.WalkDir(defaultFiles, "defaults", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -40,6 +45,9 @@ func (w *Workspace) EnsureDefaults() error {
 			return nil
 		}
 		targetPath := filepath.Clean(relPath)
+		if targetPath == "config.json" {
+			return nil
+		}
 
 		if d.IsDir() {
 			return root.MkdirAll(targetPath, 0o755)
@@ -59,11 +67,7 @@ func (w *Workspace) EnsureDefaults() error {
 		if err := root.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 			return err
 		}
-		mode := fs.FileMode(0o644)
-		if targetPath == "config.json" {
-			mode = 0o600
-		}
-		return root.WriteFile(targetPath, content, mode)
+		return root.WriteFile(targetPath, content, 0o644)
 	})
 }
 

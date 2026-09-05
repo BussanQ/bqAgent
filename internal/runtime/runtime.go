@@ -62,6 +62,7 @@ type Factory struct {
 	MCPConfigPath string
 	// MCPConfigPaths are loaded in order; later files override same-named servers.
 	MCPConfigPaths []string
+	MCPReport      func(mcp.ServerStatus)
 	// LogWriter receives best-effort MCP discovery warnings. Nil discards them.
 	LogWriter io.Writer
 }
@@ -331,7 +332,7 @@ func (factory Factory) discoverMCPTools() ([]tools.Definition, map[string]tools.
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), mcpDiscoveryTimeout)
 	defer cancel()
-	return mcp.Discover(ctx, cfg, factory.Getenv, nil, factory.logf)
+	return mcp.DiscoverWithStatus(ctx, cfg, factory.Getenv, nil, factory.logf, factory.MCPReport)
 }
 
 func (factory Factory) logf(format string, args ...any) {

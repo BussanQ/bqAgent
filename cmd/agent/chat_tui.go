@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"bqagent/internal/agent"
-	"bqagent/internal/providerconfig"
+	"bqagent/internal/globalconfig"
 	appserver "bqagent/internal/server"
 	apptui "bqagent/internal/tui"
 	"bqagent/internal/workspace"
@@ -149,7 +149,7 @@ func (backend *tuiBackend) Commands() []apptui.Command {
 }
 
 func (backend *tuiBackend) ProviderSettings(context.Context) (apptui.ProviderSettings, error) {
-	store := providerconfig.NewStore(backend.workspace.AgentDir())
+	store := globalconfig.NewStore(backend.workspace.AgentDir())
 	config, err := store.Load()
 	if err != nil {
 		return apptui.ProviderSettings{}, err
@@ -168,7 +168,7 @@ func (backend *tuiBackend) ProviderSettings(context.Context) (apptui.ProviderSet
 func (backend *tuiBackend) DiscoverProviderModels(ctx context.Context, input apptui.ProviderInput) ([]string, error) {
 	apiKey := strings.TrimSpace(input.APIKey)
 	if apiKey == "" {
-		store := providerconfig.NewStore(backend.workspace.AgentDir())
+		store := globalconfig.NewStore(backend.workspace.AgentDir())
 		config, err := store.Load()
 		if err != nil {
 			return nil, err
@@ -195,51 +195,52 @@ func (backend *tuiBackend) SaveProvider(ctx context.Context, sessionID string, i
 	if err := ctx.Err(); err != nil {
 		return apptui.RuntimeInfo{}, err
 	}
-	store := providerconfig.NewStore(backend.workspace.AgentDir())
-	config, err := store.Load()
-	if err != nil {
-		return apptui.RuntimeInfo{}, err
-	}
-	providerIndex := -1
-	lookupID := strings.TrimSpace(input.OriginalID)
-	if lookupID == "" {
-		lookupID = strings.TrimSpace(input.ID)
-	}
-	secret := providerconfig.Secret{}
-	for index, provider := range config.Providers {
-		if provider.ID == lookupID {
-			providerIndex = index
-			secret = provider.APIKey
-			break
+	store := globalconfig.NewStore(backend.workspace.AgentDir())
+	var provider globalconfig.Provider
+	_, err := store.UpdateProviders(func(active *string, providers *[]globalconfig.Provider) error {
+		providerIndex := -1
+		lookupID := strings.TrimSpace(input.OriginalID)
+		if lookupID == "" {
+			lookupID = strings.TrimSpace(input.ID)
 		}
-	}
-	if apiKey := strings.TrimSpace(input.APIKey); apiKey != "" {
-		secret, err = store.EncryptAPIKey(apiKey)
-		if err != nil {
-			return apptui.RuntimeInfo{}, err
+		secret := globalconfig.Secret{}
+		for index, provider := range *providers {
+			if provider.ID == lookupID {
+				providerIndex = index
+				secret = provider.APIKey
+				break
+			}
 		}
-	}
-	models := cleanTUIProviderModels(input.Models)
-	defaultModel := strings.TrimSpace(input.DefaultModel)
-	if !containsTUIProviderModel(models, defaultModel) {
-		if len(models) > 0 {
-			defaultModel = models[0]
+		if apiKey := strings.TrimSpace(input.APIKey); apiKey != "" {
+			var err error
+			secret, err = store.EncryptAPIKey(apiKey)
+			if err != nil {
+				return err
+			}
+		}
+		models := cleanTUIProviderModels(input.Models)
+		defaultModel := strings.TrimSpace(input.DefaultModel)
+		if !containsTUIProviderModel(models, defaultModel) {
+			if len(models) > 0 {
+				defaultModel = models[0]
+			} else {
+				defaultModel = ""
+			}
+		}
+		provider = globalconfig.Provider{
+			ID: strings.TrimSpace(input.ID), Name: strings.TrimSpace(input.Name),
+			APIType: string(agent.NormalizeAPIType(input.APIType)), BaseURL: strings.TrimSpace(input.BaseURL),
+			Models: models, DefaultModel: defaultModel, APIKey: secret,
+		}
+		if providerIndex >= 0 {
+			(*providers)[providerIndex] = provider
 		} else {
-			defaultModel = ""
+			(*providers) = append((*providers), provider)
 		}
-	}
-	provider := providerconfig.Provider{
-		ID: strings.TrimSpace(input.ID), Name: strings.TrimSpace(input.Name),
-		APIType: string(agent.NormalizeAPIType(input.APIType)), BaseURL: strings.TrimSpace(input.BaseURL),
-		Models: models, DefaultModel: defaultModel, APIKey: secret,
-	}
-	if providerIndex >= 0 {
-		config.Providers[providerIndex] = provider
-	} else {
-		config.Providers = append(config.Providers, provider)
-	}
-	config.ActiveProvider = provider.ID
-	if err := store.Save(config); err != nil {
+		*active = provider.ID
+		return nil
+	})
+	if err != nil {
 		return apptui.RuntimeInfo{}, err
 	}
 	apiKey, err := store.DecryptAPIKey(provider.APIKey)

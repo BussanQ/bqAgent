@@ -93,7 +93,7 @@ set LLM_API_KEY=your-key-here
 }
 ```
 
-初始化只补充缺失文件，不会覆盖已有的 `config.json`。已有 Provider 配置时，`webui` 与 `providers` 位于同一层。请在首次使用后立即修改默认密码；登录成功后浏览器使用 24 小时有效的 HttpOnly、SameSite=Strict 会话 Cookie，页面右上角提供退出登录按钮。密码仅在服务启动时读取，修改后需要重启 bqagent。`config.json` 默认以 `0600` 权限创建并包含明文登录密码，请始终确保它仅当前用户可读。登录保护覆盖 WebUI 使用的聊天、工作区、Provider、状态、停止和 Trace API，不影响微信、QQ、ServerChan 等独立 Channel 的入口。将 `webui.password` 留空或删除 `webui` 可关闭登录验证。
+初始化只补充缺失文件，不会覆盖已有的 `config.json`。已有 Provider 配置时，`webui` 与 `providers` 位于同一层。请在首次使用后立即修改默认密码；登录成功后浏览器使用 24 小时有效的 HttpOnly、SameSite=Strict 会话 Cookie。页面右上角的账户菜单提供“修改密码”和“退出登录”：修改密码需输入当前密码、新密码及确认密码，新密码须为 6–128 个字符、首尾不能有空格且不能与原密码相同。保存只更新全局配置中的 `webui.password`，立即生效，无需重启，并使当前服务的全部浏览器登录会话失效；请用新密码重新登录。直接手动编辑配置文件仍需重启 bqagent 才会生效。`config.json` 默认以 `0600` 权限创建并包含明文登录密码，请始终确保它仅当前用户可读。登录保护覆盖 WebUI 使用的聊天、工作区、Provider、状态、停止和 Trace API，不影响微信、QQ、ServerChan 等独立 Channel 的入口。将 `webui.password` 留空或删除 `webui` 后重启可关闭登录验证，此时不显示账户菜单。
 
 通用 `LLM_*` 配置优先于供应商兼容变量。
 
@@ -204,6 +204,40 @@ Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex
 在 `--chat` 或 `--server` 会话中，使用 `/opencode <任务>` 将当前轮次路由到 OpenCode；后续普通消息会保持绑定，直到通过 `/default` 返回内置 Agent。OpenCode 仅支持 ACP；配置 `AGENT_OPENCODE_CLI_CMD/ARGS` 不会启用 CLI 传输。
 
 WebUI 的“新会话”菜单还可以创建群聊。外部 Agent 在服务启动后异步检测，不阻塞服务启动；需要检测结果的请求会等待后台探测完成，再将可用 Agent 与 bqagent 一起加入初始成员名单。成员栏的“添加成员”按钮可以把创建时未加入、当前已检测可用的 Agent 追加到现有群聊；鼠标悬停在外部成员上会显示删除按钮。成员变更会持久化，删除成员不会清除其历史发言和外部 session，重新添加后仍可延续上下文；调度员 bqagent 不可删除。未 @ 任何成员的任务由 bqagent 直接处理，不调度外部成员。直接发送给 `@codex`、`@opencode` 等外部成员的任务只由对应成员处理，bqagent 不再参与分析或自动汇总；只有用户明确 `@bqagent` 时，bqagent 才会调度外部成员并在其完成后给出最终汇总，也可以在后续轮次 `@bqagent` 汇总共享上下文里的既有结论。成员顺序共享同一个 workspace 和群聊上下文，各自结论会单独显示。群聊仅支持 Run 模式；普通会话中的 `/codex`、`/opencode` 粘性路由保持不变。群聊编排属于通用服务能力，本期仅 WebUI 提供入口。
+
+## 系统诊断与就绪检查
+
+WebUI 顶栏的“系统诊断”入口可查看全局配置、存储、外部 Agent、MCP 和对话渠道的状态、失败原因及处理建议。默认读取快照；“主动检测”由用户手动触发，不自动轮询。
+
+```bash
+# 本地只读诊断：不创建配置，不启动会话，也不连接运行中的服务器
+bqagent --doctor
+
+# 机器可读报告
+bqagent --doctor --doctor-json
+
+# 显式执行存储写入、ACP 初始化与 MCP 工具发现探测
+bqagent --doctor --doctor-active
+```
+
+`--doctor-active`、`--doctor-json` 必须配合 `--doctor`，可同时使用；诊断不能与聊天、后台、服务模式或任务文本混用。退出码：`0` 表示服务就绪（可以有降级项），`1` 表示未就绪，`2` 表示参数错误、取消、超时或诊断执行失败。
+
+| 接口 | 用途 | 认证 |
+| --- | --- | --- |
+| `GET /healthz` | 进程存活检查，原有语义不变 | 无 |
+| `GET /readyz` | 最小就绪结果 `{"ready":true/false}`；就绪 200，未就绪 503 | 无，不返回配置详情 |
+| `GET /api/v1/webui/doctor` | 详细诊断快照 | 遵循 WebUI 登录设置 |
+| `POST /api/v1/webui/doctor` | 显式主动探测 | 遵循 WebUI 登录及同源检查 |
+
+doctor 接口接受可选的 `workspace_id` 查询参数，只读取已打开工作区，不隐式创建工作区运行时。`/readyz` 检查服务启动时的默认工作区。CLI 检查当前本地环境，不读取另一进程的实时连接状态；未观察到的渠道连接明确标记为“未验证”。
+
+就绪是**服务级**判断：核心配置无法读取或解析、核心存储存在明确故障时未就绪；未配置默认模型、可选 MCP 或外部 Agent 异常会显示降级，不阻止进入设置页。就绪不保证模型可以生成回复。快照不执行写入，存储检查会注明写入未实测；尚未创建的会话、记忆目录检查其最近的已有父目录。
+
+主动检测最多 15 秒，外部 Agent 单项最多 3 秒、MCP 单项最多 5 秒。存储仅使用并清理临时文件；ACP 仅初始化并关闭独立客户端；MCP 仅初始化和获取工具列表，不改变正在使用的工具目录。不发送模型生成请求，不执行 MCP 工具，不发送渠道消息，不触发登录或重连。没有无副作用探测接口的渠道仍显示运行时快照。同一服务实例不重复并发执行主动检测。
+
+报告区分可用、异常、禁用、检测中及未验证，包含检测时间和证据来源；不会返回密码、API Key、敏感请求头、二维码、命令参数或带凭据的 URL。
+
+全局配置由内部 `globalconfig` 模块统一管理。用户仍使用 `~/.agent/config.json`，首次启动仍初始化 `version: 1`、`webui.password: "admin123"`、空 `providers`，已有文件不覆盖；Provider 密文及 `.config.key` 不需要迁移。Provider 和 WebUI 更新各自配置段，进程内串行保存，避免覆盖其他模块配置。
 
 ## 快速开始
 

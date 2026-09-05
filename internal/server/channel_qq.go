@@ -18,17 +18,18 @@ type qqGateway interface {
 }
 
 type QQChannel struct {
-	service       *Service
-	client        *qq.Client
-	gateway       qqGateway
-	states        *qq.StateStore
-	gatewayStates *qq.GatewayStateStore
-	runner        *ChannelTurnRunner
-	mu            sync.Mutex
-	started       bool
-	stopping      bool
-	baseCtx       context.Context
-	turns         sync.WaitGroup
+	service         *Service
+	client          *qq.Client
+	gateway         qqGateway
+	states          *qq.StateStore
+	gatewayStates   *qq.GatewayStateStore
+	runner          *ChannelTurnRunner
+	mu              sync.Mutex
+	started         bool
+	stopping        bool
+	diagnosticError string
+	baseCtx         context.Context
+	turns           sync.WaitGroup
 }
 
 func NewQQChannel(service *Service, client *qq.Client, gateway qqGateway, states *qq.StateStore, gatewayStates *qq.GatewayStateStore) *QQChannel {
@@ -87,6 +88,12 @@ func (channel *QQChannel) runGateway(ctx context.Context) {
 			channel.dispatchUpdate(update)
 			return nil
 		})
+		channel.mu.Lock()
+		channel.diagnosticError = ""
+		if err != nil {
+			channel.diagnosticError = "gateway_connection_failed"
+		}
+		channel.mu.Unlock()
 		if saveErr := channel.gatewayStates.Save(next); saveErr != nil {
 			log.Printf("qq gateway state save failed: %v", saveErr)
 		}

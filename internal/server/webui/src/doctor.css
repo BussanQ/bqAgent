@@ -1,0 +1,26 @@
+.doctor-dialog { width: min(780px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; border: 1px solid var(--line-strong); border-radius: 20px; color: var(--text); background: var(--bg-soft); box-shadow: var(--overlay-shadow); }
+.doctor-dialog::backdrop { background: var(--scrim); backdrop-filter: blur(6px); }
+.doctor-dialog header { display: flex; justify-content: space-between; align-items: center; padding: 24px 28px 14px; }
+.doctor-dialog h2 { font-size: 22px; margin: 0 0 6px; }
+.doctor-dialog header p { color: var(--text-soft); margin: 0; font-size: 13px; }
+.doctor-dialog button { color: var(--text); background: var(--surface-active); border: 1px solid var(--line); border-radius: 8px; padding: 9px 14px; cursor: pointer; }
+.doctor-dialog button:hover { border-color: var(--signal); }
+.doctor-dialog button:disabled { opacity: .45; cursor: wait; }
+.doctor-actions { padding: 0 28px 18px; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--line); }
+.doctor-actions span { font-size: 11px; color: var(--text-muted); }
+.doctor-content { padding: 22px 28px 28px; }
+.doctor-summary { background: var(--surface-active); border: 1px solid var(--line-strong); border-radius: 12px; padding: 18px; }
+.doctor-summary strong { font-size: 18px; }
+.doctor-summary p { margin: 8px 0 0; color: var(--text-soft); font-size: 12px; }
+.doctor-summary[data-state="not_ready"] { border-color: var(--danger); }
+.doctor-content h3 { font-size: 12px; letter-spacing: .08em; color: var(--text-muted); margin: 24px 0 10px; }
+.doctor-check { position: relative; padding: 15px; border: 1px solid var(--line); border-radius: 10px; margin-top: 8px; overflow-wrap: anywhere; background: var(--surface-subtle); }
+.doctor-check > strong { font: 13px ui-monospace, monospace; }
+.doctor-badge { float: right; color: var(--stream); font-size: 11px; padding: 2px 7px; border-radius: 5px; background: var(--surface-active); }
+.doctor-check[data-state="error"] .doctor-badge { color: var(--danger); background: var(--surface-danger); }
+.doctor-check[data-state="unverified"] .doctor-badge, .doctor-check[data-state="detecting"] .doctor-badge { color: var(--progress); background: var(--surface-progress); }
+.doctor-check[data-state="disabled"] { opacity: .65; }
+.doctor-check p { color: var(--text-soft); margin: 8px 0; font-size: 12px; }
+.doctor-check small { display: block; font-size: 11px; color: var(--text-muted); line-height: 1.6; }
+.doctor-source { margin-top: 8px; }
+@media (max-width: 480px) { .doctor-dialog header, .doctor-content { padding: 18px; } .doctor-actions { padding: 0 18px 16px; } }

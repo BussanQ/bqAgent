@@ -10,8 +10,8 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
+	"bqagent/internal/globalconfig"
 	appmemory "bqagent/internal/memory"
-	"bqagent/internal/providerconfig"
 	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
 	"bqagent/internal/subagent"
@@ -19,6 +19,8 @@ import (
 )
 
 func newConversationService(ctx context.Context, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, includePlan bool, statusWriter io.Writer) (*appserver.Service, *extagent.Broker) {
+	var externalBroker *extagent.Broker
+	diagnostics := workspaceDoctor(ws, getenv, func() ([]extagent.DetectionStatus, bool) { return externalBroker.DetectionSnapshot() })
 	runtime := appruntime.Factory{
 		Config:          runtimeConfigFromSources(getenv, ws.AgentDir()),
 		WorkspaceRoot:   ws.Root,
@@ -27,6 +29,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		GlobalMemoryDir: ws.GlobalMemoryDir(),
 		Getenv:          getenv,
 		MCPConfigPaths:  ws.MCPConfigPaths(),
+		MCPReport:       diagnostics.RecordMCP,
 		LogWriter:       statusWriter,
 	}.Build(includePlan)
 
@@ -34,7 +37,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	if statusWriter != nil {
 		fmt.Fprintln(statusWriter, "external-agent detection=background")
 	}
-	externalBroker := extagent.NewDetectingBroker(ctx, extagent.NewStateStore(ws.Root), externalConfig, nil, func(detections map[extagent.AgentName]extagent.DetectionResult) {
+	externalBroker = extagent.NewDetectingBroker(ctx, extagent.NewStateStore(ws.Root), externalConfig, nil, func(detections map[extagent.AgentName]extagent.DetectionResult) {
 		if statusWriter != nil {
 			for _, status := range extagent.FormatStatuses(detections) {
 				log.Printf("external-agent %s", status)
@@ -55,6 +58,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	}
 
 	service := appserver.NewService(appserver.ServiceOptions{
+		Doctor:          diagnostics,
 		WorkspaceRoot:   ws.Root,
 		AgentDir:        ws.AgentDir(),
 		Client:          runtime.Client,
@@ -101,7 +105,7 @@ func groupExternalAgentTimeoutFromEnv(getenv func(string) string) time.Duration 
 
 func runtimeConfigFromSources(getenv func(string) string, agentDir string) appruntime.Config {
 	config := appruntime.ConfigFromEnv(getenv)
-	store := providerconfig.NewStore(agentDir)
+	store := globalconfig.NewStore(agentDir)
 	saved, err := store.Load()
 	if err != nil || strings.TrimSpace(saved.ActiveProvider) == "" {
 		return config

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"bqagent/internal/agent"
-	"bqagent/internal/providerconfig"
+	"bqagent/internal/globalconfig"
 )
 
 const maxProviderModelsResponseBytes = 2 << 20
@@ -68,17 +68,15 @@ func (handler *handler) handleProviders(writer http.ResponseWriter, request *htt
 			writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
 			return
 		}
-		existing, err := handler.providers.Load()
+		config, err := handler.providers.UpdateProviders(func(active *string, providers *[]globalconfig.Provider) error {
+			updated, err := handler.buildProviderConfig(input, globalconfig.Config{ActiveProvider: *active, Providers: *providers})
+			if err != nil {
+				return err
+			}
+			*active, *providers = updated.ActiveProvider, updated.Providers
+			return nil
+		})
 		if err != nil {
-			writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
-			return
-		}
-		config, err := handler.buildProviderConfig(input, existing)
-		if err != nil {
-			writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
-			return
-		}
-		if err := handler.providers.Save(config); err != nil {
 			writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
 			return
 		}
@@ -112,32 +110,29 @@ func (handler *handler) handleProviderSelection(writer http.ResponseWriter, requ
 	}
 	handler.providerMu.Lock()
 	defer handler.providerMu.Unlock()
-	config, err := handler.providers.Load()
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
-		return
-	}
-	found := false
-	for index := range config.Providers {
-		provider := &config.Providers[index]
-		if provider.ID != selection.ProviderID {
-			continue
-		}
-		for _, model := range provider.Models {
-			if model == selection.Model {
-				provider.DefaultModel = model
-				found = true
-				break
+	config, err := handler.providers.UpdateProviders(func(active *string, providers *[]globalconfig.Provider) error {
+		found := false
+		for index := range *providers {
+			provider := &(*providers)[index]
+			if provider.ID != selection.ProviderID {
+				continue
+			}
+			for _, model := range provider.Models {
+				if model == selection.Model {
+					provider.DefaultModel = model
+					found = true
+					break
+				}
 			}
 		}
-	}
-	if !found {
-		writeError(writer, http.StatusBadRequest, chatResponse{Error: "unknown provider or model"})
-		return
-	}
-	config.ActiveProvider = selection.ProviderID
-	if err := handler.providers.Save(config); err != nil {
-		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
+		if !found {
+			return fmt.Errorf("unknown provider or model")
+		}
+		*active = selection.ProviderID
+		return nil
+	})
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
 		return
 	}
 	service, err := handler.serviceForWorkspace(request.URL.Query().Get("workspace_id"))
@@ -276,23 +271,23 @@ func FetchProviderModels(ctx context.Context, apiType, baseURL, apiKey string) (
 	return models, nil
 }
 
-func (handler *handler) buildProviderConfig(input providerSettingsInput, existing providerconfig.Config) (providerconfig.Config, error) {
-	secrets := map[string]providerconfig.Secret{}
+func (handler *handler) buildProviderConfig(input providerSettingsInput, existing globalconfig.Config) (globalconfig.Config, error) {
+	secrets := map[string]globalconfig.Secret{}
 	for _, provider := range existing.Providers {
 		secrets[provider.ID] = provider.APIKey
 	}
-	config := providerconfig.Config{ActiveProvider: strings.TrimSpace(input.ActiveProvider), Providers: make([]providerconfig.Provider, 0, len(input.Providers)), WebUI: existing.WebUI}
+	config := globalconfig.Config{ActiveProvider: strings.TrimSpace(input.ActiveProvider), Providers: make([]globalconfig.Provider, 0, len(input.Providers))}
 	for _, value := range input.Providers {
 		secret := secrets[strings.TrimSpace(value.ID)]
 		if strings.TrimSpace(value.APIKey) != "" {
 			var err error
 			secret, err = handler.providers.EncryptAPIKey(value.APIKey)
 			if err != nil {
-				return providerconfig.Config{}, err
+				return globalconfig.Config{}, err
 			}
 		}
 		models := cleanModels(value.Models)
-		config.Providers = append(config.Providers, providerconfig.Provider{ID: strings.TrimSpace(value.ID), Name: strings.TrimSpace(value.Name), APIType: string(agent.NormalizeAPIType(value.APIType)), BaseURL: strings.TrimSpace(value.BaseURL), Models: models, DefaultModel: strings.TrimSpace(value.DefaultModel), APIKey: secret})
+		config.Providers = append(config.Providers, globalconfig.Provider{ID: strings.TrimSpace(value.ID), Name: strings.TrimSpace(value.Name), APIType: string(agent.NormalizeAPIType(value.APIType)), BaseURL: strings.TrimSpace(value.BaseURL), Models: models, DefaultModel: strings.TrimSpace(value.DefaultModel), APIKey: secret})
 	}
 	return config, nil
 }
@@ -304,7 +299,7 @@ func (handler *handler) applySavedProvider(service *Service) {
 	}
 }
 
-func (handler *handler) applyProvider(service *Service, config providerconfig.Config) error {
+func (handler *handler) applyProvider(service *Service, config globalconfig.Config) error {
 	for _, provider := range config.Providers {
 		if provider.ID != config.ActiveProvider {
 			continue
@@ -319,7 +314,7 @@ func (handler *handler) applyProvider(service *Service, config providerconfig.Co
 	return nil
 }
 
-func providerResponse(config providerconfig.Config) providerSettingsResponse {
+func providerResponse(config globalconfig.Config) providerSettingsResponse {
 	response := providerSettingsResponse{ActiveProvider: config.ActiveProvider, Providers: make([]providerView, 0, len(config.Providers))}
 	for _, provider := range config.Providers {
 		response.Providers = append(response.Providers, providerView{ID: provider.ID, Name: provider.Name, APIType: provider.APIType, BaseURL: provider.BaseURL, Models: append([]string(nil), provider.Models...), DefaultModel: provider.DefaultModel, APIKeyConfigured: provider.APIKey.Ciphertext != ""})

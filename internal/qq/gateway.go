@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -41,6 +42,7 @@ var (
 )
 
 type GatewayClient struct {
+	connected  atomic.Bool
 	httpClient *http.Client
 	baseURL    string
 	tokens     TokenSource
@@ -49,6 +51,8 @@ type GatewayClient struct {
 type GatewayURLResponse struct {
 	URL string `json:"url"`
 }
+
+func (client *GatewayClient) Connected() bool { return client != nil && client.connected.Load() }
 
 // heartbeatTracker serializes a heartbeat acknowledgement with the heartbeat
 // it confirms. QQ heartbeat ACK payloads do not carry an ID, so at most one
@@ -177,6 +181,8 @@ func (client *GatewayClient) GetGatewayURL(ctx context.Context) (string, error) 
 }
 
 func (client *GatewayClient) Connect(ctx context.Context, state GatewaySessionState, handler func(context.Context, Update) error) (GatewaySessionState, error) {
+	client.connected.Store(false)
+	defer client.connected.Store(false)
 	if !client.Configured() {
 		return state, fmt.Errorf("qq gateway client is not configured")
 	}
@@ -291,6 +297,9 @@ func (client *GatewayClient) Connect(ctx context.Context, state GatewaySessionSt
 		}
 		switch payload.Op {
 		case opDispatch:
+			if payload.T == "READY" || payload.T == "RESUMED" {
+				client.connected.Store(true)
+			}
 			if strings.TrimSpace(payload.T) == "READY" {
 				var ready readyData
 				if err := json.Unmarshal(payload.D, &ready); err != nil {

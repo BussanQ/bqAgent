@@ -1,4 +1,4 @@
-package providerconfig
+package globalconfig
 
 import (
 	"crypto/aes"
@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 const currentVersion = 1
@@ -40,18 +41,88 @@ type WebUI struct {
 type Config struct {
 	Version        int        `json:"version"`
 	ActiveProvider string     `json:"active_provider,omitempty"`
-	Providers      []Provider `json:"providers"`
 	WebUI          *WebUI     `json:"webui,omitempty"`
+	Providers      []Provider `json:"providers"`
 }
 
 type Store struct {
 	path    string
 	keyPath string
+	mu      sync.Mutex
+	keyMu   sync.Mutex
 }
 
+var stores sync.Map
+
 func NewStore(agentDir string) *Store {
-	return &Store{path: filepath.Join(agentDir, "config.json"), keyPath: filepath.Join(agentDir, ".config.key")}
+	if absolute, err := filepath.Abs(agentDir); err == nil {
+		agentDir = absolute
+	}
+	value, _ := stores.LoadOrStore(filepath.Clean(agentDir), &Store{path: filepath.Join(agentDir, "config.json"), keyPath: filepath.Join(agentDir, ".config.key")})
+	return value.(*Store)
 }
+
+// Default is the system configuration written on first initialization.
+func Default() Config {
+	return Config{Version: currentVersion, WebUI: &WebUI{Password: "admin123"}, Providers: []Provider{}}
+}
+
+// EnsureDefaults never replaces an existing configuration, even if it is invalid.
+func (store *Store) EnsureDefaults() error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(store.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(Default(), "", "  ")
+	_, err = f.Write(append(data, '\n'))
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+func (store *Store) Path() string { return store.path }
+
+// Update serializes read-modify-write operations for all users of this path.
+func (store *Store) Update(change func(*Config) error) (Config, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	config, err := store.Load()
+	if err != nil {
+		return Config{}, err
+	}
+	if err := change(&config); err != nil {
+		return Config{}, err
+	}
+	if err := store.save(config); err != nil {
+		return Config{}, err
+	}
+	return config, nil
+}
+
+func (store *Store) UpdateProviders(change func(*string, *[]Provider) error) (Config, error) {
+	return store.Update(func(config *Config) error { return change(&config.ActiveProvider, &config.Providers) })
+}
+
+func (store *Store) UpdateWebUI(webui *WebUI) (Config, error) {
+	return store.Update(func(config *Config) error { config.WebUI = webui; return nil })
+}
+
+func (store *Store) LoadWebUI() (*WebUI, error) {
+	config, err := store.Load()
+	return config.WebUI, err
+}
+
+func Validate(config Config) error { return validate(config) }
 
 func (store *Store) Load() (Config, error) {
 	data, err := os.ReadFile(store.path)
@@ -63,7 +134,7 @@ func (store *Store) Load() (Config, error) {
 	}
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {
-		return Config{}, fmt.Errorf("parse provider config: %w", err)
+		return Config{}, fmt.Errorf("parse global config: %w", err)
 	}
 	if config.Version == 0 {
 		config.Version = currentVersion
@@ -75,6 +146,12 @@ func (store *Store) Load() (Config, error) {
 }
 
 func (store *Store) Save(config Config) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.save(config)
+}
+
+func (store *Store) save(config Config) error {
 	config.Version = currentVersion
 	if err := validate(config); err != nil {
 		return err
@@ -172,6 +249,8 @@ func (store *Store) DecryptAPIKey(secret Secret) (string, error) {
 }
 
 func (store *Store) masterKey(create bool) ([]byte, error) {
+	store.keyMu.Lock()
+	defer store.keyMu.Unlock()
 	key, err := os.ReadFile(store.keyPath)
 	if err == nil {
 		if len(key) != 32 {

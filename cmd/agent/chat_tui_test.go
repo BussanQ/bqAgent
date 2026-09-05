@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"bqagent/internal/providerconfig"
+	"bqagent/internal/globalconfig"
 	appserver "bqagent/internal/server"
 	apptui "bqagent/internal/tui"
 	"bqagent/internal/workspace"
@@ -71,7 +71,7 @@ func TestTUIBackendProviderSaveAndDiscovery(t *testing.T) {
 	if runtime.Provider != "custom" || runtime.Model != "model-z" {
 		t.Fatalf("runtime = %#v", runtime)
 	}
-	store := providerconfig.NewStore(agentDir)
+	store := globalconfig.NewStore(agentDir)
 	config, err := store.Load()
 	if err != nil {
 		t.Fatal(err)

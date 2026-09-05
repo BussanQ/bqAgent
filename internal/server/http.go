@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"bqagent/internal/extagent"
-	"bqagent/internal/providerconfig"
+	"bqagent/internal/globalconfig"
 )
 
 const (
@@ -28,9 +28,10 @@ type HandlerOptions struct {
 }
 
 type handler struct {
+	channels   []Channel
 	service    *Service
 	workspaces *WorkspaceRegistry
-	providers  *providerconfig.Store
+	providers  *globalconfig.Store
 	providerMu sync.Mutex
 	auth       *webUIAuth
 }
@@ -57,15 +58,18 @@ type statusResponse struct {
 }
 
 func NewHandler(options HandlerOptions) http.Handler {
-	handler := &handler{service: options.Service, workspaces: options.Workspaces}
+	handler := &handler{service: options.Service, workspaces: options.Workspaces, channels: options.Channels}
 	if options.Service != nil && strings.TrimSpace(options.Service.agentDir) != "" {
-		handler.providers = providerconfig.NewStore(options.Service.agentDir)
+		handler.providers = globalconfig.NewStore(options.Service.agentDir)
 		handler.applySavedProvider(options.Service)
 	}
 	handler.auth = loadWebUIAuth(handler.providers)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handler.handleHealth)
+	mux.HandleFunc("/readyz", handler.handleReadiness)
+	mux.HandleFunc("/api/v1/webui/doctor", handler.handleDoctor)
 	mux.HandleFunc("/api/v1/webui/auth", handler.auth.handle)
+	mux.HandleFunc("/api/v1/webui/password", handler.handleChangePassword)
 	mux.HandleFunc("/api/v1/status", handler.handleStatus)
 	mux.HandleFunc("/api/v1/webui/providers", handler.handleProviders)
 	mux.HandleFunc("/api/v1/webui/provider-selection", handler.handleProviderSelection)

@@ -25,6 +25,9 @@ import (
 )
 
 type cliOptions struct {
+	doctor        bool
+	doctorActive  bool
+	doctorJSON    bool
 	plan          bool
 	background    bool
 	chat          bool
@@ -68,6 +71,11 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 	options, taskArgs, err := parseCLI(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "--doctor") || strings.HasPrefix(arg, "-doctor") {
+				return 2
+			}
+		}
 		return 1
 	}
 	if options.sessionRun || options.serverRun {
@@ -85,12 +93,18 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 	cwd, err := deps.getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+		if options.doctor {
+			return 2
+		}
 		return 1
 	}
 
 	ws, err := workspace.Discover(cwd)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+		if options.doctor {
+			return 2
+		}
 		return 1
 	}
 	// Resolve the global config from the injected process environment as well,
@@ -102,6 +116,9 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		ws.GlobalAgentDir = ""
 	}
 	dotEnv := loadWorkspaceDotEnv(getenv, ws.Root, options.subagentRun != "")
+	if options.doctor {
+		return runDoctor(ctx, stdout, stderr, options, ws, appruntime.MergeEnv(getenv, dotEnv))
+	}
 	if err := applyDotEnv(getenv, deps.setenv, dotEnv); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -187,6 +204,9 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 
 	var options cliOptions
 	var daemon bool
+	fs.BoolVar(&options.doctor, "doctor", false, "inspect local readiness without starting a conversation")
+	fs.BoolVar(&options.doctorActive, "doctor-active", false, "perform bounded storage, ACP and MCP probes (requires --doctor)")
+	fs.BoolVar(&options.doctorJSON, "doctor-json", false, "print diagnostic JSON (requires --doctor)")
 	fs.BoolVar(&options.plan, "plan", false, "break the task into steps before execution")
 	fs.BoolVar(&options.background, "background", false, "run the task in the background")
 	fs.BoolVar(&daemon, "d", false, "run the HTTP server in the background")
@@ -209,6 +229,12 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	}
 	if len(args) == 0 {
 		options.chat = true
+	}
+	if (options.doctorActive || options.doctorJSON) && !options.doctor {
+		return cliOptions{}, nil, fmt.Errorf("--doctor-active and --doctor-json require --doctor")
+	}
+	if options.doctor && (daemon || options.plan || options.background || options.chat || options.server || options.stream || options.ilinkLogin || options.ilinkStatus || options.sessionRun || options.serverRun || options.resumeID != "" || options.sessionID != "" || options.subagentRun != "" || options.subagentLease != "" || len(fs.Args()) > 0) {
+		return cliOptions{}, nil, fmt.Errorf("--doctor cannot be combined with task execution flags")
 	}
 	if daemon {
 		options.server = true

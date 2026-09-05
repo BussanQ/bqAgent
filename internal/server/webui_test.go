@@ -25,7 +25,7 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
-	"bqagent/internal/providerconfig"
+	"bqagent/internal/globalconfig"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
 )
@@ -165,8 +165,8 @@ func TestWebUIEmbeddedAssetContract(t *testing.T) {
 
 func TestWebUIPasswordLoginProtectsBrowserAPIs(t *testing.T) {
 	agentDir := filepath.Join(t.TempDir(), ".agent")
-	store := providerconfig.NewStore(agentDir)
-	if err := store.Save(providerconfig.Config{WebUI: &providerconfig.WebUI{Password: "local-secret"}}); err != nil {
+	store := globalconfig.NewStore(agentDir)
+	if err := store.Save(globalconfig.Config{WebUI: &globalconfig.WebUI{Password: "local-secret"}}); err != nil {
 		t.Fatal(err)
 	}
 	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir, Model: "test-model"})

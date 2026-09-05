@@ -89,7 +89,7 @@ On first startup, bqagent creates global `~/.agent/config.json` as its system-wi
 }
 ```
 
-Initialization creates missing files only and never overwrites an existing `config.json`. When providers already exist, `webui` sits beside `providers`. Change the well-known default password immediately after first use. A successful login creates a 24-hour HttpOnly, SameSite=Strict browser session, and the header exposes a logout action. The password is read only at process startup, so restart bqagent after changing it. `config.json` is created with mode `0600` and contains the login password as plain text, so keep it readable only by the current OS user. Authentication protects the chat, workspace, Provider, status, stop, and trace APIs used by the WebUI; independent WeChat, QQ, and ServerChan channel endpoints are unchanged. Set `webui.password` to an empty string or remove `webui` to disable authentication.
+Initialization creates missing files only and never overwrites an existing `config.json`. When providers already exist, `webui` sits beside `providers`. Change the well-known default password immediately after first use. A successful login creates a 24-hour HttpOnly, SameSite=Strict browser session. The account menu in the top-right corner provides Change password and Log out. Changing a password requires the current password, a new password, and confirmation. New passwords must contain 6–128 characters, have no leading or trailing whitespace, and differ from the current password. Saving updates only `webui.password`, takes effect immediately without a restart, and invalidates all browser login sessions on the current server; log in again with the new password. Manual configuration edits still require restarting bqagent. `config.json` is created with mode `0600` and contains the login password as plain text, so keep it readable only by the current OS user. Authentication protects the chat, workspace, Provider, status, stop, and trace APIs used by the WebUI; independent WeChat, QQ, and ServerChan channel endpoints are unchanged. Set `webui.password` to an empty string or remove `webui`, then restart to disable authentication; the account menu is hidden in this mode.
 
 Generic `LLM_*` values take precedence over provider-specific compatibility variables.
 
@@ -200,6 +200,40 @@ Claude defaults to `claude -p --output-format json`; Codex defaults to `codex ex
 In `--chat` or `--server` sessions, use `/opencode <task>` to route the turn to OpenCode. Later messages remain bound to it until `/default` switches back to the built-in agent. OpenCode is ACP-only; configuring `AGENT_OPENCODE_CLI_CMD/ARGS` does not enable a CLI transport.
 
 The WebUI's **New conversation** menu can also create a group conversation. Available external agents detected asynchronously after startup join bqagent in the initial roster; requests that need detection wait for that background probe without delaying service startup. The member bar can add currently available agents that were not part of the initial roster. Hovering an external member reveals a remove control; membership changes persist while prior messages and external session state remain available if that member is re-added. bqagent is the permanent coordinator and cannot be removed. A group task without a mention is handled directly by bqagent without consulting external members. A task addressed to `@codex`, `@opencode`, or another external member is handled directly by those members without bqagent analysis or synthesis. bqagent coordinates external agents and produces a final synthesis only when the user explicitly mentions `@bqagent`; a later `@bqagent` turn can also synthesize conclusions already in the shared context. Members run sequentially in the same workspace and receive the shared group context. Group conversations are Run-only. Existing sticky `/codex` and `/opencode` routing remains unchanged in ordinary conversations. The orchestration is channel-neutral, although this release exposes it only in the WebUI.
+
+## System diagnostics and readiness
+
+Open **System diagnostics** in the WebUI header to inspect configuration, storage, external Agents, MCP servers, and channels, including failure reasons and suggested actions. Refresh reads a snapshot; active probes require an explicit click. There is no automatic polling.
+
+```bash
+# Read-only local inspection: no initialization, conversations, or server connection
+bqagent --doctor
+
+# Machine-readable report
+bqagent --doctor --doctor-json
+
+# Explicit storage, ACP initialization, and MCP discovery probes
+bqagent --doctor --doctor-active
+```
+
+`--doctor-active` and `--doctor-json` require `--doctor` and may be combined. Diagnostic mode cannot be combined with a task, chat, background, or server mode. Exit codes: `0` ready (possibly degraded), `1` not ready, `2` invalid arguments, cancellation, timeout, or diagnostic execution failure.
+
+| Endpoint | Purpose | Authentication |
+| --- | --- | --- |
+| `GET /healthz` | Existing process liveness check | None |
+| `GET /readyz` | Minimal `{"ready":true/false}` result; HTTP 200 when ready, 503 otherwise | None; no configuration details |
+| `GET /api/v1/webui/doctor` | Detailed snapshot | Existing WebUI authentication policy |
+| `POST /api/v1/webui/doctor` | Explicit active probes | Existing WebUI authentication and same-origin checks |
+
+Doctor endpoints accept an optional `workspace_id` query parameter for an already-open workspace; reading diagnostics never creates a workspace runtime. `/readyz` uses the server's default workspace. CLI diagnostics inspect the local environment, not live connections in another process; unobserved channel connections are marked unverified.
+
+Readiness is **service-level**, not a guarantee that a model can generate a reply. Unreadable or invalid core configuration and known core storage failures make the service not ready. Missing models and optional external Agent/MCP failures cause degradation without blocking configuration access. Snapshot storage checks do not test writes. Missing lazy session/memory directories are checked through their nearest existing parent directory.
+
+Active probes have a 15-second overall timeout, at most 3 seconds per external Agent and 5 seconds per MCP server. Storage probes create and remove a temporary file. ACP probes only initialize and close independent clients. MCP probes only initialize and list tools, without changing the live tool catalog. They never generate model replies, execute MCP tools, send channel messages, log in, or reconnect channels. Channels without a side-effect-free probe continue to report runtime snapshots. Concurrent active probes on the same service instance are rejected.
+
+Reports distinguish available, error, disabled, detecting, and unverified states, with timestamps and evidence sources. Passwords, API keys, sensitive headers, QR codes, command arguments, and credential-bearing URLs are excluded.
+
+The internal `globalconfig` module now owns system configuration. The user-facing `~/.agent/config.json` path, JSON schema, initial `version: 1`, `webui.password: "admin123"`, and empty `providers` remain unchanged. Existing files are never overwritten at initialization; encrypted Provider credentials and `.config.key` require no migration. Section updates are serialized within the process so Provider changes preserve WebUI settings.
 
 ## Quick start
 

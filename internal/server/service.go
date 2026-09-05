@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/doctor"
 	"bqagent/internal/extagent"
 	"bqagent/internal/logging"
 	appmemory "bqagent/internal/memory"
@@ -26,6 +27,7 @@ import (
 )
 
 type ServiceOptions struct {
+	Doctor                    *doctor.Engine
 	WorkspaceRoot             string
 	AgentDir                  string
 	Client                    agent.ChatCompletionClient
@@ -52,6 +54,7 @@ type ServiceOptions struct {
 }
 
 type Service struct {
+	doctor                    *doctor.Engine
 	store                     *session.Store
 	workspaceRoot             string
 	agentDir                  string
@@ -251,6 +254,7 @@ func NewService(options ServiceOptions) *Service {
 		maxTurns:                  maxTurns,
 		locker:                    NewKeyedLocker(),
 		externalBroker:            options.ExternalBroker,
+		doctor:                    options.Doctor,
 		groupExternalAgentTimeout: groupExternalAgentTimeout,
 		memoryAppend:              options.MemoryAppend,
 		context:                   options.Context,

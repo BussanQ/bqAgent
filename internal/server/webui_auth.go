@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"bqagent/internal/providerconfig"
+	"bqagent/internal/globalconfig"
 )
 
 const (
@@ -35,14 +35,14 @@ type webUIAuthResponse struct {
 	Authenticated bool `json:"authenticated"`
 }
 
-func loadWebUIAuth(store *providerconfig.Store) *webUIAuth {
+func loadWebUIAuth(store *globalconfig.Store) *webUIAuth {
 	password := ""
 	if store != nil {
-		config, err := store.Load()
+		config, err := store.LoadWebUI()
 		if err != nil {
 			log.Printf("load WebUI authentication config: %v", err)
-		} else if config.WebUI != nil {
-			password = config.WebUI.Password
+		} else if config != nil {
+			password = config.Password
 		}
 	}
 	return newWebUIAuth(password)
@@ -117,6 +117,9 @@ func (auth *webUIAuth) login(writer http.ResponseWriter, request *http.Request) 
 		writeError(writer, http.StatusBadRequest, chatResponse{Error: "invalid login request"})
 		return
 	}
+	// Password validation and session creation must be atomic with password changes.
+	auth.mu.Lock()
+	defer auth.mu.Unlock()
 	if auth.required {
 		provided := sha256.Sum256([]byte(payload.Password))
 		if subtle.ConstantTimeCompare(provided[:], auth.passwordHash[:]) != 1 {
@@ -131,10 +134,8 @@ func (auth *webUIAuth) login(writer http.ResponseWriter, request *http.Request) 
 	}
 	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
 	expires := auth.now().Add(webUIAuthSessionLife)
-	auth.mu.Lock()
 	auth.pruneLocked()
 	auth.sessions[token] = expires
-	auth.mu.Unlock()
 	http.SetCookie(writer, &http.Cookie{
 		Name: webUIAuthCookie, Value: token, Path: "/", Expires: expires,
 		MaxAge: int(webUIAuthSessionLife.Seconds()), HttpOnly: true,
@@ -161,6 +162,15 @@ func (auth *webUIAuth) logout(writer http.ResponseWriter, request *http.Request)
 }
 
 func (auth *webUIAuth) authenticated(request *http.Request) bool {
+	if auth == nil {
+		return true
+	}
+	auth.mu.Lock()
+	defer auth.mu.Unlock()
+	return auth.authenticatedLocked(request)
+}
+
+func (auth *webUIAuth) authenticatedLocked(request *http.Request) bool {
 	if auth == nil || !auth.required {
 		return true
 	}
@@ -168,8 +178,6 @@ func (auth *webUIAuth) authenticated(request *http.Request) bool {
 	if err != nil || cookie.Value == "" {
 		return false
 	}
-	auth.mu.Lock()
-	defer auth.mu.Unlock()
 	expires, ok := auth.sessions[cookie.Value]
 	if !ok || !expires.After(auth.now()) {
 		delete(auth.sessions, cookie.Value)

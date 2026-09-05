@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"bqagent/internal/tools"
 )
@@ -28,6 +29,26 @@ type Logf func(format string, args ...any)
 //
 // A nil httpClient lets each Client pick its own default; tests inject one.
 func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpClient *http.Client, logf Logf) ([]tools.Definition, map[string]tools.Function) {
+	return DiscoverWithStatus(ctx, cfg, getenv, httpClient, logf, nil)
+}
+
+func DiscoverWithStatus(ctx context.Context, cfg Config, getenv func(string) string, httpClient *http.Client, logf Logf, report func(ServerStatus)) ([]tools.Definition, map[string]tools.Function) {
+	return discover(ctx, cfg, getenv, httpClient, logf, report, 0)
+}
+
+// Probe uses independent clients and a per-server timeout. Its discovered tools
+// are intentionally not registered with a running agent.
+func Probe(ctx context.Context, cfg Config, getenv func(string) string, httpClient *http.Client, report func(ServerStatus)) {
+	discover(ctx, cfg, getenv, httpClient, nil, report, 5*time.Second)
+}
+
+func discover(ctx context.Context, cfg Config, getenv func(string) string, httpClient *http.Client, logf Logf, report func(ServerStatus), timeout time.Duration) ([]tools.Definition, map[string]tools.Function) {
+	if report == nil {
+		report = func(ServerStatus) {}
+	}
+	for _, status := range cfg.Status(getenv) {
+		report(status)
+	}
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
@@ -48,12 +69,20 @@ func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpC
 	for _, name := range serverNames {
 		server := enabled[name]
 		client := NewClient(httpClient, server.URL, server.Headers)
-		if err := client.Initialize(ctx); err != nil {
+		probeCtx, cancel := ctx, func() {}
+		if timeout > 0 {
+			probeCtx, cancel = context.WithTimeout(ctx, timeout)
+		}
+		if err := client.Initialize(probeCtx); err != nil {
+			cancel()
+			report(ServerStatus{Name: name, State: "error", Reason: "initialize_" + FailureReason(err), CheckedAt: time.Now().UTC()})
 			logf("[MCP] server %q: initialize failed: %v\n", name, err)
 			continue
 		}
-		specs, err := client.ListTools(ctx)
+		specs, err := client.ListTools(probeCtx)
+		cancel()
 		if err != nil {
+			report(ServerStatus{Name: name, State: "error", Reason: "tools_list_" + FailureReason(err), CheckedAt: time.Now().UTC()})
 			logf("[MCP] server %q: tools/list failed: %v\n", name, err)
 			continue
 		}
@@ -85,6 +114,12 @@ func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpC
 			added++
 		}
 		logf("[MCP] server %q: registered %d tool(s)\n", name, added)
+		status := ServerStatus{Name: name, State: "available", Tools: added, CheckedAt: time.Now().UTC()}
+		if added != len(specs) {
+			status.State = "error"
+			status.Reason = "tool_name_collision"
+		}
+		report(status)
 	}
 	return definitions, functions
 }
