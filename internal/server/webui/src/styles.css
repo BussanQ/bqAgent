@@ -1114,7 +1114,7 @@
     font: 650 15px/1.2 ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   }
   .conversation-sidebar {
-    position: relative; z-index: 2; order: 0; width: var(--conversation-width); min-width: var(--conversation-width); min-height: 0; flex: 0 0 var(--conversation-width); display: flex; flex-direction: column; padding: 14px 12px 64px; border-right: 1px solid var(--line); background: var(--sidebar-bg); backdrop-filter: blur(18px) saturate(120%);
+    position: relative; z-index: 2; order: 0; width: var(--conversation-width); min-width: var(--conversation-width); min-height: 0; flex: 0 0 var(--conversation-width); display: flex; flex-direction: column; padding: 4px 12px 64px; border-right: 1px solid var(--line); background: var(--sidebar-bg); backdrop-filter: blur(18px) saturate(120%);
   }
   .conversation-new-wrap { position: relative; }
   .conversation-new { width: 100%; min-height: 40px; display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 0 12px; border-radius: var(--radius-sm); color: var(--text); border-color: var(--line); background: var(--surface-subtle); box-shadow: none; font-size: var(--font-ui); font-weight: 650; }
@@ -1865,11 +1865,33 @@
     body > header > .brand {
       flex: 0 0 var(--conversation-width);
       padding: 11px clamp(16px, 2.4vw, 24px);
+      border-bottom: 0;
+    }
+    body > header > .brand,
+    .app-layout > .conversation-sidebar {
+      border-right: 1px solid var(--line);
     }
     body > header > .actions {
-      min-width: var(--workspace-width);
+      flex: 0 0 var(--workspace-width);
+      width: var(--workspace-width);
+      min-width: 0;
       justify-content: flex-end;
-      padding: 11px clamp(16px, 2.4vw, 24px) 11px 0;
+      border-left: 1px solid var(--line);
+      padding: 11px 10px;
+      gap: 8px;
+    }
+    body > header > .actions > :is(.icon-button, .account-controls) { flex: 0 0 auto; }
+    body > header > .actions > .status {
+      display: block;
+      min-width: 0;
+      flex: 0 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    body > header > .actions > .status::before {
+      display: inline-block;
+      margin-right: 7px;
+      vertical-align: middle;
     }
     .app-layout > .conversation-sidebar,
     .app-layout > .workspace-sidebar { margin-top: var(--shell-header-height, 62px); }

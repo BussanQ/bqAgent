@@ -1,9 +1,63 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversationTopInset, initConversationLayout } from "./conversation-layout";
+import { readFileSync } from "node:fs";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.style.cssText = ""; });
 
 describe("conversation header space", () => {
+  it.each([240, 266.24, 336])("aligns header dividers with both sidebars at workspace width %s", workspaceWidth => {
+    document.body.innerHTML = '<header><div class="brand">bqagent</div><div class="actions"><button class="icon-button"></button><div class="status">已恢复历史会话，这是一条很长的状态信息</div><button class="icon-button"></button><button class="icon-button"></button><div class="account-controls"><button class="icon-button"></button></div></div></header><div class="app-layout"><aside class="conversation-sidebar"></aside><aside class="workspace-sidebar"></aside></div>';
+    const source = document.createElement("style");
+    const desktop = document.createElement("style");
+    try {
+      source.textContent = readFileSync("src/styles.css", "utf8")
+        .replaceAll("var(--workspace-width)", `${workspaceWidth}px`);
+      document.head.append(source);
+      // jsdom does not evaluate viewport media queries; activate the desktop rules.
+      const rule = Array.from(source.sheet!.cssRules).find(rule =>
+        rule.type === CSSRule.MEDIA_RULE && (rule as CSSMediaRule).conditionText === "(min-width: 901px)",
+      ) as CSSMediaRule;
+      const palette = getComputedStyle(document.documentElement);
+      // Resolve border colors because jsdom cannot expand var() inside border shorthands.
+      const resolveBorders = (css: string) => css.replace(/var\((--(?:signal-rgb|line))\)/g, (_match, name: string) => palette.getPropertyValue(name));
+      desktop.textContent = resolveBorders(Array.from(rule.cssRules).map(rule => rule.cssText).join("\n"));
+      source.textContent = resolveBorders(source.textContent);
+      document.head.append(desktop);
+      const brand = getComputedStyle(document.querySelector(".brand")!);
+      expect(brand.borderRightWidth).toBe("1px");
+      expect(brand.borderRightStyle).toBe("solid");
+      const sidebar = getComputedStyle(document.querySelector(".conversation-sidebar")!);
+      expect(sidebar.paddingTop).toBe("4px");
+      expect(sidebar.paddingLeft).toBe("12px");
+      expect(sidebar.paddingBottom).toBe("64px");
+      expect(sidebar.borderRightWidth).toBe(brand.borderRightWidth);
+      expect(sidebar.borderRightStyle).toBe(brand.borderRightStyle);
+      expect(sidebar.borderRightColor).toBe(brand.borderRightColor);
+      expect(brand.borderRightColor).toBe(getComputedStyle(document.querySelector(".actions")!).borderBottomColor);
+      expect(parseFloat(brand.borderBottomWidth) || 0).toBe(0);
+      const actions = getComputedStyle(document.querySelector(".actions")!);
+      const workspace = getComputedStyle(document.querySelector(".workspace-sidebar")!);
+      expect(actions.borderBottomWidth).toBe("1px");
+      expect(actions.width).toBe(`${workspaceWidth}px`);
+      expect(actions.width).toBe(workspace.width);
+      expect(actions.flexBasis).toBe(workspace.flexBasis);
+      expect(actions.flexGrow).toBe("0");
+      expect(actions.flexShrink).toBe("0");
+      expect(actions.minWidth).toBe("0px");
+      expect(actions.borderLeftWidth).toBe(workspace.borderLeftWidth);
+      expect(actions.borderLeftColor).toBe(workspace.borderLeftColor);
+      const status = getComputedStyle(document.querySelector(".status")!);
+      expect(status.minWidth).toBe("0px");
+      expect(status.overflow).toBe("hidden");
+      expect(status.textOverflow).toBe("ellipsis");
+      for (const button of document.querySelectorAll(".actions > .icon-button, .actions > .account-controls")) {
+        expect(getComputedStyle(button).flexShrink).toBe("0");
+      }
+    } finally {
+      source.remove(); desktop.remove();
+    }
+  });
+
   it("reclaims the desktop center while leaving the two occupied header areas alone", () => {
     expect(conversationTopInset(1920, 62, 280, 1584, 280, 1584)).toBe(0);
     expect(conversationTopInset(1280, 62, 230, 1014, 230, 1014)).toBe(0);
