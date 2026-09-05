@@ -276,28 +276,6 @@ export interface ConversationsResponse {
   error?: string;
 }
 
-export interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  baseVx: number;
-  baseVy: number;
-  radius: number;
-}
-
-export interface ParticleTrailPoint {
-  x: number;
-  y: number;
-  createdAt: number;
-}
-
-export interface ParticlePulse {
-  x: number;
-  y: number;
-  createdAt: number;
-}
-
 export interface SSEEvent {
   event: string;
   data: string;

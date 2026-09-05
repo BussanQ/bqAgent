@@ -32,10 +32,11 @@
     --code-bg: #07111b;
     --quote-bg: rgba(76, 154, 232, .07);
     --table-head: rgba(76, 154, 232, .09);
-    --particle-dot: #b8d9f2;
-    --particle-link: 76, 154, 232;
-    --particle-static: rgba(76, 154, 232, .15);
-    --particle-strength: .72;
+    --galaxy-light: 0;
+    --cosmos-base: #030713;
+    --cosmos-end: #0b1227;
+    --galaxy-read-rgb: 5, 10, 22;
+    --nebula-rgb: 102, 100, 185;
     --surface-subtle: rgba(153, 184, 211, .04);
     --surface-hover: rgba(76, 154, 232, .08);
     --surface-active: rgba(76, 154, 232, .13);
@@ -50,13 +51,10 @@
     --select-active: #183a59;
     --text-glow: none;
     --vignette-rgb: 3, 8, 12;
-    --grid-fade: 68%;
     --ambient-primary: .08;
     --ambient-secondary: .045;
     --ambient-tertiary: .025;
     --ambient-vignette: .42;
-    --grid-opacity: .025;
-    --scan-opacity: .008;
     --radius: 14px;
     --radius-sm: 10px;
     --radius-pill: 999px;
@@ -102,10 +100,11 @@
       --code-bg: #f3f6f9;
       --quote-bg: rgba(37, 99, 166, .07);
       --table-head: rgba(37, 99, 166, .08);
-      --particle-dot: rgba(45, 80, 113, .42);
-      --particle-link: 37, 99, 166;
-      --particle-static: rgba(45, 80, 113, .20);
-      --particle-strength: 1.25;
+      --galaxy-light: 1;
+      --cosmos-base: #edf2f8;
+      --cosmos-end: #e1e9f4;
+      --galaxy-read-rgb: 242, 246, 251;
+      --nebula-rgb: 109, 139, 175;
       --surface-subtle: rgba(37, 99, 166, .035);
       --surface-hover: rgba(37, 99, 166, .07);
       --surface-active: rgba(37, 99, 166, .11);
@@ -120,13 +119,10 @@
       --select-active: #d9e7f4;
       --text-glow: none;
       --vignette-rgb: 49, 70, 91;
-      --grid-fade: 54%;
       --ambient-primary: .065;
       --ambient-secondary: .04;
       --ambient-tertiary: .025;
       --ambient-vignette: .06;
-      --grid-opacity: .025;
-      --scan-opacity: .006;
     }
   }
 
@@ -162,10 +158,11 @@
     --code-bg: #f3f6f9;
     --quote-bg: rgba(37, 99, 166, .07);
     --table-head: rgba(37, 99, 166, .08);
-    --particle-dot: rgba(45, 80, 113, .42);
-    --particle-link: 37, 99, 166;
-    --particle-static: rgba(45, 80, 113, .20);
-    --particle-strength: 1.25;
+    --galaxy-light: 1;
+    --cosmos-base: #edf2f8;
+    --cosmos-end: #e1e9f4;
+    --galaxy-read-rgb: 242, 246, 251;
+    --nebula-rgb: 109, 139, 175;
     --surface-subtle: rgba(37, 99, 166, .035);
     --surface-hover: rgba(37, 99, 166, .07);
     --surface-active: rgba(37, 99, 166, .11);
@@ -180,13 +177,10 @@
     --select-active: #d9e7f4;
     --text-glow: none;
     --vignette-rgb: 49, 70, 91;
-    --grid-fade: 54%;
     --ambient-primary: .065;
     --ambient-secondary: .04;
     --ambient-tertiary: .025;
     --ambient-vignette: .06;
-    --grid-opacity: .025;
-    --scan-opacity: .006;
   }
 
   * { box-sizing: border-box; }
@@ -194,40 +188,18 @@
   body {
     min-width: 320px;
     background:
-      radial-gradient(circle at 46% -18%, rgba(var(--signal-rgb), var(--ambient-primary)), transparent 40%),
+      radial-gradient(ellipse at 72% 24%, rgba(var(--nebula-rgb), var(--ambient-primary)), transparent 52%),
+      radial-gradient(ellipse at 28% 66%, rgba(var(--signal-rgb), var(--ambient-primary)), transparent 56%),
       radial-gradient(circle at 92% 12%, rgba(var(--stream-rgb), var(--ambient-secondary)), transparent 30%),
       radial-gradient(ellipse at 12% 72%, rgba(var(--signal-rgb), var(--ambient-tertiary)), transparent 48%),
       radial-gradient(circle at 50% 50%, transparent 55%, rgba(var(--vignette-rgb), var(--ambient-vignette)) 100%),
-      linear-gradient(145deg, var(--bg), var(--bg-soft) 58%, var(--bg));
+      linear-gradient(145deg, var(--cosmos-base), var(--cosmos-end) 58%, var(--cosmos-base));
     color: var(--text);
     font: var(--font-body) "Segoe UI Variable Text", Aptos, ui-sans-serif, system-ui, -apple-system,
       BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-  }
-
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background-image:
-      linear-gradient(rgba(var(--signal-rgb), var(--grid-opacity)) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(var(--signal-rgb), var(--grid-opacity)) 1px, transparent 1px);
-    background-size: 40px 40px;
-    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, .55), transparent var(--grid-fade));
-  }
-
-  body::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background:
-      linear-gradient(rgba(var(--signal-rgb), var(--scan-opacity)) 50%, transparent 50%);
-    background-size: 100% 4px;
-    opacity: .55;
   }
 
   #particle-field {
@@ -238,21 +210,6 @@
     height: 100%;
     display: block;
     pointer-events: none;
-  }
-
-  .scanline {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 9999;
-    background: linear-gradient(to bottom, transparent, rgba(var(--signal-rgb),.03), transparent);
-    background-size: 100% 6px;
-    opacity: .14;
-    animation: scanline 14s linear infinite;
-  }
-  @keyframes scanline {
-    0% { transform: translateY(-100%); }
-    100% { transform: translateY(100%); }
   }
 
   ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -1192,7 +1149,8 @@
     flex: 1 1 auto;
     overflow-y: auto;
     scroll-behavior: smooth;
-    background: linear-gradient(180deg, transparent, rgba(var(--signal-rgb), .012));
+    /* This reading veil stays fixed while the universe moves behind it. */
+    background: radial-gradient(ellipse at 46% 62%, rgba(var(--galaxy-read-rgb), .78) 0%, rgba(var(--galaxy-read-rgb), .60) 32%, rgba(var(--galaxy-read-rgb), .08) 72%, transparent 100%);
     scrollbar-width: thin;
     scrollbar-color: rgba(var(--signal-rgb), .26) transparent;
   }
@@ -1883,6 +1841,41 @@
   .send.stop .send-icon { display: none; }
   .send.stop .stop-icon { display: block; }
 
+  /* The desktop conversation reaches the top between the two header islands. */
+  @media (min-width: 901px) {
+    body > header {
+      position: absolute;
+      inset: 0 0 auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      backdrop-filter: none;
+      pointer-events: none;
+    }
+    body > header > .brand,
+    body > header > .actions {
+      align-self: stretch;
+      min-height: 62px;
+      border-bottom: 1px solid var(--line);
+      background: var(--header-bg);
+      backdrop-filter: blur(18px) saturate(125%);
+      pointer-events: auto;
+    }
+    body > header > .brand {
+      flex: 0 0 var(--conversation-width);
+      padding: 11px clamp(16px, 2.4vw, 24px);
+    }
+    body > header > .actions {
+      min-width: var(--workspace-width);
+      justify-content: flex-end;
+      padding: 11px clamp(16px, 2.4vw, 24px) 11px 0;
+    }
+    .app-layout > .conversation-sidebar,
+    .app-layout > .workspace-sidebar { margin-top: var(--shell-header-height, 62px); }
+    .conversation-column { padding-top: var(--conversation-top-inset, 62px); }
+  }
+
   @media (max-width: 900px) {
     .conversation-sidebar { display: none; }
     .global-settings { width: auto; padding: 8px 14px; border-radius: var(--radius-pill); border-color: var(--line); color: var(--text); background: var(--panel-strong); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
@@ -1943,11 +1936,6 @@
     #model-select::part(display-input) { width: 100%; max-width: none; field-sizing: fixed; font-size: 12px; }
     .composer-meta { min-height: 32px; margin-top: 6px; }
     .composer-hints { display: none; }
-    #particle-field { display: none; }
-  }
-
-  @media (hover: none), (pointer: coarse) {
-    #particle-field { display: none; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1969,8 +1957,7 @@
   body.auth-login > header,
   body.auth-login > .app-layout,
   body.auth-pending > #particle-field,
-  body.auth-login > #particle-field,
-  body.auth-pending > .scanline { display: none; }
+  body.auth-login > #particle-field { display: none; }
 
   body.auth-pending::before {
     content: "";
@@ -2092,4 +2079,70 @@
     .login-panel-wrap { padding: 16px; }
     .login-panel { padding: 27px 22px; border-radius: 20px; }
     .login-heading h1 { font-size: 25px; }
+  }
+
+  /* Only the exact blank surfaces advertise dragging; content keeps native cursors. */
+  .galaxy-interactive :is(#main, #thread, .empty, .prompts, .msg) { cursor: grab; }
+  .galaxy-interactive :is(#main, #thread, .empty, .prompts, .msg) > * { cursor: auto; }
+  .galaxy-interactive :is(#main, #thread, .empty, .prompts, .msg) > :is(button, a) { cursor: pointer; }
+  .galaxy-interactive #main :is(#thread, .empty, .prompts, .msg) { cursor: grab; }
+  body.galaxy-dragging, body.galaxy-dragging * { cursor: grabbing !important; user-select: none !important; }
+  .galaxy-hint { display: none; margin-top: 24px !important; color: var(--text-muted); font-size: 11px !important; letter-spacing: .06em; }
+  .galaxy-enabled .galaxy-hint { display: block; }
+  .galaxy-explored .galaxy-hint { visibility: hidden; }
+
+  /* Click feedback overlays the UI without receiving pointer events or moving content. */
+  .galaxy-click-layer, .galaxy-trail-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    pointer-events: none;
+    overflow: hidden;
+    contain: strict;
+  }
+  .galaxy-click-pulse { position: absolute; width: 0; height: 0; pointer-events: none; }
+  .galaxy-click-pulse::before,
+  .galaxy-click-pulse::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  .galaxy-click-pulse::before {
+    border: 1px solid rgba(var(--stream-rgb), .8);
+    box-shadow: 0 0 12px rgba(var(--signal-rgb), .16);
+    animation: galaxyClickRing .52s cubic-bezier(.16, .8, .2, 1) both;
+  }
+  .galaxy-click-pulse::after {
+    background: var(--stream);
+    box-shadow: 0 0 14px rgba(var(--stream-rgb), .65);
+    animation: galaxyClickFlash .12s ease-out both;
+  }
+  @keyframes galaxyClickRing {
+    from { width: 12px; height: 12px; opacity: .7; }
+    to { width: 204px; height: 204px; opacity: 0; }
+  }
+  @keyframes galaxyClickFlash {
+    from { width: 6px; height: 6px; opacity: .8; }
+    to { width: 12px; height: 12px; opacity: 0; }
+  }
+  .galaxy-trail-segment {
+    position: absolute;
+    height: 1.5px;
+    border-radius: 2px;
+    transform-origin: 0 50%;
+    pointer-events: none;
+    background: linear-gradient(90deg, rgba(var(--signal-rgb), .25), rgba(var(--stream-rgb), .8));
+    box-shadow: 0 0 6px rgba(var(--stream-rgb), .35);
+    animation: galaxyPointerTrail .36s ease-out both;
+  }
+  @keyframes galaxyPointerTrail {
+    from { opacity: .65; }
+    to { opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .galaxy-click-layer, .galaxy-trail-layer { display: none; }
   }

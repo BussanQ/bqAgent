@@ -1,6 +1,7 @@
 import "@awesome.me/webawesome/dist/styles/themes/default.css";
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "./styles.css";
+import { initConversationLayout } from "./conversation-layout";
 import { errorMessage, parseJSONEvent } from "./api";
 import { acpPermissionTitle, formatACPPermissionInput, isRejectPermissionOption } from "./acp-permission";
 import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
@@ -1074,6 +1075,7 @@ import { createDoctorController } from "./doctor-controller";
       '<div class="empty-mark" aria-hidden="true">' + iconMarkup("bot") + '</div>' +
       '<div class="big"><span class="prompt-prefix">&gt;</span>今天想探索什么？</div>' +
       '<p>bqagent 已就绪，可以帮你拆解问题、写代码、查资料或整理复杂思路。</p>' +
+      '<p class="galaxy-hint">拖动探索四大星区 · 边界循环相连 · 双击归位</p>' +
       '<div class="prompts" aria-label="快捷提示">' +
       '<button class="prompt" type="button">' + iconMarkup("folder-tree") + '<strong>理解项目</strong><span>帮我梳理这个项目的结构</span></button>' +
       '<button class="prompt" type="button">' + iconMarkup("list-todo") + '<strong>制定计划</strong><span>把这个想法拆成执行步骤</span></button>' +
@@ -1786,5 +1788,7 @@ import { createDoctorController } from "./doctor-controller";
   setReasoningEffort(localStorage.getItem(REASONING_EFFORT_KEY), false);
   setTheme(initialTheme(localStorage.getItem(THEME_KEY),
     Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)));
+  const disposeConversationLayout = initConversationLayout();
+  window.addEventListener("beforeunload", disposeConversationLayout, { once: true });
   void auth.initialize();
 })();
