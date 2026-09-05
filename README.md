@@ -2,7 +2,7 @@
 
 [中文](./README_CN.md) | English
 
-![bqagent WebUI](./docs/images/webui-overview.png)
+![bqagent WebUI](./docs/images/webui-overview.webp)
 
 > *"The question is not what you look at, but what you see."* — Henry David Thoreau
 

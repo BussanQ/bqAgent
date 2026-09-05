@@ -2,7 +2,7 @@
 
 [English](./README.md) | 中文
 
-![bqagent WebUI 界面](./docs/images/webui-overview.png)
+![bqagent WebUI 界面](./docs/images/webui-overview.webp)
 
 > *"问题不在于你看到了什么，而在于你看见了什么。"* — 梭罗
 
