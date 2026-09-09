@@ -5,7 +5,7 @@ import { initConversationLayout } from "./conversation-layout";
 import { errorMessage, parseJSONEvent } from "./api";
 import { acpPermissionTitle, formatACPPermissionInput, isRejectPermissionOption } from "./acp-permission";
 import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
-import { complexTaskNotice, formatGenerationSpeed, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
+import { complexTaskNotice, formatFirstTokenLatency, formatGenerationSpeed, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 import { formatConversationTime } from "./conversations";
 import { addableGroupParticipants, canRemoveGroupParticipant, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldCloseCoordinatorSegment, shouldRenderFinalReply, type MentionQuery } from "./group-chat";
@@ -1194,11 +1194,11 @@ import { createDoctorController } from "./doctor-controller";
     if (previous) previous.remove();
     if (!generation) return;
 
-    var firstTokenLatency = Number(generation.first_token_latency_ms);
+    var firstTokenLatency = formatFirstTokenLatency(generation.first_token_latency_ms);
     var generationSpeed = formatGenerationSpeed(generation.tokens_per_second);
     var parts: string[] = [];
-    if (isFinite(firstTokenLatency) && firstTokenLatency > 0) {
-      parts.push("首字 " + Math.round(firstTokenLatency) + " ms");
+    if (firstTokenLatency) {
+      parts.push(firstTokenLatency);
     }
     var promptTokens = Number(generation.prompt_tokens);
     var cachedPromptTokens = Number(generation.cached_prompt_tokens || 0);

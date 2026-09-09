@@ -10,6 +10,13 @@ export interface HistoryAssistantView {
   tools: ToolEventPayload[];
 }
 
+export function formatFirstTokenLatency(value: number | undefined): string {
+  const milliseconds = Number(value);
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return "";
+  if (milliseconds > 1000) return "首字 " + Number((milliseconds / 1000).toFixed(2)) + " s";
+  return "首字 " + Math.round(milliseconds) + " ms";
+}
+
 export function formatGenerationSpeed(value: number | undefined): string {
   const tokensPerSecond = Number(value);
   // 上游缓冲后集中发送可能放大观测速率；1000 是展示过滤阈值。

@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { formatGenerationSpeed, groupHistoryMessages, historyAssistantView, normalizeHistoryMessages, parseCompletedToolActivity } from "./chat-rendering";
+import { formatFirstTokenLatency, formatGenerationSpeed, groupHistoryMessages, historyAssistantView, normalizeHistoryMessages, parseCompletedToolActivity } from "./chat-rendering";
+
+describe("首字延迟展示", () => {
+  it.each([
+    [250, "首字 250 ms"],
+    [250.6, "首字 251 ms"],
+    [999, "首字 999 ms"],
+    [1000, "首字 1000 ms"],
+    [1001, "首字 1 s"],
+    [1250, "首字 1.25 s"],
+    [1500, "首字 1.5 s"],
+    [2000, "首字 2 s"],
+    [12346, "首字 12.35 s"],
+  ])("按阈值展示延迟 %s", (value, expected) => {
+    expect(formatFirstTokenLatency(value)).toBe(expected);
+  });
+
+  it.each([undefined, 0, -1, NaN, Infinity, -Infinity])("隐藏无效延迟 %s", (value) => {
+    expect(formatFirstTokenLatency(value)).toBe("");
+  });
+});
 
 describe("生成速率展示", () => {
   it.each([
