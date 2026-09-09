@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -350,6 +351,53 @@ func TestCompletedStatusShowsCacheHitRate(t *testing.T) {
 	status := model.renderStatus(model.contentWidth())
 	if !strings.Contains(status, "缓存命中 25%") || strings.Contains(status, "缓存命中 75%") {
 		t.Fatalf("status = %q", status)
+	}
+}
+
+func TestCompletedStatusFiltersGenerationSpeed(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		speed float64
+		want  string
+	}{
+		{name: "integer", speed: 42, want: "42.0 tok/s"},
+		{name: "fraction", speed: 42.36, want: "42.4 tok/s"},
+		{name: "below_limit", speed: 999.9, want: "999.9 tok/s"},
+		{name: "at_limit", speed: 1000, want: "1000.0 tok/s"},
+		{name: "just_above_limit", speed: 1000.01},
+		{name: "above_limit", speed: 1001},
+		{name: "large", speed: 1000000},
+		{name: "max_float", speed: math.MaxFloat64},
+		{name: "zero", speed: 0},
+		{name: "negative", speed: -1},
+		{name: "nan", speed: math.NaN()},
+		{name: "positive_infinity", speed: math.Inf(1)},
+		{name: "negative_infinity", speed: math.Inf(-1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+			model.metrics = &GenerationMetrics{
+				FirstTokenLatencyMS: 250,
+				CompletionTokens:    20,
+				PromptTokens:        100,
+				CachedPromptTokens:  75,
+				CacheUsageAvailable: true,
+				TokensPerSecond:     test.speed,
+			}
+			status := model.renderStatus(200)
+			if test.want == "" {
+				if strings.Contains(status, "tok/s") {
+					t.Fatalf("status shows invalid speed: %q", status)
+				}
+			} else if !strings.Contains(status, test.want) {
+				t.Fatalf("status = %q, want speed %q", status, test.want)
+			}
+			for _, want := range []string{"首字 0.25s", "20 tok", "缓存命中 75%"} {
+				if !strings.Contains(status, want) {
+					t.Fatalf("status = %q, want metric %q", status, want)
+				}
+			}
+		})
 	}
 }
 

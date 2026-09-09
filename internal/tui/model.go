@@ -783,7 +783,10 @@ func (model Model) renderStatus(width int) string {
 			rate = min(100, max(0, rate))
 			parts = append(parts, fmt.Sprintf("缓存命中 %.0f%%", rate))
 		}
-		parts = append(parts, fmt.Sprintf("%.1f tok/s", model.metrics.TokensPerSecond))
+		// 上游缓冲后集中发送可能放大观测速率；与 WebUI 一致，过滤超过 1000 的值。
+		if speed := model.metrics.TokensPerSecond; speed > 0 && speed <= 1000 {
+			parts = append(parts, fmt.Sprintf("%.1f tok/s", speed))
+		}
 		right = strings.Join(parts, " · ")
 	}
 	if right == "" {
