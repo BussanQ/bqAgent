@@ -10,6 +10,13 @@ export interface HistoryAssistantView {
   tools: ToolEventPayload[];
 }
 
+export function formatGenerationSpeed(value: number | undefined): string {
+  const tokensPerSecond = Number(value);
+  // 上游缓冲后集中发送可能放大观测速率；1000 是展示过滤阈值。
+  if (!Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0 || tokensPerSecond > 1000) return "";
+  return "约 " + tokensPerSecond.toFixed(1).replace(/\.0$/, "") + " token/s";
+}
+
 export function complexTaskNotice(text: string): string {
   const match = String(text || "").match(/^Agent stopped: reached maximum of (\d+) iterations without completing\.$/);
   if (!match) return "";

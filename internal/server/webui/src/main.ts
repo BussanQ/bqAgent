@@ -5,7 +5,7 @@ import { initConversationLayout } from "./conversation-layout";
 import { errorMessage, parseJSONEvent } from "./api";
 import { acpPermissionTitle, formatACPPermissionInput, isRejectPermissionOption } from "./acp-permission";
 import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
-import { complexTaskNotice, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
+import { complexTaskNotice, formatGenerationSpeed, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 import { formatConversationTime } from "./conversations";
 import { addableGroupParticipants, canRemoveGroupParticipant, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldCloseCoordinatorSegment, shouldRenderFinalReply, type MentionQuery } from "./group-chat";
@@ -1195,7 +1195,7 @@ import { createDoctorController } from "./doctor-controller";
     if (!generation) return;
 
     var firstTokenLatency = Number(generation.first_token_latency_ms);
-    var tokensPerSecond = Number(generation.tokens_per_second);
+    var generationSpeed = formatGenerationSpeed(generation.tokens_per_second);
     var parts: string[] = [];
     if (isFinite(firstTokenLatency) && firstTokenLatency > 0) {
       parts.push("首字 " + Math.round(firstTokenLatency) + " ms");
@@ -1210,8 +1210,8 @@ import { createDoctorController } from "./doctor-controller";
       var cacheHitRate = Math.max(0, Math.min(100, cachedPromptTokens * 100 / promptTokens));
       parts.push("缓存命中 " + Math.round(cacheHitRate) + "%");
     }
-    if (isFinite(tokensPerSecond) && tokensPerSecond > 0) {
-      parts.push("约 " + tokensPerSecond.toFixed(1).replace(/\.0$/, "") + " token/s");
+    if (generationSpeed) {
+      parts.push(generationSpeed);
     }
     if (!parts.length) return;
 

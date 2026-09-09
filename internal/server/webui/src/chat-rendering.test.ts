@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { groupHistoryMessages, historyAssistantView, normalizeHistoryMessages, parseCompletedToolActivity } from "./chat-rendering";
+import { formatGenerationSpeed, groupHistoryMessages, historyAssistantView, normalizeHistoryMessages, parseCompletedToolActivity } from "./chat-rendering";
+
+describe("生成速率展示", () => {
+  it.each([
+    [42, "约 42 token/s"],
+    [42.36, "约 42.4 token/s"],
+    [999.9, "约 999.9 token/s"],
+    [1000, "约 1000 token/s"],
+  ])("正常展示有效速率 %s", (value, expected) => {
+    expect(formatGenerationSpeed(value)).toBe(expected);
+  });
+
+  it.each([1000.01, 1001, 1000000, Number.MAX_VALUE])("隐藏超过阈值的速率 %s", (value) => {
+    expect(formatGenerationSpeed(value)).toBe("");
+  });
+
+  it.each([undefined, 0, -1, NaN, Infinity, -Infinity])("隐藏无效速率 %s", (value) => {
+    expect(formatGenerationSpeed(value)).toBe("");
+  });
+});
 
 const folded = [
   "Completed tool activity (retain this evidence for later reasoning):",
