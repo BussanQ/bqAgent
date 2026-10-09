@@ -17,3 +17,5 @@ bqagent
 .DS_Store
 internal/server/webui/node_modules/
 internal/server/webui/dist/
+outputs
+.workbuddy
