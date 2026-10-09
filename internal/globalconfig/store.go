@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"bqagent/internal/modelcatalog"
 )
 
 const currentVersion = 1
@@ -25,13 +27,14 @@ type Secret struct {
 }
 
 type Provider struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	APIType      string   `json:"api_type"`
-	BaseURL      string   `json:"base_url,omitempty"`
-	Models       []string `json:"models"`
-	DefaultModel string   `json:"default_model"`
-	APIKey       Secret   `json:"api_key"`
+	ID                string             `json:"id"`
+	Name              string             `json:"name"`
+	APIType           string             `json:"api_type"`
+	BaseURL           string             `json:"base_url,omitempty"`
+	Models            []string           `json:"models"`
+	ModelDisplayNames modelcatalog.Names `json:"model_display_names,omitempty"`
+	DefaultModel      string             `json:"default_model"`
+	APIKey            Secret             `json:"api_key"`
 }
 
 type WebUI struct {

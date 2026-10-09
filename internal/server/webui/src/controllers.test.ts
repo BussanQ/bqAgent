@@ -41,3 +41,46 @@ describe("extracted controllers",()=>{
     expect(container.querySelector("script")).toBeNull();expect(container.textContent).toContain("未启用");expect(container.textContent).toContain("服务就绪");
   });
 });
+
+it("renders provider display names and saves and selects model IDs", async () => {
+  let settings = { active_provider: "p", providers: [{ id: "p", name: "Provider", api_type: "openai", base_url: "", models: ["model-id", "legacy"], default_model: "model-id", model_display_names: { "model-id": "Friendly Model" } }] };
+  let selection: unknown;
+  let saved: typeof settings | undefined;
+  const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/provider-models")) return new Response(JSON.stringify({ models: [{ id: "model-id", display_name: "Updated Name" }, { id: "new-id", display_name: "New Model" }] }));
+    if (url.endsWith("/provider-selection")) {
+      selection = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ api_type: "openai", provider_id: "p", model: "model-id", model_display_name: "Friendly Model" }));
+    }
+    if (url.endsWith("/providers")) {
+      if (init?.method === "PUT") { saved = JSON.parse(String(init.body)); settings = saved!; }
+      return new Response(JSON.stringify(settings));
+    }
+    return new Response(JSON.stringify({ llm: { api_type: "openai", provider_id: "p", model: "model-id", mode: "run" } }));
+  });
+  const controller = createProviderController(new APIClient(transport), { statusEl: document.getElementById("status") as HTMLDivElement, sessionId: "s", busy: false, workspaceScopedURL: url => url, setChatMode: () => {} });
+  await controller.loadRuntimeModel();
+  expect(controller.runtimeModelOptions().map(option => option.textContent)).toEqual(["Friendly Model", "legacy"]);
+  const option = controller.runtimeModelOptions()[0];
+  expect(option.dataset.model).toBe("model-id");
+  expect(controller.modelSelect.title).toBe("p / Friendly Model");
+  Object.assign(controller.modelSelect, { selectedOptions: [option] });
+  controller.modelSelect.dispatchEvent(new Event("change"));
+  await controller.runtimeModelSelectionPromise;
+  expect(selection).toEqual({ provider_id: "p", model: "model-id", session_id: "s" });
+  controller.providerSettingsTrigger.click();
+  await vi.waitFor(() => expect(document.querySelector(".provider-model-row")?.textContent).toBe("Friendly Model"));
+  document.getElementById("provider-fetch-models")!.click();
+  await vi.waitFor(() => expect(document.querySelectorAll(".provider-model-row")).toHaveLength(3));
+  expect(Array.from(document.querySelectorAll(".provider-model-row")).map(row => row.textContent)).toEqual(["Updated Name", "legacy", "New Model"]);
+  const defaults = document.getElementById("provider-default-model") as HTMLSelectElement;
+  expect(defaults.options[0].text).toBe("Updated Name");
+  expect(defaults.value).toBe("model-id");
+  document.getElementById("provider-settings-save")!.click();
+  await vi.waitFor(() => expect(saved).toBeDefined());
+  expect(saved!.providers[0].models).toEqual(["model-id", "legacy", "new-id"]);
+  expect(saved!.providers[0].model_display_names).toEqual({ "model-id": "Updated Name", "new-id": "New Model" });
+  await vi.waitFor(() => expect(controller.runtimeModelOptions()[0].textContent).toBe("Updated Name"));
+  controller.dispose();
+});

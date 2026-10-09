@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"io"
+
+	"bqagent/internal/modelcatalog"
 )
 
 const ResumeHistoryBudget = 200 << 10
@@ -15,7 +17,7 @@ type Backend interface {
 	History(string, int) (History, error)
 	Commands() []Command
 	ProviderSettings(context.Context) (ProviderSettings, error)
-	DiscoverProviderModels(context.Context, ProviderInput) ([]string, error)
+	DiscoverProviderModels(context.Context, ProviderInput) ([]modelcatalog.Model, error)
 	SaveProvider(context.Context, string, ProviderInput) (RuntimeInfo, error)
 }
 
@@ -38,12 +40,13 @@ type ToolEvent struct {
 }
 
 type TurnResult struct {
-	SessionID string
-	Reply     string
-	Model     string
-	Mode      string
-	Streamed  bool
-	Metrics   *GenerationMetrics
+	SessionID        string
+	Reply            string
+	Model            string
+	ModelDisplayName string
+	Mode             string
+	Streamed         bool
+	Metrics          *GenerationMetrics
 }
 
 type GenerationMetrics struct {
@@ -69,10 +72,11 @@ type CacheMetrics struct {
 }
 
 type RuntimeInfo struct {
-	Provider string
-	APIType  string
-	Model    string
-	Mode     string
+	Provider         string
+	APIType          string
+	Model            string
+	ModelDisplayName string
+	Mode             string
 }
 
 type ProviderSettings struct {
@@ -81,25 +85,27 @@ type ProviderSettings struct {
 }
 
 type Provider struct {
-	ID               string
-	Name             string
-	APIType          string
-	BaseURL          string
-	Models           []string
-	DefaultModel     string
-	APIKeyConfigured bool
+	ID                string
+	Name              string
+	APIType           string
+	BaseURL           string
+	Models            []string
+	ModelDisplayNames modelcatalog.Names
+	DefaultModel      string
+	APIKeyConfigured  bool
 }
 
 type ProviderInput struct {
-	OriginalID       string
-	ID               string
-	Name             string
-	APIType          string
-	BaseURL          string
-	APIKey           string
-	Models           []string
-	DefaultModel     string
-	APIKeyConfigured bool
+	OriginalID        string
+	ID                string
+	Name              string
+	APIType           string
+	BaseURL           string
+	APIKey            string
+	Models            []string
+	ModelDisplayNames modelcatalog.Names
+	DefaultModel      string
+	APIKeyConfigured  bool
 }
 
 type History struct {
@@ -122,6 +128,7 @@ type Command struct {
 }
 
 type CommandArgument struct {
+	Label       string
 	Value       string
 	Description string
 }

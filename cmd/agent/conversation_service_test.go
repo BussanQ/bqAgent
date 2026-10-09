@@ -16,12 +16,12 @@ func TestRuntimeConfigFromSourcesPrefersSavedProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Save(globalconfig.Config{ActiveProvider: "saved", Providers: []globalconfig.Provider{{ID: "saved", Name: "Saved", APIType: "anthropic", BaseURL: "https://saved.example/v1", Models: []string{"claude-saved"}, DefaultModel: "claude-saved", APIKey: secret}}}); err != nil {
+	if err := store.Save(globalconfig.Config{ActiveProvider: "saved", Providers: []globalconfig.Provider{{ID: "saved", Name: "Saved", APIType: "anthropic", BaseURL: "https://saved.example/v1", Models: []string{"claude-saved"}, ModelDisplayNames: map[string]string{"claude-saved": "Claude Saved"}, DefaultModel: "claude-saved", APIKey: secret}}}); err != nil {
 		t.Fatal(err)
 	}
 	environment := map[string]string{"LLM_API_KEY": "env-key", "LLM_MODEL": "env-model"}
 	config := runtimeConfigFromSources(func(key string) string { return environment[key] }, agentDir)
-	if config.APIType != agent.APITypeAnthropic || config.APIKey != "saved-key" || config.Model != "claude-saved" || config.BaseURL != "https://saved.example/v1" {
+	if config.APIType != agent.APITypeAnthropic || config.APIKey != "saved-key" || config.Model != "claude-saved" || config.BaseURL != "https://saved.example/v1" || config.ModelDisplayNames.Name(config.Model) != "Claude Saved" {
 		t.Fatalf("runtime config = %#v", config)
 	}
 }

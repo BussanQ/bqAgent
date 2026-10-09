@@ -13,18 +13,20 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/globalconfig"
+	"bqagent/internal/modelcatalog"
 )
 
 const maxProviderModelsResponseBytes = 2 << 20
 
 type providerView struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	APIType          string   `json:"api_type"`
-	BaseURL          string   `json:"base_url,omitempty"`
-	Models           []string `json:"models"`
-	DefaultModel     string   `json:"default_model"`
-	APIKeyConfigured bool     `json:"api_key_configured"`
+	ID                string             `json:"id"`
+	Name              string             `json:"name"`
+	APIType           string             `json:"api_type"`
+	BaseURL           string             `json:"base_url,omitempty"`
+	Models            []string           `json:"models"`
+	ModelDisplayNames modelcatalog.Names `json:"model_display_names,omitempty"`
+	DefaultModel      string             `json:"default_model"`
+	APIKeyConfigured  bool               `json:"api_key_configured"`
 }
 
 type providerSettingsResponse struct {
@@ -33,13 +35,14 @@ type providerSettingsResponse struct {
 }
 
 type providerInput struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	APIType      string   `json:"api_type"`
-	BaseURL      string   `json:"base_url"`
-	Models       []string `json:"models"`
-	DefaultModel string   `json:"default_model"`
-	APIKey       string   `json:"api_key"`
+	ID                string             `json:"id"`
+	Name              string             `json:"name"`
+	APIType           string             `json:"api_type"`
+	BaseURL           string             `json:"base_url"`
+	Models            []string           `json:"models"`
+	ModelDisplayNames modelcatalog.Names `json:"model_display_names,omitempty"`
+	DefaultModel      string             `json:"default_model"`
+	APIKey            string             `json:"api_key"`
 }
 
 type providerSettingsInput struct {
@@ -198,10 +201,10 @@ func (handler *handler) handleProviderModels(writer http.ResponseWriter, request
 	writeJSON(writer, http.StatusOK, map[string]any{"models": models})
 }
 
-// FetchProviderModels returns the model IDs exposed by an OpenAI-compatible or
+// FetchProviderModels returns model IDs and display names exposed by an OpenAI-compatible or
 // Anthropic-compatible Provider. Interactive clients share this implementation
 // so model discovery behaves the same in the WebUI and TUI.
-func FetchProviderModels(ctx context.Context, apiType, baseURL, apiKey string) ([]string, error) {
+func FetchProviderModels(ctx context.Context, apiType, baseURL, apiKey string) ([]modelcatalog.Model, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("API Key 未配置")
 	}
@@ -244,27 +247,10 @@ func FetchProviderModels(ctx context.Context, apiType, baseURL, apiKey string) (
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("Provider 返回 HTTP %d", response.StatusCode)
 	}
-	var payload struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-		Models []struct {
-			ID string `json:"id"`
-		} `json:"models"`
+	models, err := parseProviderModels(body)
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("解析模型列表失败: %w", err)
-	}
-	seen := map[string]bool{}
-	models := make([]string, 0, len(payload.Data)+len(payload.Models))
-	for _, item := range append(payload.Data, payload.Models...) {
-		id := strings.TrimSpace(item.ID)
-		if id != "" && !seen[id] {
-			seen[id] = true
-			models = append(models, id)
-		}
-	}
-	sort.Strings(models)
 	if len(models) == 0 {
 		return nil, fmt.Errorf("Provider 未返回可用模型")
 	}
@@ -287,7 +273,7 @@ func (handler *handler) buildProviderConfig(input providerSettingsInput, existin
 			}
 		}
 		models := cleanModels(value.Models)
-		config.Providers = append(config.Providers, globalconfig.Provider{ID: strings.TrimSpace(value.ID), Name: strings.TrimSpace(value.Name), APIType: string(agent.NormalizeAPIType(value.APIType)), BaseURL: strings.TrimSpace(value.BaseURL), Models: models, DefaultModel: strings.TrimSpace(value.DefaultModel), APIKey: secret})
+		config.Providers = append(config.Providers, globalconfig.Provider{ID: strings.TrimSpace(value.ID), Name: strings.TrimSpace(value.Name), APIType: string(agent.NormalizeAPIType(value.APIType)), BaseURL: strings.TrimSpace(value.BaseURL), Models: models, ModelDisplayNames: value.ModelDisplayNames.ForModels(models), DefaultModel: strings.TrimSpace(value.DefaultModel), APIKey: secret})
 	}
 	return config, nil
 }
@@ -308,7 +294,7 @@ func (handler *handler) applyProvider(service *Service, config globalconfig.Conf
 		if err != nil {
 			return err
 		}
-		service.ConfigureLLM(provider.ID, agent.NormalizeAPIType(provider.APIType), apiKey, provider.BaseURL, provider.DefaultModel, provider.Models)
+		service.ConfigureLLM(provider.ID, agent.NormalizeAPIType(provider.APIType), apiKey, provider.BaseURL, provider.DefaultModel, provider.Models, provider.ModelDisplayNames)
 		return nil
 	}
 	return nil
@@ -317,7 +303,7 @@ func (handler *handler) applyProvider(service *Service, config globalconfig.Conf
 func providerResponse(config globalconfig.Config) providerSettingsResponse {
 	response := providerSettingsResponse{ActiveProvider: config.ActiveProvider, Providers: make([]providerView, 0, len(config.Providers))}
 	for _, provider := range config.Providers {
-		response.Providers = append(response.Providers, providerView{ID: provider.ID, Name: provider.Name, APIType: provider.APIType, BaseURL: provider.BaseURL, Models: append([]string(nil), provider.Models...), DefaultModel: provider.DefaultModel, APIKeyConfigured: provider.APIKey.Ciphertext != ""})
+		response.Providers = append(response.Providers, providerView{ID: provider.ID, Name: provider.Name, APIType: provider.APIType, BaseURL: provider.BaseURL, Models: append([]string(nil), provider.Models...), ModelDisplayNames: provider.ModelDisplayNames.ForModels(provider.Models), DefaultModel: provider.DefaultModel, APIKeyConfigured: provider.APIKey.Ciphertext != ""})
 	}
 	return response
 }
@@ -343,4 +329,33 @@ func decodeProviderJSON(writer http.ResponseWriter, request *http.Request, targe
 		return fmt.Errorf("invalid provider settings: %w", err)
 	}
 	return nil
+}
+
+func parseProviderModels(body []byte) ([]modelcatalog.Model, error) {
+	var payload struct {
+		Data   []modelcatalog.Model `json:"data"`
+		Models []modelcatalog.Model `json:"models"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("解析模型列表失败: %w", err)
+	}
+	seen := map[string]int{}
+	models := make([]modelcatalog.Model, 0, len(payload.Data)+len(payload.Models))
+	for _, item := range append(payload.Data, payload.Models...) {
+		item.ID = strings.TrimSpace(item.ID)
+		item.DisplayName = strings.TrimSpace(item.DisplayName)
+		if item.ID == "" {
+			continue
+		}
+		if index, ok := seen[item.ID]; ok {
+			if models[index].DisplayName == "" {
+				models[index].DisplayName = item.DisplayName
+			}
+			continue
+		}
+		seen[item.ID] = len(models)
+		models = append(models, item)
+	}
+	sort.Slice(models, func(i, j int) bool { return models[i].ID < models[j].ID })
+	return models, nil
 }

@@ -12,6 +12,7 @@ import (
 	"bqagent/internal/agent"
 	"bqagent/internal/mcp"
 	appmemory "bqagent/internal/memory"
+	"bqagent/internal/modelcatalog"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
 )
@@ -21,6 +22,7 @@ import (
 const mcpDiscoveryTimeout = 15 * time.Second
 
 type Config struct {
+	ModelDisplayNames               modelcatalog.Names
 	APIType                         agent.APIType
 	APIKey                          string
 	BaseURL                         string

@@ -14,16 +14,17 @@ type configuredModel struct {
 
 // ModelOption is a read-only model choice exposed to interactive clients.
 type ModelOption struct {
-	Alias string
-	ID    string
+	DisplayName string
+	Alias       string
+	ID          string
 }
 
 // ModelOptions returns a copy of the configured switchable model list.
 func (service *Service) ModelOptions() []ModelOption {
 	options := make([]ModelOption, 0, len(service.models)+1)
-	options = append(options, ModelOption{Alias: "default", ID: service.model})
+	options = append(options, ModelOption{Alias: "default", ID: service.model, DisplayName: service.ModelDisplayName(service.model)})
 	for _, model := range service.models {
-		options = append(options, ModelOption{Alias: model.Alias, ID: model.ID})
+		options = append(options, ModelOption{Alias: model.Alias, ID: model.ID, DisplayName: service.ModelDisplayName(model.ID)})
 	}
 	return options
 }
@@ -125,12 +126,12 @@ func (service *Service) handleModelCommand(message string, savedSession *session
 		}
 		current := service.effectiveModel(savedSession)
 		var reply strings.Builder
-		fmt.Fprintf(&reply, "当前模型：%s\n默认模型：%s\n可用模型：\n", current, service.model)
+		fmt.Fprintf(&reply, "当前模型：%s\n默认模型：%s\n可用模型：\n", service.ModelDisplayName(current), service.ModelDisplayName(service.model))
 		for _, model := range service.models {
 			if model.Alias == model.ID {
-				fmt.Fprintf(&reply, "- %s\n", model.ID)
+				fmt.Fprintf(&reply, "- %s\n", service.ModelDisplayName(model.ID))
 			} else {
-				fmt.Fprintf(&reply, "- %s = %s\n", model.Alias, model.ID)
+				fmt.Fprintf(&reply, "- %s = %s\n", model.Alias, service.ModelDisplayName(model.ID))
 			}
 		}
 		if current != service.model && !service.modelIsConfigured(current) {
@@ -147,7 +148,7 @@ func (service *Service) handleModelCommand(message string, savedSession *session
 		if err := savedSession.SetCurrentModel(""); err != nil {
 			return "", true, err
 		}
-		return fmt.Sprintf("已恢复默认模型：%s", service.model), true, nil
+		return fmt.Sprintf("已恢复默认模型：%s", service.ModelDisplayName(service.model)), true, nil
 	}
 	if len(service.models) == 0 {
 		return "", true, fmt.Errorf("未配置可切换模型，请通过 LLM_MODELS 预先配置模型列表")
@@ -159,5 +160,10 @@ func (service *Service) handleModelCommand(message string, savedSession *session
 	if err := savedSession.SetCurrentModel(modelID); err != nil {
 		return "", true, err
 	}
-	return fmt.Sprintf("已切换当前会话模型：%s", modelID), true, nil
+	return fmt.Sprintf("已切换当前会话模型：%s", service.ModelDisplayName(modelID)), true, nil
+}
+
+// ModelDisplayName resolves a label within the active provider only.
+func (service *Service) ModelDisplayName(id string) string {
+	return service.modelDisplayNames.Name(id)
 }

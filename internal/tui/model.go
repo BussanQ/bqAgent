@@ -35,6 +35,7 @@ type activeTurn struct {
 type queuedPrompt struct{ value string }
 
 type suggestion struct {
+	label       string
 	value       string
 	description string
 }
@@ -484,6 +485,7 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	}
 	if event.result.Model != "" {
 		model.runtime.Model = event.result.Model
+		model.runtime.ModelDisplayName = event.result.ModelDisplayName
 	} else {
 		model.runtime = model.backend.RuntimeInfo(model.sessionID)
 	}
@@ -686,8 +688,12 @@ func (model *Model) refreshSuggestions() {
 				continue
 			}
 			for _, argument := range command.Arguments {
-				if strings.HasPrefix(strings.ToLower(argument.Value), strings.ToLower(prefix)) {
-					appendSuggestion(suggestion{value: command.Name + " " + argument.Value, description: argument.Description})
+				if strings.HasPrefix(strings.ToLower(argument.Value), strings.ToLower(prefix)) || (argument.Label != "" && strings.Contains(strings.ToLower(argument.Label), strings.ToLower(prefix))) {
+					label := ""
+					if argument.Label != "" {
+						label = command.Name + " " + argument.Label
+					}
+					appendSuggestion(suggestion{value: command.Name + " " + argument.Value, label: label, description: argument.Description})
 				}
 			}
 		}
@@ -736,7 +742,11 @@ func (model Model) renderSuggestions(width int) string {
 		if index == model.suggested {
 			pointer = "› "
 		}
-		line := pointer + item.value
+		label := item.label
+		if label == "" {
+			label = item.value
+		}
+		line := pointer + label
 		if item.description != "" && width > 40 {
 			line += model.styles.dim.Render("  " + item.description)
 		}
@@ -756,7 +766,11 @@ func (model Model) renderStatus(width int) string {
 	if left == "" {
 		left = "provider"
 	}
-	left += "/" + model.runtime.Model
+	name := strings.TrimSpace(model.runtime.ModelDisplayName)
+	if name == "" {
+		name = model.runtime.Model
+	}
+	left += "/" + name
 	left += " · " + displayMode(model.runtime.Mode)
 	if model.sessionID != "" {
 		id := model.sessionID

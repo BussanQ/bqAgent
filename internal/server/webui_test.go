@@ -567,7 +567,9 @@ func TestWebUIProviderModelsUsesSavedEncryptedKey(t *testing.T) {
 		t.Fatalf("discover models status = %d, body = %s", response.StatusCode, data)
 	}
 	var payload struct {
-		Models []string `json:"models"`
+		Models []struct {
+			ID string `json:"id"`
+		} `json:"models"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
@@ -575,7 +577,7 @@ func TestWebUIProviderModelsUsesSavedEncryptedKey(t *testing.T) {
 	if authorization != "Bearer saved-secret" {
 		t.Fatalf("Authorization = %q", authorization)
 	}
-	if fmt.Sprint(payload.Models) != "[model-a model-z]" {
+	if len(payload.Models) != 2 || payload.Models[0].ID != "model-a" || payload.Models[1].ID != "model-z" {
 		t.Fatalf("models = %#v", payload.Models)
 	}
 }

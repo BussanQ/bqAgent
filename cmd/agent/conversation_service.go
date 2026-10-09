@@ -21,8 +21,9 @@ import (
 func newConversationService(ctx context.Context, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, includePlan bool, statusWriter io.Writer) (*appserver.Service, *extagent.Broker) {
 	var externalBroker *extagent.Broker
 	diagnostics := workspaceDoctor(ws, getenv, func() ([]extagent.DetectionStatus, bool) { return externalBroker.DetectionSnapshot() })
+	runtimeConfig := runtimeConfigFromSources(getenv, ws.AgentDir())
 	runtime := appruntime.Factory{
-		Config:          runtimeConfigFromSources(getenv, ws.AgentDir()),
+		Config:          runtimeConfig,
 		WorkspaceRoot:   ws.Root,
 		AgentDir:        ws.AgentDir(),
 		MemoryDir:       ws.WorkspaceMemoryDir(),
@@ -58,16 +59,17 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	}
 
 	service := appserver.NewService(appserver.ServiceOptions{
-		Doctor:          diagnostics,
-		WorkspaceRoot:   ws.Root,
-		AgentDir:        ws.AgentDir(),
-		Client:          runtime.Client,
-		ClientOptions:   &runtime.ClientOptions,
-		APIType:         runtime.APIType,
-		Model:           runtime.Model,
-		Models:          runtime.Models,
-		DefaultMaxTurns: runtime.MaxIterations,
-		SystemPrompt:    systemPrompt,
+		Doctor:            diagnostics,
+		WorkspaceRoot:     ws.Root,
+		AgentDir:          ws.AgentDir(),
+		Client:            runtime.Client,
+		ClientOptions:     &runtime.ClientOptions,
+		APIType:           runtime.APIType,
+		Model:             runtime.Model,
+		Models:            runtime.Models,
+		ModelDisplayNames: runtimeConfig.ModelDisplayNames,
+		DefaultMaxTurns:   runtime.MaxIterations,
+		SystemPrompt:      systemPrompt,
 		PromptSectionsBuilder: func() (workspace.PromptSections, error) {
 			return ws.BuildPromptSections("")
 		},
@@ -123,6 +125,7 @@ func runtimeConfigFromSources(getenv func(string) string, agentDir string) appru
 		config.BaseURL = provider.BaseURL
 		config.Model = provider.DefaultModel
 		config.Models = append([]string(nil), provider.Models...)
+		config.ModelDisplayNames = provider.ModelDisplayNames.ForModels(provider.Models)
 		return config
 	}
 	return config

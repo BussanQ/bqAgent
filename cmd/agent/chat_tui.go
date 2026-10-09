@@ -8,6 +8,7 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/globalconfig"
+	"bqagent/internal/modelcatalog"
 	appserver "bqagent/internal/server"
 	apptui "bqagent/internal/tui"
 	"bqagent/internal/workspace"
@@ -72,11 +73,12 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 		Stream:         true,
 	})
 	result := apptui.TurnResult{
-		SessionID: response.SessionID,
-		Reply:     response.Reply,
-		Model:     response.Model,
-		Mode:      string(response.Mode),
-		Streamed:  response.Streamed,
+		SessionID:        response.SessionID,
+		Reply:            response.Reply,
+		Model:            response.Model,
+		ModelDisplayName: backend.service.ModelDisplayName(response.Model),
+		Mode:             string(response.Mode),
+		Streamed:         response.Streamed,
 	}
 	if response.Generation != nil {
 		result.Metrics = &apptui.GenerationMetrics{
@@ -106,7 +108,7 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 
 func (backend *tuiBackend) RuntimeInfo(sessionID string) apptui.RuntimeInfo {
 	info := backend.service.RuntimeLLMInfoForSession(sessionID)
-	return apptui.RuntimeInfo{Provider: info.ProviderID, APIType: string(info.APIType), Model: info.Model, Mode: string(info.Mode)}
+	return apptui.RuntimeInfo{Provider: info.ProviderID, APIType: string(info.APIType), Model: info.Model, ModelDisplayName: info.ModelDisplayName, Mode: string(info.Mode)}
 }
 
 func (backend *tuiBackend) History(sessionID string, budget int) (apptui.History, error) {
@@ -131,11 +133,17 @@ func (backend *tuiBackend) History(sessionID string, budget int) (apptui.History
 func (backend *tuiBackend) Commands() []apptui.Command {
 	commands := []apptui.Command{{Name: "/model", Description: "查看或切换模型"}, {Name: "/skill", Description: "使用 Skill 或 alias"}}
 	for _, option := range backend.service.ModelOptions() {
-		description := option.ID
-		if option.Alias == "default" {
-			description = "恢复默认模型 " + option.ID
+		label := option.DisplayName
+		description := ""
+		if option.DisplayName == option.ID && option.Alias != option.ID {
+			label = option.Alias
+			description = option.ID
 		}
-		commands[0].Arguments = append(commands[0].Arguments, apptui.CommandArgument{Value: option.Alias, Description: description})
+		if option.Alias == "default" {
+			label = "default"
+			description = "恢复默认模型 " + option.DisplayName
+		}
+		commands[0].Arguments = append(commands[0].Arguments, apptui.CommandArgument{Value: option.Alias, Label: label, Description: description})
 	}
 	if skills, err := backend.workspace.LoadSkills(); err == nil {
 		for _, skill := range skills {
@@ -158,14 +166,14 @@ func (backend *tuiBackend) ProviderSettings(context.Context) (apptui.ProviderSet
 	for _, provider := range config.Providers {
 		settings.Providers = append(settings.Providers, apptui.Provider{
 			ID: provider.ID, Name: provider.Name, APIType: provider.APIType, BaseURL: provider.BaseURL,
-			Models: append([]string(nil), provider.Models...), DefaultModel: provider.DefaultModel,
+			Models: append([]string(nil), provider.Models...), ModelDisplayNames: provider.ModelDisplayNames.ForModels(provider.Models), DefaultModel: provider.DefaultModel,
 			APIKeyConfigured: provider.APIKey.Ciphertext != "",
 		})
 	}
 	return settings, nil
 }
 
-func (backend *tuiBackend) DiscoverProviderModels(ctx context.Context, input apptui.ProviderInput) ([]string, error) {
+func (backend *tuiBackend) DiscoverProviderModels(ctx context.Context, input apptui.ProviderInput) ([]modelcatalog.Model, error) {
 	apiKey := strings.TrimSpace(input.APIKey)
 	if apiKey == "" {
 		store := globalconfig.NewStore(backend.workspace.AgentDir())
@@ -230,7 +238,7 @@ func (backend *tuiBackend) SaveProvider(ctx context.Context, sessionID string, i
 		provider = globalconfig.Provider{
 			ID: strings.TrimSpace(input.ID), Name: strings.TrimSpace(input.Name),
 			APIType: string(agent.NormalizeAPIType(input.APIType)), BaseURL: strings.TrimSpace(input.BaseURL),
-			Models: models, DefaultModel: defaultModel, APIKey: secret,
+			Models: models, ModelDisplayNames: input.ModelDisplayNames.ForModels(models), DefaultModel: defaultModel, APIKey: secret,
 		}
 		if providerIndex >= 0 {
 			(*providers)[providerIndex] = provider
@@ -247,7 +255,7 @@ func (backend *tuiBackend) SaveProvider(ctx context.Context, sessionID string, i
 	if err != nil {
 		return apptui.RuntimeInfo{}, err
 	}
-	backend.service.ConfigureLLM(provider.ID, agent.NormalizeAPIType(provider.APIType), apiKey, provider.BaseURL, provider.DefaultModel, provider.Models)
+	backend.service.ConfigureLLM(provider.ID, agent.NormalizeAPIType(provider.APIType), apiKey, provider.BaseURL, provider.DefaultModel, provider.Models, provider.ModelDisplayNames)
 	if strings.TrimSpace(sessionID) != "" {
 		if err := backend.service.SelectSessionModel(sessionID, provider.DefaultModel); err != nil {
 			return apptui.RuntimeInfo{}, err

@@ -21,6 +21,7 @@ export interface ProviderView {
   api_type: string;
   base_url: string;
   models: string[];
+  model_display_names?: Record<string, string>;
   default_model: string;
   api_key?: string;
   api_key_configured?: boolean;
@@ -32,6 +33,7 @@ export interface ProviderSettings {
 }
 
 export interface RuntimeLLMInfo {
+  model_display_name?: string;
   provider_id?: string;
   api_type: string;
   model: string;
@@ -259,12 +261,18 @@ export interface WorkspaceDirectoryPage {
   nextOffset: number | null;
 }
 
+export interface ProviderModel {
+  id: string;
+  display_name?: string;
+}
+
 export interface ProviderModelsResponse {
-  models: string[];
+  models: ProviderModel[];
   error?: string;
 }
 
 export interface ProviderSelectionResponse {
+  model_display_name?: string;
   api_type: string;
   model: string;
   provider_id: string;

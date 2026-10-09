@@ -4,7 +4,7 @@ import type WaSelect from "@awesome.me/webawesome/dist/components/select/select.
 import { errorMessage } from "./api";
 import { byId, eventElement } from "./dom";
 import { iconMarkup, setIconButtonLabel } from "./icons";
-import { filterProviderModels, providerAPIKeyPlaceholder, providerListSubtitle, providerModelOptions, providerPayload, remainingActiveProvider, resolveDefaultModel, resolveProviderEditorIndex, selectedProviderModelIDs, toggleProviderModel, upsertProviderModel, type ProviderModelOption } from "./providers";
+import { modelDisplayName, selectedProviderModelNames, filterProviderModels, providerAPIKeyPlaceholder, providerListSubtitle, providerModelOptions, providerPayload, remainingActiveProvider, resolveDefaultModel, resolveProviderEditorIndex, selectedProviderModelIDs, toggleProviderModel, upsertProviderModel, type ProviderModelOption } from "./providers";
 import type { ProviderModelsResponse, ProviderSelectionResponse, ProviderSettings, StatusResponse } from "./types";
 
 export interface ProviderDependencies {
@@ -57,13 +57,13 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     });
   }
 
-  function createRuntimeModelOption(providerID: string, model: string): WaOption {
+  function createRuntimeModelOption(providerID: string, model: string, displayName?: string): WaOption {
     var option = document.createElement("wa-option");
     var value = encodeURIComponent(providerID || "runtime") + ":" + encodeURIComponent(model);
     option.setAttribute("value", value);
     option.dataset.providerId = providerID;
     option.dataset.model = model;
-    option.textContent = model;
+    option.textContent = modelDisplayName(model, displayName);
     return option;
   }
 
@@ -78,15 +78,16 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     return modelSelect.selectedOptions[0] || runtimeModelOptions().find(function (option) { return option.getAttribute("aria-selected") === "true"; });
   }
 
-  function updateRuntimeModel(apiType: string, model: string, providerID?: string): void {
+  function updateRuntimeModel(apiType: string, model: string, providerID?: string, displayName?: string): void {
     if (!model) return;
     var matched = runtimeModelOption(providerID || "", model);
     if (!matched) {
-      matched = createRuntimeModelOption(providerID || "", model);
+      matched = createRuntimeModelOption(providerID || "", model, displayName);
       modelSelect.appendChild(matched);
     }
+    if (displayName?.trim()) matched.textContent = displayName.trim();
     setRuntimeModelOption(matched);
-    modelSelect.title = (providerID || apiType || "llm") + " / " + model;
+    modelSelect.title = (providerID || apiType || "llm") + " / " + matched.textContent;
   }
 
   function renderProviderSelectors(): void {
@@ -97,7 +98,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
       heading.textContent = provider.name;
       modelSelect.appendChild(heading);
       provider.models.forEach(function (model) {
-        modelSelect.appendChild(createRuntimeModelOption(provider.id, model));
+        modelSelect.appendChild(createRuntimeModelOption(provider.id, model, provider.model_display_names?.[model]));
       });
     });
     var active = providerSettingsState.providers.find(function (provider) { return provider.id === providerSettingsState.active_provider; });
@@ -130,7 +131,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     providerSettingsState.active_provider = providerID;
     var active = providerSettingsState.providers.find(function (provider) { return provider.id === providerID; });
     if (active) active.default_model = model;
-    updateRuntimeModel(payload.api_type, payload.model, payload.provider_id);
+    updateRuntimeModel(payload.api_type, payload.model, payload.provider_id, payload.model_display_name);
   }
 
   function beginRuntimeModelSelection() {
@@ -161,7 +162,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     var current = resolveDefaultModel(models, preferred);
     providerDefaultModelInput.innerHTML = "";
     if (!models.length) providerDefaultModelInput.add(new Option("请先启用模型", ""));
-    models.forEach(function (model) { providerDefaultModelInput.add(new Option(model, model)); });
+    models.forEach(function (model) { providerDefaultModelInput.add(new Option(modelDisplayName(model, providerCatalogModels.find(item => item.id === model)?.display_name), model)); });
     providerDefaultModelInput.value = current;
     providerDefaultModelInput.disabled = models.length === 0;
     providerModelCount.textContent = models.length + " 已启用";
@@ -197,7 +198,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
       check.className = "provider-model-check";
       check.setAttribute("aria-hidden", "true");
       var label = document.createElement("code");
-      label.textContent = item.id;
+      label.textContent = modelDisplayName(item.id, item.display_name);
       row.appendChild(check);
       row.appendChild(label);
       providerModelsInput.appendChild(row);
@@ -263,7 +264,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     providerAPIKeyInput.placeholder = providerAPIKeyPlaceholder(configured);
     providerAPIKeyStatus.hidden = !configured;
     providerModelFilter.value = "";
-    providerCatalogModels = providerModelOptions(provider ? provider.models : [], true);
+    providerCatalogModels = providerModelOptions(provider ? provider.models : [], true, provider?.model_display_names);
     renderProviderModelCatalog();
     refreshProviderDefaultModels(provider ? provider.default_model : "");
     syncProviderNavSelection();
@@ -335,7 +336,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
 
   async function saveProviderSettings(): Promise<void> {
     var models = selectedProviderModels();
-    var provider = { id: providerIDInput.value.trim(), name: providerNameInput.value.trim(), api_type: providerAPITypeInput.value, base_url: providerBaseURLInput.value.trim(), api_key: providerAPIKeyInput.value, models: models, default_model: providerDefaultModelInput.value || models[0] || "" };
+    var provider = { id: providerIDInput.value.trim(), name: providerNameInput.value.trim(), api_type: providerAPITypeInput.value, base_url: providerBaseURLInput.value.trim(), api_key: providerAPIKeyInput.value, models: models, model_display_names: selectedProviderModelNames(providerCatalogModels), default_model: providerDefaultModelInput.value || models[0] || "" };
     var index = editingProviderIndex;
     var providers = providerSettingsState.providers.map(providerPayload);
     if (index >= 0) providers[index] = provider; else providers.push(provider);
@@ -357,7 +358,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
       if (!response.ok) return;
       var payload = await requests.readJSON<StatusResponse>(response);
       if (loadID !== runtimeModelLoadID || !payload || !payload.llm) return;
-      updateRuntimeModel(payload.llm.api_type, payload.llm.model, payload.llm.provider_id);
+      updateRuntimeModel(payload.llm.api_type, payload.llm.model, payload.llm.provider_id, payload.llm.model_display_name);
       deps.setChatMode(payload.llm.mode);
     } catch (_) {
       // Status display is best-effort and must never block chat startup.

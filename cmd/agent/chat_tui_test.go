@@ -57,7 +57,7 @@ func TestTUIBackendProviderSaveAndDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authorization != "Bearer secret-token" || fmt.Sprint(models) != "[model-a model-z]" {
+	if authorization != "Bearer secret-token" || len(models) != 2 || models[0].ID != "model-a" || models[1].ID != "model-z" {
 		t.Fatalf("discovery authorization=%q models=%#v", authorization, models)
 	}
 
@@ -85,5 +85,25 @@ func TestTUIBackendProviderSaveAndDiscovery(t *testing.T) {
 	settings, err := backend.ProviderSettings(context.Background())
 	if err != nil || len(settings.Providers) != 1 || !settings.Providers[0].APIKeyConfigured {
 		t.Fatalf("settings = %#v, err=%v", settings, err)
+	}
+}
+
+func TestTUIBackendProviderDisplayNames(t *testing.T) {
+	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: t.TempDir()}
+	backend := &tuiBackend{service: appserver.NewService(appserver.ServiceOptions{WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir()}), workspace: ws}
+	info, err := backend.SaveProvider(context.Background(), "", apptui.ProviderInput{ID: "p", Name: "P", APIType: "openai", Models: []string{"model-id"}, DefaultModel: "model-id", ModelDisplayNames: map[string]string{"model-id": "Friendly Model"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Model != "model-id" || info.ModelDisplayName != "Friendly Model" {
+		t.Fatalf("runtime = %#v", info)
+	}
+	settings, err := backend.ProviderSettings(context.Background())
+	if err != nil || settings.Providers[0].ModelDisplayNames["model-id"] != "Friendly Model" {
+		t.Fatalf("settings = %#v, err=%v", settings, err)
+	}
+	args := backend.Commands()[0].Arguments
+	if len(args) != 2 || args[1].Value != "model-id" || args[1].Label != "Friendly Model" {
+		t.Fatalf("arguments = %#v", args)
 	}
 }

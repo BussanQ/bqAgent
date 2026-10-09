@@ -9,13 +9,15 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"bqagent/internal/modelcatalog"
 )
 
 type fakeBackend struct {
 	history          History
 	commands         []Command
 	providerSettings ProviderSettings
-	discoveredModels []string
+	discoveredModels []modelcatalog.Model
 	savedProvider    ProviderInput
 	savedSessionID   string
 }
@@ -31,8 +33,8 @@ func (backend *fakeBackend) Commands() []Command                  { return backe
 func (backend *fakeBackend) ProviderSettings(context.Context) (ProviderSettings, error) {
 	return backend.providerSettings, nil
 }
-func (backend *fakeBackend) DiscoverProviderModels(context.Context, ProviderInput) ([]string, error) {
-	return append([]string(nil), backend.discoveredModels...), nil
+func (backend *fakeBackend) DiscoverProviderModels(context.Context, ProviderInput) ([]modelcatalog.Model, error) {
+	return append([]modelcatalog.Model(nil), backend.discoveredModels...), nil
 }
 func (backend *fakeBackend) SaveProvider(_ context.Context, sessionID string, input ProviderInput) (RuntimeInfo, error) {
 	backend.savedProvider = input
@@ -564,7 +566,7 @@ func TestProviderWizardCustomModelsUseFirstAsDefault(t *testing.T) {
 }
 
 func TestProviderWizardAutomaticModelDiscovery(t *testing.T) {
-	backend := &fakeBackend{discoveredModels: []string{"model-a", "model-b"}}
+	backend := &fakeBackend{discoveredModels: []modelcatalog.Model{{ID: "model-a", DisplayName: "Model Alpha"}, {ID: "model-b"}}}
 	model := NewModel(backend, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
 	model.provider = newProviderWizard(true, model.contentWidth())
 	model.provider.draft = ProviderInput{ID: "auto", Name: "Auto", APIType: "openai", APIKey: "secret"}
@@ -580,6 +582,13 @@ func TestProviderWizardAutomaticModelDiscovery(t *testing.T) {
 		t.Fatalf("discover message = %#v", message)
 	}
 	model.handleProviderModels(message)
+	if model.provider.draft.ModelDisplayNames["model-a"] != "Model Alpha" {
+		t.Fatalf("missing display name: %#v", model.provider.draft)
+	}
+	view, _ := model.provider.render(model.styles)
+	if !strings.Contains(view, "默认 Model Alpha") {
+		t.Fatalf("wizard uses ID: %s", view)
+	}
 	if model.provider.step != providerStepConfirm || fmt.Sprint(model.provider.draft.Models) != "[model-a model-b]" || model.provider.draft.DefaultModel != "model-a" {
 		t.Fatalf("discovered provider = %#v", model.provider)
 	}
@@ -597,5 +606,29 @@ func TestProviderWizardLoadsActiveProviderForEditing(t *testing.T) {
 	wizard.beginSelectedProvider()
 	if wizard.draft.OriginalID != "second" || wizard.draft.APIType != "anthropic" || !wizard.draft.APIKeyConfigured {
 		t.Fatalf("editing draft = %#v", wizard.draft)
+	}
+}
+
+func TestModelDisplayNamesRenderAndCompleteWithIDs(t *testing.T) {
+	backend := &fakeBackend{commands: []Command{{Name: "/model", Arguments: []CommandArgument{{Value: "model-id", Label: "Friendly Model"}}}}}
+	model := NewModel(backend, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.width = 100
+	model.runtime = RuntimeInfo{Provider: "p", Model: "model-id", ModelDisplayName: "Friendly Model"}
+	view := model.View().Content
+	if !strings.Contains(view, "Friendly Model") || strings.Contains(view, "model-id") {
+		t.Fatalf("view = %s", view)
+	}
+	model.input.setValue("/model Friendly")
+	model.refreshSuggestions()
+	if len(model.suggestions) != 1 || !strings.Contains(model.renderSuggestions(100), "Friendly Model") || strings.Contains(model.renderSuggestions(100), "model-id") {
+		t.Fatalf("suggestions = %#v", model.suggestions)
+	}
+	model.completeSuggestion(false)
+	if model.input.value() != "/model model-id" {
+		t.Fatalf("input = %s", model.input.value())
+	}
+	model.runtime.ModelDisplayName = ""
+	if !strings.Contains(model.View().Content, "model-id") {
+		t.Fatal("missing ID fallback")
 	}
 }

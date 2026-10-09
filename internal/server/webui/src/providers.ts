@@ -1,4 +1,4 @@
-import type { ProviderView } from "./types";
+import type { ProviderView, ProviderModel } from "./types";
 
 export const PROVIDER_API_TYPE_LABELS: Record<string, { full: string; short: string }> = {
   openai: { full: "OpenAI Chat Completions", short: "OpenAI" },
@@ -6,8 +6,7 @@ export const PROVIDER_API_TYPE_LABELS: Record<string, { full: string; short: str
   anthropic: { full: "Anthropic Messages", short: "Anthropic" },
 };
 
-export interface ProviderModelOption {
-  id: string;
+export interface ProviderModelOption extends ProviderModel {
   selected: boolean;
 }
 
@@ -19,6 +18,7 @@ export function providerPayload(value: ProviderView): ProviderView {
     base_url: value.base_url || "",
     api_key: "",
     models: value.models || [],
+    model_display_names: value.model_display_names,
     default_model: value.default_model,
   };
 }
@@ -34,25 +34,27 @@ export function resolveProviderEditorIndex(providers: Array<{ id: string }>, act
   return Math.max(0, providers.findIndex((provider) => provider.id === activeID));
 }
 
-export function providerModelOptions(models: string[], selected = true): ProviderModelOption[] {
-  return (models || []).map((id) => ({ id, selected }));
+export function providerModelOptions(models: string[], selected = true, names: Record<string, string> = {}): ProviderModelOption[] {
+  return (models || []).map((id) => ({ id, selected, display_name: names[id] }));
 }
 
-export function upsertProviderModel(models: ProviderModelOption[], model: string, selected: boolean): ProviderModelOption[] {
-  const id = String(model || "").trim();
-  if (!id) return models.map((item) => ({ id: item.id, selected: item.selected }));
-  const next = models.map((item) => ({ id: item.id, selected: item.selected }));
+export function upsertProviderModel(models: ProviderModelOption[], model: string | ProviderModel, selected: boolean): ProviderModelOption[] {
+  const id = (typeof model === "string" ? model : model.id).trim();
+  const displayName = typeof model === "string" ? undefined : model.display_name?.trim();
+  if (!id) return models.map((item) => ({ ...item }));
+  const next = models.map((item) => ({ ...item }));
   const existing = next.find((item) => item.id === id);
   if (existing) {
     if (selected) existing.selected = true;
+    if (displayName) existing.display_name = displayName;
     return next;
   }
-  next.push({ id, selected });
+  next.push({ id, selected, display_name: displayName });
   return next;
 }
 
 export function toggleProviderModel(models: ProviderModelOption[], model: string, selected: boolean): ProviderModelOption[] {
-  return models.map((item) => item.id === model ? { id: item.id, selected } : { id: item.id, selected: item.selected });
+  return models.map((item) => item.id === model ? { ...item, selected } : { ...item });
 }
 
 export function selectedProviderModelIDs(models: ProviderModelOption[]): string[] {
@@ -67,7 +69,7 @@ export function resolveDefaultModel(models: string[], preferred = ""): string {
 export function filterProviderModels(models: ProviderModelOption[], query: string): ProviderModelOption[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return models;
-  return models.filter((item) => item.id.toLowerCase().includes(needle));
+  return models.filter((item) => (item.id.toLowerCase().includes(needle) || modelDisplayName(item.id, item.display_name).toLowerCase().includes(needle)));
 }
 
 export function providerListSubtitle(provider: Pick<ProviderView, "api_type" | "models">): string {
@@ -82,4 +84,12 @@ export function remainingActiveProvider(providers: Array<{ id: string }>, curren
 
 export function providerAPIKeyPlaceholder(configured: boolean): string {
   return configured ? "已保存；留空保持不变" : "输入 API Key";
+}
+
+export function modelDisplayName(id: string, name?: string): string {
+  return name?.trim() || id;
+}
+
+export function selectedProviderModelNames(models: ProviderModelOption[]): Record<string, string> {
+  return Object.fromEntries(models.filter(item => item.selected && item.display_name?.trim()).map(item => [item.id, item.display_name!.trim()]));
 }

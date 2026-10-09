@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,6 +19,7 @@ import (
 	"bqagent/internal/extagent"
 	"bqagent/internal/logging"
 	appmemory "bqagent/internal/memory"
+	"bqagent/internal/modelcatalog"
 	appruntime "bqagent/internal/runtime"
 	"bqagent/internal/session"
 	"bqagent/internal/subagent"
@@ -35,6 +37,7 @@ type ServiceOptions struct {
 	APIType                   agent.APIType
 	Model                     string
 	Models                    []string
+	ModelDisplayNames         modelcatalog.Names
 	SystemPrompt              string
 	SystemPromptBuilder       func() (string, error)
 	PromptSectionsBuilder     func() (workspace.PromptSections, error)
@@ -63,6 +66,7 @@ type Service struct {
 	apiType                   agent.APIType
 	model                     string
 	models                    []configuredModel
+	modelDisplayNames         modelcatalog.Names
 	systemPrompt              string
 	systemPromptBuilder       func() (string, error)
 	promptSectionsBuilder     func() (workspace.PromptSections, error)
@@ -244,6 +248,7 @@ func NewService(options ServiceOptions) *Service {
 		apiType:                   agent.NormalizeAPIType(string(options.APIType)),
 		model:                     agent.EffectiveModel(options.Model),
 		models:                    parseConfiguredModels(options.Models),
+		modelDisplayNames:         maps.Clone(options.ModelDisplayNames),
 		systemPrompt:              options.SystemPrompt,
 		systemPromptBuilder:       options.SystemPromptBuilder,
 		promptSectionsBuilder:     options.PromptSectionsBuilder,
@@ -271,7 +276,7 @@ func NewService(options ServiceOptions) *Service {
 	return service
 }
 
-func (service *Service) ConfigureLLM(providerID string, apiType agent.APIType, apiKey, baseURL, model string, models []string) {
+func (service *Service) ConfigureLLM(providerID string, apiType agent.APIType, apiKey, baseURL, model string, models []string, names modelcatalog.Names) {
 	if service == nil {
 		return
 	}
@@ -281,6 +286,7 @@ func (service *Service) ConfigureLLM(providerID string, apiType agent.APIType, a
 	service.client = agent.NewClientWithOptions(apiKey, baseURL, apiType, nil, service.clientOptions)
 	service.model = agent.EffectiveModel(model)
 	service.models = parseConfiguredModels(models)
+	service.modelDisplayNames = maps.Clone(names)
 	if service.plannerEnabled {
 		service.planner = agent.NewPlanner(service.client, service.model)
 	}
@@ -1384,17 +1390,18 @@ func uniqueMemoryStores(stores ...*appmemory.Store) []*appmemory.Store {
 }
 
 type RuntimeLLMInfo struct {
-	ProviderID string        `json:"provider_id,omitempty"`
-	APIType    agent.APIType `json:"api_type"`
-	Model      string        `json:"model"`
-	Mode       ChatMode      `json:"mode"`
+	ProviderID       string        `json:"provider_id,omitempty"`
+	APIType          agent.APIType `json:"api_type"`
+	Model            string        `json:"model"`
+	ModelDisplayName string        `json:"model_display_name"`
+	Mode             ChatMode      `json:"mode"`
 }
 
 func (service *Service) RuntimeLLMInfo() RuntimeLLMInfo {
 	if service == nil {
 		return RuntimeLLMInfo{}
 	}
-	return RuntimeLLMInfo{ProviderID: service.providerID, APIType: service.apiType, Model: service.model, Mode: ChatModeRun}
+	return RuntimeLLMInfo{ProviderID: service.providerID, APIType: service.apiType, Model: service.model, ModelDisplayName: service.ModelDisplayName(service.model), Mode: ChatModeRun}
 }
 
 func (service *Service) RuntimeLLMInfoForSession(sessionID string) RuntimeLLMInfo {
@@ -1411,6 +1418,7 @@ func (service *Service) RuntimeLLMInfoForSession(sessionID string) RuntimeLLMInf
 	savedSession, err := service.store.Open(canonicalID)
 	if err == nil {
 		info.Model = service.effectiveModel(savedSession)
+		info.ModelDisplayName = service.ModelDisplayName(info.Model)
 		info.Mode = storedChatMode(savedSession.Meta().CurrentMode)
 	}
 	return info

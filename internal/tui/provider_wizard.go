@@ -9,6 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"bqagent/internal/modelcatalog"
 )
 
 type providerStep uint8
@@ -51,7 +53,7 @@ type providerSettingsMsg struct {
 }
 
 type providerModelsMsg struct {
-	models []string
+	models []modelcatalog.Model
 	err    error
 }
 
@@ -111,7 +113,7 @@ func (wizard *providerWizard) beginSelectedProvider() tea.Cmd {
 		wizard.draft = ProviderInput{
 			OriginalID: provider.ID, ID: provider.ID, Name: provider.Name,
 			APIType: provider.APIType, BaseURL: provider.BaseURL,
-			Models: append([]string(nil), provider.Models...), DefaultModel: provider.DefaultModel,
+			Models: append([]string(nil), provider.Models...), ModelDisplayNames: provider.ModelDisplayNames.ForModels(provider.Models), DefaultModel: provider.DefaultModel,
 			APIKeyConfigured: provider.APIKeyConfigured,
 		}
 	}
@@ -330,13 +332,20 @@ func (model *Model) handleProviderModels(message providerModelsMsg) []tea.Cmd {
 		model.provider.err = "自动获取模型失败：" + message.err.Error() + "；可重试或选择自定义模型。"
 		return nil
 	}
-	models := parseProviderModels(strings.Join(message.models, ","))
+	ids := make([]string, 0, len(message.models))
+	names := modelcatalog.Names{}
+	for _, item := range message.models {
+		ids = append(ids, item.ID)
+		names[strings.TrimSpace(item.ID)] = item.DisplayName
+	}
+	models := parseProviderModels(strings.Join(ids, ","))
 	if len(models) == 0 {
 		model.provider.step = providerStepModelSource
 		model.provider.err = "Provider 未返回可用模型；请选择自定义模型。"
 		return nil
 	}
 	model.provider.draft.Models = models
+	model.provider.draft.ModelDisplayNames = names.ForModels(models)
 	model.provider.draft.DefaultModel = models[0]
 	model.provider.step = providerStepConfirm
 	model.provider.err = ""
@@ -353,7 +362,7 @@ func (model *Model) handleProviderSaved(message providerSavedMsg) []tea.Cmd {
 		return nil
 	}
 	providerID := model.provider.draft.ID
-	defaultModel := model.provider.draft.DefaultModel
+	defaultModel := model.provider.draft.ModelDisplayNames.Name(model.provider.draft.DefaultModel)
 	model.provider = nil
 	model.runtime = message.runtime
 	if model.runtime.Model == "" {
@@ -428,7 +437,7 @@ func (wizard *providerWizard) render(styles theme) (string, *tea.Cursor) {
 			providerSummaryLine("协议", providerAPITypeLabels()[providerAPITypeIndex(wizard.draft.APIType)], styles, wizard.width),
 			providerSummaryLine("API 地址", displayProviderBaseURL(wizard.draft.APIType, wizard.draft.BaseURL), styles, wizard.width),
 			providerSummaryLine("API Key", providerKeySummary(wizard.draft), styles, wizard.width),
-			providerSummaryLine("模型", fmt.Sprintf("%d 个；默认 %s", len(wizard.draft.Models), wizard.draft.DefaultModel), styles, wizard.width),
+			providerSummaryLine("模型", fmt.Sprintf("%d 个；默认 %s", len(wizard.draft.Models), wizard.draft.ModelDisplayNames.Name(wizard.draft.DefaultModel)), styles, wizard.width),
 			"", styles.dim.Render("Enter 保存并启用  ·  Shift+Tab 返回  ·  Esc 取消"),
 		)
 	case providerStepSaving:

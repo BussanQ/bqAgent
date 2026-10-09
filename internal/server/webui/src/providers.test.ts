@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   filterProviderModels,
+  providerModelOptions,
+  providerPayload,
+  modelDisplayName,
+  selectedProviderModelNames,
   providerAPIKeyPlaceholder,
   providerAPITypeLabel,
   providerListSubtitle,
@@ -49,5 +53,24 @@ describe("Provider 设置页辅助逻辑", () => {
     expect(remainingActiveProvider([{ id: "a" }, { id: "b" }], "a")).toBe("a");
     expect(providerAPIKeyPlaceholder(true)).toBe("已保存；留空保持不变");
     expect(providerAPIKeyPlaceholder(false)).toBe("输入 API Key");
+  });
+});
+
+
+describe("模型展示名称", () => {
+  it("保留名称，按名称或 ID 筛选，并提交原始 ID", () => {
+    let models = providerModelOptions(["m", "legacy"], true, { m: "Friendly Model" });
+    models = upsertProviderModel(models, { id: "m", display_name: "Updated Name" }, true);
+    models = toggleProviderModel(models, "m", false);
+    expect(models[0].display_name).toBe("Updated Name");
+    models = toggleProviderModel(models, "m", true);
+    expect(filterProviderModels(models, "UPDATED").map(item => item.id)).toEqual(["m"]);
+    expect(filterProviderModels(models, "legacy").map(item => item.id)).toEqual(["legacy"]);
+    expect(selectedProviderModelIDs(models)).toEqual(["m", "legacy"]);
+    expect(selectedProviderModelNames(models)).toEqual({ m: "Updated Name" });
+    expect(modelDisplayName("legacy", "  ")).toBe("legacy");
+    const provider = providerPayload({ id: "p", name: "P", api_type: "openai", base_url: "", models: ["m"], default_model: "m", model_display_names: { m: "Friendly Model" } });
+    expect(provider.model_display_names).toEqual({ m: "Friendly Model" });
+    expect(provider.default_model).toBe("m");
   });
 });
