@@ -233,7 +233,7 @@ type streamDelta struct {
 	ReasoningContent string `json:"reasoning_content"`
 	Reasoning        string `json:"reasoning"`
 	ToolCalls        []struct {
-		Index    int    `json:"index"`
+		Index    *int   `json:"index"`
 		ID       string `json:"id"`
 		Type     string `json:"type"`
 		Function struct {
@@ -470,6 +470,7 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 	}
 
 	type partialToolCall struct {
+		index     *int
 		id        string
 		callType  string
 		name      string
@@ -481,6 +482,8 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 		role           string
 		finishReason   string
 		toolCallMap    = map[int]*partialToolCall{}
+		toolCallsByID  = map[string]*partialToolCall{}
+		toolCalls      []*partialToolCall
 		usage          TokenUsage
 		sawDone        bool
 	)
@@ -535,13 +538,41 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 			state.markSemantic()
 		}
 		for _, tc := range delta.ToolCalls {
-			ptc, ok := toolCallMap[tc.Index]
-			if !ok {
+			// Compatible providers may omit index. Keep distinct call IDs
+			// separate instead of treating every missing index as zero.
+			var ptc *partialToolCall
+			if tc.Index != nil {
+				ptc = toolCallMap[*tc.Index]
+			}
+			if byID := toolCallsByID[tc.ID]; tc.ID != "" && byID != nil {
+				if ptc != nil && ptc != byID {
+					return AssistantMessage{}, providerProtocolError("conflicting tool call index and ID in chat completions stream", nil)
+				}
+				ptc = byID
+			}
+			if tc.Index == nil && tc.ID == "" {
+				if len(toolCalls) != 1 {
+					return AssistantMessage{}, providerProtocolError("ambiguous tool call delta without index or ID in chat completions stream", nil)
+				}
+				ptc = toolCalls[0]
+			}
+			if ptc == nil {
 				ptc = &partialToolCall{}
-				toolCallMap[tc.Index] = ptc
+				toolCalls = append(toolCalls, ptc)
+			}
+			if tc.Index != nil {
+				if ptc.index != nil && *ptc.index != *tc.Index {
+					return AssistantMessage{}, providerProtocolError("tool call ID changed index in chat completions stream", nil)
+				}
+				ptc.index = tc.Index
+				toolCallMap[*tc.Index] = ptc
 			}
 			if tc.ID != "" {
+				if ptc.id != "" && ptc.id != tc.ID {
+					return AssistantMessage{}, providerProtocolError("tool call index changed ID in chat completions stream", nil)
+				}
 				ptc.id = tc.ID
+				toolCallsByID[tc.ID] = ptc
 			}
 			if tc.Type != "" {
 				ptc.callType = tc.Type
@@ -572,13 +603,15 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 		Completion: completionFromStopReason(finishReason),
 		Usage:      usage,
 	}
-	indices := make([]int, 0, len(toolCallMap))
-	for index := range toolCallMap {
-		indices = append(indices, index)
-	}
-	sort.Ints(indices)
-	for _, index := range indices {
-		ptc := toolCallMap[index]
+	// Preserve index ordering where available, then arrival order for calls
+	// whose provider supplied only IDs.
+	sort.SliceStable(toolCalls, func(i, j int) bool {
+		if toolCalls[i].index == nil {
+			return false
+		}
+		return toolCalls[j].index == nil || *toolCalls[i].index < *toolCalls[j].index
+	})
+	for _, ptc := range toolCalls {
 		message.ToolCalls = append(message.ToolCalls, ToolCall{
 			ID:   ptc.id,
 			Type: ptc.callType,
