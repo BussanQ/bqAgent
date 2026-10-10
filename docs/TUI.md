@@ -36,13 +36,15 @@ OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 
 | `Tab` / `Shift+Tab` | 打开、补全或切换命令候选 |
 | `↑` / `↓` | 移动多行光标或召回当前工作区历史 |
 | `Esc` | 打断当前回复；空闲时关闭候选面板或收起工具详情 |
-| `Ctrl+C` | 复制输入框中选中的文本 |
+| `Ctrl+C` | 首次复制选中文本并提示；2 秒内连续再按一次安全退出 |
 | `Ctrl+V` | 从系统剪贴板粘贴到输入框 |
 | `Ctrl+Q` | 安全退出；有活动轮次时先取消并等待结束 |
 | `Ctrl+L` | 清理当前视口与草稿，不改变 Session |
 | `Ctrl+T` | 展开或收起超过 5 次的工具调用组 |
 
 达到 5 行或 200 字符的粘贴内容会折叠为原子 Chip；发送和历史召回时仍使用完整原文。自然完成后会自动发送排队内容，取消后则把它恢复到输入框。普通排队消息可按换行合并，Slash 命令不会与其他内容跨边界合并。
+
+两次 `Ctrl+C` 退出也适用于 Provider 配置界面。首次按下不取消当前任务；确认退出后，有活动任务时先取消并等待结束，不再启动排队任务。按其他键、粘贴、鼠标点击或超过 2 秒都会取消此次退出确认。
 
 输入历史保存在 `~/.agent/tui/history/<workspace-sha256>.jsonl`，每个工作区独立，最多 500 条且不超过 1 MiB。目录和文件权限分别为 `0700`、`0600`（受操作系统权限模型约束）。
 
@@ -71,3 +73,5 @@ On a real TTY, no-argument startup and `--chat` use an inline, always-streaming 
 The status bar shows full-precision `in / out` totals for the current user turn, including tool-call rounds. Input includes cached tokens; output includes reasoning counted by the provider. All three native API adapters publish usage immediately when received. Until then, estimates update with streamed text, reasoning, and tool arguments and remain marked `~`. Missing usage stays estimated; explicit zero is authoritative. Counts persist after completion and reset on the next turn. No extra token-count API requests are made.
 
 Completed-turn TPS uses the final text response and keeps pauses in its generation duration. The TUI applies no fixed TPS ceiling. Inspired by pi-tps, the agent checks sample count, spacing, observable streaming duration, and pause-dominated bursts before publishing a rate; insufficient evidence displays `TPS —`. These client-side heuristics cannot recover hidden server-side timing.
+
+Press `Ctrl+C` twice within two seconds to exit safely, including in Provider setup. The first press still copies selected prompt text and shows a confirmation hint; the second cancels any active turn and waits for it to finish. Other keys, paste, mouse clicks, or timeout cancel the confirmation. `Ctrl+Q` remains a one-step safe exit shortcut.

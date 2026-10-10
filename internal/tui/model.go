@@ -43,6 +43,9 @@ type suggestion struct {
 
 const maxSuggestions = 8
 
+const quitConfirmWindow = 2 * time.Second
+const quitConfirmHint = "再次按 Ctrl+C 退出（2 秒内）"
+
 type Model struct {
 	backend Backend
 	config  Config
@@ -52,15 +55,16 @@ type Model struct {
 	width   int
 	height  int
 
-	phase        phase
-	progress     string
-	startedAt    time.Time
-	stream       string
-	active       *activeTurn
-	sequence     uint64
-	queued       *queuedPrompt
-	pendingQuit  bool
-	pendingClear bool
+	phase            phase
+	progress         string
+	startedAt        time.Time
+	stream           string
+	active           *activeTurn
+	sequence         uint64
+	queued           *queuedPrompt
+	pendingQuit      bool
+	pendingClear     bool
+	quitConfirmUntil time.Time
 
 	sessionID  string
 	runtime    RuntimeInfo
@@ -161,6 +165,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		commands = append(commands, model.handleKey(message)...)
 	case tea.MouseClickMsg:
+		model.quitConfirmUntil = time.Time{}
 		commands = append(commands, model.handleMouse(message)...)
 	case turnEvent:
 		commands = append(commands, model.handleTurnEvent(message)...)
@@ -181,8 +186,14 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.spinner, command = model.spinner.Update(message)
 		commands = append(commands, command)
 	case tickMsg:
+		if !time.Time(message).Before(model.quitConfirmUntil) {
+			model.quitConfirmUntil = time.Time{}
+		}
 		commands = append(commands, tickCommand())
 	default:
+		if _, pasted := message.(tea.PasteMsg); pasted {
+			model.quitConfirmUntil = time.Time{}
+		}
 		if model.provider != nil {
 			commands = append(commands, model.provider.updateInput(message))
 			break
@@ -205,6 +216,9 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 func (model Model) View() tea.View {
 	if model.provider != nil {
 		content, cursor := model.provider.render(model.styles)
+		if model.quitConfirmationActive() {
+			content += "\n" + model.styles.dim.Render(quitConfirmHint)
+		}
 		view := tea.NewView(content)
 		view.Cursor = cursor
 		view.ReportFocus = true
@@ -247,6 +261,14 @@ func (model Model) View() tea.View {
 
 func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	name := key.String()
+	if name == "ctrl+c" {
+		if model.quitConfirmationActive() {
+			return model.requestQuit()
+		}
+		model.quitConfirmUntil = time.Now().Add(quitConfirmWindow)
+	} else {
+		model.quitConfirmUntil = time.Time{}
+	}
 	if model.provider != nil {
 		return model.handleProviderKey(key)
 	}
@@ -255,15 +277,7 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		model.toggleToolGroup()
 		return nil
 	case "ctrl+q":
-		if model.active != nil {
-			model.pendingQuit = true
-			model.active.cancelled = true
-			model.active.cancel()
-			model.phase = phaseCancelling
-			model.progress = "正在安全退出"
-			return nil
-		}
-		return []tea.Cmd{model.commitToolGroup(), tea.Quit}
+		return model.requestQuit()
 	case "ctrl+l":
 		disableMouse := model.discardToolGroup()
 		model.input.reset()
@@ -327,6 +341,25 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	model.refreshSuggestions()
 	model.resizeInput()
 	return []tea.Cmd{command}
+}
+
+func (model Model) quitConfirmationActive() bool {
+	return !model.quitConfirmUntil.IsZero() && time.Now().Before(model.quitConfirmUntil)
+}
+
+func (model *Model) requestQuit() []tea.Cmd {
+	model.quitConfirmUntil = time.Time{}
+	model.pendingClear = false
+	if model.active != nil {
+		model.pendingQuit = true
+		model.active.cancelled = true
+		model.active.cancel()
+		model.phase = phaseCancelling
+		model.progress = "正在安全退出"
+		return nil
+	}
+	model.provider = nil
+	return []tea.Cmd{model.commitToolGroup(), tea.Quit}
 }
 
 func (model *Model) cancelActiveTurn() {
@@ -817,6 +850,9 @@ func (model Model) renderStatus(width int) string {
 		}
 		right = strings.Join(parts, " · ")
 	}
+	if model.quitConfirmationActive() {
+		right = quitConfirmHint
+	}
 	if right == "" {
 		right = "Enter 发送 · Alt+Enter 换行 · / 命令"
 	}
@@ -934,7 +970,7 @@ func (model Model) helpText() string {
 	return `快捷键
   Enter 发送    Alt+Enter 换行    Tab/Shift+Tab 补全
   ↑/↓ 历史      Ctrl+C 复制选中文本    Ctrl+V 粘贴
-  Ctrl+Q 安全退出
+  连按两次 Ctrl+C（2 秒内）或 Ctrl+Q 安全退出
   Esc 打断当前回复；空闲时关闭面板/收起工具详情
   Ctrl+L 清理当前视口和草稿（保留 Session）
   Ctrl+T 展开/收起已合并的工具详情（也可点击工具汇总行）
