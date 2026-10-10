@@ -27,8 +27,8 @@ func TestRunCloseoutReviewForUnregisteredLongTask(t *testing.T) {
 	}}
 	store := &memoryTaskStore{}
 	app := NewWithOptions(client, "test", Options{TaskStore: store, Functions: map[string]tools.Function{"read_file": func(context.Context, map[string]any) (string, error) { return "source", nil }}})
-	reply, err := app.Run(context.Background(), "implement fast", 20)
-	if err != nil || !strings.Contains(reply, "尚未确认完成") || store.state == nil || store.state.Status != "active" {
+	reply, err := app.Run(context.Background(), "implement fast", 6)
+	if err != nil || !strings.Contains(reply, "maximum of 6 iterations") || store.state == nil || store.state.Status != "active" {
 		t.Fatalf("reply=%q task=%+v err=%v", reply, store.state, err)
 	}
 	found := false
@@ -77,13 +77,66 @@ func TestRunProductiveContinuationsCompleteInOneTurn(t *testing.T) {
 	}
 }
 
-func TestRunStagnantContinuationStreamsPause(t *testing.T) {
-	client := &stubClient{responses: []AssistantMessage{{Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}}}
+func TestRunStagnantContinuationRecoversWithoutPausing(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{{Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}, {Content: "done", Phase: "final_answer"}}}
 	var output bytes.Buffer
 	app := NewWithOptions(client, "test", Options{Stream: true, TokenSink: &output})
 	reply, err := app.Run(context.Background(), "work", 50)
-	if err != nil || len(client.messages) != 3 || !strings.Contains(reply, "连续自动续行仍无实质工具进展") || !strings.Contains(output.String(), reply) {
+	if err != nil || len(client.messages) != 4 || reply != "done" || strings.Contains(output.String(), "尚未确认完成") {
 		t.Fatalf("calls=%d reply=%q output=%q err=%v", len(client.messages), reply, output.String(), err)
+	}
+	last := client.messages[3]
+	if !strings.Contains(contentText(last[len(last)-1]["content"]), "Change approach now") {
+		t.Fatal("missing escalated recovery instruction")
+	}
+}
+
+func TestRunRepairsFailedVerificationAfterEmptyReplies(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			active := activeTestTask()
+			store := &memoryTaskStore{state: &active}
+			complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted test passed after repair"}}, Verification: []taskstate.Verification{{Command: "test_switch", Status: "passed", Details: "ok"}}}
+			client := &stubClient{responses: []AssistantMessage{
+				{Content: ""}, {Content: ""},
+				{ToolCalls: []ToolCall{{ID: "failed-test", Function: FunctionCall{Name: "test_switch", Arguments: `{}`}}}},
+				{Content: ""}, {Content: ""}, {Content: "will fix", Phase: "commentary"}, {Content: ""},
+				{ToolCalls: []ToolCall{{ID: "fix", Function: FunctionCall{Name: "edit_file", Arguments: `{}`}}}},
+				{ToolCalls: []ToolCall{{ID: "passed-test", Function: FunctionCall{Name: "test_switch", Arguments: `{}`}}}},
+				taskUpdateMessage(complete), {Content: "verified", Phase: "final_answer"},
+			}}
+			var output bytes.Buffer
+			fixed, checks := false, 0
+			app := NewWithOptions(client, "test", Options{TaskStore: store, Stream: stream, TokenSink: &output, Functions: map[string]tools.Function{
+				"test_switch": func(context.Context, map[string]any) (string, error) {
+					checks++
+					if !fixed {
+						return "disabled: service_tier should be omitted", errors.New("test failed")
+					}
+					return "ok", nil
+				},
+				"edit_file": func(context.Context, map[string]any) (string, error) { fixed = true; return "", nil },
+			}})
+			reply, err := app.Run(context.Background(), active.Goal, 20)
+			if err != nil || reply != "verified" || checks != 2 || !fixed || store.state.Status != "completed" || len(client.messages) != 11 || strings.Contains(output.String(), "尚未确认完成") {
+				t.Fatalf("reply=%q checks=%d fixed=%v task=%+v calls=%d err=%v", reply, checks, fixed, store.state, len(client.messages), err)
+			}
+			request := client.messages[7]
+			found := false
+			for _, message := range request {
+				text := contentText(message["content"])
+				if message["role"] == "developer" && strings.Contains(text, "diagnose its actual output") && strings.Contains(text, "Recovery attempt") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("missing failure recovery instruction")
+			}
+			encoded, _ := json.Marshal(request)
+			if !strings.Contains(string(encoded), "service_tier should be omitted") {
+				t.Fatal("failed verification evidence lost before repair")
+			}
+		})
 	}
 }
 
@@ -99,11 +152,11 @@ func TestContinuationProgressClassification(t *testing.T) {
 	} {
 		t.Run(tt.name+tt.result, func(t *testing.T) {
 			guard := &continuationGuard{}
-			guard.allow()
-			guard.allow()
+			guard.recoveryPrompt("continue")
+			guard.recoveryPrompt("continue")
 			guard.observe(ToolCall{Function: FunctionCall{Name: tt.name}}, tt.result)
-			if got := guard.allow(); got != tt.progress {
-				t.Fatalf("allow after %s = %v, want %v", tt.name, got, tt.progress)
+			if got := strings.Contains(guard.recoveryPrompt("continue"), "Change approach now"); got == tt.progress {
+				t.Fatalf("escalated recovery after %s = %v, progress=%v", tt.name, got, tt.progress)
 			}
 		})
 	}
@@ -146,11 +199,11 @@ func TestPlannedTaskChecksOverallCompletionAtLastStep(t *testing.T) {
 	}
 }
 
-func TestPlannedTaskStopsAfterBoundedCommentary(t *testing.T) {
+func TestPlannedTaskStopsAtIterationBudget(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Content: `{"steps":["implement","verify"]}`}, {Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}}}
 	app := NewWithOptions(client, "test", Options{Planner: NewPlanner(client, "test")})
-	reply, _, err := app.RunPlannedConversationTurn(context.Background(), nil, "task", 10)
-	if err != nil || !strings.Contains(reply, "尚未确认完成") || len(client.messages) != 4 {
+	reply, _, err := app.RunPlannedConversationTurn(context.Background(), nil, "task", 3)
+	if err != nil || !strings.Contains(reply, "maximum of 3 iterations") || len(client.messages) != 4 {
 		t.Fatalf("reply=%q calls=%d err=%v", reply, len(client.messages), err)
 	}
 }
@@ -255,12 +308,12 @@ func TestRunContinuationLimitsAndOrdinaryAnswers(t *testing.T) {
 			}
 			client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "answer"}, {Role: "assistant", Content: "answer"}, {Role: "assistant", Content: "answer"}}}
 			app := NewWithOptions(client, "test", Options{TaskStore: store})
-			reply, err := app.Run(context.Background(), "status", 20)
+			reply, err := app.Run(context.Background(), "status", 3)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if status == "active" {
-				if !strings.Contains(reply, "尚未确认完成") || len(client.messages) != 3 || store.state.Status != "active" {
+				if !strings.Contains(reply, "maximum of 3 iterations") || len(client.messages) != 3 || store.state.Status != "active" {
 					t.Fatalf("reply=%q calls=%d", reply, len(client.messages))
 				}
 			} else if reply != "answer" || len(client.messages) != 1 {
@@ -270,8 +323,8 @@ func TestRunContinuationLimitsAndOrdinaryAnswers(t *testing.T) {
 	}
 	client := &stubClient{responses: []AssistantMessage{{Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}}}
 	app := NewWithOptions(client, "test", Options{})
-	reply, err := app.Run(context.Background(), "work", 20)
-	if err != nil || !strings.Contains(reply, "尚未确认完成") || len(client.messages) != 3 {
+	reply, err := app.Run(context.Background(), "work", 3)
+	if err != nil || !strings.Contains(reply, "maximum of 3 iterations") || len(client.messages) != 3 {
 		t.Fatalf("commentary limit: %q %v", reply, err)
 	}
 }

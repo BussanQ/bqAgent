@@ -882,24 +882,30 @@ func (model Model) renderStatus(width int) string {
 
 func (model Model) tokenUsageStatus() string {
 	if model.usage != nil {
-		return "in " + formatTokenCount(model.usage.InputTokens, model.usage.InputEstimated) + " · out " + formatTokenCount(model.usage.OutputTokens, model.usage.OutputEstimated)
+		return "in " + formatTokenCount(model.usage.InputTokens) + " · out " + formatTokenCount(model.usage.OutputTokens)
 	}
 	if model.metrics != nil {
-		return "in " + formatTokenCount(model.metrics.PromptTokens, false) + " · out " + formatTokenCount(model.metrics.CompletionTokens, false)
+		return "in " + formatTokenCount(model.metrics.PromptTokens) + " · out " + formatTokenCount(model.metrics.CompletionTokens)
 	}
 	if model.liveRunes > 0 {
-		return "in — · out " + formatTokenCount(model.liveTokens, true)
+		return "in — · out " + formatTokenCount(model.liveTokens)
 	}
 	return "in — · out —"
 }
 
-func formatTokenCount(tokens int, estimated bool) string {
-	digits := fmt.Sprint(max(0, tokens))
-	for i := len(digits) - 3; i > 0; i -= 3 {
-		digits = digits[:i] + "," + digits[i:]
+func formatTokenCount(tokens int) string {
+	tokens = max(0, tokens)
+	digits := fmt.Sprint(tokens)
+	var value float64
+	var unit string
+	switch {
+	case tokens >= 999_950: // Promote rounded 1000K to 1M.
+		value, unit = float64(tokens)/1_000_000, "M"
+	case tokens >= 1_000:
+		value, unit = float64(tokens)/1_000, "K"
 	}
-	if estimated {
-		return "~" + digits
+	if unit != "" {
+		digits = strings.TrimSuffix(fmt.Sprintf("%.1f", value), ".0") + unit
 	}
 	return digits
 }

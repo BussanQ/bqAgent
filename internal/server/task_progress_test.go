@@ -46,8 +46,8 @@ func TestServiceRestoresTaskAndContinuesUntilVerified(t *testing.T) {
 	active := taskstate.State{Goal: "implement fast switch", Status: "active", Criteria: []taskstate.Criterion{{Description: "switch works"}}, Remaining: []string{"test switch"}}
 	client := &taskScriptClient{responses: []agent.AssistantMessage{serverTaskUpdate(active), {Role: "assistant", Content: "will test"}, {Role: "assistant", Content: "will test"}, {Role: "assistant", Content: "will test"}}}
 	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: client, Model: "test", SystemPrompt: "test"})
-	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "implement fast switch"})
-	if err != nil || !strings.Contains(response.Reply, "尚未确认完成") {
+	response, err := service.HandleTurnWithOptions(context.Background(), TurnRequest{Message: "implement fast switch"}, TurnOptions{MaxIterations: 4})
+	if err != nil || !strings.Contains(response.Reply, "maximum of 4 iterations") {
 		t.Fatalf("first=%+v err=%v", response, err)
 	}
 	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "switch test succeeded"}}, Verification: []taskstate.Verification{{Command: "test_switch", Status: "passed", Details: "ok"}}}
@@ -103,6 +103,8 @@ func TestServiceCompletesLongTaskWithoutFollowupTurn(t *testing.T) {
 		responses = append(responses,
 			agent.AssistantMessage{Content: ""},
 			agent.AssistantMessage{Content: ""},
+			agent.AssistantMessage{Content: ""},
+			agent.AssistantMessage{Content: "still working", Phase: "commentary"},
 			agent.AssistantMessage{ToolCalls: []agent.ToolCall{{ID: fmt.Sprintf("edit-%d", i), Function: agent.FunctionCall{Name: "edit_switch", Arguments: fmt.Sprintf(`{"step":%d}`, i)}}}})
 	}
 	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "switch verification passed"}}, Verification: []taskstate.Verification{{Command: "test_switch", Status: "passed", Details: "ok"}}}

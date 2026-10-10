@@ -427,23 +427,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		truncatedToolRecoveries = 0
 		if len(message.ToolCalls) == 0 {
 			if reason := a.continuationReason(ctx, message, continuations); reason != "" {
-				if !continuations.allow() {
-					paused := "任务尚未确认完成：连续自动续行仍无实质工具进展，当前工作与任务状态已保留。"
-					checkpoint := map[string]any{"role": "assistant", "content": paused, "phase": "final_answer"}
-					if err := a.recordMessages(checkpoint); err != nil {
-						return "", updatedMessages, err
-					}
-					if a.stream {
-						sink := a.tokenSink
-						if sink == nil {
-							sink = a.logWriter
-						}
-						if sink != nil {
-							_, _ = io.WriteString(sink, "\n\n"+paused)
-						}
-					}
-					return paused, append(updatedMessages, checkpoint), nil
-				}
+				reason = continuations.recoveryPrompt(reason)
 				a.writeProgress("任务尚未完成，继续执行与验证。")
 				updatedMessages, err = a.appendContinuation(updatedMessages, reason)
 				messages = updatedMessages
@@ -586,6 +570,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		a.writeStageProgress(fmt.Sprintf("Completed analysis iteration %d", actualIterations))
 	}
 
+	continuations.stopped = true
 	if a.stageConfig.MaxIterations > 0 || a.stageConfig.Timeout > 0 || a.stageConfig.LoopProtection {
 		return a.finishStageCheckpoint(ctx, updatedMessages, fmt.Sprintf("maximum turn iterations reached (%d)", maxIterations), actualIterations)
 	}

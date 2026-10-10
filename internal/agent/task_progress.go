@@ -91,7 +91,7 @@ func (a *Agent) taskContext(ctx context.Context) string {
 	return text
 }
 
-const maxNoProgressContinuations = 2
+const recoveryEscalationThreshold = 2
 
 type continuationGuard struct {
 	stagnant         int
@@ -113,20 +113,19 @@ func (guard *continuationGuard) observe(call ToolCall, result string) {
 	guard.substantiveCalls++
 }
 
-func (guard *continuationGuard) allow() bool {
+// Recovery changes the next action rather than treating temporary lack of tool
+// progress as a completed turn. Total iterations, deadlines and cancellation
+// remain enforced by runConversation.
+func (guard *continuationGuard) recoveryPrompt(reason string) string {
 	if guard.progressed {
 		guard.stagnant = 0
 	}
 	guard.progressed = false
-	// Only consecutive no-progress retries are bounded here. Productive work
-	// replenishes this budget; the outer loop still bounds total iterations,
-	// stage time and cancellation for the whole turn.
-	if guard.stagnant >= maxNoProgressContinuations {
-		guard.stopped = true
-		return false
-	}
 	guard.stagnant++
-	return true
+	if guard.stagnant <= recoveryEscalationThreshold {
+		return reason
+	}
+	return reason + fmt.Sprintf("\nRecovery attempt %d: repeated empty replies or progress-only replies have not advanced the task. Change approach now: inspect the latest tool results and saved remaining work, choose the smallest actionable unfinished step, and execute it in this same turn. If a build or test failed, diagnose its actual output, fix the cause, and rerun only the permitted targeted verification. A failed test is evidence to act on, not by itself a blocker. Do not repeat a promise, rewrite only the plan, weaken acceptance criteria, or ask the user to say continue. If truly blocked by missing external information or authorization, record the concrete blocker and explain it; otherwise keep working until verified.", guard.stagnant)
 }
 
 func (a *Agent) continuationReason(ctx context.Context, message AssistantMessage, guard *continuationGuard) string {
