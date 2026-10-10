@@ -187,7 +187,7 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `CONTEXT_SUMMARIZATION_ENABLED` | `true` | Enables summarization of older dialogue. |
 | `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `128000` | Estimated input size that triggers summarization. |
 | `CONTEXT_SUMMARY_MODEL` | main model | Optional cheaper model used for summaries. |
-| `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` bounds `messages.jsonl`; `full` keeps append-only audit history. |
+| `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` uses only bounded `messages.jsonl`; `full` keeps append-only audit history and a separate working snapshot. |
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | Retained tail of each `output.log`; `0` disables trimming. |
 | `RUN_TRACE_ENABLED` | `false` | Persists `.agent/runs/<run-id>/` traces and enables run feedback APIs. |
 
@@ -295,7 +295,7 @@ Primary configuration is fixed at `~/.agent/`, where missing defaults are initia
 │  └─ <session-id>/
 │     ├─ meta.json
 │     ├─ messages.jsonl
-│     ├─ working_messages.jsonl
+│     ├─ working_messages.jsonl  # full mode only; legacy compact files are migrated
 │     ├─ context_checkpoint.json
 │     └─ output.log
 └─ server/
@@ -363,9 +363,9 @@ project/
   - when a skill is relevant, the model reads the complete `SKILL.md` on demand with `read_file`
   - explicit `/skill <name-or-alias> [args]` and leading skill IDs/aliases route through the same main conversation loop
 - `~/.agent/sessions/<session-id>/messages.jsonl`
-  - current-turn journal; compact mode converges it to the bounded snapshot after each turn
+  - the only message file in compact mode: messages are appended during a turn and atomically replaced with bounded working context after the turn; full mode retains append-only history
 - `~/.agent/sessions/<session-id>/working_messages.jsonl`
-  - stable bounded snapshot used for normal resume
+  - separate bounded working context in full mode only; legacy compact snapshots are migrated and removed on resume or startup maintenance
 - `~/.agent/sessions/<session-id>/context_checkpoint.json`
   - compact checkpoint with summary plus recent tail for faster resume context reconstruction
 - `~/.agent/sessions/<session-id>/output.log`
@@ -480,7 +480,7 @@ count. The iteration cap is therefore just a runaway safety valve (defaults to a
 high `1000`). Summarization is enabled
 by default. All context budgets and summary-model overrides are listed in the [environment variables](#environment-variables) chapter.
 
-Sessions persist the channel/user mapping, status, messages, and resumable context checkpoints. The default compact mode rewrites `messages.jsonl` to the bounded `working_messages.jsonl` snapshot after each turn, preventing raw tool results from accumulating indefinitely; full append-only audit history remains available as an opt-in. If a transcript is newer than its working snapshot after an interrupted turn, recovery uses the newer transcript. Session log limits and storage modes are documented under [environment variables](#environment-variables). WeChat/iLink sends only the final reply because its context token must not be consumed by intermediate progress messages.
+Sessions persist the channel/user mapping, status, messages, and resumable context checkpoints. Default compact mode uses one `messages.jsonl`: messages are appended during a turn, then atomically replaced with bounded working context when the turn ends. If a legacy `working_messages.jsonl` exists, resume or startup maintenance selects recoverable content by modification time and readability, persists it in `messages.jsonl`, and removes the old snapshot. Newer messages from interrupted turns are preserved; startup maintenance skips running sessions, and a failed migration write leaves the legacy snapshot intact. Opt-in full mode retains append-only audit history and a separate working snapshot. Session log limits and storage modes are documented under [environment variables](#environment-variables). WeChat/iLink sends only the final reply because its context token must not be consumed by intermediate progress messages.
 
 This is still intentionally a small implementation:
 

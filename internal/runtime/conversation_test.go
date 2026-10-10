@@ -282,7 +282,7 @@ func TestPrepareConversationRefreshesExistingSystemMessage(t *testing.T) {
 }
 
 func TestPrepareConversationPrefersWorkingContextSnapshot(t *testing.T) {
-	store := session.NewStore(t.TempDir())
+	store := session.NewStore(t.TempDir(), session.Options{TranscriptMode: session.TranscriptModeFull})
 	conversation, err := PrepareConversation(store, "", &session.CreateOptions{Task: "hello", Chat: true}, "system prompt")
 	if err != nil {
 		t.Fatalf("PrepareConversation returned error: %v", err)
@@ -334,6 +334,53 @@ func TestPrepareConversationPrefersWorkingContextSnapshot(t *testing.T) {
 	}
 }
 
+func TestPrepareConversationMigratesLegacyCompactSnapshot(t *testing.T) {
+	for _, maintainFirst := range []bool{false, true} {
+		t.Run(map[bool]string{false: "resume", true: "startup_maintenance"}[maintainFirst], func(t *testing.T) {
+			root := t.TempDir()
+			store := session.NewStore(root)
+			conversation, err := PrepareConversation(store, "", &session.CreateOptions{Task: "legacy"}, "system prompt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			legacy, err := session.NewStore(root, session.Options{TranscriptMode: session.TranscriptModeFull}).Open(conversation.Session.ID())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := legacy.SaveWorkingMessages([]map[string]any{
+				{"role": "system", "content": "system prompt"},
+				{"role": "assistant", "content": agent.EarlierConversationSummaryPrefix + "compact summary"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			if err := os.Chtimes(legacy.MessagesPath(), now.Add(-time.Second), now.Add(-time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if maintainFirst {
+				if err := legacy.MarkCompleted(); err != nil {
+					t.Fatal(err)
+				}
+				if errs := store.MaintainExistingSessions(); len(errs) != 0 {
+					t.Fatal(errs)
+				}
+			}
+			for range 2 {
+				restored, err := PrepareConversation(store, legacy.ID(), nil, "system prompt")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(restored.Messages) != 2 || restored.Messages[1]["role"] != "system" || restored.Messages[1]["content"] != agent.EarlierConversationSummaryPrefix+"compact summary" {
+					t.Fatalf("migrated summary was lost: %#v", restored.Messages)
+				}
+				if _, err := os.Stat(legacy.WorkingMessagesPath()); !os.IsNotExist(err) {
+					t.Fatalf("legacy working file still exists: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestPrepareConversationUsesNewerTranscriptAfterInterruptedTurn(t *testing.T) {
 	store := session.NewStore(t.TempDir(), session.Options{TranscriptMode: session.TranscriptModeCompact, OutputMaxBytes: session.DefaultOutputMaxBytes})
 	conversation, err := PrepareConversation(store, "", &session.CreateOptions{Task: "hello", Chat: true}, "system prompt")
@@ -342,6 +389,14 @@ func TestPrepareConversationUsesNewerTranscriptAfterInterruptedTurn(t *testing.T
 	}
 	working := []map[string]any{{"role": "system", "content": "system prompt"}, {"role": "assistant", "content": "previous summary"}}
 	if err := conversation.Session.SaveWorkingMessages(working); err != nil {
+		t.Fatal(err)
+	}
+	// Recreate the legacy two-file layout to exercise migration on resume.
+	snapshot, err := os.ReadFile(conversation.Session.MessagesPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conversation.Session.WorkingMessagesPath(), snapshot, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := conversation.Session.RecordMessage(map[string]any{"role": "user", "content": "interrupted request"}); err != nil {

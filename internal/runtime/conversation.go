@@ -62,7 +62,9 @@ func PrepareConversationWithPrompt(store *session.Store, sessionID string, creat
 		}
 		usingWorkingContext := false
 		messages, usingWorkingContext, err = savedSession.LoadResumableMessages()
-		if err == nil && usingWorkingContext {
+		// Compact transcripts now also carry working snapshots. Startup
+		// maintenance may already have moved a legacy summary into that file.
+		if err == nil && (usingWorkingContext || savedSession.TranscriptMode() == session.TranscriptModeCompact) {
 			var migrated bool
 			messages, migrated = migrateSyntheticSummaryRoles(messages)
 			if migrated {

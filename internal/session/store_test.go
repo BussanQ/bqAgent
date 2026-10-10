@@ -276,7 +276,7 @@ func TestSessionStoreLoadsLegacyCheckpointWithoutProvenance(t *testing.T) {
 }
 
 func TestSessionStorePersistsWorkingMessagesSeparatelyFromTranscript(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := NewStore(t.TempDir(), Options{TranscriptMode: TranscriptModeFull})
 	savedSession, err := store.Create(CreateOptions{Task: "inspect repo", Chat: true})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)

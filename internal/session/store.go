@@ -299,8 +299,14 @@ func (session *Session) CheckpointPath() string {
 	return filepath.Join(session.Dir(), "context_checkpoint.json")
 }
 
+// WorkingMessagesPath is the full-mode snapshot and the legacy compact path.
+// Compact sessions now persist both the journal and working context in MessagesPath.
 func (session *Session) WorkingMessagesPath() string {
 	return filepath.Join(session.Dir(), "working_messages.jsonl")
+}
+
+func (session *Session) TranscriptMode() TranscriptMode {
+	return session.store.options.TranscriptMode
 }
 
 func (session *Session) LoadMessages() ([]map[string]any, error) {
@@ -308,6 +314,14 @@ func (session *Session) LoadMessages() ([]map[string]any, error) {
 }
 
 func (session *Session) LoadWorkingMessages() ([]map[string]any, error) {
+	if session.store.options.TranscriptMode == TranscriptModeCompact {
+		messages, _, err := session.LoadResumableMessages()
+		return messages, err
+	}
+	return session.loadSeparateWorkingMessages()
+}
+
+func (session *Session) loadSeparateWorkingMessages() ([]map[string]any, error) {
 	if _, err := os.Stat(session.WorkingMessagesPath()); err != nil {
 		return nil, err
 	}
@@ -338,10 +352,33 @@ func (session *Session) LoadTranscriptProvenance() (TranscriptProvenance, error)
 }
 
 func (session *Session) LoadResumableMessages() ([]map[string]any, bool, error) {
+	messages, usingWorking, err := session.loadResumableMessages()
+	if err != nil || session.store.options.TranscriptMode != TranscriptModeCompact {
+		return messages, usingWorking, err
+	}
+	if _, err := os.Stat(session.WorkingMessagesPath()); os.IsNotExist(err) {
+		return messages, usingWorking, nil
+	} else if err != nil {
+		return nil, usingWorking, err
+	}
+	// Persist the selected legacy snapshot before removing it. If the journal
+	// was newer, keep its bytes and checkpoint provenance unchanged.
+	if usingWorking {
+		if err := writeMessagesJSONL(session.MessagesPath(), messages); err != nil {
+			return nil, usingWorking, err
+		}
+	}
+	if err := session.removeSeparateWorkingMessages(); err != nil {
+		return nil, usingWorking, err
+	}
+	return messages, usingWorking, nil
+}
+
+func (session *Session) loadResumableMessages() ([]map[string]any, bool, error) {
 	workingInfo, workingErr := os.Stat(session.WorkingMessagesPath())
 	messageInfo, messageErr := os.Stat(session.MessagesPath())
 	if workingErr == nil && (messageErr != nil || !messageInfo.ModTime().After(workingInfo.ModTime())) {
-		messages, err := session.LoadWorkingMessages()
+		messages, err := session.loadSeparateWorkingMessages()
 		if err == nil {
 			return messages, true, nil
 		}
@@ -360,7 +397,7 @@ func (session *Session) LoadResumableMessages() ([]map[string]any, bool, error) 
 			return messages, false, nil
 		}
 		if workingErr == nil {
-			fallback, fallbackErr := session.LoadWorkingMessages()
+			fallback, fallbackErr := session.loadSeparateWorkingMessages()
 			if fallbackErr == nil {
 				return fallback, true, nil
 			}
@@ -369,7 +406,7 @@ func (session *Session) LoadResumableMessages() ([]map[string]any, bool, error) 
 		return nil, false, err
 	}
 	if workingErr == nil {
-		messages, err := session.LoadWorkingMessages()
+		messages, err := session.loadSeparateWorkingMessages()
 		return messages, true, err
 	}
 	if !os.IsNotExist(messageErr) {
@@ -385,16 +422,24 @@ func (session *Session) SaveWorkingMessages(messages []map[string]any) error {
 	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
 		return err
 	}
-	return writeMessagesJSONL(session.WorkingMessagesPath(), messages)
-}
-
-func (session *Session) SaveWorkingContext(messages []map[string]any) error {
 	if session.store.options.TranscriptMode == TranscriptModeCompact {
 		if err := writeMessagesJSONL(session.MessagesPath(), messages); err != nil {
 			return err
 		}
+		return session.removeSeparateWorkingMessages()
 	}
+	return writeMessagesJSONL(session.WorkingMessagesPath(), messages)
+}
+
+func (session *Session) SaveWorkingContext(messages []map[string]any) error {
 	return session.SaveWorkingMessages(messages)
+}
+
+func (session *Session) removeSeparateWorkingMessages() error {
+	if err := os.Remove(session.WorkingMessagesPath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func (session *Session) RecordMessage(message map[string]any) error {
@@ -548,10 +593,12 @@ func (s *Store) MaintainExistingSessions() []error {
 		if saved.Meta().Status == StatusRunning {
 			continue
 		}
-		working, loadErr := saved.LoadWorkingMessages()
-		if loadErr == nil && len(working) > 0 {
-			if rewriteErr := saved.RewriteMessages(working); rewriteErr != nil {
-				errorsFound = append(errorsFound, fmt.Errorf("session %s compact transcript: %w", entry.Name(), rewriteErr))
+		_, loadErr := saved.loadSeparateWorkingMessages()
+		if loadErr == nil {
+			// Select by freshness, just like resume; an interrupted turn may
+			// have newer messages than the legacy working snapshot.
+			if _, _, migrateErr := saved.LoadResumableMessages(); migrateErr != nil {
+				errorsFound = append(errorsFound, fmt.Errorf("session %s migrate compact transcript: %w", entry.Name(), migrateErr))
 			}
 		} else if loadErr != nil && !os.IsNotExist(loadErr) {
 			errorsFound = append(errorsFound, fmt.Errorf("session %s load working messages: %w", entry.Name(), loadErr))

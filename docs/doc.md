@@ -191,7 +191,7 @@ LLM_MODEL=claude-sonnet-4-5
 | `CONTEXT_SUMMARIZATION_ENABLED` | `true` | 启用旧对话摘要。 |
 | `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `128000` | 触发摘要的输入大小。 |
 | `CONTEXT_SUMMARY_MODEL` | 主模型 | 可选的低成本摘要模型。 |
-| `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` 限制 `messages.jsonl`；`full` 保留 append-only 审计历史。 |
+| `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` 仅使用有界的 `messages.jsonl`；`full` 保留 append-only 审计历史和独立工作快照。 |
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | 每个 `output.log` 保留的尾部大小；`0` 禁用裁剪。 |
 | `RUN_TRACE_ENABLED` | `false` | 保存 `.agent/runs/<run-id>/` Trace 并启用运行反馈接口。 |
 
@@ -299,7 +299,7 @@ bqagent 会从当前目录向上查找，直到命中以下任一工作区标记
 │  └─ <session-id>/
 │     ├─ meta.json
 │     ├─ messages.jsonl
-│     ├─ working_messages.jsonl
+│     ├─ working_messages.jsonl  # 仅 full 模式；旧 compact 文件会自动迁移
 │     ├─ context_checkpoint.json
 │     └─ output.log
 └─ server/
@@ -367,9 +367,9 @@ project/
   - 当 Skill 与任务相关时，模型通过 `read_file` 按需读取完整 `SKILL.md`
   - 显式 `/skill <名称或别名> [参数]` 及消息开头的 Skill ID/alias 都进入同一个主会话循环
 - `~/.agent/sessions/<session-id>/messages.jsonl`
-  - 当前执行轮的 journal；compact 模式会在每轮结束后将其收敛为 bounded snapshot
+  - compact 模式唯一的消息文件：执行中追加消息，每轮结束后原子替换为有界工作上下文；full 模式保留完整追加历史
 - `~/.agent/sessions/<session-id>/working_messages.jsonl`
-  - 正常恢复使用的稳定 bounded snapshot
+  - 仅 full 模式单独保存有界工作上下文；旧 compact 会话的同名文件在恢复或启动维护时迁移后删除
 - `~/.agent/sessions/<session-id>/context_checkpoint.json`
   - 保存“摘要 + 最近 tail”的紧凑 checkpoint，用于恢复时重建工作上下文
 - `~/.agent/sessions/<session-id>/output.log`
@@ -477,7 +477,7 @@ WebUI 输入区的 “+” 按钮支持上传浏览器本地文件，或引用�
 
 默认情况下循环表现为"自动压缩续跑"：当对话接近输入 token 预算时，会把更早的对话摘要（压缩）后**继续**在压缩上下文上推进，而不是在固定轮数处停下。因此轮数上限只是失控保险（默认很高，为 `1000`）。所有上下文预算和摘要模型覆盖均集中在[环境变量配置](#环境变量配置)章节。
 
-Session 用于保存会话 ID、渠道用户映射、消息、任务状态和可恢复的上下文 checkpoint。默认 compact 模式会在每轮结束后用受预算控制的 `working_messages.jsonl` 收敛 `messages.jsonl`，避免原始工具结果无限累计；也可选择 append-only 完整审计模式。若任务中断后 transcript 比 working snapshot 更新，恢复时会优先使用较新的 transcript。Session 日志上限和存储模式集中在[环境变量配置](#环境变量配置)章节。微信 iLink 只发送最终回复，不发送中间 progress，以免同一个 `context_token` 被提前消耗。
+Session 用于保存会话 ID、渠道用户映射、消息、任务状态和可恢复的上下文 checkpoint。默认 compact 模式只保存一个 `messages.jsonl`：执行中逐条追加消息，每轮结束后原子替换为受预算控制的工作上下文。旧会话若同时存在 `working_messages.jsonl`，恢复或启动维护时会按更新时间和可读性选择可恢复内容，成功保存到 `messages.jsonl` 后删除旧快照，保留中断任务中新追加的消息；启动维护跳过运行中的会话，迁移写入失败不会删除旧快照。可选的 full 模式仍保留完整追加历史和独立工作快照。Session 日志上限和存储模式集中在[环境变量配置](#环境变量配置)章节。微信 iLink 只发送最终回复，不发送中间 progress，以免同一个 `context_token` 被提前消耗。
 
 这里仍然刻意保持简单：
 
