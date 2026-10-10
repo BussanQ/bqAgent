@@ -25,6 +25,8 @@ openai/gpt-5 · Run · 20260827   Enter 发送 · Alt+Enter 换行 · / 命令
 
 OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 时立即校准。usage 尚未返回时，输入按请求内容估算，输出随文本、推理和工具参数增量更新，带 `~` 标记；供应商通常只在请求结束时提供准确输出量，因此不会把中途的字符估算冒充精确 token。缺失 usage 时保留 `~`，明确返回的 `0` 则显示为准确的零。此显示不额外调用 token 计数接口。
 
+完成后，TPS 沿用最后一次文本回复的计算口径：`(输出 token − 推理 token − 1) / 首段至末段文本的秒数`，中途停顿仍计入耗时。TUI 不再按 `1000 tok/s` 等速度上限过滤，而是参考 pi-tps 的采样可靠性检测：首段之后至少 5 次非空更新、平均更新间隔至少 1ms、扣除 ≥500ms 间隙后的观测窗口至少 200ms，且这些间隙不能占据窗口的大部分。这里只用间隙判断采样质量，不从 TPS 分母中扣除。样本不足、短时集中补发、缺少输出 usage 等情况下显示 `TPS —`；通过检测的高速输出正常显示。该检测是客户端启发式判断，无法还原供应商隐藏的服务端生成时间。
+
 ## 输入与快捷键
 
 | 按键 | 行为 |
@@ -67,3 +69,5 @@ stdin/stdout 不是 TTY，或 `TERM=dumb` 时，会自动使用原有逐行模�
 On a real TTY, no-argument startup and `--chat` use an inline, always-streaming Bubble Tea UI without an alternate screen. Mouse tracking is enabled only for a clickable collapsed tool group and disabled when the group is committed or cleared. `/provider` opens a sequential Provider setup wizard with encrypted API-key storage and either automatic model discovery or comma-separated custom models; the first custom model becomes the default. Redirected input/output and `TERM=dumb` fall back to the legacy line mode. See the tables above for shortcuts, commands, queue behavior, persisted workspace history, resume limits, `NO_COLOR`, and the CodeHamr design acknowledgment.
 
 The status bar shows full-precision `in / out` totals for the current user turn, including tool-call rounds. Input includes cached tokens; output includes reasoning counted by the provider. All three native API adapters publish usage immediately when received. Until then, estimates update with streamed text, reasoning, and tool arguments and remain marked `~`. Missing usage stays estimated; explicit zero is authoritative. Counts persist after completion and reset on the next turn. No extra token-count API requests are made.
+
+Completed-turn TPS uses the final text response and keeps pauses in its generation duration. The TUI applies no fixed TPS ceiling. Inspired by pi-tps, the agent checks sample count, spacing, observable streaming duration, and pause-dominated bursts before publishing a rate; insufficient evidence displays `TPS —`. These client-side heuristics cannot recover hidden server-side timing.

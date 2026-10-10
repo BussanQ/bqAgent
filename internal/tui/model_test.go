@@ -366,10 +366,10 @@ func TestCompletedStatusFiltersGenerationSpeed(t *testing.T) {
 		{name: "fraction", speed: 42.36, want: "42.4 tok/s"},
 		{name: "below_limit", speed: 999.9, want: "999.9 tok/s"},
 		{name: "at_limit", speed: 1000, want: "1000.0 tok/s"},
-		{name: "just_above_limit", speed: 1000.01},
-		{name: "above_limit", speed: 1001},
-		{name: "large", speed: 1000000},
-		{name: "max_float", speed: math.MaxFloat64},
+		{name: "just_above_old_limit", speed: 1000.01, want: "1000.0 tok/s"},
+		{name: "above_old_limit", speed: 1001, want: "1001.0 tok/s"},
+		{name: "above_pi_tps_ceiling", speed: 20000, want: "20000.0 tok/s"},
+		{name: "large", speed: 1000000, want: "1000000.0 tok/s"},
 		{name: "zero", speed: 0},
 		{name: "negative", speed: -1},
 		{name: "nan", speed: math.NaN()},
@@ -388,7 +388,7 @@ func TestCompletedStatusFiltersGenerationSpeed(t *testing.T) {
 			}
 			status := model.renderStatus(200)
 			if test.want == "" {
-				if strings.Contains(status, "tok/s") {
+				if strings.Contains(status, "tok/s") || !strings.Contains(status, "TPS —") {
 					t.Fatalf("status shows invalid speed: %q", status)
 				}
 			} else if !strings.Contains(status, test.want) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -793,6 +794,15 @@ func (model Model) renderStatus(width int) string {
 		right = fmt.Sprintf("%s · %s %s · %s", model.tokenUsageStatus(), model.spinner.View(), model.phaseLabel(), elapsed)
 	} else if model.metrics != nil || model.usage != nil {
 		parts := []string{model.tokenUsageStatus()}
+		speedLabel := "TPS —"
+		if model.metrics != nil {
+			if speed := model.metrics.TokensPerSecond; speed > 0 && !math.IsNaN(speed) && !math.IsInf(speed, 0) {
+				// Reliability is checked against stream samples by the agent.
+				// A high rate alone is not evidence of buffered delivery.
+				speedLabel = fmt.Sprintf("%.1f tok/s", speed)
+			}
+		}
+		parts = append(parts, speedLabel)
 		if model.metrics != nil {
 			parts = append(parts, fmt.Sprintf("首字 %.2fs", float64(model.metrics.FirstTokenLatencyMS)/1000))
 			if model.metrics.CacheMetrics != nil && model.metrics.CacheMetrics.Available && model.metrics.CacheMetrics.InputTokens > 0 {
@@ -803,10 +813,6 @@ func (model Model) renderStatus(width int) string {
 				rate := 100 * float64(model.metrics.CachedPromptTokens) / float64(model.metrics.PromptTokens)
 				rate = min(100, max(0, rate))
 				parts = append(parts, fmt.Sprintf("缓存命中 %.0f%%", rate))
-			}
-			// 上游缓冲后集中发送可能放大观测速率；与 WebUI 一致，过滤超过 1000 的值。
-			if speed := model.metrics.TokensPerSecond; speed > 0 && speed <= 1000 {
-				parts = append(parts, fmt.Sprintf("%.1f tok/s", speed))
 			}
 		}
 		right = strings.Join(parts, " · ")

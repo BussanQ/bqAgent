@@ -80,8 +80,8 @@ func TestRunConversationTurnWithGenerationMetrics(t *testing.T) {
 	if !metrics.CacheUsageAvailable || metrics.PromptTokens != 100 || metrics.CachedPromptTokens != 75 {
 		t.Fatalf("cache metrics = %#v", metrics)
 	}
-	if metrics.GenerationDuration <= 0 || metrics.TokensPerSecond <= 0 {
-		t.Fatalf("generation metrics = %#v, want positive duration and rate", metrics)
+	if metrics.GenerationDuration <= 0 || metrics.TokensPerSecond != 0 {
+		t.Fatalf("generation metrics = %#v, want positive duration but unavailable rate for two updates", metrics)
 	}
 }
 
@@ -144,6 +144,8 @@ func TestGenerationMetricsRateExcludesReasoningTokens(t *testing.T) {
 		completionTokens:   12,
 		reasoningTokens:    2,
 		generationDuration: time.Second,
+		streamUpdates:      5,
+		streamSpan:         800 * time.Millisecond,
 	})
 
 	metrics := collector.metricsFor("answer")

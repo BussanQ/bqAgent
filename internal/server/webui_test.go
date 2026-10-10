@@ -765,7 +765,8 @@ func TestWebUIStreamChat(t *testing.T) {
 	if first.done.Generation.FirstTokenLatencyMS <= 0 || first.done.Generation.GenerationDurationMS <= 0 {
 		t.Fatalf("generation timing = %#v, want positive values", first.done.Generation)
 	}
-	if first.done.Generation.CompletionTokens != 6 || first.done.Generation.ReasoningTokens != 1 || first.done.Generation.TokensPerSecond <= 0 {
+	// This fixture emits only two text chunks, insufficient for a reliable TPS.
+	if first.done.Generation.CompletionTokens != 6 || first.done.Generation.ReasoningTokens != 1 || first.done.Generation.TokensPerSecond != 0 {
 		t.Fatalf("generation metrics = %#v", first.done.Generation)
 	}
 	if !first.done.Generation.CacheUsageAvailable || first.done.Generation.PromptTokens != 4 || first.done.Generation.CachedPromptTokens != 3 {

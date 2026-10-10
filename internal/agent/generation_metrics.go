@@ -42,6 +42,24 @@ type generationCandidate struct {
 	completionTokens    int
 	reasoningTokens     int
 	generationDuration  time.Duration
+	streamUpdates       int
+	streamSpan          time.Duration
+	streamStalls        time.Duration
+}
+
+// Only borrow pi-tps's sampling checks, not its TPS ceiling, stall-adjusted
+// speed or full-request fallback. The first text update measures TTFT; the
+// subsequent updates provide independent evidence of paced streaming.
+func (candidate generationCandidate) reliableStream() bool {
+	const minUpdates = 5
+	const minAverageGap = time.Millisecond
+	const minActiveSpan = 200 * time.Millisecond
+	if candidate.streamUpdates < minUpdates || candidate.streamSpan <= 0 {
+		return false
+	}
+	averageGap := candidate.streamSpan / time.Duration(candidate.streamUpdates-1)
+	activeSpan := candidate.streamSpan - candidate.streamStalls
+	return averageGap >= minAverageGap && activeSpan >= minActiveSpan && candidate.streamStalls < activeSpan
 }
 
 type turnGenerationCollector struct {
@@ -105,7 +123,7 @@ func (collector *turnGenerationCollector) metricsFor(result string) TurnGenerati
 		CacheMetrics:        cache,
 	}
 	visibleTokens := candidate.completionTokens - candidate.reasoningTokens
-	if visibleTokens > 1 && candidate.generationDuration > 0 {
+	if visibleTokens > 1 && candidate.generationDuration > 0 && candidate.reliableStream() {
 		metrics.TokensPerSecond = float64(visibleTokens-1) / candidate.generationDuration.Seconds()
 	}
 	return metrics
@@ -173,17 +191,28 @@ func (client *generationMetricsClient) CreateChatCompletionStreamWithOptions(ctx
 	countsLiveDeltas := ctx.Value(liveCallKey{}) == nil
 	ctx, finishUsage := beginLiveTokenCall(ctx, messages, definitions, options)
 	startedAt := client.now()
-	var firstChunkAt, lastChunkAt time.Time
+	var firstChunkAt, lastChunkAt, firstStreamUpdateAt time.Time
+	var streamUpdates int
+	var streamStalls time.Duration
 	wrappedOnChunk := func(chunk string) {
-		if countsLiveDeltas {
-			reportLiveTokenDelta(ctx, chunk)
-		}
 		if chunk != "" {
 			chunkAt := client.now()
 			if firstChunkAt.IsZero() {
 				firstChunkAt = chunkAt
+			} else {
+				streamUpdates++
+				if firstStreamUpdateAt.IsZero() {
+					firstStreamUpdateAt = chunkAt
+				} else if gap := chunkAt.Sub(lastChunkAt); gap >= 500*time.Millisecond {
+					// Use stalls only to detect pause-then-burst delivery. They
+					// remain part of generationDuration and therefore of TPS.
+					streamStalls += gap
+				}
 			}
 			lastChunkAt = chunkAt
+		}
+		if countsLiveDeltas {
+			reportLiveTokenDelta(ctx, chunk)
 		}
 		if onChunk != nil {
 			onChunk(chunk)
@@ -204,6 +233,10 @@ func (client *generationMetricsClient) CreateChatCompletionStreamWithOptions(ctx
 	if err != nil || firstChunkAt.IsZero() || len(message.ToolCalls) > 0 || message.FinalContent() == "" {
 		return message, err
 	}
+	var streamSpan time.Duration
+	if !firstStreamUpdateAt.IsZero() {
+		streamSpan = lastChunkAt.Sub(firstStreamUpdateAt)
+	}
 	turnGenerationCollectorFromContext(ctx).record(generationCandidate{
 		content:             message.FinalContent(),
 		firstTokenLatency:   firstChunkAt.Sub(startedAt),
@@ -213,6 +246,9 @@ func (client *generationMetricsClient) CreateChatCompletionStreamWithOptions(ctx
 		completionTokens:    message.Usage.CompletionTokens,
 		reasoningTokens:     message.Usage.ReasoningTokens,
 		generationDuration:  lastChunkAt.Sub(firstChunkAt),
+		streamUpdates:       streamUpdates,
+		streamSpan:          streamSpan,
+		streamStalls:        streamStalls,
 	})
 	return message, nil
 }
