@@ -366,8 +366,14 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		message.normalizeInlineToolCalls()
 		truncatedToolBatch := message.Completion.OutputTruncated && len(message.ToolCalls) > 0
+		recoveredBashCalls := false
 		if truncatedToolBatch {
 			message.ToolCalls = replayableToolCalls(message.ToolCalls)
+		} else {
+			message.ToolCalls, recoveredBashCalls = recoverConcatenatedBashCalls(message.ToolCalls)
+			if recoveredBashCalls {
+				a.logf("[Agent] Split concatenated execute_bash arguments into separate tool calls; executing batch sequentially\n")
+			}
 		}
 
 		requestMessage := message.RequestMessage()
@@ -423,11 +429,12 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		// a turn containing them runs sequentially. A turn of only independent tools
 		// runs concurrently and appends results in the original order.
 		guardAction := loopGuardAction{}
-		if a.hasSpecialToolCalls(message.ToolCalls, allowPlan) {
+		if recoveredBashCalls || a.hasSpecialToolCalls(message.ToolCalls, allowPlan) {
 			for _, toolCall := range message.ToolCalls {
 				parsedArguments, err := parseArguments(toolCall.Function.Arguments)
 				if err != nil {
 					result := fmt.Sprintf("Error: Invalid JSON arguments for tool %q: %v", toolCall.Function.Name, err)
+					guardAction = guardAction.merge(loopGuard.observeTool(toolCall, result))
 					a.emitToolResult(toolCall, result, 0, true)
 					toolMessage, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, result)
 					updatedMessages = toolMessage
@@ -442,6 +449,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				arguments, ok := parsedArguments.(map[string]any)
 				if !ok {
 					result := fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
+					guardAction = guardAction.merge(loopGuard.observeTool(toolCall, result))
 					a.emitToolResult(toolCall, result, 0, true)
 					toolMessage, recordErr := a.appendToolMessage(updatedMessages, toolCall.ID, result)
 					updatedMessages = toolMessage

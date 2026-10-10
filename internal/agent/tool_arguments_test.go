@@ -49,8 +49,8 @@ func TestRunRecoversConcatenatedToolArguments(t *testing.T) {
 	// The reported Bash commands, with only the private path replaced. Tool
 	// implementations are stubs; no shell commands or filesystem reads run.
 	commands := []string{
-		`f=/tmp/service.log; echo "=== failure summary ==="; grep -n -E "Scheduler hit an exception|exited with non-zero|died during|hbm ECC|Load weight end|ready to roll|The server is fired" $f | cut -c1-200 | tail -40; echo "=== 1st start fail 120-190 ==="; sed -n '120,190p' $f | cut -c1-300`,
-		`f=/tmp/service.log; echo "=== ECC detail 804-942 ==="; sed -n '804,942p' $f | cut -c1-300; echo "=== 3rd start 466-555 ==="; sed -n '467,554p' $f | cut -c1-250`,
+		"f=/tmp/service.log\nsed -n '805,853p' $f | cut -c1-250; echo ======; sed -n '854,891p' $f | cut -c1-250",
+		"f=/tmp/service.log\nsed -n '93,186p' $f | cut -c1-250; echo =====; sed -n '467,612p' $f | cut -c1-250",
 	}
 	arguments := make([]string, len(commands))
 	for i, command := range commands {
@@ -71,6 +71,13 @@ func TestRunRecoversConcatenatedToolArguments(t *testing.T) {
 				{ToolCalls: []ToolCall{call("fixed-1", arguments[0]), call("fixed-2", arguments[1])}},
 				{Content: "done"},
 			}}
+			wantRequests := 3
+			if name == "execute_bash" {
+				// The model never repairs its response. The runtime must execute
+				// both commands before asking the model for the final answer.
+				client.responses = append(client.responses[:1], AssistantMessage{Content: "done"})
+				wantRequests = 2
+			}
 			var executions [2]atomic.Int32
 			app := NewWithOptions(client, "", Options{
 				Context: ContextConfig{Enabled: false},
@@ -87,7 +94,7 @@ func TestRunRecoversConcatenatedToolArguments(t *testing.T) {
 				ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: name}}},
 			})
 			result, err := app.Run(context.Background(), "analyze the service log", 3)
-			if err != nil || result != "done" || len(client.messages) != 3 {
+			if err != nil || result != "done" || len(client.messages) != wantRequests {
 				t.Fatalf("Run = %q, %v, requests=%d", result, err, len(client.messages))
 			}
 			for i := range executions {
@@ -96,6 +103,17 @@ func TestRunRecoversConcatenatedToolArguments(t *testing.T) {
 				}
 			}
 			messages := extractToolMessages(client.messages[1])
+			if name == "execute_bash" {
+				if len(messages) != 2 || messages[0]["tool_call_id"] == messages[1]["tool_call_id"] {
+					t.Fatalf("expected two distinct results after automatic recovery: %#v", messages)
+				}
+				for _, message := range messages {
+					if message["content"] != "ok" {
+						t.Fatalf("automatic recovery failed: %#v", message)
+					}
+				}
+				return
+			}
 			if len(messages) != 1 || messages[0]["tool_call_id"] != "bad" {
 				t.Fatalf("recovery tool results = %#v", messages)
 			}

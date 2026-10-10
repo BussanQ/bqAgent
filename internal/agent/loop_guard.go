@@ -13,6 +13,7 @@ type loopGuard struct {
 	config              StageConfig
 	callCounts          map[string]int
 	failureCounts       map[string]int
+	argumentFailures    map[string]int
 	pathFailures        map[string]int
 	lastTodoProgress    string
 	hasLastTodoProgress bool
@@ -39,7 +40,7 @@ func (action loopGuardAction) merge(next loopGuardAction) loopGuardAction {
 }
 
 func newLoopGuard(config StageConfig) *loopGuard {
-	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, pathFailures: map[string]int{}}
+	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, argumentFailures: map[string]int{}, pathFailures: map[string]int{}}
 }
 
 func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardAction {
@@ -47,6 +48,16 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 		return loopGuardAction{}
 	}
 	failed := strings.HasPrefix(strings.TrimSpace(result), "Error:")
+	// Invalid arguments cannot make progress. Bound retries even in CLI mode,
+	// where the configurable stage loop protection may be disabled. Call IDs
+	// are intentionally excluded because providers generate a new ID on retry.
+	if strings.HasPrefix(result, "Error: Invalid JSON arguments for tool ") || strings.HasPrefix(result, "Error: Tool arguments for ") {
+		signature := call.Function.Name + "\x00" + strings.TrimSpace(call.Function.Arguments)
+		guard.argumentFailures[signature]++
+		if guard.argumentFailures[signature] >= 3 {
+			return loopGuardAction{checkpointReason: fmt.Sprintf("loop protection: repeated invalid arguments for tool %s", call.Function.Name)}
+		}
+	}
 	if progress, ok := todoProgressSignature(call); ok {
 		if guard.hasLastTodoProgress && guard.lastTodoProgress == progress {
 			guard.todoNoProgressCount++
