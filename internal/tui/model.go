@@ -13,7 +13,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/mattn/go-runewidth"
 )
 
 type phase uint8
@@ -871,9 +870,10 @@ func (model Model) renderStatus(width int) string {
 	if right == "" {
 		right = "Enter 发送 · Alt+Enter 换行 · / 命令"
 	}
+	left, right = right, left
 	left = ansi.Truncate(left, width, "…")
 	right = ansi.Truncate(right, width, "…")
-	space := width - runewidth.StringWidth(left) - lipgloss.Width(right)
+	space := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if space < 1 {
 		return model.styles.dim.Render(left + "\n" + right)
 	}
