@@ -64,6 +64,7 @@ type Model struct {
 	sessionID  string
 	runtime    RuntimeInfo
 	metrics    *GenerationMetrics
+	usage      *TokenUsage
 	liveTokens int
 	liveRunes  int
 
@@ -95,6 +96,7 @@ type turnEvent struct {
 	kind     string
 	text     string
 	tool     ToolEvent
+	usage    TokenUsage
 	result   TurnResult
 	err      error
 }
@@ -397,6 +399,7 @@ func (model *Model) submit(value string) tea.Cmd {
 	model.progress = "正在思考"
 	model.startedAt = time.Now()
 	model.metrics = nil
+	model.usage = nil
 	model.liveTokens = 0
 	model.liveRunes = 0
 	model.statusNotice = ""
@@ -450,6 +453,9 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 			return commands
 		}
 		switch event.kind {
+		case "usage":
+			usage := event.usage
+			model.usage = &usage
 		case "token":
 			model.phase = phaseStreaming
 			model.progress = "正在生成"
@@ -531,6 +537,7 @@ func launchTurn(backend Backend, ctx context.Context, sequence uint64, sessionID
 			}
 		}
 		sink := TurnEvents{
+			Usage:    func(usage TokenUsage) { send(turnEvent{kind: "usage", usage: usage}) },
 			Token:    func(text string) { send(turnEvent{kind: "token", text: text}) },
 			Progress: func(text string) { send(turnEvent{kind: "progress", text: text}) },
 			Tool:     func(event ToolEvent) { send(turnEvent{kind: "tool", tool: event}) },
@@ -604,6 +611,7 @@ func (model *Model) clearSession() {
 	model.sessionID = ""
 	model.runtime = model.backend.RuntimeInfo("")
 	model.metrics = nil
+	model.usage = nil
 	model.liveTokens = 0
 	model.liveRunes = 0
 	model.queued = nil
@@ -782,24 +790,24 @@ func (model Model) renderStatus(width int) string {
 	right := model.statusNotice
 	if model.phase != phaseIdle {
 		elapsed := time.Since(model.startedAt).Round(100 * time.Millisecond)
-		right = fmt.Sprintf("%s %s · %s · ~%d tok", model.spinner.View(), model.phaseLabel(), elapsed, model.liveTokens)
-	} else if model.metrics != nil {
-		parts := []string{
-			fmt.Sprintf("首字 %.2fs", float64(model.metrics.FirstTokenLatencyMS)/1000),
-			fmt.Sprintf("%d tok", model.metrics.CompletionTokens),
-		}
-		if model.metrics.CacheMetrics != nil && model.metrics.CacheMetrics.Available && model.metrics.CacheMetrics.InputTokens > 0 {
-			rate := 100 * model.metrics.CacheMetrics.HitRate
-			rate = min(100, max(0, rate))
-			parts = append(parts, fmt.Sprintf("缓存命中 %.0f%%", rate))
-		} else if model.metrics.CacheUsageAvailable && model.metrics.PromptTokens > 0 {
-			rate := 100 * float64(model.metrics.CachedPromptTokens) / float64(model.metrics.PromptTokens)
-			rate = min(100, max(0, rate))
-			parts = append(parts, fmt.Sprintf("缓存命中 %.0f%%", rate))
-		}
-		// 上游缓冲后集中发送可能放大观测速率；与 WebUI 一致，过滤超过 1000 的值。
-		if speed := model.metrics.TokensPerSecond; speed > 0 && speed <= 1000 {
-			parts = append(parts, fmt.Sprintf("%.1f tok/s", speed))
+		right = fmt.Sprintf("%s · %s %s · %s", model.tokenUsageStatus(), model.spinner.View(), model.phaseLabel(), elapsed)
+	} else if model.metrics != nil || model.usage != nil {
+		parts := []string{model.tokenUsageStatus()}
+		if model.metrics != nil {
+			parts = append(parts, fmt.Sprintf("首字 %.2fs", float64(model.metrics.FirstTokenLatencyMS)/1000))
+			if model.metrics.CacheMetrics != nil && model.metrics.CacheMetrics.Available && model.metrics.CacheMetrics.InputTokens > 0 {
+				rate := 100 * model.metrics.CacheMetrics.HitRate
+				rate = min(100, max(0, rate))
+				parts = append(parts, fmt.Sprintf("缓存命中 %.0f%%", rate))
+			} else if model.metrics.CacheUsageAvailable && model.metrics.PromptTokens > 0 {
+				rate := 100 * float64(model.metrics.CachedPromptTokens) / float64(model.metrics.PromptTokens)
+				rate = min(100, max(0, rate))
+				parts = append(parts, fmt.Sprintf("缓存命中 %.0f%%", rate))
+			}
+			// 上游缓冲后集中发送可能放大观测速率；与 WebUI 一致，过滤超过 1000 的值。
+			if speed := model.metrics.TokensPerSecond; speed > 0 && speed <= 1000 {
+				parts = append(parts, fmt.Sprintf("%.1f tok/s", speed))
+			}
 		}
 		right = strings.Join(parts, " · ")
 	}
@@ -813,6 +821,30 @@ func (model Model) renderStatus(width int) string {
 		return model.styles.dim.Render(left + "\n" + right)
 	}
 	return model.styles.dim.Render(left + strings.Repeat(" ", space) + right)
+}
+
+func (model Model) tokenUsageStatus() string {
+	if model.usage != nil {
+		return "in " + formatTokenCount(model.usage.InputTokens, model.usage.InputEstimated) + " · out " + formatTokenCount(model.usage.OutputTokens, model.usage.OutputEstimated)
+	}
+	if model.metrics != nil {
+		return "in " + formatTokenCount(model.metrics.PromptTokens, false) + " · out " + formatTokenCount(model.metrics.CompletionTokens, false)
+	}
+	if model.liveRunes > 0 {
+		return "in — · out " + formatTokenCount(model.liveTokens, true)
+	}
+	return "in — · out —"
+}
+
+func formatTokenCount(tokens int, estimated bool) string {
+	digits := fmt.Sprint(max(0, tokens))
+	for i := len(digits) - 3; i > 0; i -= 3 {
+		digits = digits[:i] + "," + digits[i:]
+	}
+	if estimated {
+		return "~" + digits
+	}
+	return digits
 }
 
 func (model Model) phaseLabel() string {

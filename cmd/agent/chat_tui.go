@@ -62,6 +62,14 @@ type tuiBackend struct {
 }
 
 func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message string, events apptui.TurnEvents) (apptui.TurnResult, error) {
+	if events.Usage != nil {
+		ctx = agent.WithLiveTokenUsage(ctx, func(usage agent.LiveTokenUsage) {
+			events.Usage(apptui.TokenUsage{
+				InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
+				InputEstimated: usage.InputEstimated, OutputEstimated: usage.OutputEstimated, Calls: usage.Calls,
+			})
+		})
+	}
 	response, err := backend.service.HandleTurnWithOptions(ctx, appserver.TurnRequest{
 		SessionID: sessionID,
 		Message:   message,

@@ -60,15 +60,15 @@ type anthropicTool struct {
 }
 
 type anthropicUsage struct {
-	InputTokens              int  `json:"input_tokens"`
-	OutputTokens             int  `json:"output_tokens"`
+	InputTokens              *int `json:"input_tokens"`
+	OutputTokens             *int `json:"output_tokens"`
 	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
 }
 
 func (usage anthropicUsage) tokenUsage() TokenUsage {
-	promptTokens := usage.InputTokens
-	result := TokenUsage{CompletionTokens: usage.OutputTokens}
+	promptTokens := tokenCountValue(usage.InputTokens)
+	result := TokenUsage{CompletionTokens: tokenCountValue(usage.OutputTokens), PromptTokensAvailable: usage.InputTokens != nil, CompletionTokensAvailable: usage.OutputTokens != nil}
 	if usage.CacheCreationInputTokens != nil {
 		promptTokens += *usage.CacheCreationInputTokens
 		result.CacheWritePromptTokens = *usage.CacheCreationInputTokens
@@ -80,7 +80,7 @@ func (usage anthropicUsage) tokenUsage() TokenUsage {
 		result.CacheUsageAvailable = true
 	}
 	result.PromptTokens = promptTokens
-	result.TotalTokens = promptTokens + usage.OutputTokens
+	result.TotalTokens = promptTokens + result.CompletionTokens
 	return result
 }
 
@@ -190,6 +190,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 		switch event.Type {
 		case "message_start":
 			usage = event.Message.Usage.tokenUsage()
+			reportLiveTokenUsage(ctx, usage)
 		case "content_block_start":
 			if event.ContentBlock.Type == "tool_use" {
 				state.markSemantic()
@@ -231,7 +232,9 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 					return AssistantMessage{}, providerProtocolError("anthropic tool argument delta has no active tool block", nil)
 				}
 				call.arguments.WriteString(event.Delta.PartialJSON)
+				reportLiveTokenDelta(ctx, event.Delta.PartialJSON)
 			case "thinking_delta", "signature_delta":
+				reportLiveTokenDelta(ctx, event.Delta.Thinking)
 				if event.Delta.Thinking != "" || event.Delta.Signature != "" || event.Delta.Text != "" {
 					state.markSemantic()
 				}
@@ -243,9 +246,11 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 				}
 			}
 		case "message_delta":
-			if event.Usage.OutputTokens > 0 {
-				usage.CompletionTokens = event.Usage.OutputTokens
+			if event.Usage.OutputTokens != nil {
+				usage.CompletionTokens = *event.Usage.OutputTokens
+				usage.CompletionTokensAvailable = true
 			}
+			reportLiveTokenUsage(ctx, event.Usage.tokenUsage())
 			if event.Delta.StopReason != "" {
 				stopReason = event.Delta.StopReason
 			}

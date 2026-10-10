@@ -37,9 +37,9 @@ type openAIResponseTool struct {
 }
 
 type openAIResponseUsage struct {
-	InputTokens        int `json:"input_tokens"`
-	OutputTokens       int `json:"output_tokens"`
-	TotalTokens        int `json:"total_tokens"`
+	InputTokens        *int `json:"input_tokens"`
+	OutputTokens       *int `json:"output_tokens"`
+	TotalTokens        int  `json:"total_tokens"`
 	InputTokensDetails *struct {
 		CachedTokens     int `json:"cached_tokens"`
 		CacheWriteTokens int `json:"cache_write_tokens"`
@@ -184,6 +184,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				calls[event.OutputIndex] = call
 			}
 			call.arguments.WriteString(event.Delta)
+			reportLiveTokenDelta(ctx, event.Delta)
 		case "response.function_call_arguments.done":
 			if event.Arguments != nil {
 				state.markSemantic()
@@ -222,7 +223,9 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 		}
 		if strings.Contains(event.Type, "reasoning") && strings.HasSuffix(event.Type, ".delta") && event.Delta != "" {
 			state.markSemantic()
+			reportLiveTokenDelta(ctx, event.Delta)
 		}
+		reportLiveTokenUsage(ctx, tokenUsageFromOpenAIResponse(event.Response.Usage))
 	}
 	if err := scanner.Err(); err != nil {
 		return AssistantMessage{}, providerTransportError(ctx, err)
@@ -364,13 +367,15 @@ func assistantFromOpenAIResponse(response openAIResponseEnvelope) AssistantMessa
 func tokenUsageFromOpenAIResponse(usage openAIResponseUsage) TokenUsage {
 	total := usage.TotalTokens
 	if total == 0 {
-		total = usage.InputTokens + usage.OutputTokens
+		total = tokenCountValue(usage.InputTokens) + tokenCountValue(usage.OutputTokens)
 	}
 	result := TokenUsage{
-		PromptTokens:     usage.InputTokens,
-		CompletionTokens: usage.OutputTokens,
-		ReasoningTokens:  usage.OutputTokensDetails.ReasoningTokens,
-		TotalTokens:      total,
+		PromptTokens:              tokenCountValue(usage.InputTokens),
+		CompletionTokens:          tokenCountValue(usage.OutputTokens),
+		PromptTokensAvailable:     usage.InputTokens != nil,
+		CompletionTokensAvailable: usage.OutputTokens != nil,
+		ReasoningTokens:           usage.OutputTokensDetails.ReasoningTokens,
+		TotalTokens:               total,
 	}
 	if usage.InputTokensDetails != nil {
 		result.CachedPromptTokens = usage.InputTokensDetails.CachedTokens

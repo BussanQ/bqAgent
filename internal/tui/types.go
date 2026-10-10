@@ -25,6 +25,15 @@ type TurnEvents struct {
 	Token    func(string)
 	Progress func(string)
 	Tool     func(ToolEvent)
+	Usage    func(TokenUsage)
+}
+
+type TokenUsage struct {
+	InputTokens     int
+	OutputTokens    int
+	InputEstimated  bool
+	OutputEstimated bool
+	Calls           int
 }
 
 type ToolEvent struct {

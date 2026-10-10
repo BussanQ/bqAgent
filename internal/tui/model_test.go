@@ -394,7 +394,7 @@ func TestCompletedStatusFiltersGenerationSpeed(t *testing.T) {
 			} else if !strings.Contains(status, test.want) {
 				t.Fatalf("status = %q, want speed %q", status, test.want)
 			}
-			for _, want := range []string{"首字 0.25s", "20 tok", "缓存命中 75%"} {
+			for _, want := range []string{"首字 0.25s", "in 100", "out 20", "缓存命中 75%"} {
 				if !strings.Contains(status, want) {
 					t.Fatalf("status = %q, want metric %q", status, want)
 				}

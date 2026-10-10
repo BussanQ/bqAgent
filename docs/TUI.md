@@ -19,7 +19,11 @@ bqAgent  Harness
 openai/gpt-5 · Run · 20260827   Enter 发送 · Alt+Enter 换行 · / 命令
 ```
 
-实时 token 会先显示在底部活动区域，块结束后再用 Glamour 渲染 Markdown 并写入 scrollback。状态栏动态显示 Provider、模型、当前模式、短 Session ID、当前阶段、耗时和实时 token 估算；完成后显示首 token 延迟、token 数及 TPS。工具调用按 Tool ID 合并开始/完成事件，显示序号、关键参数、状态和耗时；前 5 次逐项展示，从第 6 次开始自动合并为成功/失败/运行中汇总，点击汇总行或按 `Ctrl+T` 可展开/收起详情。失败预览限制为 2 KiB/8 行，`todo_write` 会显示任务进度。
+流式文本会先显示在底部活动区域，块结束后再用 Glamour 渲染 Markdown 并写入 scrollback。状态栏动态显示 Provider、模型、当前模式、短 Session ID、当前阶段、耗时，以及 `in / out` token 数；完成后保留计数并显示首 token 延迟及 TPS。工具调用按 Tool ID 合并开始/完成事件，显示序号、关键参数、状态和耗时；前 5 次逐项展示，从第 6 次开始自动合并为成功/失败/运行中汇总，点击汇总行或按 `Ctrl+T` 可展开/收起详情。失败预览限制为 2 KiB/8 行，`todo_write` 会显示任务进度。
+
+`in / out` 参考 [pi-tps](https://github.com/monotykamary/pi-tps) 按当前用户轮次累计，包括工具调用前后的模型请求。`in` 是各次请求的完整输入之和（包含缓存读取、写入，不等于当前上下文占用）；`out` 使用供应商返回的输出总量，包含其 usage 计入的推理 token。数字保留整数精度，例如 `in 12,345 · out 678`，下一轮发送时重新计数。
+
+OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 时立即校准。usage 尚未返回时，输入按请求内容估算，输出随文本、推理和工具参数增量更新，带 `~` 标记；供应商通常只在请求结束时提供准确输出量，因此不会把中途的字符估算冒充精确 token。缺失 usage 时保留 `~`，明确返回的 `0` 则显示为准确的零。此显示不额外调用 token 计数接口。
 
 ## 输入与快捷键
 
@@ -61,3 +65,5 @@ stdin/stdout 不是 TTY，或 `TERM=dumb` 时，会自动使用原有逐行模�
 ## Inline terminal TUI (English summary)
 
 On a real TTY, no-argument startup and `--chat` use an inline, always-streaming Bubble Tea UI without an alternate screen. Mouse tracking is enabled only for a clickable collapsed tool group and disabled when the group is committed or cleared. `/provider` opens a sequential Provider setup wizard with encrypted API-key storage and either automatic model discovery or comma-separated custom models; the first custom model becomes the default. Redirected input/output and `TERM=dumb` fall back to the legacy line mode. See the tables above for shortcuts, commands, queue behavior, persisted workspace history, resume limits, `NO_COLOR`, and the CodeHamr design acknowledgment.
+
+The status bar shows full-precision `in / out` totals for the current user turn, including tool-call rounds. Input includes cached tokens; output includes reasoning counted by the provider. All three native API adapters publish usage immediately when received. Until then, estimates update with streamed text, reasoning, and tool arguments and remain marked `~`. Missing usage stays estimated; explicit zero is authoritative. Counts persist after completion and reset on the next turn. No extra token-count API requests are made.

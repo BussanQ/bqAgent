@@ -134,7 +134,9 @@ func instrumentGenerationMetrics(client ChatCompletionClient) ChatCompletionClie
 }
 
 func (client *generationMetricsClient) CreateChatCompletion(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition) (AssistantMessage, error) {
+	ctx, finishUsage := beginLiveTokenCall(ctx, messages, definitions, ChatCompletionOptions{})
 	message, err := client.inner.CreateChatCompletion(ctx, model, messages, definitions)
+	finishUsage(message)
 	turnGenerationCollectorFromContext(ctx).recordUsage(message.Usage)
 	return message, err
 }
@@ -148,6 +150,7 @@ func (client *generationMetricsClient) CountInputTokens(ctx context.Context, mod
 }
 
 func (client *generationMetricsClient) CreateChatCompletionWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (AssistantMessage, error) {
+	ctx, finishUsage := beginLiveTokenCall(ctx, messages, definitions, options)
 	var message AssistantMessage
 	var err error
 	if inner, ok := client.inner.(chatCompletionOptionsClient); ok {
@@ -156,6 +159,7 @@ func (client *generationMetricsClient) CreateChatCompletionWithOptions(ctx conte
 		message, err = client.inner.CreateChatCompletion(ctx, model, messages, definitions)
 	}
 	turnGenerationCollectorFromContext(ctx).recordUsage(message.Usage)
+	finishUsage(message)
 	return message, err
 }
 
@@ -164,9 +168,16 @@ func (client *generationMetricsClient) CreateChatCompletionStream(ctx context.Co
 }
 
 func (client *generationMetricsClient) CreateChatCompletionStreamWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error) {
+	// Only the outer metrics wrapper counts visible deltas. Native adapters
+	// separately report reasoning, tool arguments, and authoritative usage.
+	countsLiveDeltas := ctx.Value(liveCallKey{}) == nil
+	ctx, finishUsage := beginLiveTokenCall(ctx, messages, definitions, options)
 	startedAt := client.now()
 	var firstChunkAt, lastChunkAt time.Time
 	wrappedOnChunk := func(chunk string) {
+		if countsLiveDeltas {
+			reportLiveTokenDelta(ctx, chunk)
+		}
 		if chunk != "" {
 			chunkAt := client.now()
 			if firstChunkAt.IsZero() {
@@ -189,6 +200,7 @@ func (client *generationMetricsClient) CreateChatCompletionStreamWithOptions(ctx
 		message, err = client.inner.CreateChatCompletionStream(ctx, model, messages, definitions, wrappedOnChunk)
 	}
 	turnGenerationCollectorFromContext(ctx).recordUsage(message.Usage)
+	finishUsage(message)
 	if err != nil || firstChunkAt.IsZero() || len(message.ToolCalls) > 0 || message.FinalContent() == "" {
 		return message, err
 	}

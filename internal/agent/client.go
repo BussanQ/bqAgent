@@ -134,14 +134,17 @@ type AssistantMessage struct {
 }
 
 type TokenUsage struct {
-	PromptTokens           int  `json:"prompt_tokens,omitempty"`
-	CachedPromptTokens     int  `json:"cached_prompt_tokens,omitempty"`
-	CacheWritePromptTokens int  `json:"cache_write_prompt_tokens,omitempty"`
-	CompletionTokens       int  `json:"completion_tokens,omitempty"`
-	ReasoningTokens        int  `json:"reasoning_tokens,omitempty"`
-	TotalTokens            int  `json:"total_tokens,omitempty"`
-	CacheUsageAvailable    bool `json:"cache_usage_available,omitempty"`
-	Estimated              bool `json:"estimated,omitempty"`
+	// Availability distinguishes an authoritative zero from omitted usage.
+	PromptTokensAvailable     bool `json:"-"`
+	CompletionTokensAvailable bool `json:"-"`
+	PromptTokens              int  `json:"prompt_tokens,omitempty"`
+	CachedPromptTokens        int  `json:"cached_prompt_tokens,omitempty"`
+	CacheWritePromptTokens    int  `json:"cache_write_prompt_tokens,omitempty"`
+	CompletionTokens          int  `json:"completion_tokens,omitempty"`
+	ReasoningTokens           int  `json:"reasoning_tokens,omitempty"`
+	TotalTokens               int  `json:"total_tokens,omitempty"`
+	CacheUsageAvailable       bool `json:"cache_usage_available,omitempty"`
+	Estimated                 bool `json:"estimated,omitempty"`
 }
 
 type ToolCall struct {
@@ -181,9 +184,9 @@ type openAIPromptCacheRequestOptions struct {
 }
 
 type chatCompletionUsage struct {
-	PromptTokens        int `json:"prompt_tokens"`
-	CompletionTokens    int `json:"completion_tokens"`
-	TotalTokens         int `json:"total_tokens"`
+	PromptTokens        *int `json:"prompt_tokens"`
+	CompletionTokens    *int `json:"completion_tokens"`
+	TotalTokens         int  `json:"total_tokens"`
 	PromptTokensDetails *struct {
 		CachedTokens     int `json:"cached_tokens"`
 		CacheWriteTokens int `json:"cache_write_tokens"`
@@ -196,13 +199,15 @@ type chatCompletionUsage struct {
 func (usage chatCompletionUsage) tokenUsage() TokenUsage {
 	totalTokens := usage.TotalTokens
 	if totalTokens == 0 {
-		totalTokens = usage.PromptTokens + usage.CompletionTokens
+		totalTokens = tokenCountValue(usage.PromptTokens) + tokenCountValue(usage.CompletionTokens)
 	}
 	result := TokenUsage{
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		ReasoningTokens:  usage.CompletionTokensDetails.ReasoningTokens,
-		TotalTokens:      totalTokens,
+		PromptTokens:              tokenCountValue(usage.PromptTokens),
+		CompletionTokens:          tokenCountValue(usage.CompletionTokens),
+		PromptTokensAvailable:     usage.PromptTokens != nil,
+		CompletionTokensAvailable: usage.CompletionTokens != nil,
+		ReasoningTokens:           usage.CompletionTokensDetails.ReasoningTokens,
+		TotalTokens:               totalTokens,
 	}
 	if usage.PromptTokensDetails != nil {
 		result.CachedPromptTokens = usage.PromptTokensDetails.CachedTokens
@@ -510,10 +515,11 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 		if chunk.Error.Message != "" || chunk.Error.Type != "" || chunk.Error.Code != "" {
 			return AssistantMessage{}, providerStreamEventError(chunk.Error.Message, firstNonBlank(chunk.Error.Code, chunk.Error.Type))
 		}
-		if chunk.Usage.TotalTokens > 0 || chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+		if chunk.Usage.TotalTokens > 0 || chunk.Usage.PromptTokens != nil || chunk.Usage.CompletionTokens != nil {
 			usage = chunk.Usage.tokenUsage()
 		}
 		if len(chunk.Choices) == 0 {
+			reportLiveTokenUsage(ctx, chunk.Usage.tokenUsage())
 			continue
 		}
 		choice := chunk.Choices[0]
@@ -533,6 +539,7 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 		}
 		if delta.ReasoningContent != "" || delta.Reasoning != "" {
 			state.markSemantic()
+			reportLiveTokenDelta(ctx, firstNonBlank(delta.ReasoningContent, delta.Reasoning))
 		}
 		if len(delta.ToolCalls) > 0 {
 			state.markSemantic()
@@ -582,8 +589,10 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 			}
 			if tc.Function.Arguments != "" {
 				ptc.arguments.WriteString(tc.Function.Arguments)
+				reportLiveTokenDelta(ctx, tc.Function.Arguments)
 			}
 		}
+		reportLiveTokenUsage(ctx, chunk.Usage.tokenUsage())
 	}
 	if err := scanner.Err(); err != nil {
 		return AssistantMessage{}, providerTransportError(ctx, err)
