@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -75,9 +76,30 @@ func parseArguments(raw string) (any, error) {
 
 	var parsed any
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		if count := concatenatedArgumentObjects(raw); count > 1 {
+			return nil, fmt.Errorf("%w; arguments contain %d concatenated JSON objects. This tool call was not executed. Reissue each intended operation as a separate tool call with a unique call ID and exactly one JSON object in arguments. Do not concatenate objects or discard any intended operation", err, count)
+		}
 		return nil, err
 	}
 	return parsed, nil
+}
+
+// Count only a complete sequence of objects. Never silently accept a valid
+// prefix, combine duplicate keys, or choose one command from malformed input.
+func concatenatedArgumentObjects(raw string) int {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	count := 0
+	for {
+		var object map[string]json.RawMessage
+		err := decoder.Decode(&object)
+		if err == io.EOF {
+			return count
+		}
+		if err != nil || object == nil {
+			return 0
+		}
+		count++
+	}
 }
 
 func requireStringArgument(toolName string, args map[string]any, key string) (string, error) {

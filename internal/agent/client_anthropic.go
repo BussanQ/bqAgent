@@ -134,6 +134,8 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 	type partialCall struct {
 		id        string
 		name      string
+		input     string
+		stopped   bool
 		arguments strings.Builder
 	}
 	content := strings.Builder{}
@@ -155,7 +157,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 		}
 		var event struct {
 			Type    string `json:"type"`
-			Index   int    `json:"index"`
+			Index   *int   `json:"index"`
 			Message struct {
 				Usage anthropicUsage `json:"usage"`
 			} `json:"message"`
@@ -191,7 +193,21 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 		case "content_block_start":
 			if event.ContentBlock.Type == "tool_use" {
 				state.markSemantic()
-				calls[event.Index] = &partialCall{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
+				if event.Index == nil || *event.Index < 0 {
+					return AssistantMessage{}, providerProtocolError("anthropic tool block start requires a non-negative index", nil)
+				}
+				if calls[*event.Index] != nil {
+					return AssistantMessage{}, providerProtocolError("duplicate anthropic tool block index", nil)
+				}
+				call := &partialCall{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
+				if event.ContentBlock.Input != nil {
+					input, err := json.Marshal(event.ContentBlock.Input)
+					if err != nil {
+						return AssistantMessage{}, providerProtocolError("encode anthropic tool block input", err)
+					}
+					call.input = string(input)
+				}
+				calls[*event.Index] = call
 			}
 		case "content_block_delta":
 			switch event.Delta.Type {
@@ -207,15 +223,23 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 				if event.Delta.PartialJSON != "" {
 					state.markSemantic()
 				}
-				call := calls[event.Index]
-				if call == nil {
-					call = &partialCall{}
-					calls[event.Index] = call
+				if event.Index == nil {
+					return AssistantMessage{}, providerProtocolError("anthropic tool argument delta requires an index", nil)
+				}
+				call := calls[*event.Index]
+				if call == nil || call.stopped {
+					return AssistantMessage{}, providerProtocolError("anthropic tool argument delta has no active tool block", nil)
 				}
 				call.arguments.WriteString(event.Delta.PartialJSON)
 			case "thinking_delta", "signature_delta":
 				if event.Delta.Thinking != "" || event.Delta.Signature != "" || event.Delta.Text != "" {
 					state.markSemantic()
+				}
+			}
+		case "content_block_stop":
+			if event.Index != nil {
+				if call := calls[*event.Index]; call != nil {
+					call.stopped = true
 				}
 			}
 		case "message_delta":
@@ -246,6 +270,11 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 	for _, index := range indexes {
 		call := calls[index]
 		arguments := call.arguments.String()
+		// input_json_delta forms the full input, not a suffix of the start
+		// event's input. Retain the initial object only when no JSON arrived.
+		if arguments == "" {
+			arguments = call.input
+		}
 		message.ToolCalls = append(message.ToolCalls, ToolCall{
 			ID: call.id, Type: "function",
 			Function: FunctionCall{Name: call.name, Arguments: arguments},
@@ -289,6 +318,7 @@ func buildAnthropicRequest(model string, messages []map[string]any, definitions 
 func anthropicMessages(messages []map[string]any, cache PromptCacheOptions) ([]anthropicSystemBlock, []anthropicMessage) {
 	systemParts := make([]anthropicSystemBlock, 0, 2)
 	converted := make([]anthropicMessage, 0, len(messages))
+	invalidArguments := map[string]string{}
 	appendMessage := func(role string, blocks []any) {
 		if len(blocks) == 0 {
 			return
@@ -313,15 +343,31 @@ func anthropicMessages(messages []map[string]any, cache PromptCacheOptions) ([]a
 			}
 		case "tool":
 			callID, _ := message["tool_call_id"].(string)
-			appendMessage("user", []any{map[string]any{
-				"type": "tool_result", "tool_use_id": callID, "content": contentText(message["content"]),
-			}})
+			content := contentText(message["content"])
+			failed := strings.HasPrefix(strings.TrimSpace(content), "Error:")
+			if raw, invalid := invalidArguments[callID]; invalid {
+				// Anthropic requires an object in tool_use.input. Keep invalid
+				// JSON in the error result so the model can repair every command.
+				content += fmt.Sprintf("\n\nOriginal invalid arguments (this call was not executed): %q", raw)
+				failed = true
+			}
+			result := map[string]any{"type": "tool_result", "tool_use_id": callID, "content": content}
+			if failed {
+				result["is_error"] = true
+			}
+			appendMessage("user", []any{result})
 		case "assistant":
 			blocks := anthropicContent(message["content"])
 			for _, call := range messageToolCalls(message) {
+				input, ok := parseToolArguments(call.Function.Arguments).(map[string]any)
+				delete(invalidArguments, call.ID)
+				if !ok || input == nil || !json.Valid([]byte(call.Function.Arguments)) {
+					invalidArguments[call.ID] = call.Function.Arguments
+					input = map[string]any{}
+				}
 				blocks = append(blocks, map[string]any{
 					"type": "tool_use", "id": call.ID, "name": call.Function.Name,
-					"input": parseToolArguments(call.Function.Arguments),
+					"input": input,
 				})
 			}
 			appendMessage("assistant", blocks)

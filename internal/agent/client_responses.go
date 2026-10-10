@@ -123,6 +123,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	usage := TokenUsage{}
 	completion := CompletionState{}
 	sawTerminal := false
+	var finalOutput []openAIResponseOutput
 
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -139,6 +140,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			Type        string                 `json:"type"`
 			Message     string                 `json:"message"`
 			Delta       string                 `json:"delta"`
+			Arguments   *string                `json:"arguments"`
 			OutputIndex int                    `json:"output_index"`
 			Item        openAIResponseOutput   `json:"item"`
 			Response    openAIResponseEnvelope `json:"response"`
@@ -182,6 +184,17 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				calls[event.OutputIndex] = call
 			}
 			call.arguments.WriteString(event.Delta)
+		case "response.function_call_arguments.done":
+			if event.Arguments != nil {
+				state.markSemantic()
+				call := calls[event.OutputIndex]
+				if call == nil {
+					call = &partialCall{}
+					calls[event.OutputIndex] = call
+				}
+				call.arguments.Reset()
+				call.arguments.WriteString(*event.Arguments)
+			}
 		case "response.output_item.done":
 			if event.Item.Type == "function_call" {
 				state.markSemantic()
@@ -199,6 +212,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			}
 		case "response.completed", "response.incomplete":
 			sawTerminal = true
+			finalOutput = event.Response.Output
 			usage = tokenUsageFromOpenAIResponse(event.Response.Usage)
 			completion = completionFromOpenAIResponse(event.Response)
 			if event.Type == "response.incomplete" && completion.StopReason == "" {
@@ -230,6 +244,12 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			ID: call.id, Type: "function",
 			Function: FunctionCall{Name: call.name, Arguments: call.arguments.String()},
 		})
+	}
+	// The terminal response contains the final output snapshot. Prefer it to
+	// accumulated deltas, which compatible providers may revise or repeat.
+	// A missing output field still allows delta-only streams to work.
+	if finalOutput != nil {
+		message.ToolCalls = assistantFromOpenAIResponse(openAIResponseEnvelope{Output: finalOutput}).ToolCalls
 	}
 	message.normalizeInlineToolCalls()
 	return message, nil
