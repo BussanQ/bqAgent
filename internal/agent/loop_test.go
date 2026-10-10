@@ -138,6 +138,7 @@ func TestRunConversationPassesReasoningEffort(t *testing.T) {
 		Stream:          true,
 		Context:         ContextConfig{Enabled: false},
 		ReasoningEffort: ReasoningEffortHigh,
+		ServiceTier:     "priority",
 		Functions: map[string]tools.Function{
 			"read_file": func(context.Context, map[string]any) (string, error) { return "contents", nil },
 		},
@@ -154,6 +155,9 @@ func TestRunConversationPassesReasoningEffort(t *testing.T) {
 		t.Fatalf("option-aware model calls = %d, want 2", len(client.options))
 	}
 	for index, options := range client.options {
+		if options.ServiceTier != "priority" {
+			t.Fatalf("call %d service tier = %q", index+1, options.ServiceTier)
+		}
 		if options.ReasoningEffort != ReasoningEffortHigh {
 			t.Fatalf("call %d reasoning effort = %q, want high", index+1, options.ReasoningEffort)
 		}

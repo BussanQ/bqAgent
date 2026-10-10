@@ -29,6 +29,7 @@ const (
 )
 
 type Meta struct {
+	FastMode            bool      `json:"fast_mode,omitempty"`
 	ID                  string    `json:"id"`
 	WorkspaceRoot       string    `json:"workspace_root"`
 	Task                string    `json:"task,omitempty"`
@@ -630,6 +631,17 @@ func (session *Session) SetLastRunID(runID string) error {
 	session.meta.LastRunID = strings.TrimSpace(runID)
 	session.meta.UpdatedAt = time.Now().UTC()
 	return session.persistMeta()
+}
+
+func (session *Session) SetFastMode(enabled bool) error {
+	previous := session.meta
+	session.meta.FastMode = enabled
+	session.meta.UpdatedAt = time.Now().UTC()
+	if err := session.persistMeta(); err != nil {
+		session.meta = previous
+		return err
+	}
+	return nil
 }
 
 func (session *Session) SetCurrentModel(model string) error {

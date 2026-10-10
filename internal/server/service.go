@@ -599,6 +599,20 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{SessionID: conversation.Session.ID(), Reply: feedbackReply}, nil
 	}
 
+	if reply, handled, commandErr := service.handleFastCommand(message, conversation.Session, len(request.Images) > 0 || len(request.Files) > 0); handled {
+		if commandErr != nil {
+			writeTurnError(turnErrorWriter, commandErr)
+			markConversationFailed(conversation, commandErr)
+			return TurnResponse{}, commandErr
+		}
+		conversation.Messages = append(conversation.Messages, map[string]any{"role": "user", "content": message}, map[string]any{"role": "assistant", "content": reply})
+		if err := service.completeConversation(conversation); err != nil {
+			return TurnResponse{}, err
+		}
+		writeTurnReply(logWriter, reply, false)
+		return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply}, nil
+	}
+
 	if command, _ := splitFirstToken(message); strings.EqualFold(command, "/model") && (len(request.Images) > 0 || len(request.Files) > 0) {
 		modelErr := fmt.Errorf("/model 命令不能携带图片或文件附件")
 		writeTurnError(turnErrorWriter, modelErr)
@@ -878,6 +892,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		Context:         service.context,
 		Stage:           options.Stage,
 		ReasoningEffort: request.ReasoningEffort,
+		ServiceTier:     service.sessionServiceTier(conversation.Session),
 		Trace:           runRecorder,
 	})
 

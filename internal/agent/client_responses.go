@@ -15,6 +15,7 @@ import (
 )
 
 type openAIResponseRequest struct {
+	ServiceTier        string                           `json:"service_tier,omitempty"`
 	Model              string                           `json:"model"`
 	Input              []any                            `json:"input"`
 	Tools              []openAIResponseTool             `json:"tools,omitempty"`
@@ -260,7 +261,8 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 
 func buildOpenAIResponseRequest(model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, stream bool) (openAIResponseRequest, error) {
 	request := openAIResponseRequest{
-		Model: model, Input: openAIResponseInput(messages, options.PromptCache), Stream: stream,
+		ServiceTier: options.ServiceTier,
+		Model:       model, Input: openAIResponseInput(messages, options.PromptCache), Stream: stream,
 		PromptCacheKey:     openAIPromptCacheKey(options.PromptCache),
 		PromptCacheOptions: openAIPromptCacheRequest(options.PromptCache),
 	}

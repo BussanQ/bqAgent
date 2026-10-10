@@ -71,6 +71,7 @@ func ParseReasoningEffort(raw string) (ReasoningEffort, error) {
 }
 
 type ChatCompletionOptions struct {
+	ServiceTier     string
 	ResponseFormat  map[string]any
 	ReasoningEffort ReasoningEffort
 	PromptCache     PromptCacheOptions
@@ -159,6 +160,7 @@ type FunctionCall struct {
 }
 
 type chatCompletionRequest struct {
+	ServiceTier        string                           `json:"service_tier,omitempty"`
 	Model              string                           `json:"model"`
 	Messages           []map[string]any                 `json:"messages"`
 	Tools              []tools.Definition               `json:"tools,omitempty"`
@@ -169,6 +171,7 @@ type chatCompletionRequest struct {
 }
 
 type chatCompletionStreamRequest struct {
+	ServiceTier        string                           `json:"service_tier,omitempty"`
 	Model              string                           `json:"model"`
 	Messages           []map[string]any                 `json:"messages"`
 	Tools              []tools.Definition               `json:"tools,omitempty"`
@@ -365,6 +368,7 @@ func (c *Client) createChatCompletion(ctx context.Context, model string, message
 		Tools:              definitions,
 		ResponseFormat:     options.ResponseFormat,
 		ReasoningEffort:    options.ReasoningEffort,
+		ServiceTier:        options.ServiceTier,
 		PromptCacheKey:     openAIPromptCacheKey(options.PromptCache),
 		PromptCacheOptions: openAIPromptCacheRequest(options.PromptCache),
 	})
@@ -443,6 +447,7 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 		Stream:             true,
 		StreamOptions:      map[string]any{"include_usage": true},
 		ReasoningEffort:    options.ReasoningEffort,
+		ServiceTier:        options.ServiceTier,
 		PromptCacheKey:     openAIPromptCacheKey(options.PromptCache),
 		PromptCacheOptions: openAIPromptCacheRequest(options.PromptCache),
 	})

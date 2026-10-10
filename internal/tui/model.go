@@ -994,7 +994,7 @@ func (model Model) helpText() string {
   /help 帮助    /provider 配置模型 Provider    /clear 新建会话并清理显示    /exit 安全退出
 
 后端命令
-  /run（完整工具）  /ask（只读问答）  /model  /skill  /memory  /feedback  /agent
+  /run（完整工具）  /ask（只读问答）  /model  /fast  /skill  /memory  /feedback  /agent
   /claude  /codex  /cursor  /opencode  /default  /stop`
 }
 
@@ -1007,6 +1007,7 @@ func mergeCommands(dynamic []Command) []Command {
 		{Name: "/run", Description: "切换到 Run 模式（完整工具能力）"},
 		{Name: "/ask", Description: "切换到 Ask 模式（只读问答，不修改文件或执行命令）"},
 		{Name: "/model", Description: "查看或切换模型"},
+		{Name: "/fast", Description: "切换 API Fast 模式", Arguments: []CommandArgument{{Value: "on", Description: "开启"}, {Value: "off", Description: "关闭"}, {Value: "status", Description: "查看状态"}}},
 		{Name: "/skill", Description: "使用 Skill 或 alias"},
 		{Name: "/memory", Description: "管理记忆", Arguments: []CommandArgument{{Value: "list", Description: "列出记忆"}, {Value: "search", Description: "搜索记忆"}, {Value: "confirm", Description: "确认候选记忆"}, {Value: "compact", Description: "压缩记忆"}}},
 		{Name: "/feedback", Description: "提交运行反馈", Arguments: []CommandArgument{{Value: "up", Description: "正向反馈"}, {Value: "down", Description: "负向反馈"}}},

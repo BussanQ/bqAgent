@@ -122,6 +122,7 @@ type Options struct {
 	Context         ContextConfig
 	Stage           StageConfig
 	ReasoningEffort ReasoningEffort
+	ServiceTier     string
 	Trace           *apptrace.Recorder
 }
 
@@ -148,6 +149,7 @@ type Agent struct {
 	promptUsage     promptUsageBaseline
 	stageConfig     StageConfig
 	reasoningEffort ReasoningEffort
+	serviceTier     string
 	trace           *apptrace.Recorder
 }
 
@@ -213,6 +215,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		contextConfig:   contextConfig,
 		stageConfig:     normalizeStageConfig(options.Stage),
 		reasoningEffort: options.ReasoningEffort,
+		serviceTier:     options.ServiceTier,
 		trace:           options.Trace,
 	}
 }
@@ -290,7 +293,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if a.stageConfig.ImmediateProgress {
 			a.writeStageProgress(selectModelProgressMessage(modelProgressMessages))
 		}
-		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort}
+		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort, ServiceTier: a.serviceTier}
 		completionOptions.PromptCache = buildPromptCacheOptions(a.apiType, a.model, a.prompt, definitions, completionOptions)
 		requestMessages, compacted := a.buildRequestMessages(explorationCtx, messages, definitions, completionOptions)
 		if compacted != nil {
