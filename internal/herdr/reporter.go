@@ -14,11 +14,12 @@ import (
 	"unicode"
 )
 
-// Reporting is asynchronous: allow normal CLI startup/IPC latency without
-// increasing the independent shutdown budget.
+// Both commands need room for CLI startup and IPC. Reports are asynchronous;
+// only shutdown waits for release, with extra time for cancelling/reaping the
+// previous command before starting release.
 const reportTimeout = time.Second
-const releaseTimeout = 150 * time.Millisecond
-const closeTimeout = 200 * time.Millisecond
+const releaseTimeout = time.Second
+const closeTimeout = releaseTimeout + 200*time.Millisecond
 
 type snapshot struct{ state, sessionID string }
 type commandRunner func(context.Context, string, []string) error

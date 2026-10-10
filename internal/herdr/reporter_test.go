@@ -181,6 +181,70 @@ func TestReporterTimeoutDoesNotPreventLaterReports(t *testing.T) {
 	}
 }
 
+func TestReporterCloseWaitsForSlowRelease(t *testing.T) {
+	started := make(chan struct{})
+	released := make(chan error, 1)
+	r := newReporter(testEnv, []string{"bqagent", "--chat"}, func(ctx context.Context, _ string, args []string) error {
+		if args[1] == "report-agent" {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		timer := time.NewTimer(300 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			released <- nil
+			return nil
+		case <-ctx.Done():
+			released <- ctx.Err()
+			return ctx.Err()
+		}
+	})
+	defer r.Close()
+	r.Report("idle", "session")
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("report worker did not start")
+	}
+	r.Close()
+	select {
+	case err := <-released:
+		if err != nil {
+			t.Fatalf("healthy release cancelled before completion: %v", err)
+		}
+	default:
+		t.Fatal("Close returned before healthy release completed")
+	}
+}
+
+func TestReporterCloseBoundsUnresponsiveRelease(t *testing.T) {
+	released := make(chan error, 1)
+	r := newReporter(testEnv, nil, func(ctx context.Context, _ string, args []string) error {
+		if args[1] == "release-agent" {
+			<-ctx.Done()
+			released <- ctx.Err()
+		}
+		return ctx.Err()
+	})
+	closed := make(chan struct{})
+	go func() { r.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(closeTimeout + time.Second):
+		t.Fatal("Close hung on unresponsive release")
+	}
+	select {
+	case err := <-released:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("release error=%v, want deadline exceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("release worker did not stop after deadline")
+	}
+}
+
 func TestReporterAllowsSlowStartupReport(t *testing.T) {
 	completed := make(chan error, 1)
 	r := newReporter(testEnv, []string{"bqagent", "--chat"}, func(ctx context.Context, _ string, args []string) error {
@@ -231,7 +295,7 @@ func TestReporterCloseHasHardWaitBound(t *testing.T) {
 	go func() { r.Close(); close(closed) }()
 	select {
 	case <-closed:
-	case <-time.After(time.Second):
+	case <-time.After(closeTimeout + time.Second):
 		close(unblock)
 		t.Fatal("Close waited indefinitely for broken transport")
 	}
