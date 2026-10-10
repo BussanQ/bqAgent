@@ -20,7 +20,7 @@ func awaitCall(t *testing.T, calls <-chan []string) []string {
 	select {
 	case args := <-calls:
 		return args
-	case <-time.After(time.Second):
+	case <-time.After(reportTimeout + time.Second):
 		t.Fatal("report worker did not make progress")
 		return nil
 	}
@@ -137,6 +137,9 @@ func TestReporterCloseCancelsInFlightAndUsesFreshReleaseContext(t *testing.T) {
 		if ctx.Err() != nil {
 			t.Error("release inherited cancelled request context")
 		}
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > releaseTimeout {
+			t.Error("release must retain its short, independent deadline")
+		}
 		close(released)
 		return nil
 	})
@@ -175,6 +178,37 @@ func TestReporterTimeoutDoesNotPreventLaterReports(t *testing.T) {
 	r.Report("idle", "one")
 	if args := awaitCall(t, calls); argument(args, "--state") != "idle" {
 		t.Fatalf("timeout lost latest snapshot: %v", args)
+	}
+}
+
+func TestReporterAllowsSlowStartupReport(t *testing.T) {
+	completed := make(chan error, 1)
+	r := newReporter(testEnv, []string{"bqagent", "--chat"}, func(ctx context.Context, _ string, args []string) error {
+		if args[1] != "report-agent" {
+			return nil
+		}
+		// The user's Herdr CLI took 196ms. Leave room for startup and IPC
+		// without cancelling a healthy report at the old 150ms deadline.
+		timer := time.NewTimer(300 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			completed <- nil
+			return nil
+		case <-ctx.Done():
+			completed <- ctx.Err()
+			return ctx.Err()
+		}
+	})
+	defer r.Close()
+	r.Report("idle", "")
+	select {
+	case err := <-completed:
+		if err != nil {
+			t.Fatalf("healthy slow startup report cancelled: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup report did not finish")
 	}
 }
 

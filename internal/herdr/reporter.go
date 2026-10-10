@@ -14,7 +14,10 @@ import (
 	"unicode"
 )
 
-const reportTimeout = 150 * time.Millisecond
+// Reporting is asynchronous: allow normal CLI startup/IPC latency without
+// increasing the independent shutdown budget.
+const reportTimeout = time.Second
+const releaseTimeout = 150 * time.Millisecond
 const closeTimeout = 200 * time.Millisecond
 
 type snapshot struct{ state, sessionID string }
@@ -110,7 +113,7 @@ func (r *Reporter) loop() {
 		r.mu.Lock()
 		if r.closed {
 			r.mu.Unlock()
-			ctx, cancel := context.WithTimeout(context.Background(), reportTimeout)
+			ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
 			_ = r.run(ctx, r.bin, r.arguments(snapshot{}, true))
 			cancel()
 			return
