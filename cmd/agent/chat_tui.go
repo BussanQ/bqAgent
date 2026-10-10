@@ -19,19 +19,22 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 	if !interactiveTerminal(stdin, stdout, getenv) {
 		return runChatLegacy(ctx, stdin, stdout, stderr, getenv, ws, systemPrompt, initialTask, options)
 	}
+	herdrReporter := newHerdrReporter(getenv, options)
+	defer herdrReporter.Close()
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, nil)
 	defer externalBroker.Close()
 	backend := &tuiBackend{service: service, workspace: ws}
 	noColor := getenv != nil && strings.TrimSpace(getenv("NO_COLOR")) != ""
 	err := apptui.Run(backend, apptui.Config{
-		Context:     ctx,
-		Input:       stdin,
-		Output:      stdout,
-		Workspace:   ws.Root,
-		AgentDir:    ws.AgentDir(),
-		InitialTask: initialTask,
-		SessionID:   effectiveSessionID(options),
-		NoColor:     noColor,
+		ActivitySink: herdrReporter.Report,
+		Context:      ctx,
+		Input:        stdin,
+		Output:       stdout,
+		Workspace:    ws.Root,
+		AgentDir:     ws.AgentDir(),
+		InitialTask:  initialTask,
+		SessionID:    effectiveSessionID(options),
+		NoColor:      noColor,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -74,6 +77,7 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 		SessionID: sessionID,
 		Message:   message,
 	}, appserver.TurnOptions{
+		SessionSink:    events.Session,
 		OutputWriter:   eventWriter{write: events.Progress},
 		TokenSink:      eventWriter{write: events.Token},
 		ProgressWriter: eventWriter{write: events.Progress},

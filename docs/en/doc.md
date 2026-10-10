@@ -21,6 +21,7 @@ Additional capabilities draw on ideas from `agent-claudecode.py` and OpenClaw:
 - Continued support for `.agent/rules/*.md` and `.agent/skills/*/SKILL.md`
 - Plan-first execution with `--plan`
 - An always-streaming inline terminal TUI by default, also available explicitly with `--chat`
+- [Automatic Herdr support](../TUI.md#herdr-集成): asynchronous activity reports, session recovery, and bounded release without blocking model work
 - Persistent session recovery with `--resume`
 - Request-time context pruning for long conversations
 - Optional request-time summary compaction for older turns

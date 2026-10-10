@@ -204,6 +204,9 @@ func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *Generation
 }
 
 type TurnOptions struct {
+	// SessionSink observes the canonical session before model work starts.
+	// Callers must keep it nonblocking.
+	SessionSink       func(string)
 	OutputWriter      io.Writer
 	ProgressWriter    io.Writer
 	TokenSink         io.Writer
@@ -527,6 +530,9 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			markConversationFailed(conversation, err)
 			return TurnResponse{}, err
 		}
+	}
+	if options.SessionSink != nil {
+		options.SessionSink(conversation.Session.ID())
 	}
 	systemPrompt := conversation.Prompt.Combined()
 	defer func() {

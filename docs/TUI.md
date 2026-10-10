@@ -60,6 +60,17 @@ OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 
 
 使用 `--chat --resume <session-id>` 时，只回放最近的用户和助手文本，总显示预算为 200 KiB；会提示省略条数，单条超限消息只在 TUI 中截断，不修改持久 Session。
 
+## Herdr 集成
+
+在 Herdr 窗格中启动 bqAgent 即可自动启用，无需安装插件或配置额外依赖。遵循 [Herdr 接入协议](https://herdr.dev/zh-cn/docs/add-herdr-support/)，仅当 `HERDR_ENV=1` 且 `HERDR_PANE_ID`、`HERDR_BIN_PATH`、`HERDR_SOCKET_PATH` 均存在时启用；其他终端不启动发送器、不执行 Herdr 命令。
+
+- TUI 和兼容逐行模式：等待输入为 `idle`，处理请求为 `working`；TUI 的 Provider 配置等待用户选择时为 `blocked`。
+- 前台单次任务：运行期间为 `working`。退出时释放窗格；HTTP/Bot 服务、后台任务和内部子智能体 worker 不接管窗格。
+- 会话创建后、模型开始工作前更新恢复信息。恢复命令为 `bqagent --chat [--plan] [--stream] --resume <session-id>`，保留相应启动选项；模型和会话模式使用已有的持久会话配置。`/clear` 改为恢复一个新的空会话，不会重新打开旧会话。
+- 使用单个后台发送器，仅保留最新待发送状态，重复状态不发送，也不逐 token 上报。每次 Herdr CLI 调用限时 150ms，错误静默忽略；退出取消在途上报并尝试释放，额外等待上限为 200ms。状态上报不等待 Herdr 响应，不执行重试循环。
+
+恢复要求 Herdr 0.9.2+，并且 `bqagent` 在 `PATH` 中；不能使用绝对路径作为恢复命令首项。单次任务恢复后进入交互会话，保留上下文并等待新的指令。需要验证时，可在 Herdr 窗格中运行 `herdr pane get "$HERDR_PANE_ID"` 或 `herdr agent list`。进程被强制终止而无法释放时，由 Herdr 自身清理机制兜底。上报仅含状态、会话 ID 和恢复参数，不含提示词、回复或工具输出。
+
 ## TTY 回退与兼容性
 
 stdin/stdout 不是 TTY，或 `TERM=dumb` 时，会自动使用原有逐行模式，便于管道、重定向和自动化测试。TUI 始终流式输出；`--stream` 继续接受，在 TUI 中与默认行为等价。设置 `NO_COLOR` 可关闭 TUI 与 Markdown 颜色。
@@ -75,3 +86,5 @@ The status bar shows full-precision `in / out` totals for the current user turn,
 Completed-turn TPS uses the final text response and keeps pauses in its generation duration. The TUI applies no fixed TPS ceiling. Inspired by pi-tps, the agent checks sample count, spacing, observable streaming duration, and pause-dominated bursts before publishing a rate; insufficient evidence displays `TPS —`. These client-side heuristics cannot recover hidden server-side timing.
 
 Press `Ctrl+C` twice within two seconds to exit safely, including in Provider setup. The first press still copies selected prompt text and shows a confirmation hint; the second cancels any active turn and waits for it to finish. Other keys, paste, mouse clicks, or timeout cancel the confirmation. `Ctrl+Q` remains a one-step safe exit shortcut.
+
+Herdr support is automatic only when all four Herdr environment variables above are present and `HERDR_ENV=1`. Foreground TUI, line mode, and one-shot tasks report activity and session recovery metadata; Provider setup reports `blocked`. A single background sender coalesces pending states, ignores failures, and limits each CLI call to 150ms; shutdown cancels pending work and attempts release with at most 200ms of extra waiting. No token-by-token reporting or retry loop is used. Background jobs, internal workers, and HTTP/Bot services do not claim a pane. Recovery requires Herdr 0.9.2+ and `bqagent` on `PATH`; it opens the saved session in chat mode, preserving plan/stream flags and persisted model/mode settings. Clearing the session updates recovery to a new empty chat. Prompts, replies, and tool output are never reported.

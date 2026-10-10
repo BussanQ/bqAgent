@@ -357,6 +357,9 @@ func runInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace.Works
 }
 
 func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt, task string, options cliOptions) int {
+	herdrReporter := newHerdrReporter(getenv, options)
+	defer herdrReporter.Close()
+	herdrReporter.Report("working", effectiveSessionID(options))
 	if effectiveSessionID(options) != "" && strings.TrimSpace(task) == "" {
 		fmt.Fprintln(stderr, "resume requires a follow-up task")
 		return 1
@@ -418,6 +421,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		}
 	}
 	systemPrompt = conversation.Prompt.Combined()
+	herdrReporter.Report("working", conversation.Session.ID())
 
 	runtime := appruntime.Factory{
 		Config:          llmConfig,
@@ -503,14 +507,23 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 
 func runChatLegacy(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt, initialTask string, options cliOptions) int {
 	sessionID := effectiveSessionID(options)
+	herdrReporter := newHerdrReporter(getenv, options)
+	defer herdrReporter.Close()
+	herdrReporter.Report("idle", sessionID)
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, nil)
 	defer externalBroker.Close()
 
 	executeTurn := func(input string) error {
+		herdrReporter.Report("working", sessionID)
+		defer func() { herdrReporter.Report("idle", sessionID) }()
 		response, err := service.HandleTurnWithOptions(ctx, appserver.TurnRequest{
 			SessionID: sessionID,
 			Message:   input,
 		}, appserver.TurnOptions{
+			SessionSink: func(id string) {
+				sessionID = id
+				herdrReporter.Report("working", id)
+			},
 			OutputWriter: stdout,
 			Stream:       options.stream,
 		})

@@ -153,6 +153,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	commands := make([]tea.Cmd, 0, 4)
 	switch message := message.(type) {
 	case startupMsg:
+		model.reportActivity("idle")
 		model.enqueuePrint(model.startup...)
 		if model.initialTask != "" && !model.initialSent {
 			model.initialSent = true
@@ -413,6 +414,7 @@ func (model *Model) submit(value string) tea.Cmd {
 		model.enqueuePrint(model.helpText())
 		return toolCommand
 	case "/provider":
+		model.reportActivity("blocked")
 		model.provider = newProviderWizard(model.config.NoColor, model.contentWidth())
 		model.input.area.Blur()
 		return tea.Batch(toolCommand, loadProviderSettings(model.backend, model.config.Context))
@@ -430,6 +432,7 @@ func (model *Model) submit(value string) tea.Cmd {
 	model.enqueueUserTurn(value)
 	model.sequence++
 	model.phase = phaseThinking
+	model.reportActivity("working")
 	model.progress = "正在思考"
 	model.startedAt = time.Now()
 	model.metrics = nil
@@ -487,6 +490,9 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 			return commands
 		}
 		switch event.kind {
+		case "session":
+			model.sessionID = event.text
+			model.reportActivity("working")
 		case "usage":
 			usage := event.usage
 			model.usage = &usage
@@ -534,6 +540,7 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	}
 	model.metrics = event.result.Metrics
 	model.phase = phaseIdle
+	model.reportActivity("idle")
 	model.progress = ""
 	if model.pendingClear {
 		model.pendingClear = false
@@ -571,6 +578,7 @@ func launchTurn(backend Backend, ctx context.Context, sequence uint64, sessionID
 			}
 		}
 		sink := TurnEvents{
+			Session:  func(id string) { send(turnEvent{kind: "session", text: id}) },
 			Usage:    func(usage TokenUsage) { send(turnEvent{kind: "usage", usage: usage}) },
 			Token:    func(text string) { send(turnEvent{kind: "token", text: text}) },
 			Progress: func(text string) { send(turnEvent{kind: "progress", text: text}) },
@@ -643,6 +651,7 @@ func (model *Model) discardToolGroup() tea.Cmd {
 
 func (model *Model) clearSession() {
 	model.sessionID = ""
+	model.reportActivity("idle")
 	model.runtime = model.backend.RuntimeInfo("")
 	model.metrics = nil
 	model.usage = nil
@@ -656,6 +665,12 @@ func (model *Model) clearSession() {
 	model.closePanel()
 	model.printQueue = nil
 	model.statusNotice = "已清理显示；下一条消息将创建新会话"
+}
+
+func (model Model) reportActivity(state string) {
+	if model.config.ActivitySink != nil {
+		model.config.ActivitySink(state, model.sessionID)
+	}
 }
 
 func (model *Model) recordHistory(value string) {

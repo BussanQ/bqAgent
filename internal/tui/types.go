@@ -22,6 +22,7 @@ type Backend interface {
 }
 
 type TurnEvents struct {
+	Session  func(string)
 	Token    func(string)
 	Progress func(string)
 	Tool     func(ToolEvent)
@@ -143,12 +144,14 @@ type CommandArgument struct {
 }
 
 type Config struct {
-	Context     context.Context
-	Input       io.Reader
-	Output      io.Writer
-	Workspace   string
-	AgentDir    string
-	InitialTask string
-	SessionID   string
-	NoColor     bool
+	// ActivitySink must be nonblocking. States are idle, working and blocked.
+	ActivitySink func(state, sessionID string)
+	Context      context.Context
+	Input        io.Reader
+	Output       io.Writer
+	Workspace    string
+	AgentDir     string
+	InitialTask  string
+	SessionID    string
+	NoColor      bool
 }

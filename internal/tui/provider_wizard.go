@@ -246,6 +246,7 @@ func (model *Model) handleProviderKey(key tea.KeyPressMsg) []tea.Cmd {
 		return []tea.Cmd{tea.Quit}
 	case "esc":
 		model.provider = nil
+		model.reportActivity("idle")
 		model.statusNotice = "已取消 Provider 配置"
 		return []tea.Cmd{model.input.area.Focus()}
 	case "shift+tab":
@@ -364,6 +365,7 @@ func (model *Model) handleProviderSaved(message providerSavedMsg) []tea.Cmd {
 	providerID := model.provider.draft.ID
 	defaultModel := model.provider.draft.ModelDisplayNames.Name(model.provider.draft.DefaultModel)
 	model.provider = nil
+	model.reportActivity("idle")
 	model.runtime = message.runtime
 	if model.runtime.Model == "" {
 		model.runtime = model.backend.RuntimeInfo(model.sessionID)
