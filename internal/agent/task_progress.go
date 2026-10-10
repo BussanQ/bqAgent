@@ -91,16 +91,15 @@ func (a *Agent) taskContext(ctx context.Context) string {
 	return text
 }
 
-const maxAutomaticContinuations = 3
 const maxNoProgressContinuations = 2
 
 type continuationGuard struct {
-	attempts, stagnant int
-	progressed         bool
-	substantiveCalls   int
-	reviewed           bool
-	taskUpdated        bool
-	stopped            bool
+	stagnant         int
+	progressed       bool
+	substantiveCalls int
+	reviewed         bool
+	taskUpdated      bool
+	stopped          bool
 }
 
 func (guard *continuationGuard) observe(call ToolCall, result string) {
@@ -119,11 +118,13 @@ func (guard *continuationGuard) allow() bool {
 		guard.stagnant = 0
 	}
 	guard.progressed = false
-	if guard.attempts >= maxAutomaticContinuations || guard.stagnant >= maxNoProgressContinuations {
+	// Only consecutive no-progress retries are bounded here. Productive work
+	// replenishes this budget; the outer loop still bounds total iterations,
+	// stage time and cancellation for the whole turn.
+	if guard.stagnant >= maxNoProgressContinuations {
 		guard.stopped = true
 		return false
 	}
-	guard.attempts++
 	guard.stagnant++
 	return true
 }

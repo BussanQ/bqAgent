@@ -95,3 +95,36 @@ func TestAskModeDoesNotResumeOrMutateCodingTask(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceCompletesLongTaskWithoutFollowupTurn(t *testing.T) {
+	active := taskstate.State{Goal: "implement fast switch", Status: "active", Criteria: []taskstate.Criterion{{Description: "switch works"}}, Remaining: []string{"implement", "verify"}}
+	responses := []agent.AssistantMessage{serverTaskUpdate(active)}
+	for i := 0; i < 6; i++ {
+		responses = append(responses,
+			agent.AssistantMessage{Content: ""},
+			agent.AssistantMessage{Content: ""},
+			agent.AssistantMessage{ToolCalls: []agent.ToolCall{{ID: fmt.Sprintf("edit-%d", i), Function: agent.FunctionCall{Name: "edit_switch", Arguments: fmt.Sprintf(`{"step":%d}`, i)}}}})
+	}
+	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "switch verification passed"}}, Verification: []taskstate.Verification{{Command: "test_switch", Status: "passed", Details: "ok"}}}
+	responses = append(responses,
+		agent.AssistantMessage{ToolCalls: []agent.ToolCall{{ID: "verify", Function: agent.FunctionCall{Name: "test_switch", Arguments: `{}`}}}},
+		serverTaskUpdate(complete), agent.AssistantMessage{Content: "verified", Phase: "final_answer"})
+	client := &taskScriptClient{responses: responses}
+	edits, checks := 0, 0
+	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test", Functions: map[string]tools.Function{
+		"edit_switch": func(context.Context, map[string]any) (string, error) { edits++; return "", nil },
+		"test_switch": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
+	}})
+	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: active.Goal})
+	if err != nil || response.Reply != "verified" || edits != 6 || checks != 1 || len(client.responses) != 0 {
+		t.Fatalf("response=%+v edits=%d checks=%d remaining=%d err=%v", response, edits, checks, len(client.responses), err)
+	}
+	saved, err := service.store.Open(response.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := saved.LoadTaskState()
+	if err != nil || state == nil || state.Status != "completed" {
+		t.Fatalf("state=%+v err=%v", state, err)
+	}
+}

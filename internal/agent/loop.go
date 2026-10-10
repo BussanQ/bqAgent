@@ -428,7 +428,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if len(message.ToolCalls) == 0 {
 			if reason := a.continuationReason(ctx, message, continuations); reason != "" {
 				if !continuations.allow() {
-					paused := "任务尚未确认完成：自动续行已达到次数或无进展限制，当前工作与任务状态已保留。"
+					paused := "任务尚未确认完成：连续自动续行仍无实质工具进展，当前工作与任务状态已保留。"
 					checkpoint := map[string]any{"role": "assistant", "content": paused, "phase": "final_answer"}
 					if err := a.recordMessages(checkpoint); err != nil {
 						return "", updatedMessages, err

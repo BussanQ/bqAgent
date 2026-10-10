@@ -159,7 +159,9 @@ func todoProgressSignature(call ToolCall) (string, bool) {
 
 func toolResultMadeProgress(call ToolCall, result string) bool {
 	trimmed := strings.TrimSpace(result)
-	if trimmed == "" || strings.HasPrefix(trimmed, "Error:") {
+	// Tool errors are encoded with Error: by runRegularToolCall. Successful
+	// commands (especially file edits) need not produce stdout.
+	if strings.HasPrefix(trimmed, "Error:") {
 		return false
 	}
 	switch call.Function.Name {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -41,17 +42,70 @@ func TestRunCloseoutReviewForUnregisteredLongTask(t *testing.T) {
 	}
 }
 
-func TestRunContinuationTotalBudgetAndStreamPause(t *testing.T) {
-	var responses []AssistantMessage
-	for i := 0; i < 4; i++ {
-		responses = append(responses, AssistantMessage{ToolCalls: []ToolCall{{ID: "read", Function: FunctionCall{Name: "read_file", Arguments: `{}`}}}}, AssistantMessage{Content: "working", Phase: "commentary"})
+func TestRunProductiveContinuationsCompleteInOneTurn(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			active := activeTestTask()
+			store := &memoryTaskStore{state: &active}
+			var responses []AssistantMessage
+			// Match the reported failure: two empty replies, then a successful
+			// silent edit. Repeat beyond the former three-continuation cap.
+			for i := 0; i < 6; i++ {
+				responses = append(responses, AssistantMessage{Content: ""}, AssistantMessage{Content: ""},
+					AssistantMessage{ToolCalls: []ToolCall{{ID: fmt.Sprintf("edit-%d", i), Function: FunctionCall{Name: "edit_file", Arguments: fmt.Sprintf(`{"step":%d}`, i)}}}},
+					AssistantMessage{Content: "working", Phase: "commentary"})
+				// Each following cycle starts with work to reset the consecutive
+				// empty-reply budget before the next pair of empty responses.
+				responses = append(responses, AssistantMessage{ToolCalls: []ToolCall{{ID: fmt.Sprintf("read-%d", i), Function: FunctionCall{Name: "read_file", Arguments: fmt.Sprintf(`{"step":%d}`, i)}}}})
+			}
+			complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted verification passed"}}, Verification: []taskstate.Verification{{Command: "verify", Status: "passed", Details: "ok"}}}
+			responses = append(responses, AssistantMessage{ToolCalls: []ToolCall{{ID: "verify", Function: FunctionCall{Name: "verify", Arguments: `{}`}}}}, taskUpdateMessage(complete), AssistantMessage{Content: "done", Phase: "final_answer"})
+			expectedCalls := len(responses)
+			client := &stubClient{responses: responses}
+			var output bytes.Buffer
+			edits, checks := 0, 0
+			app := NewWithOptions(client, "test", Options{TaskStore: store, Stream: stream, TokenSink: &output, Functions: map[string]tools.Function{
+				"edit_file": func(context.Context, map[string]any) (string, error) { edits++; return "", nil },
+				"read_file": func(context.Context, map[string]any) (string, error) { return "source", nil },
+				"verify":    func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
+			}})
+			reply, err := app.Run(context.Background(), "implement fast", 50)
+			if err != nil || reply != "done" || edits != 6 || checks != 1 || len(client.messages) != expectedCalls || store.state.Status != "completed" || strings.Contains(output.String(), "尚未确认完成") {
+				t.Fatalf("calls=%d edits=%d checks=%d task=%+v reply=%q err=%v", len(client.messages), edits, checks, store.state, reply, err)
+			}
+		})
 	}
-	client := &stubClient{responses: responses}
+}
+
+func TestRunStagnantContinuationStreamsPause(t *testing.T) {
+	client := &stubClient{responses: []AssistantMessage{{Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}}}
 	var output bytes.Buffer
-	app := NewWithOptions(client, "test", Options{Stream: true, TokenSink: &output, Functions: map[string]tools.Function{"read_file": func(context.Context, map[string]any) (string, error) { return "source", nil }}})
+	app := NewWithOptions(client, "test", Options{Stream: true, TokenSink: &output})
 	reply, err := app.Run(context.Background(), "work", 50)
-	if err != nil || len(client.messages) != 8 || !strings.Contains(reply, "尚未确认完成") || !strings.Contains(output.String(), reply) {
+	if err != nil || len(client.messages) != 3 || !strings.Contains(reply, "连续自动续行仍无实质工具进展") || !strings.Contains(output.String(), reply) {
 		t.Fatalf("calls=%d reply=%q output=%q err=%v", len(client.messages), reply, output.String(), err)
+	}
+}
+
+func TestContinuationProgressClassification(t *testing.T) {
+	for _, tt := range []struct {
+		name, result string
+		progress     bool
+	}{
+		{"execute_bash", "", true}, {"edit_file", "  \n", true},
+		{"read_file", "source", true}, {"execute_bash", "Error: command failed", false},
+		{"grep", "No matches found.", false}, {"glob", "No files matched.", false},
+		{"task_update", "saved", false}, {"todo_write", "updated", false},
+	} {
+		t.Run(tt.name+tt.result, func(t *testing.T) {
+			guard := &continuationGuard{}
+			guard.allow()
+			guard.allow()
+			guard.observe(ToolCall{Function: FunctionCall{Name: tt.name}}, tt.result)
+			if got := guard.allow(); got != tt.progress {
+				t.Fatalf("allow after %s = %v, want %v", tt.name, got, tt.progress)
+			}
+		})
 	}
 }
 
