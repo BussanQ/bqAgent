@@ -23,6 +23,7 @@ import (
 	appruntime "bqagent/internal/runtime"
 	"bqagent/internal/session"
 	"bqagent/internal/subagent"
+	"bqagent/internal/taskstate"
 	"bqagent/internal/tools"
 	apptrace "bqagent/internal/trace"
 	"bqagent/internal/workspace"
@@ -876,7 +877,12 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if mode == ChatModeRun && service.planner != nil {
 		planner = agent.NewPlanner(service.client, effectiveModel)
 	}
+	var taskStore taskstate.Store
+	if mode == ChatModeRun {
+		taskStore = conversation.Session
+	}
 	app := agent.NewWithOptions(service.client, effectiveModel, agent.Options{
+		TaskStore:       taskStore,
 		Prompt:          conversation.Prompt,
 		APIType:         service.apiType,
 		LogWriter:       logWriter,

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"bqagent/internal/taskstate"
 	"bqagent/internal/tools"
 	apptrace "bqagent/internal/trace"
 )
@@ -106,6 +107,7 @@ type StageConfig struct {
 }
 
 type Options struct {
+	TaskStore       taskstate.Store
 	SystemPrompt    string
 	Prompt          PromptSnapshot
 	APIType         APIType
@@ -127,6 +129,8 @@ type Options struct {
 }
 
 type Agent struct {
+	taskStore       taskstate.Store
+	task            *taskstate.State
 	client          ChatCompletionClient
 	model           string
 	apiType         APIType
@@ -195,7 +199,8 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		checkpointSaver = saver
 	}
 
-	return &Agent{
+	app := &Agent{
+		taskStore:       options.TaskStore,
 		client:          client,
 		model:           model,
 		apiType:         NormalizeAPIType(string(options.APIType)),
@@ -218,6 +223,8 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		serviceTier:     options.ServiceTier,
 		trace:           options.Trace,
 	}
+	app.installTaskTool()
+	return app
 }
 
 func normalizeStageConfig(config StageConfig) StageConfig {
@@ -257,6 +264,13 @@ func (a *Agent) RunConversationTurnWithMetrics(ctx context.Context, messages []m
 }
 
 func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, maxIterations int, allowPlan bool) (result string, updatedMessages []map[string]any, err error) {
+	ctx, continuations := continuationContext(ctx)
+	if a.taskStore != nil {
+		a.task, err = a.taskStore.LoadTaskState()
+		if err != nil {
+			return "", messages, err
+		}
+	}
 	messages = ensurePromptSnapshotMessages(messages, a.prompt)
 	startedAt := time.Now()
 	updatedMessages = messages
@@ -367,6 +381,12 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			err = requestErr
 			return "", updatedMessages, err
 		}
+		if err := ctx.Err(); err != nil {
+			return "", updatedMessages, err
+		}
+		if strings.EqualFold(message.Completion.StopReason, "incomplete") && !message.Completion.OutputTruncated {
+			return "", updatedMessages, fmt.Errorf("model response incomplete: %s", firstNonBlank(message.Completion.IncompleteReason, "unspecified reason"))
+		}
 		message.normalizeInlineToolCalls()
 		truncatedToolBatch := message.Completion.OutputTruncated && len(message.ToolCalls) > 0
 		recoveredBashCalls := false
@@ -406,6 +426,32 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		truncatedToolRecoveries = 0
 		if len(message.ToolCalls) == 0 {
+			if reason := a.continuationReason(ctx, message, continuations); reason != "" {
+				if !continuations.allow() {
+					paused := "任务尚未确认完成：自动续行已达到次数或无进展限制，当前工作与任务状态已保留。"
+					checkpoint := map[string]any{"role": "assistant", "content": paused, "phase": "final_answer"}
+					if err := a.recordMessages(checkpoint); err != nil {
+						return "", updatedMessages, err
+					}
+					if a.stream {
+						sink := a.tokenSink
+						if sink == nil {
+							sink = a.logWriter
+						}
+						if sink != nil {
+							_, _ = io.WriteString(sink, "\n\n"+paused)
+						}
+					}
+					return paused, append(updatedMessages, checkpoint), nil
+				}
+				a.writeProgress("任务尚未完成，继续执行与验证。")
+				updatedMessages, err = a.appendContinuation(updatedMessages, reason)
+				messages = updatedMessages
+				if err != nil {
+					return "", updatedMessages, err
+				}
+				continue
+			}
 			finalContent := message.FinalContent()
 			if message.Content != nil && strings.TrimSpace(finalContent) != "" {
 				return finalContent, updatedMessages, nil
@@ -484,6 +530,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 
 				_, toolResult := a.runRegularToolCall(explorationCtx, toolCall)
+				continuations.observe(toolCall, toolResult)
 				action := loopGuard.observeTool(toolCall, toolResult)
 				if action.recoveryPrompt != "" {
 					toolResult = toolResult + "\n\nRecovery instruction: " + action.recoveryPrompt
@@ -516,6 +563,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			waitGroup.Wait()
 
 			for index, toolCall := range message.ToolCalls {
+				continuations.observe(toolCall, results[index])
 				action := loopGuard.observeTool(toolCall, results[index])
 				if action.recoveryPrompt != "" {
 					results[index] = results[index] + "\n\nRecovery instruction: " + action.recoveryPrompt

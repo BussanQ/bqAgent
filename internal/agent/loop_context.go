@@ -67,6 +67,25 @@ func normalizeContextConfig(config ContextConfig) ContextConfig {
 
 func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (request []map[string]any, compacted []map[string]any) {
 	sanitized := sanitizeCompletedToolHistory(duplicateMessages(messages))
+	if text := a.taskContext(ctx); text != "" {
+		sanitized = append(sanitized, map[string]any{"role": "developer", "content": text})
+		// The current task is stored separately. Never accumulate stale snapshots
+		// in the conversation when the context manager compacts this request.
+		defer func() {
+			if compacted == nil {
+				return
+			}
+			filtered := make([]map[string]any, 0, len(compacted))
+			for _, message := range compacted {
+				content, _ := message["content"].(string)
+				if message["role"] == "developer" && strings.HasPrefix(content, taskProgressInstructions) {
+					continue
+				}
+				filtered = append(filtered, message)
+			}
+			compacted = filtered
+		}()
+	}
 	if !a.contextConfig.Enabled {
 		return sanitized, nil
 	}
@@ -375,6 +394,9 @@ func truncateMessageGroupToBudget(group []map[string]any, budgetTokens int) []ma
 		largestIndex := -1
 		largestContent := ""
 		for index, message := range cloned {
+			if len(responseItemsFromMessage(message)) > 0 {
+				continue
+			}
 			content, _ := message["content"].(string)
 			if len(content) > len(largestContent) {
 				largestIndex = index
@@ -389,6 +411,12 @@ func truncateMessageGroupToBudget(group []map[string]any, budgetTokens int) []ma
 			maxChars = 16
 		}
 		cloned[largestIndex]["content"] = truncateTextMiddle(largestContent, maxChars)
+	}
+	// Native Responses items are indivisible: clipping only their display text
+	// would leave the actual replay payload oversized. Drop the whole group,
+	// including paired tool outputs, if it cannot fit.
+	if estimateMessagesTokens(cloned) > budgetTokens {
+		return nil
 	}
 	return cloned
 }
@@ -476,6 +504,12 @@ func truncateTextMiddle(text string, maxChars int) string {
 func estimateMessagesTokens(messages []map[string]any) int {
 	totalTokens := 0
 	for _, message := range messages {
+		if items := responseItemsFromMessage(message); len(items) > 0 {
+			for _, item := range items {
+				totalTokens += estimateTextTokens(string(item)) + 4
+			}
+			continue
+		}
 		for _, key := range []string{"role", "tool_call_id"} {
 			if text, ok := message[key].(string); ok {
 				totalTokens += estimateTextTokens(text)

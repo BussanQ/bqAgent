@@ -14,6 +14,7 @@ import (
 	appmemory "bqagent/internal/memory"
 	"bqagent/internal/modelcatalog"
 	"bqagent/internal/session"
+	"bqagent/internal/taskstate"
 	"bqagent/internal/tools"
 )
 
@@ -349,7 +350,9 @@ func (runtime Runtime) NewAgent(logWriter io.Writer, systemPrompt string, record
 }
 
 func (runtime Runtime) NewAgentWithProgress(logWriter io.Writer, progressWriter io.Writer, systemPrompt string, recorder agent.MessageRecorder, stream bool) *agent.Agent {
+	taskStore, _ := recorder.(taskstate.Store)
 	return agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{
+		TaskStore:       taskStore,
 		SystemPrompt:    systemPrompt,
 		APIType:         runtime.APIType,
 		LogWriter:       logWriter,

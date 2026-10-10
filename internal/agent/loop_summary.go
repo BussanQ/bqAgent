@@ -339,11 +339,24 @@ func sanitizeCompletedToolHistory(messages []map[string]any) []map[string]any {
 	}
 
 	sanitized := make([]map[string]any, 0, len(messages))
+	nativeCalls := map[string]bool{}
+	for _, message := range messages {
+		if len(responseItemsFromMessage(message)) > 0 {
+			for _, call := range messageToolCalls(message) {
+				nativeCalls[call.ID] = true
+			}
+		}
+	}
 	for i := 0; i < len(messages); i++ {
 		message := messages[i]
 		role, _ := message["role"].(string)
+		if role == "assistant" && len(responseItemsFromMessage(message)) > 0 {
+			sanitized = append(sanitized, message)
+			continue
+		}
 		if role == "tool" {
-			if pendingAssistantIndex >= 0 && i >= pendingToolStart {
+			callID, _ := message["tool_call_id"].(string)
+			if nativeCalls[callID] || pendingAssistantIndex >= 0 && i >= pendingToolStart {
 				sanitized = append(sanitized, message)
 			} else {
 				content, _ := message["content"].(string)

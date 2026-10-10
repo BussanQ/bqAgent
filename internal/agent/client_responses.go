@@ -51,16 +51,27 @@ type openAIResponseUsage struct {
 }
 
 type openAIResponseOutput struct {
-	ID        string `json:"id"`
-	Type      string `json:"type"`
-	Role      string `json:"role"`
-	CallID    string `json:"call_id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	Phase     string          `json:"phase,omitempty"`
+	Raw       json.RawMessage `json:"-"`
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`
+	Role      string          `json:"role"`
+	CallID    string          `json:"call_id"`
+	Name      string          `json:"name"`
+	Arguments string          `json:"arguments"`
 	Content   []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+}
+
+func (item *openAIResponseOutput) UnmarshalJSON(data []byte) error {
+	type plain openAIResponseOutput
+	if err := json.Unmarshal(data, (*plain)(item)); err != nil {
+		return err
+	}
+	item.Raw = append(json.RawMessage(nil), data...)
+	return nil
 }
 
 type openAIResponseEnvelope struct {
@@ -125,6 +136,8 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	completion := CompletionState{}
 	sawTerminal := false
 	var finalOutput []openAIResponseOutput
+	messageItems := map[int]openAIResponseOutput{}
+	messageDeltas := map[int]string{}
 
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -167,10 +180,14 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				state.markSemantic()
 			}
 			content.WriteString(event.Delta)
+			messageDeltas[event.OutputIndex] += event.Delta
 			if onChunk != nil {
 				onChunk(event.Delta)
 			}
 		case "response.output_item.added":
+			if event.Item.Type != "function_call" {
+				messageItems[event.OutputIndex] = event.Item
+			}
 			if event.Item.Type == "function_call" {
 				state.markSemantic()
 				calls[event.OutputIndex] = &partialCall{id: firstNonBlank(event.Item.CallID, event.Item.ID), name: event.Item.Name}
@@ -198,6 +215,9 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				call.arguments.WriteString(*event.Arguments)
 			}
 		case "response.output_item.done":
+			if event.Item.Type != "function_call" {
+				messageItems[event.OutputIndex] = event.Item
+			}
 			if event.Item.Type == "function_call" {
 				state.markSemantic()
 				call := calls[event.OutputIndex]
@@ -253,7 +273,49 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	// accumulated deltas, which compatible providers may revise or repeat.
 	// A missing output field still allows delta-only streams to work.
 	if finalOutput != nil {
-		message.ToolCalls = assistantFromOpenAIResponse(openAIResponseEnvelope{Output: finalOutput}).ToolCalls
+		final := assistantFromOpenAIResponse(openAIResponseEnvelope{Output: finalOutput})
+		message.ToolCalls, message.ResponseItems, message.Phase = final.ToolCalls, final.ResponseItems, final.Phase
+		if final.Content != "" {
+			message.Content = final.Content
+			if content.Len() == 0 && onChunk != nil {
+				onChunk(final.DisplayContent())
+			}
+		}
+	} else if len(messageItems) > 0 {
+		// Some compatible streams omit terminal output. Reconstruct item order
+		// from output_index, keeping the final function arguments already parsed.
+		for index, call := range calls {
+			raw, _ := json.Marshal(map[string]any{"type": "function_call", "call_id": call.id, "name": call.name, "arguments": call.arguments.String()})
+			messageItems[index] = openAIResponseOutput{Type: "function_call", CallID: call.id, Name: call.name, Arguments: call.arguments.String(), Raw: raw}
+		}
+		ordered := make([]int, 0, len(messageItems))
+		for index := range messageItems {
+			ordered = append(ordered, index)
+		}
+		sort.Ints(ordered)
+		var output []openAIResponseOutput
+		for _, index := range ordered {
+			item := messageItems[index]
+			if item.Type == "message" && len(item.Content) == 0 && messageDeltas[index] != "" {
+				var raw map[string]any
+				_ = json.Unmarshal(item.Raw, &raw)
+				if raw == nil {
+					raw = map[string]any{"type": "message", "role": "assistant", "phase": item.Phase}
+				}
+				raw["content"] = []any{map[string]any{"type": "output_text", "text": messageDeltas[index]}}
+				encoded, _ := json.Marshal(raw)
+				_ = json.Unmarshal(encoded, &item)
+			}
+			output = append(output, item)
+		}
+		final := assistantFromOpenAIResponse(openAIResponseEnvelope{Output: output})
+		message.ResponseItems, message.Phase = final.ResponseItems, final.Phase
+		if final.Content != "" {
+			message.Content = final.Content
+			if content.Len() == 0 && onChunk != nil {
+				onChunk(final.DisplayContent())
+			}
+		}
 	}
 	message.normalizeInlineToolCalls()
 	return message, nil
@@ -296,8 +358,18 @@ func openAIResponseInput(messages []map[string]any, cache PromptCacheOptions) []
 				"type": "function_call_output", "call_id": callID, "output": contentText(message["content"]),
 			})
 		case "assistant":
+			if items := responseItemsFromMessage(message); len(items) > 0 {
+				for _, item := range items {
+					input = append(input, item)
+				}
+				continue
+			}
 			if text := contentText(message["content"]); strings.TrimSpace(text) != "" {
-				input = append(input, map[string]any{"role": "assistant", "content": text})
+				item := map[string]any{"role": "assistant", "content": text}
+				if phase, _ := message["phase"].(string); phase != "" {
+					item["phase"] = phase
+				}
+				input = append(input, item)
 			}
 			for _, call := range messageToolCalls(message) {
 				input = append(input, map[string]any{
@@ -347,8 +419,16 @@ func assistantFromOpenAIResponse(response openAIResponseEnvelope) AssistantMessa
 	var content strings.Builder
 	message := AssistantMessage{Role: "assistant", Completion: completionFromOpenAIResponse(response), Usage: tokenUsageFromOpenAIResponse(response.Usage)}
 	for _, output := range response.Output {
+		raw := output.Raw
+		if len(raw) == 0 {
+			raw, _ = json.Marshal(output)
+		}
+		message.ResponseItems = append(message.ResponseItems, raw)
 		switch output.Type {
 		case "message":
+			if output.Phase != "" {
+				message.Phase = output.Phase
+			}
 			for _, part := range output.Content {
 				if part.Type == "output_text" || part.Type == "text" {
 					content.WriteString(part.Text)

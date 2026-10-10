@@ -146,7 +146,7 @@ func (a *Agent) appendToolError(messages []map[string]any, toolCallID, format st
 func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall, allowPlan bool) bool {
 	for _, toolCall := range toolCalls {
 		switch toolCall.Function.Name {
-		case "write_file", "edit_file", "todo_write":
+		case "write_file", "edit_file", "todo_write", "task_update":
 			return true
 		case "consult_group_agent":
 			return true

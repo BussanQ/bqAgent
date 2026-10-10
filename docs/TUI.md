@@ -90,3 +90,11 @@ Press `Ctrl+C` twice within two seconds to exit safely, including in Provider se
 Herdr support is automatic only when all four Herdr environment variables above are present and `HERDR_ENV=1`. Foreground TUI, line mode, and one-shot tasks report activity and session recovery metadata; Provider setup reports `blocked`. A single background sender coalesces pending states, ignores failures, and allows each status report up to 1 second for CLI startup and IPC; shutdown cancels pending work and waits for release with a separate 1-second timeout and at most 1.2 seconds of extra waiting, returning as soon as release finishes. Reporting never blocks model work. No token-by-token reporting or retry loop is used. Background jobs, internal workers, and HTTP/Bot services do not claim a pane. Recovery requires Herdr 0.9.2+ and `bqagent` on `PATH`; it opens the saved session in chat mode, preserving plan/stream flags and persisted model/mode settings. Clearing the session updates recovery to a new empty chat. Prompts, replies, and tool output are never reported.
 
 `/fast` 在开启、关闭之间循环切换，默认关闭；也支持 `/fast on`、`/fast off`、`/fast status`。设置按会话保存，恢复会话后继续生效，新会话默认关闭。开启后，OpenAI Chat Completions / Responses 请求携带 `service_tier=priority`，关闭后省略此参数。适用于支持该字段的 Codex、Cursor 等兼容 API；是否提供加速及其计费由上游决定，不支持的上游可能返回错误。Anthropic 协议暂不支持开启。此命令控制 bqAgent 自身 API 请求，不控制 `/codex`、`/cursor` 外部 Agent 进程。
+
+## 长编程任务的连续执行
+
+Run 模式与命令行任务提供内部工具 `task_update`，用于多步骤编程任务。模型应在修改前登记原始目标、验收项和剩余工作，并在取得进展后记录实际验证结果。状态保存在当前会话的 `task.json`，独立于对话压缩；恢复会话或发送“继续”“改完了吗”时会重新注入当前目标与未完成项。普通问答和小型单步修改不必创建任务，Ask 模式不暴露此写入工具。
+
+Responses 接口会保留原始输出项、顺序及 assistant 的 `phase`，包括流式响应和历史回传。只有进度说明（`commentary`）时继续执行；输出截断按未完成处理，其他 incomplete 响应返回错误。对已登记且仍 active 的任务，最终文字回复会触发收尾检查；标记 completed 要求验收项均有完成证据、无剩余工作，并有通过的验证记录。模型遗忘登记时，多步工具工作后的第一次收尾也会要求复核原始需求；分析或普通问答可直接给出答案。
+
+自动续行每轮最多 3 次，连续 2 次没有实质工具进展后停止，并明确显示“任务尚未确认完成”。既有轮次、阶段时间和取消限制仍然有效。真正受阻或需要用户决策时记录 blocked / awaiting_input 及原因即可结束；修改原始目标或删除验收项需显式注明用户变更范围的原因。验证记录来自模型对工具结果的归纳，不能替代实际执行对应验证。外部 `/codex`、`/cursor` 进程仍由各自运行时管理。

@@ -94,6 +94,7 @@ func openAIPromptCacheRequest(options PromptCacheOptions) *openAIPromptCacheRequ
 }
 
 func openAIChatMessagesWithCache(messages []map[string]any, options PromptCacheOptions) []map[string]any {
+	messages = chatMessagesWithoutResponseMetadata(messages)
 	if !options.Enabled || !options.ExplicitBreakpoint || options.StableMessageCount <= 0 || len(messages) < options.StableMessageCount {
 		return messages
 	}

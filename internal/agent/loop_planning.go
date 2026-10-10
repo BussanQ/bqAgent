@@ -25,6 +25,7 @@ func (a *Agent) RunPlannedConversationTurn(ctx context.Context, messages []map[s
 }
 
 func (a *Agent) runPlannedConversation(ctx context.Context, messages []map[string]any, task string, maxIterations int) (string, []map[string]any, error) {
+	ctx, _ = continuationContext(ctx)
 	if a.planner == nil {
 		return "", messages, fmt.Errorf("planner is not configured")
 	}
@@ -48,11 +49,15 @@ func (a *Agent) runPlannedConversation(ctx context.Context, messages []map[strin
 			return "", messages, err
 		}
 
-		stepResult, updatedMessages, err := a.runConversation(ctx, messages, maxIterations, false)
+		stepCtx := context.WithValue(ctx, planStepContextKey{}, index < len(steps)-1)
+		stepResult, updatedMessages, err := a.runConversation(stepCtx, messages, maxIterations, false)
 		if err != nil {
 			return "", updatedMessages, err
 		}
 		messages = updatedMessages
+		if a.planShouldStop(ctx) {
+			return stepResult, messages, nil
+		}
 		results = append(results, stepResult)
 	}
 
@@ -103,11 +108,15 @@ func (a *Agent) executePlanTool(ctx context.Context, messages []map[string]any, 
 			return "", messages, err
 		}
 
-		stepResult, updatedMessages, err := a.runConversation(ctx, messages, maxIterations, false)
+		stepCtx := context.WithValue(ctx, planStepContextKey{}, index < len(steps)-1)
+		stepResult, updatedMessages, err := a.runConversation(stepCtx, messages, maxIterations, false)
 		if err != nil {
 			return "", updatedMessages, err
 		}
 		messages = updatedMessages
+		if a.planShouldStop(ctx) {
+			return stepResult, messages, nil
+		}
 		results = append(results, stepResult)
 	}
 

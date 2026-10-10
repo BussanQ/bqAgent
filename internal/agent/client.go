@@ -126,12 +126,16 @@ type CompletionState struct {
 }
 
 type AssistantMessage struct {
-	Role       string                  `json:"role"`
-	Content    any                     `json:"content"`
-	ToolCalls  []ToolCall              `json:"tool_calls,omitempty"`
-	Completion CompletionState         `json:"-"`
-	Usage      TokenUsage              `json:"-"`
-	Request    ProviderRequestMetadata `json:"-"`
+	// ResponseItems preserves ordered Responses output, including message phase
+	// and opaque reasoning items, across persistence and manual history replay.
+	ResponseItems []json.RawMessage       `json:"-"`
+	Phase         string                  `json:"-"`
+	Role          string                  `json:"role"`
+	Content       any                     `json:"content"`
+	ToolCalls     []ToolCall              `json:"tool_calls,omitempty"`
+	Completion    CompletionState         `json:"-"`
+	Usage         TokenUsage              `json:"-"`
+	Request       ProviderRequestMetadata `json:"-"`
 }
 
 type TokenUsage struct {
@@ -775,6 +779,12 @@ func (m AssistantMessage) RequestMessage() map[string]any {
 	if len(m.ToolCalls) > 0 {
 		message["tool_calls"] = m.ToolCalls
 	}
+	if m.Phase != "" {
+		message["phase"] = m.Phase
+	}
+	if len(m.ResponseItems) > 0 {
+		message["response_items"] = m.replayResponseItems()
+	}
 	return message
 }
 
@@ -793,6 +803,22 @@ func (m AssistantMessage) DisplayContent() string {
 }
 
 func (m AssistantMessage) FinalContent() string {
+	if m.Phase == "final_answer" {
+		var final strings.Builder
+		for _, raw := range m.ResponseItems {
+			var item openAIResponseOutput
+			if json.Unmarshal(raw, &item) == nil && item.Type == "message" && item.Phase == "final_answer" {
+				for _, part := range item.Content {
+					if part.Type == "output_text" || part.Type == "text" {
+						final.WriteString(part.Text)
+					}
+				}
+			}
+		}
+		if final.Len() > 0 {
+			return final.String()
+		}
+	}
 	if m.Content == nil {
 		return "None"
 	}
