@@ -18,7 +18,7 @@ func TestSlashMenuIncludesAllCommandsAndEffortOnFirstPage(t *testing.T) {
 	if !strings.Contains(view, "/effort") || !strings.Contains(view, "↑/↓ 滚动选择") {
 		t.Fatalf("effort not discoverable: %q", view)
 	}
-	for _, name := range []string{"/help", "/clear", "/exit", "/provider", "/run", "/ask", "/model", "/effort", "/fast", "/skill", "/memory", "/feedback", "/agent", "/claude", "/codex", "/cursor", "/opencode", "/default", "/stop", "/custom"} {
+	for _, name := range []string{"/help", "/clear", "/exit", "/provider", "/run", "/ask", "/model", "/effort", "/fast", "/skill", "/memory", "/feedback", "/agent", "/claude", "/codex", "/cursor", "/opencode", "/pi", "/default", "/stop", "/custom"} {
 		count := 0
 		for i, item := range model.suggestions {
 			if item.value != name {

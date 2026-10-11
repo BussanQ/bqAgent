@@ -13,12 +13,24 @@ func ConfigFromEnv(getenv func(string) string, workspaceRoot string) Config {
 			ACP: defaultACPConfig(agent, getenv(prefix+"ACP_CMD"), getenv(prefix+"ACP_ARGS")),
 			CLI: defaultCLIConfig(agent, getenv(prefix+"CLI_CMD"), getenv(prefix+"CLI_ARGS")),
 		}
+		if agent == AgentCodex {
+			cfg := config.Agents[agent]
+			// Opt in explicitly; existing ACP and CLI configuration stays unchanged.
+			if command := strings.TrimSpace(getenv(prefix + "APP_SERVER_CMD")); command != "" {
+				args := []string{"app-server"}
+				if raw := strings.TrimSpace(getenv(prefix + "APP_SERVER_ARGS")); raw != "" {
+					args = splitArgs(raw)
+				}
+				cfg.AppServer = CommandSpec{Command: command, Args: args}
+				config.Agents[agent] = cfg
+			}
+		}
 	}
 	return config
 }
 
 func SupportedAgents() []AgentName {
-	return []AgentName{AgentClaude, AgentCodex, AgentCursor, AgentOpenCode}
+	return []AgentName{AgentClaude, AgentCodex, AgentCursor, AgentOpenCode, AgentPi}
 }
 
 func defaultACPConfig(agent AgentName, command, args string) CommandSpec {
@@ -52,6 +64,8 @@ func defaultCLIConfig(agent AgentName, command, args string) CommandSpec {
 			command = "claude"
 		case AgentCodex:
 			command = "codex"
+		case AgentPi:
+			command = "pi"
 		}
 	}
 	if strings.TrimSpace(args) != "" {
@@ -62,6 +76,8 @@ func defaultCLIConfig(agent AgentName, command, args string) CommandSpec {
 		return CommandSpec{Command: command, Args: []string{"-p", "--output-format", "json"}}
 	case AgentCodex:
 		return CommandSpec{Command: command, Args: []string{"exec", "--json", "--skip-git-repo-check"}}
+	case AgentPi:
+		return CommandSpec{Command: command, Args: []string{"--mode", "json"}}
 	default:
 		return CommandSpec{Command: command}
 	}

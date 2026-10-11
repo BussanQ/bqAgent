@@ -468,9 +468,48 @@ func directGroupReply(replies []groupVisibleReply) string {
 
 func sharedGroupContext(messages []map[string]any, replies []groupVisibleReply) string {
 	var lines []string
+	pending := map[string]string{}
+	appendResult := func(participant, result string) {
+		text, failed := groupHistoryResult(participant, result)
+		prefix := "@" + participant
+		if failed {
+			prefix += " failed"
+		}
+		lines = append(lines, prefix+": "+text)
+	}
 	for _, message := range messages {
 		role, _ := message["role"].(string)
 		content := conversationMessageText(message["content"])
+		if role == "assistant" {
+			for _, call := range historyToolCalls(message) {
+				if call.Function.Name != groupConsultTool {
+					continue
+				}
+				var args struct {
+					Participant string `json:"participant"`
+				}
+				if json.Unmarshal([]byte(call.Function.Arguments), &args) == nil && call.ID != "" && strings.TrimSpace(args.Participant) != "" {
+					pending[call.ID] = strings.TrimSpace(args.Participant)
+				}
+			}
+			if note, activity, ok := agent.ParseCompletedToolActivity(content); ok {
+				for _, tool := range activity {
+					participant, _ := tool.Arguments["participant"].(string)
+					if tool.Name == groupConsultTool && participant != "" {
+						appendResult(participant, tool.Result)
+					}
+				}
+				content = note
+			}
+		}
+		if role == "tool" {
+			callID, _ := message["tool_call_id"].(string)
+			if participant := pending[callID]; participant != "" {
+				appendResult(participant, content)
+				delete(pending, callID)
+			}
+			continue
+		}
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
@@ -515,11 +554,5 @@ func recordSyntheticGroupConsult(conversationMessages *[]map[string]any, savedSe
 }
 
 func isExternalRouteCommand(message string) bool {
-	command, _ := splitFirstToken(message)
-	switch strings.ToLower(command) {
-	case "/claude", "/codex", "/cursor", "/opencode", "/default":
-		return true
-	default:
-		return false
-	}
+	return extagent.IsRouteCommand(message)
 }

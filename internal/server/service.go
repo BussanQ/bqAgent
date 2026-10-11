@@ -999,7 +999,7 @@ func (service *Service) handleAgentCommand(ctx context.Context, message, session
 	switch action {
 	case "spawn":
 		if len(fields) < 4 {
-			return "", true, fmt.Errorf("usage: /agent spawn <claude|codex|cursor|opencode> [--timeout 30m] [--retries 1] [--include-dirty] -- <task>")
+			return "", true, fmt.Errorf("usage: /agent spawn <claude|codex|cursor|opencode|pi> [--timeout 30m] [--retries 1] [--include-dirty] -- <task>")
 		}
 		agentName := extagent.AgentName(strings.ToLower(fields[2]))
 		timeout, retries, includeDirty := 30*time.Minute, 1, false

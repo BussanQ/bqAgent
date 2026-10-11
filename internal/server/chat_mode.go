@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/extagent"
 	"bqagent/internal/tools"
 )
 
@@ -106,9 +107,12 @@ func chatModeCommandReply(mode ChatMode) string {
 }
 
 func askModeBlockedCommand(message string) bool {
+	if extagent.IsRouteCommand(message) {
+		return true
+	}
 	command, rest := splitFirstToken(message)
 	switch strings.ToLower(command) {
-	case "/agent", "/claude", "/codex", "/cursor", "/opencode", "/default":
+	case "/agent":
 		return true
 	case "/memory":
 		action, _ := splitFirstToken(rest)

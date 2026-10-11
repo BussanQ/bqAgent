@@ -16,6 +16,20 @@ func Detect(ctx context.Context, config Config, factory ACPClientFactory) map[Ag
 	for _, agent := range SupportedAgents() {
 		cfg := config.Agents[agent]
 		result := DetectionResult{Agent: agent}
+		if agent == AgentCodex && looksExecutable(cfg.AppServer.Command) {
+			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			client, err := NewCodexAppServerClient(cfg.AppServer, config.WorkspaceRoot)
+			if err == nil {
+				err = client.Initialize(probeCtx)
+				_ = client.Close()
+			}
+			cancel()
+			if err == nil {
+				result.AppServer = &AgentTransport{Agent: agent, Kind: TransportAppServer, Command: cfg.AppServer}
+			} else {
+				result.StartupError = "app-server: " + err.Error()
+			}
+		}
 
 		if cliTransportSupported(agent) && looksExecutable(cfg.CLI.Command) {
 			result.CLI = &AgentTransport{Agent: agent, Kind: TransportCLI, Command: cfg.CLI}
@@ -37,6 +51,8 @@ func Detect(ctx context.Context, config Config, factory ACPClientFactory) map[Ag
 		}
 
 		switch {
+		case result.AppServer != nil:
+			result.Preferred = result.AppServer
 		case result.ACP != nil:
 			result.Preferred = result.ACP
 		case result.CLI != nil:
@@ -49,7 +65,7 @@ func Detect(ctx context.Context, config Config, factory ACPClientFactory) map[Ag
 }
 
 func cliTransportSupported(agent AgentName) bool {
-	return agent == AgentClaude || agent == AgentCodex
+	return agent == AgentClaude || agent == AgentCodex || agent == AgentPi
 }
 
 func looksExecutable(command string) bool {

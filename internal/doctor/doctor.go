@@ -235,8 +235,8 @@ func (e *Engine) externalChecks(ctx context.Context, active bool, report *Report
 	}
 	for _, name := range extagent.SupportedAgents() {
 		cfg := e.options.External.Agents[name]
-		check := Check{ID: string(name), Group: "external_agents", State: "unverified", Reason: "not_probed", Hint: "Verify the configured executable and ACP authentication.", Source: "local", CheckedAt: report.CheckedAt}
-		if cfg.ACP.Command == "" && cfg.CLI.Command == "" && e.options.Snapshot == nil {
+		check := Check{ID: string(name), Group: "external_agents", State: "unverified", Reason: "not_probed", Hint: "Verify the configured executable and external agent authentication.", Source: "local", CheckedAt: report.CheckedAt}
+		if cfg.ACP.Command == "" && cfg.CLI.Command == "" && cfg.AppServer.Command == "" && e.options.Snapshot == nil {
 			check.State = "disabled"
 			check.Reason = "not_configured"
 			report.Checks = append(report.Checks, check)
@@ -249,9 +249,12 @@ func (e *Engine) externalChecks(ctx context.Context, active bool, report *Report
 			if !executable(cfg.ACP.Command, e.options.External.WorkspaceRoot) {
 				cfg.ACP = extagent.CommandSpec{}
 			}
+			if !executable(cfg.AppServer.Command, e.options.External.WorkspaceRoot) {
+				cfg.AppServer = extagent.CommandSpec{}
+			}
 			config := e.options.External
 			config.Agents = map[extagent.AgentName]extagent.AgentConfig{name: cfg}
-			// Detect ignores absent commands and only initializes ACP; it never sends a prompt.
+			// Detection only initializes transports; it never sends a prompt.
 			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			result := extagent.Detect(probeCtx, config, e.options.ACPFactory)[name]
 			probeErr := probeCtx.Err()
@@ -261,6 +264,9 @@ func (e *Engine) externalChecks(ctx context.Context, active bool, report *Report
 				check.Reason = "transport_" + string(result.Preferred.Kind)
 				if result.CLIFallback {
 					check.Reason = "cli_fallback_acp_failed"
+					if cfg.AppServer.Command != "" {
+						check.Reason = "cli_fallback_app_server_failed"
+					}
 				}
 			} else {
 				check.State = "error"
@@ -285,9 +291,12 @@ func (e *Engine) externalChecks(ctx context.Context, active bool, report *Report
 				}
 				if result.Fallback {
 					check.Reason = "cli_fallback_acp_failed"
+					if cfg.AppServer.Command != "" {
+						check.Reason = "cli_fallback_app_server_failed"
+					}
 				}
 			}
-		} else if !executable(cfg.ACP.Command, e.options.External.WorkspaceRoot) && !executable(cfg.CLI.Command, e.options.External.WorkspaceRoot) {
+		} else if !executable(cfg.ACP.Command, e.options.External.WorkspaceRoot) && !executable(cfg.CLI.Command, e.options.External.WorkspaceRoot) && !executable(cfg.AppServer.Command, e.options.External.WorkspaceRoot) {
 			check.State = "error"
 			check.Reason = "executable_not_found"
 		}

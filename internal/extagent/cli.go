@@ -20,6 +20,8 @@ func (adapter CLIAdapter) SendTurn(ctx context.Context, spec CommandSpec, state 
 		return adapter.runClaude(ctx, spec, state, cwd, prompt)
 	case AgentCodex:
 		return adapter.runCodex(ctx, spec, state, cwd, prompt)
+	case AgentPi:
+		return adapter.runPi(ctx, spec, state, cwd, prompt)
 	default:
 		return TurnResponse{}, fmt.Errorf("cli is not supported for %s", state.Agent)
 	}

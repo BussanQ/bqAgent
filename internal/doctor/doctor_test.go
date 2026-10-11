@@ -25,6 +25,22 @@ type probeACP struct {
 	closed     bool
 }
 
+func TestDoctorRecognizesConfiguredAppServerWithoutProbe(t *testing.T) {
+	e := testEngine(t)
+	e.options.External = extagent.Config{Agents: map[extagent.AgentName]extagent.AgentConfig{extagent.AgentCodex: {AppServer: extagent.CommandSpec{Command: os.Args[0]}}}}
+	report := Report{}
+	e.externalChecks(context.Background(), false, &report)
+	for _, check := range report.Checks {
+		if check.ID == "codex" {
+			if check.State != "unverified" || check.Reason != "not_probed" {
+				t.Fatalf("app-server status = %+v", check)
+			}
+			return
+		}
+	}
+	t.Fatal("Codex check missing")
+}
+
 func (client *probeACP) Initialize(ctx context.Context) error { return client.initialize(ctx) }
 func (client *probeACP) Close() error                         { client.closed = true; return nil }
 

@@ -1011,7 +1011,7 @@ func (model Model) helpText() string {
 
 后端命令
   /run（完整工具）  /ask（只读问答）  /model  /fast  /skill  /memory  /feedback  /agent
-  /claude  /codex  /cursor  /opencode  /default  /stop`
+  /claude  /codex  /cursor  /opencode  /pi  /default  /stop`
 }
 
 func mergeCommands(dynamic []Command) []Command {
@@ -1033,6 +1033,7 @@ func mergeCommands(dynamic []Command) []Command {
 		{Name: "/codex", Description: "切换到 Codex 外部 Agent"},
 		{Name: "/cursor", Description: "切换到 Cursor 外部 Agent"},
 		{Name: "/opencode", Description: "切换到 OpenCode 外部 Agent"},
+		{Name: "/pi", Description: "切换到 Pi 外部 Agent"},
 		{Name: "/default", Description: "恢复默认 Agent"},
 		{Name: "/stop", Description: "停止当前外部 Agent 进程"},
 	}

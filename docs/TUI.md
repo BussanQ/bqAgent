@@ -52,7 +52,7 @@ OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 
 
 - 本地命令：`/help`、`/provider`、`/clear`、`/exit`。
 - Provider/能力命令：`/model`、`/effort`、`/fast`、`/skill`、`/memory`、`/feedback`、`/agent`。
-- 外部 Agent：`/claude`、`/codex`、`/cursor`、`/opencode`、`/default`、`/stop`。
+- 外部 Agent：`/claude`、`/codex`、`/cursor`、`/opencode`、`/pi`、`/default`、`/stop`。
 
 `/provider` 会打开独立的分步配置向导，依次设置 Provider ID、API 协议、API 地址、API Key 和模型；Provider 名称直接使用第一步输入的 ID。模型既可从 Provider 的 `/models` 接口自动获取，也可手工输入；多个自定义模型使用英文逗号分隔，第一个模型自动成为默认模型。API Key 使用密码输入并加密保存到全局 `~/.agent/config.json`；编辑已有 Provider 时留空可保留原密钥。保存后新 Provider 会立即成为当前 Provider，并刷新 `/model` 候选。
 

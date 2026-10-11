@@ -12,14 +12,16 @@ const (
 	AgentCodex    AgentName = "codex"
 	AgentCursor   AgentName = "cursor"
 	AgentOpenCode AgentName = "opencode"
+	AgentPi       AgentName = "pi"
 	AgentDefault  AgentName = "default"
 )
 
 type TransportKind string
 
 const (
-	TransportACP TransportKind = "acp"
-	TransportCLI TransportKind = "cli"
+	TransportACP       TransportKind = "acp"
+	TransportCLI       TransportKind = "cli"
+	TransportAppServer TransportKind = "app-server"
 )
 
 type CommandSpec struct {
@@ -38,6 +40,7 @@ type DetectionResult struct {
 	Preferred      *AgentTransport
 	ACP            *AgentTransport
 	CLI            *AgentTransport
+	AppServer      *AgentTransport
 	CLIFallback    bool
 	StartupError   string
 	DetectionNotes []string
@@ -49,8 +52,9 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	ACP CommandSpec
-	CLI CommandSpec
+	ACP       CommandSpec
+	CLI       CommandSpec
+	AppServer CommandSpec
 }
 
 type SessionState struct {
@@ -92,7 +96,8 @@ type ACPPermissionSink interface {
 	EmitACPPermissionRequest(ACPPermissionRequest)
 }
 
-type ACPClient interface {
+// SessionClient is the shared lifecycle for persistent external agent transports.
+type SessionClient interface {
 	Initialize(context.Context) error
 	LoadSessionSupported() bool
 	NewSession(context.Context, string) (string, error)
@@ -100,3 +105,6 @@ type ACPClient interface {
 	Prompt(context.Context, string, string) (string, error)
 	Close() error
 }
+
+// ACPClient remains an alias for existing integrations and factories.
+type ACPClient = SessionClient

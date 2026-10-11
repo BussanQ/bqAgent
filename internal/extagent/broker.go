@@ -336,11 +336,33 @@ func (broker *Broker) sendTurn(ctx context.Context, request TurnRequest, group b
 	}
 	state.BQSessionID = request.BQSessionID
 	state.Agent = request.Agent
+	if state.ExternalSessionID != "" && state.Transport != "" && state.Transport != detection.Preferred.Kind &&
+		((state.Transport == TransportACP && detection.Preferred.Kind == TransportAppServer) ||
+			(state.Transport == TransportAppServer && detection.Preferred.Kind == TransportACP)) {
+		// ACP session IDs belong to the adapter and cannot be assumed to be
+		// Codex thread IDs. Keep an existing session on its original transport.
+		var previous *AgentTransport
+		switch state.Transport {
+		case TransportACP:
+			previous = detection.ACP
+		case TransportCLI:
+			previous = detection.CLI
+		case TransportAppServer:
+			previous = detection.AppServer
+			if previous == nil {
+				previous = detection.CLI
+			}
+		}
+		if previous == nil {
+			return TurnResponse{}, fmt.Errorf("saved %s session requires %s transport; restore its configuration or reset the external session", state.Agent, state.Transport)
+		}
+		detection.Preferred = previous
+	}
 	state.Transport = detection.Preferred.Kind
 
 	var response TurnResponse
 	switch detection.Preferred.Kind {
-	case TransportACP:
+	case TransportACP, TransportAppServer:
 		response, err = broker.sendACP(ctx, detection.Preferred.Command, state, request.CWD, request.Prompt, request.PermissionSink, generation)
 	case TransportCLI:
 		response, err = broker.cli.SendTurn(ctx, detection.Preferred.Command, state, request.CWD, request.Prompt)
@@ -348,6 +370,18 @@ func (broker *Broker) sendTurn(ctx context.Context, request TurnRequest, group b
 		err = fmt.Errorf("unsupported transport %q", detection.Preferred.Kind)
 	}
 	if err != nil {
+		if state.Transport == TransportAppServer && response.State.ExternalSessionID != "" && broker.generationCurrent(request.BQSessionID, generation) {
+			// Keep a newly created thread resumable even when its first turn fails.
+			var saveErr error
+			if group {
+				saveErr = broker.store.SaveGroup(response.State)
+			} else {
+				saveErr = broker.store.Save(response.State)
+			}
+			if saveErr != nil {
+				return TurnResponse{}, errors.Join(err, saveErr)
+			}
+		}
 		return TurnResponse{}, err
 	}
 	if !broker.generationCurrent(request.BQSessionID, generation) {
@@ -370,7 +404,7 @@ func (broker *Broker) sendACP(ctx context.Context, spec CommandSpec, state Sessi
 }
 
 func (broker *Broker) sendACPAttempt(ctx context.Context, spec CommandSpec, state SessionState, cwd, prompt string, permissionSink ACPPermissionSink, generation uint64, forceNewSession, allowReconnect bool) (TurnResponse, error) {
-	client, err := broker.acpClient(ctx, state.BQSessionID, state.Agent, spec, cwd, generation)
+	client, err := broker.sessionClient(ctx, state.BQSessionID, state.Agent, spec, cwd, generation, state.Transport)
 	if err != nil {
 		return TurnResponse{}, err
 	}
@@ -393,7 +427,15 @@ func (broker *Broker) sendACPAttempt(ctx context.Context, spec CommandSpec, stat
 	if !broker.generationCurrent(state.BQSessionID, generation) {
 		return TurnResponse{}, errBrokerSessionCleared
 	}
-	if aware, ok := client.(acpPermissionAware); ok {
+	state.ExternalSessionID = sessionID
+	if aware, ok := client.(interface {
+		setContextPermissionHandler(func(context.Context, acpPermissionParams) acpPermissionOutcome)
+	}); ok {
+		aware.setContextPermissionHandler(func(permissionCtx context.Context, params acpPermissionParams) acpPermissionOutcome {
+			return broker.awaitPermission(permissionCtx, state.BQSessionID, state.Agent, params, permissionSink, generation)
+		})
+		defer aware.setContextPermissionHandler(nil)
+	} else if aware, ok := client.(acpPermissionAware); ok {
 		aware.setPermissionHandler(func(params acpPermissionParams) acpPermissionOutcome {
 			return broker.awaitPermission(ctx, state.BQSessionID, state.Agent, params, permissionSink, generation)
 		})
@@ -401,6 +443,12 @@ func (broker *Broker) sendACPAttempt(ctx context.Context, spec CommandSpec, stat
 	}
 	reply, err := client.Prompt(ctx, sessionID, prompt)
 	if err != nil {
+		if state.Transport == TransportAppServer {
+			// A started turn may already have changed files. Never replay it on a
+			// new connection or fall back to CLI after a prompt failure.
+			broker.discardACPClient(state.BQSessionID, state.Agent, client)
+			return TurnResponse{State: state}, err
+		}
 		if allowReconnect && ctx.Err() == nil && broker.generationCurrent(state.BQSessionID, generation) && isACPConnectionError(err) {
 			broker.discardACPClient(state.BQSessionID, state.Agent, client)
 			return broker.sendACPAttempt(ctx, spec, state, cwd, prompt, permissionSink, generation, true, false)
@@ -529,6 +577,10 @@ func (broker *Broker) generationCurrent(sessionID string, generation uint64) boo
 // acpClient coalesces startup by key. Both ACPClientFactory and Initialize can
 // spawn processes or block, so they deliberately run outside broker.mu.
 func (broker *Broker) acpClient(ctx context.Context, sessionID string, agent AgentName, spec CommandSpec, cwd string, generation uint64) (ACPClient, error) {
+	return broker.sessionClient(ctx, sessionID, agent, spec, cwd, generation, TransportACP)
+}
+
+func (broker *Broker) sessionClient(ctx context.Context, sessionID string, agent AgentName, spec CommandSpec, cwd string, generation uint64, transport TransportKind) (SessionClient, error) {
 	key := acpClientKey{sessionID: sessionID, agent: agent}
 
 	broker.mu.Lock()
@@ -560,7 +612,13 @@ func (broker *Broker) acpClient(ctx context.Context, sessionID string, agent Age
 	broker.acpInFlight[key] = future
 	broker.mu.Unlock()
 
-	client, err := broker.acpFactory(spec, cwd)
+	var client ACPClient
+	var err error
+	if transport == TransportAppServer {
+		client, err = NewCodexAppServerClient(spec, cwd)
+	} else {
+		client, err = broker.acpFactory(spec, cwd)
+	}
 	if err == nil {
 		broker.mu.Lock()
 		if broker.acpInFlight[key] == future && !future.abandoned {

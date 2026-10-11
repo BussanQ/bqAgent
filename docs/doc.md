@@ -198,11 +198,25 @@ LLM_MODEL=claude-sonnet-4-5
 
 ### 外部编码 Agent
 
-对 `CLAUDE`、`CODEX`、`CURSOR`、`OPENCODE` 中的每个名称，可使用 `AGENT_<NAME>_ACP_CMD` 和 `AGENT_<NAME>_ACP_ARGS` 覆盖 ACP 启动命令。CLI 传输目前只为 Claude 和 Codex 实现，可通过 `AGENT_<NAME>_CLI_CMD` 和 `AGENT_<NAME>_CLI_ARGS` 覆盖。
+对 `CLAUDE`、`CODEX`、`CURSOR`、`OPENCODE`、`PI` 中的每个名称，可使用 `AGENT_<NAME>_ACP_CMD` 和 `AGENT_<NAME>_ACP_ARGS` 覆盖 ACP 启动命令。CLI 传输目前为 Claude、Codex 和 Pi 实现，可通过 `AGENT_<NAME>_CLI_CMD` 和 `AGENT_<NAME>_CLI_ARGS` 覆盖。
 
 Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex exec --json --skip-git-repo-check`。Cursor 默认通过 `cursor-agent acp` 使用 ACP，OpenCode 默认通过 `opencode acp` 使用 ACP。启动 bqAgent 的进程必须能从 PATH 找到对应的可执行文件；安装外部 Agent 或修改传输环境变量后，需要重启常驻 chat/server 进程以重新探测。
 
 在 `--chat` 或 `--server` 会话中，使用 `/opencode <任务>` 将当前轮次路由到 OpenCode；后续普通消息会保持绑定，直到通过 `/default` 返回内置 Agent。OpenCode 仅支持 ACP；配置 `AGENT_OPENCODE_CLI_CMD/ARGS` 不会启用 CLI 传输。
+
+Codex 还支持可选的官方 App Server stdio 适配。设置环境变量后重启 bqAgent：
+
+```bash
+export AGENT_CODEX_APP_SERVER_CMD=codex
+# 可选；默认参数就是 app-server，可在这里追加 Codex 配置参数
+export AGENT_CODEX_APP_SERVER_ARGS='app-server'
+```
+
+未配置时保持原有 ACP/CLI 行为；配置后新会话的探测优先级为 App Server → ACP → CLI，仅在启动探测失败时降级。适配器继承本机 Codex 的登录、模型和安全配置，通过 `thread/start`、`thread/resume` 和 `turn/start` 运行，接收流式事件并以 `turn/completed` 的状态确认结果，取消时发送 `turn/interrupt`。命令、文件修改和权限请求复用现有审批界面；没有审批接收端时不自动批准。其他服务端交互请求（例如结构化提问）暂不支持，会明确返回协议错误。
+
+已有 Codex CLI 的 thread ID 可用于 App Server 恢复；已有 ACP 会话仍使用其 ACP 适配器，以免混用会话 ID。任务开始后不会因报错或断线自动重跑或改走 CLI；新建线程的失败轮次也保留 thread ID，供后续继续。群聊、普通外部路由和子任务共用 Broker，会话状态继续按原方式保存。
+
+Pi 默认使用 `pi --mode json`，通过标准输入接收任务，并通过 `--session <ID>` 延续会话，复用统一外部 Agent 探测、Broker 和会话存储。安装并配置 Pi 后，重启 bqAgent 即可在新群聊中使用 `@pi`；已有群聊可通过“添加成员”加入 Pi。普通会话可使用 `/pi <任务>`，通过 `/default` 返回内置 Agent。可用 `AGENT_PI_CLI_CMD` 指定可执行文件；`AGENT_PI_CLI_ARGS` 覆盖参数时需保留 `--mode json`，不要使用 `--no-session`、`--continue`、`--resume` 或指定固定 session，以免破坏群聊之间的会话隔离。
 
 WebUI 的“新会话”菜单还可以创建群聊。外部 Agent 在服务启动后异步检测，不阻塞服务启动；需要检测结果的请求会等待后台探测完成，再将可用 Agent 与 bqagent 一起加入初始成员名单。成员栏的“添加成员”按钮可以把创建时未加入、当前已检测可用的 Agent 追加到现有群聊；鼠标悬停在外部成员上会显示删除按钮。成员变更会持久化，删除成员不会清除其历史发言和外部 session，重新添加后仍可延续上下文；调度员 bqagent 不可删除。未 @ 任何成员的任务由 bqagent 直接处理，不调度外部成员。直接发送给 `@codex`、`@opencode` 等外部成员的任务只由对应成员处理，bqagent 不再参与分析或自动汇总；只有用户明确 `@bqagent` 时，bqagent 才会调度外部成员并在其完成后给出最终汇总，也可以在后续轮次 `@bqagent` 汇总共享上下文里的既有结论。成员顺序共享同一个 workspace 和群聊上下文，各自结论会单独显示。群聊仅支持 Run 模式；普通会话中的 `/codex`、`/opencode` 粘性路由保持不变。群聊编排属于通用服务能力，本期仅 WebUI 提供入口。
 
