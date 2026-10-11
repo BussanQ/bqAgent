@@ -294,15 +294,18 @@ bqagent 会从当前目录向上查找，直到命中以下任一工作区标记
 
 主配置固定使用 `~/.agent/`，启动时会在这里补齐默认文件。工作区中的 `.agent/` 是可选的次级配置层，不会在切换工作区时自动创建；存在时，其 `AGENT.md`、`SOUL.md`、`USER.md`、memory 内容、skills 和 `mcp.json` 会在全局配置之后合并加载，同名工作区 Skill 和 MCP server 覆盖全局定义。WebUI 侧栏中的创建按钮只会生成 `.agent/memory/`、`mcp.json`、`AGENT.md`、`SOUL.md` 和 `USER.md`。除此之外，工作区 `.agent/memory/` 只会在发现已有 Markdown memory 需要迁移或首次显式写入 memory 时按需创建；对空 memory 的只读查询不会创建目录。
 
+会话按工作区分组保存：`<workspace-key>` 由规范化绝对工作区路径的可读编码和哈希组成，`<session-id>` 仍为时间戳加短 ID。旧的 `sessions/<session-id>/` 目录保持原位，恢复、列表、维护和删除操作继续兼容。移动或重命名工作区后需要单独迁移会话归属。
+
 ```text
 ~/.agent/
 ├─ sessions/
-│  └─ <session-id>/
-│     ├─ meta.json
-│     ├─ messages.jsonl
-│     ├─ working_messages.jsonl  # 仅 full 模式；旧 compact 文件会自动迁移
-│     ├─ context_checkpoint.json
-│     └─ output.log
+│  └─ <workspace-key>/
+│     └─ <session-id>/
+│        ├─ meta.json
+│        ├─ messages.jsonl
+│        ├─ working_messages.jsonl  # 仅 full 模式；旧 compact 文件会自动迁移
+│        ├─ context_checkpoint.json
+│        └─ output.log
 └─ server/
    ├─ server.log
    ├─ weixin/
@@ -367,13 +370,13 @@ project/
   - system prompt 只索引规范名称、frontmatter `description` 和工作区相对路径
   - 当 Skill 与任务相关时，模型通过 `read_file` 按需读取完整 `SKILL.md`
   - 显式 `/skill <名称或别名> [参数]` 及消息开头的 Skill ID/alias 都进入同一个主会话循环
-- `~/.agent/sessions/<session-id>/messages.jsonl`
+- `~/.agent/sessions/<workspace-key>/<session-id>/messages.jsonl`
   - compact 模式唯一的消息文件：执行中追加消息，每轮结束后原子替换为有界工作上下文；full 模式保留完整追加历史
-- `~/.agent/sessions/<session-id>/working_messages.jsonl`
+- `~/.agent/sessions/<workspace-key>/<session-id>/working_messages.jsonl`
   - 仅 full 模式单独保存有界工作上下文；旧 compact 会话的同名文件在恢复或启动维护时迁移后删除
-- `~/.agent/sessions/<session-id>/context_checkpoint.json`
+- `~/.agent/sessions/<workspace-key>/<session-id>/context_checkpoint.json`
   - 保存“摘要 + 最近 tail”的紧凑 checkpoint，用于恢复时重建工作上下文
-- `~/.agent/sessions/<session-id>/output.log`
+- `~/.agent/sessions/<workspace-key>/<session-id>/output.log`
   - 人类可读的执行日志
 - `.agent/mcp.json`
   - MCP 服务器配置（`mcpServers` 映射）。这里配置的 **Streamable HTTP** 服务器会在启动时连接，
@@ -430,10 +433,10 @@ aliases:
 
 `--background` 会启动一个”最小后台会话”：通过同一二进制拉起子进程，并把输出写入：
 
-- `~/.agent/sessions/<session-id>/meta.json`
-- `~/.agent/sessions/<session-id>/messages.jsonl`
-- `~/.agent/sessions/<session-id>/context_checkpoint.json`（当已生成摘要 checkpoint 时）
-- `~/.agent/sessions/<session-id>/output.log`
+- `~/.agent/sessions/<workspace-key>/<session-id>/meta.json`
+- `~/.agent/sessions/<workspace-key>/<session-id>/messages.jsonl`
+- `~/.agent/sessions/<workspace-key>/<session-id>/context_checkpoint.json`（当已生成摘要 checkpoint 时）
+- `~/.agent/sessions/<workspace-key>/<session-id>/output.log`
 
 命令会立即返回 session ID、session 目录和日志路径。
 

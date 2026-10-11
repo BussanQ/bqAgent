@@ -35,7 +35,7 @@ func TestAttachmentUploadPersistsAndInjectsText(t *testing.T) {
 	if !strings.Contains(userText, content) || !strings.Contains(userText, filepath.ToSlash(relative)) {
 		t.Fatalf("user text = %q, want attachment content and path", userText)
 	}
-	transcript, err := os.ReadFile(filepath.Join(root, ".agent", "sessions", response.SessionID, "messages.jsonl"))
+	transcript, err := os.ReadFile(filepath.Join(root, ".agent", "sessions", session.WorkspaceDirectoryName(root), response.SessionID, "messages.jsonl"))
 	if err != nil {
 		t.Fatalf("read transcript: %v", err)
 	}

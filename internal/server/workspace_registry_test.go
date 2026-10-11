@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"bqagent/internal/session"
 	apptrace "bqagent/internal/trace"
 )
 
@@ -266,10 +267,10 @@ func TestWebUIWorkspaceSelectionRoutesFileExplorer(t *testing.T) {
 	if chat.done.SessionID == "" {
 		t.Fatal("selected workspace chat did not return a session")
 	}
-	if _, err := os.Stat(filepath.Join(selectedRoot, ".agent", "sessions", chat.done.SessionID, "meta.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(selectedRoot, ".agent", "sessions", session.WorkspaceDirectoryName(selectedRoot), chat.done.SessionID, "meta.json")); err != nil {
 		t.Fatalf("selected workspace session missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(defaultRoot, ".agent", "sessions", chat.done.SessionID, "meta.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(defaultRoot, ".agent", "sessions", session.WorkspaceDirectoryName(defaultRoot), chat.done.SessionID, "meta.json")); !os.IsNotExist(err) {
 		t.Fatalf("selected session leaked into default workspace: %v", err)
 	}
 	selectedService, _, err := registry.Resolve(selected.ID)

@@ -17,7 +17,7 @@ func TestNewServiceStoresSessionsInGlobalAgentDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if savedSession.Dir() != filepath.Join(agentDir, "sessions", savedSession.ID()) {
+	if savedSession.Dir() != filepath.Join(agentDir, "sessions", session.WorkspaceDirectoryName(workspaceRoot), savedSession.ID()) {
 		t.Fatalf("session dir = %q, want global agent directory", savedSession.Dir())
 	}
 	if _, err := os.Stat(filepath.Join(workspaceRoot, ".agent")); !os.IsNotExist(err) {

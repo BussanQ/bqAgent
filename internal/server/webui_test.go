@@ -847,7 +847,7 @@ func TestWebUIEmptyFinalResponseFailsSession(t *testing.T) {
 		t.Fatalf("model requests = %d, want 3", client.requests)
 	}
 
-	entries, err := os.ReadDir(filepath.Join(root, ".agent", "sessions"))
+	entries, err := os.ReadDir(filepath.Join(root, ".agent", "sessions", session.WorkspaceDirectoryName(root)))
 	if err != nil {
 		t.Fatalf("read sessions directory failed: %v", err)
 	}

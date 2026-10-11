@@ -181,6 +181,16 @@ func (s *Store) Open(id string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An existing new-layout directory is authoritative, even if damaged.
+	// Only fall back when the directory itself does not exist.
+	if _, err := os.Lstat(dir); os.IsNotExist(err) {
+		dir, err = s.legacySessionDir(canonicalID)
+		if err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
 	content, err := os.ReadFile(filepath.Join(dir, "meta.json"))
 	if err != nil {
 		return nil, err
@@ -212,7 +222,7 @@ func (s *Store) Delete(id string) error {
 	if err != nil {
 		return err
 	}
-	root, err := os.OpenRoot(filepath.Join(s.agentDir, "sessions"))
+	root, err := os.OpenRoot(filepath.Dir(saved.Dir()))
 	if err != nil {
 		return err
 	}
@@ -223,20 +233,13 @@ func (s *Store) Delete(id string) error {
 // List returns sessions belonging to this store's workspace, newest first.
 // Invalid entries and sessions owned by another workspace are ignored.
 func (s *Store) List(limit int) ([]Meta, error) {
-	root := filepath.Join(s.agentDir, "sessions")
-	entries, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return []Meta{}, nil
-	}
+	ids, err := s.sessionIDs()
 	if err != nil {
 		return nil, err
 	}
-	metas := make([]Meta, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		saved, openErr := s.Open(entry.Name())
+	metas := make([]Meta, 0, len(ids))
+	for _, id := range ids {
+		saved, openErr := s.Open(id)
 		if openErr != nil {
 			if errors.Is(openErr, ErrWorkspaceMismatch) {
 				continue
@@ -273,7 +276,7 @@ func (s *Store) sessionDir(id string) (string, error) {
 	}
 	// Resolve from the agent directory's existing parent so first use can create
 	// ~/.agent/sessions without weakening symlink containment checks.
-	return safepath.Resolve(filepath.Dir(s.agentDir), filepath.Join(filepath.Base(s.agentDir), "sessions", id))
+	return safepath.Resolve(filepath.Dir(s.agentDir), filepath.Join(filepath.Base(s.agentDir), "sessions", WorkspaceDirectoryName(s.workspaceRoot), id))
 }
 
 func (session *Session) ID() string {
@@ -570,25 +573,18 @@ func (s *Store) MaintainExistingSessions() []error {
 	if s == nil || s.options.TranscriptMode != TranscriptModeCompact {
 		return nil
 	}
-	root := filepath.Join(s.agentDir, "sessions")
-	entries, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return nil
-	}
+	ids, err := s.sessionIDs()
 	if err != nil {
 		return []error{err}
 	}
 	errorsFound := make([]error, 0)
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		saved, openErr := s.Open(entry.Name())
+	for _, id := range ids {
+		saved, openErr := s.Open(id)
 		if openErr != nil {
 			if errors.Is(openErr, ErrWorkspaceMismatch) {
 				continue
 			}
-			errorsFound = append(errorsFound, fmt.Errorf("session %s: %w", entry.Name(), openErr))
+			errorsFound = append(errorsFound, fmt.Errorf("session %s: %w", id, openErr))
 			continue
 		}
 		if saved.Meta().Status == StatusRunning {
@@ -599,13 +595,13 @@ func (s *Store) MaintainExistingSessions() []error {
 			// Select by freshness, just like resume; an interrupted turn may
 			// have newer messages than the legacy working snapshot.
 			if _, _, migrateErr := saved.LoadResumableMessages(); migrateErr != nil {
-				errorsFound = append(errorsFound, fmt.Errorf("session %s migrate compact transcript: %w", entry.Name(), migrateErr))
+				errorsFound = append(errorsFound, fmt.Errorf("session %s migrate compact transcript: %w", id, migrateErr))
 			}
 		} else if loadErr != nil && !os.IsNotExist(loadErr) {
-			errorsFound = append(errorsFound, fmt.Errorf("session %s load working messages: %w", entry.Name(), loadErr))
+			errorsFound = append(errorsFound, fmt.Errorf("session %s load working messages: %w", id, loadErr))
 		}
 		if trimErr := saved.TrimOutputLog(); trimErr != nil {
-			errorsFound = append(errorsFound, fmt.Errorf("session %s trim output: %w", entry.Name(), trimErr))
+			errorsFound = append(errorsFound, fmt.Errorf("session %s trim output: %w", id, trimErr))
 		}
 	}
 	return errorsFound

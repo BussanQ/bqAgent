@@ -65,7 +65,7 @@ func TestSessionStoreUsesConfiguredGlobalAgentDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDir := filepath.Join(agentDir, "sessions", savedSession.ID())
+	wantDir := filepath.Join(agentDir, "sessions", WorkspaceDirectoryName(workspaceRoot), savedSession.ID())
 	if savedSession.Dir() != wantDir {
 		t.Fatalf("session dir = %q, want %q", savedSession.Dir(), wantDir)
 	}
@@ -90,8 +90,8 @@ func TestGlobalSessionStoreRejectsAnotherWorkspaceSession(t *testing.T) {
 	secondOptions := DefaultOptions()
 	secondOptions.AgentDir = agentDir
 	second := NewStore(t.TempDir(), secondOptions)
-	if _, err := second.Open(savedSession.ID()); !errors.Is(err, ErrWorkspaceMismatch) {
-		t.Fatalf("Open error = %v, want workspace mismatch", err)
+	if _, err := second.Open(savedSession.ID()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Open error = %v, want not exist in this workspace", err)
 	}
 	if maintenanceErrors := second.MaintainExistingSessions(); len(maintenanceErrors) != 0 {
 		t.Fatalf("maintenance errors = %v, want foreign sessions skipped", maintenanceErrors)
@@ -175,8 +175,8 @@ func TestSessionStoreDeleteRemovesOnlyRequestedOwnedSession(t *testing.T) {
 	if _, err := store.Open(kept.ID()); err != nil {
 		t.Fatalf("kept session was affected: %v", err)
 	}
-	if err := store.Delete(foreign.ID()); !errors.Is(err, ErrWorkspaceMismatch) {
-		t.Fatalf("Delete foreign session error = %v, want workspace mismatch", err)
+	if err := store.Delete(foreign.ID()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Delete foreign session error = %v, want not exist in this workspace", err)
 	}
 	if _, err := foreignStore.Open(foreign.ID()); err != nil {
 		t.Fatalf("foreign session was deleted: %v", err)

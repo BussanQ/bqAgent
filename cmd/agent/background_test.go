@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"bqagent/internal/session"
 )
 
 func TestRunWithBackgroundCreatesSessionAndLaunchesChild(t *testing.T) {
@@ -57,7 +59,7 @@ func TestRunWithBackgroundCreatesSessionAndLaunchesChild(t *testing.T) {
 		t.Fatalf("stdout = %q, want session_id output", stdout.String())
 	}
 
-	sessionsDir := filepath.Join(home, ".agent", "sessions")
+	sessionsDir := filepath.Join(home, ".agent", "sessions", session.WorkspaceDirectoryName(root))
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		t.Fatalf("failed to read sessions dir: %v", err)
