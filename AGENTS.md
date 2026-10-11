@@ -5,3 +5,4 @@
 - 默认只运行与本次改动功能直接对应的具体单元测试，例如 `go test ./internal/runtime -run '^TestConfigFromEnvEnablesRunTrace$'`。
 - 不运行整库测试、整包无筛选测试、集成测试、端到端测试、联网测试或仅编译检查，除非用户明确要求。
 - 如果没有对应的功能单元测试，先补充或调整单元测试；不要用扩大测试范围代替。
+- commit信息详细一些，写清楚每次改动的feature特性内容
