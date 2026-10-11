@@ -196,13 +196,22 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 
 For each name in `CLAUDE`, `CODEX`, `CURSOR`, `OPENCODE`, and `PI`, `AGENT_<NAME>_ACP_CMD` and `AGENT_<NAME>_ACP_ARGS` override the ACP launch command. CLI transport is currently implemented for Claude, Codex, and Pi and can be overridden with `AGENT_<NAME>_CLI_CMD` and `AGENT_<NAME>_CLI_ARGS`.
 
-Claude defaults to `claude -p --output-format json`; Codex defaults to `codex exec --json --skip-git-repo-check`; Pi defaults to `pi --mode json`, receives prompts on stdin, and resumes with `--session <ID>`. Cursor defaults to ACP via `cursor-agent acp`, and OpenCode defaults to ACP via `opencode acp`. The corresponding executable must be visible in the PATH of the process that starts bqAgent; restart a long-lived chat/server process after installing an external agent or changing its transport environment.
+Claude defaults to `claude -p --output-format json`; Codex prefers the shared App Server by default, with `codex exec --json --skip-git-repo-check` as its legacy CLI fallback; Pi defaults to `pi --mode json`, receives prompts on stdin, and resumes with `--session <ID>`. Cursor defaults to ACP via `cursor-agent acp`, and OpenCode defaults to ACP via `opencode acp`. The corresponding executable must be visible in the PATH of the process that starts bqAgent; restart a long-lived chat/server process after installing an external agent or changing its transport environment.
 
 In `--chat` or `--server` sessions, use `/opencode <task>` to route the turn to OpenCode. Later messages remain bound to it until `/default` switches back to the built-in agent. OpenCode is ACP-only; configuring `AGENT_OPENCODE_CLI_CMD/ARGS` does not enable a CLI transport.
 
-Codex optionally supports the official App Server stdio protocol. Set `AGENT_CODEX_APP_SERVER_CMD=codex` and restart bqAgent. `AGENT_CODEX_APP_SERVER_ARGS` defaults to `app-server` and can override the arguments, including Codex configuration flags. Without this opt-in, existing ACP/CLI behavior is unchanged. New sessions prefer App Server, then ACP, then CLI based on startup probes.
+Codex automatically discovers the shared App Server without environment overrides. bqAgent first connects using `codex app-server proxy`. If that fails, it runs the idempotent `codex app-server daemon start` command and reconnects on success. Older Codex versions without daemon/proxy support, or unavailable shared services, fall back to a standalone `codex app-server` stdio process, then ACP/CLI. Probes only initialize the protocol; they never create threads or send model tasks. Closing bqAgent disconnects its proxies without stopping the shared daemon.
 
-The adapter inherits local Codex authentication, model and security settings; it creates/resumes threads, receives streamed events, checks the final turn status, and interrupts cancelled turns. Command, file-change and permission approvals use the existing approval UI; no approval receiver means no automatic grant. Other server requests, such as structured user questions, currently receive an explicit unsupported-method error. Existing CLI thread IDs can resume through App Server; ACP sessions retain their original adapter. Failed or disconnected turns are never automatically replayed or rerouted to CLI, and newly created thread IDs remain saved after failed turns. Group chat, ordinary routing and subtasks share the same Broker.
+To explicitly connect to an existing shared service, set these variables and restart bqAgent:
+
+```bash
+export AGENT_CODEX_APP_SERVER_CMD=codex
+export AGENT_CODEX_APP_SERVER_ARGS='app-server proxy'
+```
+
+Explicit `AGENT_CODEX_APP_SERVER_CMD/ARGS` overrides run exactly as configured: they do not automatically start the daemon or substitute a standalone App Server, but failed startup probes can still fall back to ACP/CLI. With CMD alone, ARGS retains its compatible default of `app-server`; with ARGS alone, CMD defaults to `codex`. Set `AGENT_CODEX_APP_SERVER_ARGS='app-server'` for a standalone process, or unset both variables to restore automatic discovery. Existing custom `AGENT_CODEX_ACP_CMD/ARGS` or `AGENT_CODEX_CLI_CMD/ARGS` settings preserve their original ACP/CLI path unless App Server is explicitly configured. For example, `AGENT_CODEX_CLI_CMD=codex` retains CLI mode.
+
+The adapter inherits Codex authentication, model and security settings (server-side settings in shared mode); it creates/resumes threads, receives streamed events, checks the final turn status, and interrupts cancelled turns. Command, file-change and permission approvals use the existing approval UI; no approval receiver means no automatic grant. Other server requests, such as structured user questions, currently receive an explicit unsupported-method error. Existing CLI thread IDs can resume through App Server; ACP sessions retain their original adapter. Failed or disconnected turns are never automatically replayed or rerouted to CLI, and newly created thread IDs remain saved after failed turns. Group chat, ordinary routing and subtasks share the same Broker.
 
 Pi uses the shared external-agent detection, Broker, and session storage. Install and configure Pi, then restart bqAgent to use `@pi` in new groups or add it to existing groups with the member picker. Ordinary chats support `/pi <task>` and `/default`. Override the executable with `AGENT_PI_CLI_CMD`; custom `AGENT_PI_CLI_ARGS` must retain `--mode json` and avoid `--no-session`, `--continue`, `--resume`, or a fixed session to preserve conversation isolation.
 
@@ -219,7 +228,7 @@ bqagent --doctor
 # Machine-readable report
 bqagent --doctor --doctor-json
 
-# Explicit storage, ACP initialization, and MCP discovery probes
+# Explicit storage, external Agent initialization, and MCP discovery probes (may start the shared Codex daemon)
 bqagent --doctor --doctor-active
 ```
 
@@ -236,7 +245,7 @@ Doctor endpoints accept an optional `workspace_id` query parameter for an alread
 
 Readiness is **service-level**, not a guarantee that a model can generate a reply. Unreadable or invalid core configuration and known core storage failures make the service not ready. Missing models and optional external Agent/MCP failures cause degradation without blocking configuration access. Snapshot storage checks do not test writes. Missing lazy session/memory directories are checked through their nearest existing parent directory.
 
-Active probes have a 15-second overall timeout, at most 3 seconds per external Agent and 5 seconds per MCP server. Storage probes create and remove a temporary file. ACP probes only initialize and close independent clients. MCP probes only initialize and list tools, without changing the live tool catalog. They never generate model replies, execute MCP tools, send channel messages, log in, or reconnect channels. Channels without a side-effect-free probe continue to report runtime snapshots. Concurrent active probes on the same service instance are rejected.
+Active probes have a 15-second overall timeout, at most 3 seconds per ordinary external Agent and 5 seconds per MCP server. Automatic Codex discovery can use the remaining overall budget. Storage probes create and remove a temporary file. External Agent probes only initialize the protocol and close their probe connections; automatic Codex discovery may start the shared daemon, but never stops an existing service. MCP probes only initialize and list tools, without changing the live tool catalog. They never generate model replies, execute MCP tools, send channel messages, log in, or reconnect channels. Channels without a side-effect-free probe continue to report runtime snapshots. Concurrent active probes on the same service instance are rejected.
 
 Reports distinguish available, error, disabled, detecting, and unverified states, with timestamps and evidence sources. Passwords, API keys, sensitive headers, QR codes, command arguments, and credential-bearing URLs are excluded.
 

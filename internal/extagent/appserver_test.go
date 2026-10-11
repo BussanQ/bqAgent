@@ -261,8 +261,8 @@ func appServerDetections(spec CommandSpec) map[AgentName]DetectionResult {
 
 func TestAppServerDetectionOptInAndFallback(t *testing.T) {
 	config := ConfigFromEnv(func(string) string { return "" }, t.TempDir())
-	if config.Agents[AgentCodex].AppServer.Command != "" || config.Agents[AgentCodex].CLI.Command != "codex" {
-		t.Fatal("legacy defaults changed")
+	if !config.Agents[AgentCodex].AutoAppServer || config.Agents[AgentCodex].CLI.Command != "codex" {
+		t.Fatal("expected automatic App Server with legacy CLI fallback")
 	}
 	configured := ConfigFromEnv(func(key string) string {
 		if key == "AGENT_CODEX_APP_SERVER_CMD" {

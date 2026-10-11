@@ -17,15 +17,9 @@ func Detect(ctx context.Context, config Config, factory ACPClientFactory) map[Ag
 		cfg := config.Agents[agent]
 		result := DetectionResult{Agent: agent}
 		if agent == AgentCodex && looksExecutable(cfg.AppServer.Command) {
-			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			client, err := NewCodexAppServerClient(cfg.AppServer, config.WorkspaceRoot)
+			spec, err := detectCodexAppServer(ctx, cfg, config.WorkspaceRoot, probeCodexAppServer, startCodexDaemon)
 			if err == nil {
-				err = client.Initialize(probeCtx)
-				_ = client.Close()
-			}
-			cancel()
-			if err == nil {
-				result.AppServer = &AgentTransport{Agent: agent, Kind: TransportAppServer, Command: cfg.AppServer}
+				result.AppServer = &AgentTransport{Agent: agent, Kind: TransportAppServer, Command: spec}
 			} else {
 				result.StartupError = "app-server: " + err.Error()
 			}
@@ -62,6 +56,62 @@ func Detect(ctx context.Context, config Config, factory ACPClientFactory) map[Ag
 		results[agent] = result
 	}
 	return results
+}
+
+// Resolve the transport before any thread or turn is started. Fallbacks must
+// never replay a user task. Keep the successful command for subsequent clients.
+func detectCodexAppServer(ctx context.Context, cfg AgentConfig, cwd string,
+	probe func(context.Context, CommandSpec, string) error,
+	start func(context.Context, string, string) error,
+) (CommandSpec, error) {
+	try := func(spec CommandSpec) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		return probe(probeCtx, spec, cwd)
+	}
+	spec := cfg.AppServer
+	err := try(spec)
+	if err == nil || !cfg.AutoAppServer || ctx.Err() != nil {
+		return spec, err
+	}
+	// start is idempotent: an already-running shared daemon is never restarted.
+	startCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	startErr := start(startCtx, spec.Command, cwd)
+	cancel()
+	if ctx.Err() != nil {
+		return spec, ctx.Err()
+	}
+	if startErr == nil {
+		if err = try(spec); err == nil {
+			return spec, nil
+		}
+	}
+	// Older releases may support stdio but lack the managed daemon and proxy.
+	spec.Args = []string{"app-server"}
+	if directErr := try(spec); directErr != nil {
+		return spec, fmt.Errorf("shared connection: %v; daemon start: %v; standalone: %w", err, startErr, directErr)
+	}
+	return spec, nil
+}
+
+func probeCodexAppServer(ctx context.Context, spec CommandSpec, cwd string) error {
+	client, err := NewCodexAppServerClient(spec, cwd)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	return client.Initialize(ctx)
+}
+
+func startCodexDaemon(ctx context.Context, command, cwd string) error {
+	cmd := exec.CommandContext(ctx, command, "app-server", "daemon", "start")
+	cmd.Dir = cwd
+	// Leave output disconnected and only cancel this launcher, never the shared
+	// daemon's process group. The daemon may serve other Codex clients.
+	return cmd.Run()
 }
 
 func cliTransportSupported(agent AgentName) bool {

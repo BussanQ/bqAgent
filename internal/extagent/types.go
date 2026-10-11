@@ -55,6 +55,9 @@ type AgentConfig struct {
 	ACP       CommandSpec
 	CLI       CommandSpec
 	AppServer CommandSpec
+	// AutoAppServer discovers the shared Codex daemon, with legacy fallbacks.
+	// Explicit transport commands leave this disabled.
+	AutoAppServer bool
 }
 
 type SessionState struct {

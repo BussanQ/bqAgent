@@ -200,19 +200,22 @@ LLM_MODEL=claude-sonnet-4-5
 
 对 `CLAUDE`、`CODEX`、`CURSOR`、`OPENCODE`、`PI` 中的每个名称，可使用 `AGENT_<NAME>_ACP_CMD` 和 `AGENT_<NAME>_ACP_ARGS` 覆盖 ACP 启动命令。CLI 传输目前为 Claude、Codex 和 Pi 实现，可通过 `AGENT_<NAME>_CLI_CMD` 和 `AGENT_<NAME>_CLI_ARGS` 覆盖。
 
-Claude 默认使用 `claude -p --output-format json`；Codex 默认使用 `codex exec --json --skip-git-repo-check`。Cursor 默认通过 `cursor-agent acp` 使用 ACP，OpenCode 默认通过 `opencode acp` 使用 ACP。启动 bqAgent 的进程必须能从 PATH 找到对应的可执行文件；安装外部 Agent 或修改传输环境变量后，需要重启常驻 chat/server 进程以重新探测。
+Claude 默认使用 `claude -p --output-format json`；Codex 默认优先复用共享 App Server，旧版兼容的 CLI 后备命令是 `codex exec --json --skip-git-repo-check`。Cursor 默认通过 `cursor-agent acp` 使用 ACP，OpenCode 默认通过 `opencode acp` 使用 ACP。启动 bqAgent 的进程必须能从 PATH 找到对应的可执行文件；安装外部 Agent 或修改传输环境变量后，需要重启常驻 chat/server 进程以重新探测。
 
 在 `--chat` 或 `--server` 会话中，使用 `/opencode <任务>` 将当前轮次路由到 OpenCode；后续普通消息会保持绑定，直到通过 `/default` 返回内置 Agent。OpenCode 仅支持 ACP；配置 `AGENT_OPENCODE_CLI_CMD/ARGS` 不会启用 CLI 传输。
 
-Codex 还支持可选的官方 App Server stdio 适配。设置环境变量后重启 bqAgent：
+Codex 默认自动探测共享 App Server，无需设置环境变量。bqAgent 先通过 `codex app-server proxy` 连接已有服务；连接失败时调用幂等的 `codex app-server daemon start`，成功后重新连接。旧版 Codex 不支持 daemon/proxy，或共享服务不可用时，尝试独立的 `codex app-server` stdio 进程，再回退到 ACP/CLI。探测只进行协议初始化，不创建线程或发送模型任务。关闭 bqAgent 只关闭代理连接，不停止共享服务。
+
+也可以显式指定连接已有共享服务，设置后重启 bqAgent：
 
 ```bash
 export AGENT_CODEX_APP_SERVER_CMD=codex
-# 可选；默认参数就是 app-server，可在这里追加 Codex 配置参数
-export AGENT_CODEX_APP_SERVER_ARGS='app-server'
+export AGENT_CODEX_APP_SERVER_ARGS='app-server proxy'
 ```
 
-未配置时保持原有 ACP/CLI 行为；配置后新会话的探测优先级为 App Server → ACP → CLI，仅在启动探测失败时降级。适配器继承本机 Codex 的登录、模型和安全配置，通过 `thread/start`、`thread/resume` 和 `turn/start` 运行，接收流式事件并以 `turn/completed` 的状态确认结果，取消时发送 `turn/interrupt`。命令、文件修改和权限请求复用现有审批界面；没有审批接收端时不自动批准。其他服务端交互请求（例如结构化提问）暂不支持，会明确返回协议错误。
+显式配置 `AGENT_CODEX_APP_SERVER_CMD/ARGS` 后按指定命令执行，不自动启动 daemon 或替换成独立 App Server；启动探测失败仍可回退到 ACP/CLI。只设置 CMD 时，ARGS 保持兼容默认值 `app-server`；只设置 ARGS 时，CMD 默认为 `codex`。需要独立进程时设置 `AGENT_CODEX_APP_SERVER_ARGS='app-server'`。要恢复自动探测，取消设置这两个变量。已有自定义 `AGENT_CODEX_ACP_CMD/ARGS` 或 `AGENT_CODEX_CLI_CMD/ARGS` 且未显式配置 App Server 时，保持原有 ACP/CLI 路径；例如设置 `AGENT_CODEX_CLI_CMD=codex` 可继续使用原 CLI 模式。
+
+适配器继承 Codex 的登录、模型和安全配置，共享模式使用服务端配置。通过 `thread/start`、`thread/resume` 和 `turn/start` 运行，接收流式事件并以 `turn/completed` 的状态确认结果，取消时发送 `turn/interrupt`。命令、文件修改和权限请求复用现有审批界面；没有审批接收端时不自动批准。其他服务端交互请求（例如结构化提问）暂不支持，会明确返回协议错误。
 
 已有 Codex CLI 的 thread ID 可用于 App Server 恢复；已有 ACP 会话仍使用其 ACP 适配器，以免混用会话 ID。任务开始后不会因报错或断线自动重跑或改走 CLI；新建线程的失败轮次也保留 thread ID，供后续继续。群聊、普通外部路由和子任务共用 Broker，会话状态继续按原方式保存。
 
@@ -231,7 +234,7 @@ bqagent --doctor
 # 机器可读报告
 bqagent --doctor --doctor-json
 
-# 显式执行存储写入、ACP 初始化与 MCP 工具发现探测
+# 显式执行存储写入、外部 Agent 初始化与 MCP 工具发现探测（可能启动 Codex 共享服务）
 bqagent --doctor --doctor-active
 ```
 
@@ -248,7 +251,7 @@ doctor 接口接受可选的 `workspace_id` 查询参数，只读取已打开工
 
 就绪是**服务级**判断：核心配置无法读取或解析、核心存储存在明确故障时未就绪；未配置默认模型、可选 MCP 或外部 Agent 异常会显示降级，不阻止进入设置页。就绪不保证模型可以生成回复。快照不执行写入，存储检查会注明写入未实测；尚未创建的会话、记忆目录检查其最近的已有父目录。
 
-主动检测最多 15 秒，外部 Agent 单项最多 3 秒、MCP 单项最多 5 秒。存储仅使用并清理临时文件；ACP 仅初始化并关闭独立客户端；MCP 仅初始化和获取工具列表，不改变正在使用的工具目录。不发送模型生成请求，不执行 MCP 工具，不发送渠道消息，不触发登录或重连。没有无副作用探测接口的渠道仍显示运行时快照。同一服务实例不重复并发执行主动检测。
+主动检测最多 15 秒，普通外部 Agent 单项最多 3 秒、MCP 单项最多 5 秒；Codex 自动发现可使用剩余的整体时间预算。存储仅使用并清理临时文件；外部 Agent 仅进行协议初始化并关闭探测连接，Codex 自动发现可能启动共享服务，但不停止已有服务；MCP 仅初始化和获取工具列表，不改变正在使用的工具目录。不发送模型生成请求，不执行 MCP 工具，不发送渠道消息，不触发登录或重连。没有无副作用探测接口的渠道仍显示运行时快照。同一服务实例不重复并发执行主动检测。
 
 报告区分可用、异常、禁用、检测中及未验证，包含检测时间和证据来源；不会返回密码、API Key、敏感请求头、二维码、命令参数或带凭据的 URL。
 

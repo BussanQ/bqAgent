@@ -15,15 +15,25 @@ func ConfigFromEnv(getenv func(string) string, workspaceRoot string) Config {
 		}
 		if agent == AgentCodex {
 			cfg := config.Agents[agent]
-			// Opt in explicitly; existing ACP and CLI configuration stays unchanged.
-			if command := strings.TrimSpace(getenv(prefix + "APP_SERVER_CMD")); command != "" {
+			command := strings.TrimSpace(getenv(prefix + "APP_SERVER_CMD"))
+			rawArgs := strings.TrimSpace(getenv(prefix + "APP_SERVER_ARGS"))
+			if command != "" || rawArgs != "" {
+				if command == "" {
+					command = "codex"
+				}
 				args := []string{"app-server"}
-				if raw := strings.TrimSpace(getenv(prefix + "APP_SERVER_ARGS")); raw != "" {
-					args = splitArgs(raw)
+				if rawArgs != "" {
+					args = splitArgs(rawArgs)
 				}
 				cfg.AppServer = CommandSpec{Command: command, Args: args}
-				config.Agents[agent] = cfg
+			} else if strings.TrimSpace(getenv(prefix+"ACP_CMD")) == "" &&
+				strings.TrimSpace(getenv(prefix+"ACP_ARGS")) == "" &&
+				strings.TrimSpace(getenv(prefix+"CLI_CMD")) == "" &&
+				strings.TrimSpace(getenv(prefix+"CLI_ARGS")) == "" {
+				cfg.AppServer = CommandSpec{Command: "codex", Args: []string{"app-server", "proxy"}}
+				cfg.AutoAppServer = true
 			}
+			config.Agents[agent] = cfg
 		}
 	}
 	return config

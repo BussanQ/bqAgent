@@ -254,8 +254,13 @@ func (e *Engine) externalChecks(ctx context.Context, active bool, report *Report
 			}
 			config := e.options.External
 			config.Agents = map[extagent.AgentName]extagent.AgentConfig{name: cfg}
-			// Detection only initializes transports; it never sends a prompt.
-			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			// Detection may start the shared daemon, but never sends a prompt.
+			timeout := 3 * time.Second
+			if cfg.AutoAppServer {
+				// Still bounded by Inspect's overall 15-second deadline.
+				timeout = 15 * time.Second
+			}
+			probeCtx, cancel := context.WithTimeout(ctx, timeout)
 			result := extagent.Detect(probeCtx, config, e.options.ACPFactory)[name]
 			probeErr := probeCtx.Err()
 			cancel()
