@@ -462,7 +462,7 @@ WebUI 的聊天、文件树、预览、状态、停止和 Trace 请求会携带 
 
 “新会话”菜单支持普通会话和群聊。外部 Agent 在服务启动后异步检测，Broker 立即可用；外部路由、子 Agent 和群聊成员查询会在需要时等待探测结果。群聊使用独立的 `conversation_type=group` session，初始成员名单为 bqagent 加当前检测可用的外部 Agent；`POST /api/v1/webui/group/participants` 和成员栏的“添加成员”按钮可以追加成员，`DELETE` 同一路径或成员标签悬停显示的删除按钮可以移除外部成员。成员变更持久化，但移除不会清除历史发言或外部 session；调度员 bqagent 不可移除。无 @ 的任务由 bqagent 直接处理且不开放外部成员调度。`@成员` 是硬路由且按出现顺序执行；仅 @ 外部成员时，任务直接由对应成员处理并结束该轮，bqagent 不参与分析或汇总。只有当前轮明确包含 `@bqagent` 时，bqagent 才能通过 `consult_group_agent` 邀请或追问成员，并在成员完成后汇总。所有成员使用同一 workspace，前序成员结论会加入后续成员的受预算约束共享上下文，并通过 `participant_start`、`participant_message`、`participant_error` SSE 事件单独展示。每个外部成员在同一群聊下保留独立外部 session。群聊仅允许 Run，TUI 暂不提供群聊入口。
 
-输入区还提供“推理强度”选择器，包含**自动、低、中、高**四档。默认“自动”不会向上游发送 effort 参数，因此保持模型或供应商的默认行为；选择会保存在浏览器 `localStorage` 中，并随每次 WebUI 请求显式发送，但不会写入 session 元数据。非自动档位在 OpenAI Chat Completions 中映射为 `reasoning_effort`，在 OpenAI Responses 中映射为 `reasoning.effort`，在 Anthropic Messages 中映射为 adaptive `thinking` 与 `output_config.effort`。
+输入区还提供“推理强度”选择器，包含**自动、低、中、高、最高（max）**五档。默认“自动”不会向上游发送 effort 参数，因此保持模型或供应商的默认行为；选择会保存在浏览器 `localStorage` 中，并随每次 WebUI 请求显式发送，但不会写入 session 元数据。非自动档位在 OpenAI Chat Completions 中映射为 `reasoning_effort`，在 OpenAI Responses 中映射为 `reasoning.effort`，在 Anthropic Messages 中映射为 adaptive `thinking` 与 `output_config.effort`。
 
 三种内置协议会对 429、5xx、可能恢复的网络故障和结构化流内限流/过载错误自动重试一次。流式请求一旦收到文本、推理或工具调用增量就不再重试，以免重放已产生的内容。429 与 503 会采用最长 10 秒的 `Retry-After`。如果上游以 400/422 明确拒绝 reasoning 参数，客户端会省略该参数重试；降级成功后会在当前进程中按协议、端点和模型记住该能力限制。重试和降级只写入模型日志与 Run Trace，不改变回复正文。
 

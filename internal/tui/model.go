@@ -273,7 +273,7 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		return model.handleProviderKey(key)
 	}
 	switch name {
-	case "ctrl+t":
+	case "ctrl+o":
 		model.toggleToolGroup()
 		return nil
 	case "ctrl+q":
@@ -994,10 +994,11 @@ func (model Model) helpText() string {
   连按两次 Ctrl+C（2 秒内）或 Ctrl+Q 安全退出
   Esc 打断当前回复；空闲时关闭面板/收起工具详情
   Ctrl+L 清理当前视口和草稿（保留 Session）
-  Ctrl+T 展开/收起已合并的工具详情（也可点击工具汇总行）
+  Ctrl+O 展开/收起已合并的工具详情（也可点击工具汇总行）
 
 本地命令
   /help 帮助    /provider 配置模型 Provider    /clear 新建会话并清理显示    /exit 安全退出
+  /effort [auto|low|medium|high|max] 查看或设置推理努力程度
 
 后端命令
   /run（完整工具）  /ask（只读问答）  /model  /fast  /skill  /memory  /feedback  /agent

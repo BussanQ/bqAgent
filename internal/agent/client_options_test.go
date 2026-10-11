@@ -41,6 +41,7 @@ func TestReasoningEffortParsing(t *testing.T) {
 		" LOW ":  ReasoningEffortLow,
 		"medium": ReasoningEffortMedium,
 		"HIGH":   ReasoningEffortHigh,
+		" MAX ":  ReasoningEffortMax,
 	} {
 		got, err := ParseReasoningEffort(raw)
 		if err != nil {
@@ -88,6 +89,25 @@ func TestReasoningEffortProviderPayloads(t *testing.T) {
 		assertReasoningEffortOmitted(t, autoRequest, "thinking")
 		assertReasoningEffortOmitted(t, autoRequest, "output_config")
 	})
+}
+
+func TestReasoningEffortMaxProviderPayloads(t *testing.T) {
+	assertReasoningEffortJSON(t, chatCompletionRequest{ReasoningEffort: ReasoningEffortMax}, []string{"reasoning_effort"}, "max")
+	assertReasoningEffortJSON(t, chatCompletionStreamRequest{ReasoningEffort: ReasoningEffortMax}, []string{"reasoning_effort"}, "max")
+	for _, stream := range []bool{false, true} {
+		options := ChatCompletionOptions{ReasoningEffort: ReasoningEffortMax}
+		messages := []map[string]any{{"role": "user", "content": "hi"}}
+		response, err := buildOpenAIResponseRequest("model", messages, nil, options, stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertReasoningEffortJSON(t, response, []string{"reasoning", "effort"}, "max")
+		anthropic, err := buildAnthropicRequest("model", messages, nil, options, stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertReasoningEffortJSON(t, anthropic, []string{"output_config", "effort"}, "max")
+	}
 }
 
 func TestReasoningEffortStreamOptionsReachChatRequest(t *testing.T) {

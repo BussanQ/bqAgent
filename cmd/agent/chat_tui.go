@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/globalconfig"
@@ -62,9 +63,17 @@ func shouldUseTUI(inputTTY, outputTTY bool, termName string) bool {
 type tuiBackend struct {
 	service   *appserver.Service
 	workspace *workspace.Workspace
+	effortMu  sync.RWMutex
+	effort    agent.ReasoningEffort
 }
 
 func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message string, events apptui.TurnEvents) (apptui.TurnResult, error) {
+	if err := ctx.Err(); err != nil {
+		return apptui.TurnResult{}, err
+	}
+	if reply, handled, err := backend.handleEffortCommand(message); handled {
+		return apptui.TurnResult{SessionID: sessionID, Reply: reply}, err
+	}
 	if events.Usage != nil {
 		ctx = agent.WithLiveTokenUsage(ctx, func(usage agent.LiveTokenUsage) {
 			events.Usage(apptui.TokenUsage{
@@ -74,8 +83,9 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 		})
 	}
 	response, err := backend.service.HandleTurnWithOptions(ctx, appserver.TurnRequest{
-		SessionID: sessionID,
-		Message:   message,
+		SessionID:       sessionID,
+		Message:         message,
+		ReasoningEffort: backend.currentEffort(),
 	}, appserver.TurnOptions{
 		SessionSink:    events.Session,
 		OutputWriter:   eventWriter{write: events.Progress},
@@ -143,7 +153,15 @@ func (backend *tuiBackend) History(sessionID string, budget int) (apptui.History
 }
 
 func (backend *tuiBackend) Commands() []apptui.Command {
-	commands := []apptui.Command{{Name: "/model", Description: "查看或切换模型"}, {Name: "/skill", Description: "使用 Skill 或 alias"}}
+	commands := []apptui.Command{{Name: "/model", Description: "查看或切换模型"}, {Name: "/skill", Description: "使用 Skill 或 alias"}, {
+		Name: "/effort", Description: "查看或设置模型推理努力程度", Arguments: []apptui.CommandArgument{
+			{Value: "auto", Description: "自动（模型默认）"},
+			{Value: string(agent.ReasoningEffortLow), Description: "低"},
+			{Value: string(agent.ReasoningEffortMedium), Description: "中"},
+			{Value: string(agent.ReasoningEffortHigh), Description: "高"},
+			{Value: string(agent.ReasoningEffortMax), Description: "最高"},
+		},
+	}}
 	for _, option := range backend.service.ModelOptions() {
 		label := option.DisplayName
 		description := ""

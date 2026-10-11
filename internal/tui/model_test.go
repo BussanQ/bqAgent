@@ -97,8 +97,20 @@ func TestToolGroupCollapsesAfterFiveAndMouseExpands(t *testing.T) {
 		}
 	}
 	collapsed := model.View().Content
-	if !strings.Contains(collapsed, "工具活动 · 6 次") || !strings.Contains(collapsed, "点击或 Ctrl+T 展开") || strings.Contains(collapsed, "file-1.go") {
+	if !strings.Contains(collapsed, "工具活动 · 6 次") || !strings.Contains(collapsed, "点击或 Ctrl+O 展开") || strings.Contains(collapsed, "file-1.go") {
 		t.Fatalf("collapsed tool group = %q", collapsed)
+	}
+	model.handleKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if !model.tools.expanded || !strings.Contains(model.View().Content, "file-1.go") {
+		t.Fatal("Ctrl+O should expand tool details")
+	}
+	model.handleKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if model.tools.expanded || strings.Contains(model.View().Content, "file-1.go") {
+		t.Fatal("Ctrl+O should collapse tool details")
+	}
+	model.handleKey(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	if model.tools.expanded {
+		t.Fatal("Ctrl+T should no longer toggle tool details")
 	}
 	viewLines := strings.Count(collapsed, "\n") + 1
 	headerY := max(0, model.height-viewLines)

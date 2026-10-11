@@ -976,6 +976,7 @@ func TestDecodeWebUIChatRequestReasoningEffort(t *testing.T) {
 		{name: "low", raw: "low", want: agent.ReasoningEffortLow},
 		{name: "medium", raw: "medium", want: agent.ReasoningEffortMedium},
 		{name: "high", raw: "high", want: agent.ReasoningEffortHigh},
+		{name: "max", raw: "max", want: agent.ReasoningEffortMax},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := fmt.Sprintf(`{"message":"hi","reasoning_effort":%q}`, test.raw)

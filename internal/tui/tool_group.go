@@ -74,7 +74,7 @@ func (group toolGroup) render(styles theme, interactive bool) string {
 			marker = "▼"
 			hint = "收起详情"
 		} else if interactive {
-			hint = "点击或 Ctrl+T 展开"
+			hint = "点击或 Ctrl+O 展开"
 		}
 		header = fmt.Sprintf("%s %s · %s", marker, header, hint)
 	} else {

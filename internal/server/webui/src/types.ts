@@ -1,4 +1,4 @@
-export type ReasoningEffort = "auto" | "low" | "medium" | "high";
+export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "max";
 export type ChatMode = "run" | "ask";
 export type ConversationType = "default" | "group";
 

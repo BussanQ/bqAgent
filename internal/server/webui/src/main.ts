@@ -1,3 +1,4 @@
+import { REASONING_EFFORT_VALUES, REASONING_EFFORT_LABELS, normalizeReasoningEffort } from "./reasoning-effort";
 import "@awesome.me/webawesome/dist/styles/themes/default.css";
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "./styles.css";
@@ -38,8 +39,6 @@ import { createDoctorController } from "./doctor-controller";
   interface ToolTimeline extends HTMLDivElement { toolGroup?: ToolGroup }
   const THEME_KEY = "bqagent.webui.theme";
   const REASONING_EFFORT_KEY = "bqagent.webui.reasoning-effort";
-  const REASONING_EFFORT_VALUES: ReasoningEffort[] = ["auto", "low", "medium", "high"];
-  const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = { auto: "自动", low: "低", medium: "中", high: "高" };
   const thread = byId<HTMLDivElement>("thread");
   const main = byId<HTMLElement>("main");
   const conversationList = byId<HTMLDivElement>("conversation-list");
@@ -1034,11 +1033,6 @@ import { createDoctorController } from "./doctor-controller";
     input.placeholder = conversationType === "group" ? "群聊模式：无 @ 由 bqagent 处理，@成员可定向交互" : chatModePlaceholder(chatMode);
     addAttachmentBtn.title = chatMode === "ask" ? "Ask 模式与附件" : "Run 模式与附件";
     addAttachmentBtn.setAttribute("aria-label", chatMode === "ask" ? "Ask 模式：选择模式或添加文件" : "Run 模式：选择模式或添加文件");
-  }
-
-  function normalizeReasoningEffort(value: unknown): ReasoningEffort {
-    value = String(value || "").toLowerCase();
-    return REASONING_EFFORT_VALUES.includes(value as ReasoningEffort) ? value as ReasoningEffort : "auto";
   }
 
   function setReasoningEffort(value: unknown, persist: boolean): void {

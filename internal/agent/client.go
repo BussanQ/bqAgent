@@ -53,6 +53,7 @@ const (
 	ReasoningEffortLow    ReasoningEffort = "low"
 	ReasoningEffortMedium ReasoningEffort = "medium"
 	ReasoningEffortHigh   ReasoningEffort = "high"
+	ReasoningEffortMax    ReasoningEffort = "max"
 )
 
 func ParseReasoningEffort(raw string) (ReasoningEffort, error) {
@@ -65,8 +66,10 @@ func ParseReasoningEffort(raw string) (ReasoningEffort, error) {
 		return ReasoningEffortMedium, nil
 	case string(ReasoningEffortHigh):
 		return ReasoningEffortHigh, nil
+	case string(ReasoningEffortMax):
+		return ReasoningEffortMax, nil
 	default:
-		return ReasoningEffortAuto, fmt.Errorf("unsupported reasoning effort %q; expected auto, low, medium, or high", strings.TrimSpace(raw))
+		return ReasoningEffortAuto, fmt.Errorf("unsupported reasoning effort %q; expected auto, low, medium, high, or max", strings.TrimSpace(raw))
 	}
 }
 
