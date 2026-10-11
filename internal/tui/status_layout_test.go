@@ -27,7 +27,7 @@ func TestStatusPlacesActivityLeftAndRuntimeRight(t *testing.T) {
 			}
 			for _, width := range []int{200, 40} {
 				status := ansi.Strip(model.renderStatus(width))
-				if !strings.HasPrefix(status, prefix) || !strings.HasSuffix(status, "api/model · Run · 20261011") {
+				if !strings.HasPrefix(status, prefix) || !strings.HasSuffix(status, "api/model · Run") || strings.Contains(status, "20261011") {
 					t.Fatalf("width %d: swapped status = %q", width, status)
 				}
 				if width == 200 && (strings.Contains(status, "\n") || ansi.StringWidth(status) != width) {
@@ -38,5 +38,20 @@ func TestStatusPlacesActivityLeftAndRuntimeRight(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStatusShowsProviderNamespaceAfterModelSwitch(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.runtime = RuntimeInfo{Provider: "gateway", APIType: "openai-response", Model: "plain", ModelDisplayName: "Plain"}
+	if !strings.HasSuffix(ansi.Strip(model.renderStatus(200)), "gateway/Plain · Run") {
+		t.Fatal("missing configured provider for unqualified model")
+	}
+	for _, provider := range []string{"group", "other"} {
+		model.active = &activeTurn{sequence: model.sequence}
+		model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "done", result: TurnResult{Model: provider + "/auto-deepseek", ModelDisplayName: "Deepseek"}})
+		if got := ansi.Strip(model.renderStatus(200)); !strings.HasSuffix(got, provider+"/Deepseek · Run") || strings.Contains(got, "openai-response/Deepseek") {
+			t.Fatalf("provider did not follow selected model: %q", got)
+		}
 	}
 }

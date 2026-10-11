@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"bqagent/internal/modelcatalog"
+
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -38,6 +40,7 @@ type suggestion struct {
 	label       string
 	value       string
 	description string
+	confirm     bool
 }
 
 const maxSuggestions = 8
@@ -321,9 +324,12 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		}
 	case "enter":
 		if model.panelOpen && len(model.suggestions) > 0 && strings.TrimSpace(model.input.displayValue()) != model.suggestions[model.suggested].value {
-			model.input.setValue(model.suggestions[model.suggested].value)
-			model.refreshSuggestions()
-			return nil
+			selected := model.suggestions[model.suggested]
+			model.input.setValue(selected.value)
+			if !selected.confirm {
+				model.refreshSuggestions()
+				return nil
+			}
 		}
 		value := strings.TrimSpace(model.input.value())
 		if value == "" {
@@ -714,6 +720,7 @@ func (model *Model) refreshSuggestions() {
 	}
 	model.commands = mergeCommands(model.backend.Commands())
 	fields := strings.Fields(value)
+	parameterPicker := len(fields) > 0 && (strings.EqualFold(fields[0], "/model") || strings.EqualFold(fields[0], "/effort"))
 	trailingSpace := strings.HasSuffix(rawValue, " ")
 	suggestions := make([]suggestion, 0)
 	seenSuggestions := make(map[string]struct{})
@@ -728,7 +735,7 @@ func (model *Model) refreshSuggestions() {
 		seenSuggestions[key] = struct{}{}
 		suggestions = append(suggestions, item)
 	}
-	if len(fields) <= 1 && !trailingSpace {
+	if len(fields) <= 1 && !trailingSpace && !parameterPicker {
 		for _, command := range model.commands {
 			if strings.HasPrefix(strings.ToLower(command.Name), strings.ToLower(value)) {
 				appendSuggestion(suggestion{value: command.Name, description: command.Description})
@@ -749,13 +756,10 @@ func (model *Model) refreshSuggestions() {
 					if argument.Label != "" {
 						label = command.Name + " " + argument.Label
 					}
-					appendSuggestion(suggestion{value: command.Name + " " + argument.Value, label: label, description: argument.Description})
+					appendSuggestion(suggestion{value: command.Name + " " + argument.Value, label: label, description: argument.Description, confirm: parameterPicker})
 				}
 			}
 		}
-	}
-	if len(suggestions) > maxSuggestions {
-		suggestions = suggestions[:maxSuggestions]
 	}
 	model.suggestions = suggestions
 	model.panelOpen = len(suggestions) > 0
@@ -792,8 +796,24 @@ func (model Model) renderSuggestions(width int) string {
 	// Bubble Tea's Windows inline renderer otherwise resizes the frame for every
 	// narrower match and can leave each previous panel in terminal scrollback.
 	lines := make([]string, 0, maxSuggestions+1)
-	lines = append(lines, model.styles.accent.Render("命令与参数"))
-	for index, item := range model.suggestions {
+	title := "命令与参数"
+	if len(model.suggestions) > 0 && model.suggestions[0].confirm {
+		title = "选择模型"
+		if strings.HasPrefix(model.suggestions[0].value, "/effort ") {
+			title = "选择推理努力程度"
+		}
+		title += " · ↑/↓ 选择 · Enter 确认 · Tab 补全"
+	} else if len(model.suggestions) > maxSuggestions {
+		title += " · ↑/↓ 滚动选择"
+	}
+	if len(model.suggestions) > maxSuggestions {
+		title += fmt.Sprintf(" · %d/%d", model.suggested+1, len(model.suggestions))
+	}
+	lines = append(lines, model.styles.accent.Render(title))
+	start := max(0, model.suggested-maxSuggestions+1)
+	end := min(len(model.suggestions), start+maxSuggestions)
+	for index := start; index < end; index++ {
+		item := model.suggestions[index]
 		pointer := "  "
 		if index == model.suggested {
 			pointer = "› "
@@ -822,19 +842,8 @@ func (model Model) renderStatus(width int) string {
 	if left == "" {
 		left = "provider"
 	}
-	name := strings.TrimSpace(model.runtime.ModelDisplayName)
-	if name == "" {
-		name = model.runtime.Model
-	}
-	left += "/" + name
+	left = modelcatalog.QualifiedName(left, model.runtime.Model, model.runtime.ModelDisplayName)
 	left += " · " + displayMode(model.runtime.Mode)
-	if model.sessionID != "" {
-		id := model.sessionID
-		if len(id) > 8 {
-			id = id[:8]
-		}
-		left += " · " + id
-	}
 	right := model.statusNotice
 	if model.phase != phaseIdle {
 		elapsed := time.Since(model.startedAt).Round(100 * time.Millisecond)
@@ -1014,6 +1023,7 @@ func mergeCommands(dynamic []Command) []Command {
 		{Name: "/run", Description: "切换到 Run 模式（完整工具能力）"},
 		{Name: "/ask", Description: "切换到 Ask 模式（只读问答，不修改文件或执行命令）"},
 		{Name: "/model", Description: "查看或切换模型"},
+		{Name: "/effort", Description: "查看或设置模型推理努力程度", Arguments: []CommandArgument{{Value: "auto", Description: "自动（模型默认）"}, {Value: "low", Description: "低"}, {Value: "medium", Description: "中"}, {Value: "high", Description: "高"}, {Value: "max", Description: "最高"}}},
 		{Name: "/fast", Description: "切换 API Fast 模式", Arguments: []CommandArgument{{Value: "on", Description: "开启"}, {Value: "off", Description: "关闭"}, {Value: "status", Description: "查看状态"}}},
 		{Name: "/skill", Description: "使用 Skill 或 alias"},
 		{Name: "/memory", Description: "管理记忆", Arguments: []CommandArgument{{Value: "list", Description: "列出记忆"}, {Value: "search", Description: "搜索记忆"}, {Value: "confirm", Description: "确认候选记忆"}, {Value: "compact", Description: "压缩记忆"}}},

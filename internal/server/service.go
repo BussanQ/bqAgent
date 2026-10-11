@@ -30,6 +30,7 @@ import (
 )
 
 type ServiceOptions struct {
+	ProviderID                string
 	Doctor                    *doctor.Engine
 	WorkspaceRoot             string
 	AgentDir                  string
@@ -244,6 +245,7 @@ func NewService(options ServiceOptions) *Service {
 		log.Printf("session maintenance: %v", maintenanceErr)
 	}
 	service := &Service{
+		providerID:                strings.TrimSpace(options.ProviderID),
 		store:                     store,
 		workspaceRoot:             options.WorkspaceRoot,
 		agentDir:                  options.AgentDir,

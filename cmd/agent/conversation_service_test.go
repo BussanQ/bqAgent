@@ -21,7 +21,7 @@ func TestRuntimeConfigFromSourcesPrefersSavedProvider(t *testing.T) {
 	}
 	environment := map[string]string{"LLM_API_KEY": "env-key", "LLM_MODEL": "env-model"}
 	config := runtimeConfigFromSources(func(key string) string { return environment[key] }, agentDir)
-	if config.APIType != agent.APITypeAnthropic || config.APIKey != "saved-key" || config.Model != "claude-saved" || config.BaseURL != "https://saved.example/v1" || config.ModelDisplayNames.Name(config.Model) != "Claude Saved" {
+	if config.ProviderID != "saved" || config.APIType != agent.APITypeAnthropic || config.APIKey != "saved-key" || config.Model != "claude-saved" || config.BaseURL != "https://saved.example/v1" || config.ModelDisplayNames.Name(config.Model) != "Claude Saved" {
 		t.Fatalf("runtime config = %#v", config)
 	}
 }

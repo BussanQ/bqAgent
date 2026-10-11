@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"bqagent/internal/globalconfig"
+	"bqagent/internal/modelcatalog"
 	appserver "bqagent/internal/server"
 	apptui "bqagent/internal/tui"
 	"bqagent/internal/workspace"
@@ -103,7 +104,38 @@ func TestTUIBackendProviderDisplayNames(t *testing.T) {
 		t.Fatalf("settings = %#v, err=%v", settings, err)
 	}
 	args := backend.Commands()[0].Arguments
-	if len(args) != 2 || args[1].Value != "model-id" || args[1].Label != "Friendly Model" {
+	if len(args) != 2 || args[1].Value != "model-id" || args[1].Label != "p/Friendly Model" {
 		t.Fatalf("arguments = %#v", args)
+	}
+}
+
+func TestTUIModelChoicesKeepProviderAndRequestIdentity(t *testing.T) {
+	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: t.TempDir()}
+	service := appserver.NewService(appserver.ServiceOptions{
+		WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir(), ProviderID: "gateway", Model: "plain",
+		Models:            []string{"plain", "group/auto-deepseek", "other/deepseek", "short=workbuddy/ai/gpt-6-sol"},
+		ModelDisplayNames: modelcatalog.Names{"plain": "Plain", "group/auto-deepseek": "Deepseek", "other/deepseek": "Deepseek"},
+	})
+	backend := &tuiBackend{service: service, workspace: ws}
+	args := backend.Commands()[0].Arguments
+	wants := []string{"default", "gateway/Plain", "group/Deepseek", "other/Deepseek", "workbuddy/ai/gpt-6-sol"}
+	if len(args) != len(wants) || args[0].Description != "恢复默认模型 gateway/Plain" {
+		t.Fatalf("choices=%+v", args)
+	}
+	for i, want := range wants {
+		if args[i].Label != want {
+			t.Fatalf("choice %d=%+v want label %q", i, args[i], want)
+		}
+	}
+	if args[2].Value != "group/auto-deepseek" || args[4].Value != "short" {
+		t.Fatal("presentation changed selectable request IDs/aliases")
+	}
+	result, err := backend.RunTurn(context.Background(), "", "/model "+args[2].Value, apptui.TurnEvents{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := backend.RuntimeInfo(result.SessionID)
+	if info.Provider != "gateway" || info.Model != "group/auto-deepseek" || info.ModelDisplayName != "Deepseek" {
+		t.Fatalf("selected identity=%+v", info)
 	}
 }

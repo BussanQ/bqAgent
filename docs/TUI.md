@@ -19,7 +19,7 @@ bqAgent  Harness
 openai/gpt-5 · Run · 20260827   Enter 发送 · Alt+Enter 换行 · / 命令
 ```
 
-流式文本会先显示在底部活动区域，块结束后再用 Glamour 渲染 Markdown 并写入 scrollback。状态栏动态显示 Provider、模型、当前模式、短 Session ID、当前阶段、耗时，以及 `in / out` token 数；完成后保留计数并显示首 token 延迟及 TPS。工具调用按 Tool ID 合并开始/完成事件，显示序号、关键参数、状态和耗时；前 5 次逐项展示，从第 6 次开始自动合并为成功/失败/运行中汇总，点击汇总行或按 `Ctrl+O` 可展开/收起详情。失败预览限制为 2 KiB/8 行，`todo_write` 会显示任务进度。
+流式文本会先显示在底部活动区域，块结束后再用 Glamour 渲染 Markdown 并写入 scrollback。状态栏动态显示 Provider、模型、当前模式、当前阶段、耗时，以及 `in / out` token 数；完成后保留计数并显示首 token 延迟及 TPS。工具调用按 Tool ID 合并开始/完成事件，显示序号、关键参数、状态和耗时；前 5 次逐项展示，从第 6 次开始自动合并为成功/失败/运行中汇总，点击汇总行或按 `Ctrl+O` 可展开/收起详情。失败预览限制为 2 KiB/8 行，`todo_write` 会显示任务进度。
 
 `in / out` 参考 [pi-tps](https://github.com/monotykamary/pi-tps) 按当前用户轮次累计，包括工具调用前后的模型请求。`in` 是各次请求的完整输入之和（包含缓存读取、写入，不等于当前上下文占用）；`out` 使用供应商返回的输出总量，包含其 usage 计入的推理 token。数字保留整数精度，例如 `in 12,345 · out 678`，下一轮发送时重新计数。
 
@@ -51,12 +51,12 @@ OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 
 ## 命令面板
 
 - 本地命令：`/help`、`/provider`、`/clear`、`/exit`。
-- Provider/能力命令：`/model`、`/fast`、`/skill`、`/memory`、`/feedback`、`/agent`。
+- Provider/能力命令：`/model`、`/effort`、`/fast`、`/skill`、`/memory`、`/feedback`、`/agent`。
 - 外部 Agent：`/claude`、`/codex`、`/cursor`、`/opencode`、`/default`、`/stop`。
 
 `/provider` 会打开独立的分步配置向导，依次设置 Provider ID、API 协议、API 地址、API Key 和模型；Provider 名称直接使用第一步输入的 ID。模型既可从 Provider 的 `/models` 接口自动获取，也可手工输入；多个自定义模型使用英文逗号分隔，第一个模型自动成为默认模型。API Key 使用密码输入并加密保存到全局 `~/.agent/config.json`；编辑已有 Provider 时留空可保留原密钥。保存后新 Provider 会立即成为当前 Provider，并刷新 `/model` 候选。
 
-`/model` 参数来自当前 Provider 配置；`/skill` 候选会从工作区与全局 Skill/alias 动态刷新。`/clear` 保留旧 Session 文件，但清理当前显示、队列和 Session ID，下一条消息使用默认模型创建新 Session。`/exit` 会先取消并等待活动后台轮次退出。
+输入 `/model` 即展示当前 Provider 的模型列表，↑/↓ 选择、Enter 直接切换，Tab 仅补全到输入框；模型超过 8 个时列表随选择滚动。模型列表和右下角统一显示 `provider/模型名称`：优先保留模型 ID 的来源前缀（如 `group`），无前缀时使用当前配置的 Provider，未配置时回退到 API 协议；实际请求仍使用原始模型 ID。`/model` 参数来自当前 Provider 配置；`/skill` 候选会从工作区与全局 Skill/alias 动态刷新。`/clear` 保留旧 Session 文件，但清理当前显示、队列和 Session ID，下一条消息使用默认模型创建新 Session。`/exit` 会先取消并等待活动后台轮次退出。
 
 使用 `--chat --resume <session-id>` 时，只回放最近的用户和助手文本，总显示预算为 200 KiB；会提示省略条数，单条超限消息只在 TUI 中截断，不修改持久 Session。
 
@@ -99,4 +99,6 @@ Responses 接口会保留原始输出项、顺序及 assistant 的 `phase`，包
 
 自动续行不限制累计次数；只要有实质工具进展，就在同一轮对话中继续实现、验证和收尾。成功但没有输出的工具调用（例如写入文件的脚本）也算进展。连续 2 次续行仍无实质工具进展时，后续回复会触发恢复指令，要求检查最新失败输出和剩余工作、改变方法并执行下一步，不再因此提前结束或要求用户发送“继续”。失败调用、空搜索和仅更新任务/待办不会重置恢复计数；测试失败后应修复原因并重跑允许的定向测试。既有轮次、阶段时间和取消限制仍然有效。真正受阻或需要用户决策时记录 blocked / awaiting_input 及原因即可结束；修改原始目标或删除验收项需显式注明用户变更范围的原因。验证记录来自模型对工具结果的归纳，不能替代实际执行对应验证。外部 `/codex`、`/cursor` 进程仍由各自运行时管理。
 
-`/effort` 查看当前推理努力程度，`/effort auto|low|medium|high|max` 设置后续请求的档位，支持 Tab 参数补全。与 WebUI 复用努力程度解析及模型请求链路，`auto` 不发送显式 effort；`max` 请求最高档，实际支持取决于模型和上游。不支持参数时沿用已有兼容回退。设置保留在当前 TUI 进程中，切换或新建会话后继续使用，退出重启恢复 auto；不修改 `/codex`、`/cursor` 外部 CLI/ACP 的配置。
+输入 `/effort` 展示努力程度列表，↑/↓ 选择、Enter 直接确认，Tab 仅补全。`/effort auto|low|medium|high|max` 设置后续请求的档位。与 WebUI 复用努力程度解析及模型请求链路，`auto` 不发送显式 effort；`max` 请求最高档，实际支持取决于模型和上游。不支持参数时沿用已有兼容回退。设置保留在当前 TUI 进程中，切换或新建会话后继续使用，退出重启恢复 auto；不修改 `/codex`、`/cursor` 外部 CLI/ACP 的配置。
+
+输入 `/` 可浏览完整命令列表，`/effort` 在首屏可见。命令和参数候选每屏显示 8 项，↑/↓ 滚动并循环选择，标题显示当前位置和总数；Skill/alias 和 `/agent` 子命令也保留全部候选。

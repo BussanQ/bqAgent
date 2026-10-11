@@ -162,16 +162,20 @@ func (backend *tuiBackend) Commands() []apptui.Command {
 			{Value: string(agent.ReasoningEffortMax), Description: "最高"},
 		},
 	}}
+	info := backend.RuntimeInfo("")
+	provider := info.Provider
+	if provider == "" {
+		provider = info.APIType
+	}
 	for _, option := range backend.service.ModelOptions() {
-		label := option.DisplayName
+		label := modelcatalog.QualifiedName(provider, option.ID, option.DisplayName)
 		description := ""
 		if option.DisplayName == option.ID && option.Alias != option.ID {
-			label = option.Alias
-			description = option.ID
+			description = "别名 " + option.Alias
 		}
 		if option.Alias == "default" {
+			description = "恢复默认模型 " + label
 			label = "default"
-			description = "恢复默认模型 " + option.DisplayName
 		}
 		commands[0].Arguments = append(commands[0].Arguments, apptui.CommandArgument{Value: option.Alias, Label: label, Description: description})
 	}

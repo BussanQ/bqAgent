@@ -10,6 +10,26 @@ type Model struct {
 
 type Names map[string]string
 
+// QualifiedName retains routing namespaces hidden by friendly model names.
+// Unqualified IDs use the configured provider (or protocol fallback).
+func QualifiedName(provider, id, name string) string {
+	id, name = strings.TrimSpace(id), strings.TrimSpace(name)
+	if name == "" {
+		name = id
+	}
+	if prefix, _, ok := strings.Cut(id, "/"); ok && prefix != "" {
+		provider = prefix
+	}
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		provider = "provider"
+	}
+	if strings.HasPrefix(name, provider+"/") {
+		return name
+	}
+	return provider + "/" + name
+}
+
 // Name falls back to the request ID for providers and old configs without labels.
 func (names Names) Name(id string) string {
 	if name := strings.TrimSpace(names[id]); name != "" {

@@ -23,6 +23,7 @@ import (
 const mcpDiscoveryTimeout = 15 * time.Second
 
 type Config struct {
+	ProviderID                      string
 	ModelDisplayNames               modelcatalog.Names
 	APIType                         agent.APIType
 	APIKey                          string

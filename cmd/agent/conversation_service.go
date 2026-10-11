@@ -59,6 +59,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	}
 
 	service := appserver.NewService(appserver.ServiceOptions{
+		ProviderID:        runtimeConfig.ProviderID,
 		Doctor:            diagnostics,
 		WorkspaceRoot:     ws.Root,
 		AgentDir:          ws.AgentDir(),
@@ -121,6 +122,7 @@ func runtimeConfigFromSources(getenv func(string) string, agentDir string) appru
 			return config
 		}
 		config.APIType = agent.NormalizeAPIType(provider.APIType)
+		config.ProviderID = provider.ID
 		config.APIKey = apiKey
 		config.BaseURL = provider.BaseURL
 		config.Model = provider.DefaultModel
