@@ -208,9 +208,9 @@ func (w *Workspace) workspaceSection() string {
 		"# Workspace",
 		"Root: " + w.Root,
 		"Global agent directory: " + w.AgentDir(),
-		"Primary context: ~/.agent/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
+		"Primary context: ~/.agent/{AGENT.md, SOUL.md, USER.md}",
 		"Optional workspace context: .agent/{AGENT.md, SOUL.md, USER.md} (merged after global context)",
-		"Legacy compatible context directory: workspace/{AGENT.md, SOUL.md, TOOLS.md, USER.md}",
+		"Legacy compatible context directory: workspace/{AGENT.md, SOUL.md, USER.md}",
 		"Global structured memory: ~/.agent/memory/entries.jsonl (memory target=global)",
 		"Workspace structured memory: .agent/memory/entries.jsonl",
 		"Legacy global long-term memory: ~/.agent/memory/MEMORY.md",
@@ -233,7 +233,6 @@ func (w *Workspace) loadWorkspaceDocuments(root *os.Root) (string, error) {
 	}{
 		{label: "AGENT.md", paths: []string{w.WorkspaceAgentPath(), filepath.Join(w.LegacyContextDir(), agentDocFileName)}},
 		{label: "SOUL.md", paths: []string{w.WorkspaceSoulPath(), filepath.Join(w.LegacyContextDir(), soulDocFileName)}},
-		{label: "TOOLS.md", paths: []string{w.WorkspaceToolsPath(), filepath.Join(w.LegacyContextDir(), toolsDocFileName)}},
 		{label: "USER.md", paths: []string{w.WorkspaceUserPath(), filepath.Join(w.LegacyContextDir(), userDocFileName)}},
 	}
 

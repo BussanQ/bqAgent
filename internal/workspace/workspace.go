@@ -18,7 +18,6 @@ const (
 	contextDirName    = ".agent"
 	agentDocFileName  = "AGENT.md"
 	soulDocFileName   = "SOUL.md"
-	toolsDocFileName  = "TOOLS.md"
 	userDocFileName   = "USER.md"
 	memoryDirName     = "memory"
 	memoryDocFileName = "MEMORY.md"
@@ -99,10 +98,6 @@ func (w *Workspace) WorkspaceAgentPath() string {
 
 func (w *Workspace) WorkspaceSoulPath() string {
 	return filepath.Join(w.ContextDir(), soulDocFileName)
-}
-
-func (w *Workspace) WorkspaceToolsPath() string {
-	return filepath.Join(w.ContextDir(), toolsDocFileName)
 }
 
 func (w *Workspace) WorkspaceUserPath() string {

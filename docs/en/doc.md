@@ -17,7 +17,7 @@ bqagent keeps its core intentionally simple:
 Additional capabilities draw on ideas from `agent-claudecode.py` and OpenClaw:
 
 - Workspace-rooted system prompt assembly
-- A primary `.agent/` layout built around `AGENT.md`, `SOUL.md`, `TOOLS.md`, and `USER.md`
+- A primary `.agent/` layout built around `AGENT.md`, `SOUL.md`, and `USER.md`
 - Continued support for `.agent/rules/*.md` and `.agent/skills/*/SKILL.md`
 - Plan-first execution with `--plan`
 - An always-streaming inline terminal TUI by default, also available explicitly with `--chat`
@@ -363,7 +363,6 @@ project/
 ├─ .agent/
 │  ├─ AGENT.md
 │  ├─ SOUL.md
-│  ├─ TOOLS.md
 │  ├─ USER.md
 │  ├─ memory/
 │  │  ├─ MEMORY.md
@@ -377,7 +376,6 @@ project/
 ├─ workspace/  # legacy compatible layout
 │  ├─ AGENT.md
 │  ├─ SOUL.md
-│  ├─ TOOLS.md
 │  ├─ USER.md
 │  └─ memory/
 │     ├─ MEMORY.md
@@ -387,7 +385,9 @@ project/
 
 ### Files and directories
 
-- `.agent/AGENT.md`, `SOUL.md`, `TOOLS.md`, `USER.md`
+Tool usage guidance lives in `AGENT.md`; tool parameters come from the definitions sent with each request. Legacy `TOOLS.md` files are no longer generated or loaded. Move any custom guidance into `AGENT.md` in the same directory before deleting the old file. Initialization does not overwrite an existing `AGENT.md`.
+
+- `.agent/AGENT.md`, `SOUL.md`, `USER.md`
   - OpenClaw-style context files
   - loaded into the system prompt by default when present
   - when both `.agent/` and `workspace/` exist, `.agent/` takes precedence

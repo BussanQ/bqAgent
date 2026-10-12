@@ -7,41 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"bqagent/internal/tools"
 )
-
-func TestDefaultToolsDocumentMatchesToolDefinitions(t *testing.T) {
-	content, err := defaultFiles.ReadFile("defaults/TOOLS.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	documented := make(map[string]bool)
-	for _, line := range strings.Split(string(content), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "- **") {
-			continue
-		}
-		name, _, ok := strings.Cut(strings.TrimPrefix(line, "- **"), "**:")
-		if ok {
-			documented[name] = true
-		}
-	}
-
-	definitions := tools.Definitions()
-	definitions = append(definitions, tools.PlanDefinition(), tools.StructuredMemoryDefinition())
-	for _, definition := range definitions {
-		name := definition.Function.Name
-		if !documented[name] {
-			t.Errorf("default TOOLS.md does not document %q", name)
-		}
-		delete(documented, name)
-	}
-	for name := range documented {
-		t.Errorf("default TOOLS.md documents unknown tool %q", name)
-	}
-}
 
 func TestDiscoverFindsNearestWorkspaceMarker(t *testing.T) {
 	root := t.TempDir()
@@ -213,7 +179,7 @@ func TestEnsureDefaultsInitializesGlobalAgentDirectoryOnly(t *testing.T) {
 	if err := ws.EnsureDefaults(); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"AGENT.md", "SOUL.md", "TOOLS.md", "USER.md", "mcp.json", "config.json", filepath.Join("memory", "MEMORY.md")} {
+	for _, path := range []string{"AGENT.md", "SOUL.md", "USER.md", "mcp.json", "config.json", filepath.Join("memory", "MEMORY.md")} {
 		if _, err := os.Stat(filepath.Join(globalAgent, path)); err != nil {
 			t.Fatalf("global defaults missing %s: %v", path, err)
 		}
@@ -503,9 +469,8 @@ func TestBuildSystemPromptIncludesWorkspaceDirectoryDocuments(t *testing.T) {
 		t.Fatalf("failed to create .agent memory directory: %v", err)
 	}
 	files := map[string]string{
-		filepath.Join(root, ".agent", "AGENT.md"):                "# AGENT\n\nUse memory carefully.",
+		filepath.Join(root, ".agent", "AGENT.md"):                "# AGENT\n\nUse memory carefully.\nPrefer read before edit.",
 		filepath.Join(root, ".agent", "SOUL.md"):                 "# SOUL\n\nBe direct.",
-		filepath.Join(root, ".agent", "TOOLS.md"):                "# TOOLS\n\nPrefer read before edit.",
 		filepath.Join(root, ".agent", "USER.md"):                 "Preferred language: Chinese",
 		filepath.Join(root, ".agent", "memory", "MEMORY.md"):     "User likes concise answers.",
 		filepath.Join(root, ".agent", "memory", "2026-03-20.md"): "Yesterday note.",
@@ -528,7 +493,6 @@ func TestBuildSystemPromptIncludesWorkspaceDirectoryDocuments(t *testing.T) {
 		"Use memory carefully.",
 		"## SOUL.md",
 		"Be direct.",
-		"## TOOLS.md",
 		"Prefer read before edit.",
 		"## USER.md",
 		"Preferred language: Chinese",
@@ -558,9 +522,8 @@ func TestBuildSystemPromptFallsBackToLegacyWorkspaceLayout(t *testing.T) {
 		t.Fatalf("failed to create legacy workspace memory directory: %v", err)
 	}
 	files := map[string]string{
-		filepath.Join(root, "workspace", "AGENT.md"):                "# AGENT\n\nLegacy agent instructions.",
+		filepath.Join(root, "workspace", "AGENT.md"):                "# AGENT\n\nLegacy agent instructions.\nLegacy tool guidance.",
 		filepath.Join(root, "workspace", "SOUL.md"):                 "# SOUL\n\nLegacy soul.",
-		filepath.Join(root, "workspace", "TOOLS.md"):                "# TOOLS\n\nLegacy tool guidance.",
 		filepath.Join(root, "workspace", "USER.md"):                 "Legacy preferred language: Chinese",
 		filepath.Join(root, "workspace", "memory", "MEMORY.md"):     "Legacy long-term memory.",
 		filepath.Join(root, "workspace", "memory", "2026-03-20.md"): "Legacy yesterday note.",

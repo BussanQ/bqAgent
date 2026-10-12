@@ -488,7 +488,6 @@ Prompt 来源：
 
 - `.agent/AGENT.md`
 - `.agent/SOUL.md`
-- `.agent/TOOLS.md`
 - `.agent/USER.md`
 - `.agent/rules/*.md`
 - `.agent/skills/*/SKILL.md`

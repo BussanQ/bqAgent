@@ -21,7 +21,7 @@ bqagent 的核心仍然很简单：
 新增的能力主要来自对 `agent-claudecode.py` 和 OpenClaw 思路的吸收：
 
 - 基于 workspace 的 system prompt 装配
-- 以 `.agent/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md` 作为主布局
+- 以 `.agent/AGENT.md`、`SOUL.md`、`USER.md` 作为主布局
 - 继续支持 `.agent/rules/*.md` 和 `.agent/skills/*/SKILL.md`
 - 使用 `--plan` 先拆步骤再执行
 - 默认启动始终流式的内联终端 TUI（也可显式使用 `--chat`）
@@ -369,7 +369,6 @@ project/
 ├─ .agent/
 │  ├─ AGENT.md
 │  ├─ SOUL.md
-│  ├─ TOOLS.md
 │  ├─ USER.md
 │  ├─ memory/
 │  │  ├─ MEMORY.md
@@ -383,7 +382,6 @@ project/
 ├─ workspace/  # 兼容旧布局
 │  ├─ AGENT.md
 │  ├─ SOUL.md
-│  ├─ TOOLS.md
 │  ├─ USER.md
 │  └─ memory/
 │     ├─ MEMORY.md
@@ -393,7 +391,9 @@ project/
 
 ### 这些文件分别做什么
 
-- `.agent/AGENT.md`、`SOUL.md`、`TOOLS.md`、`USER.md`
+工具使用约定统一放在 `AGENT.md`，工具参数以代码随请求发送的定义为准。旧版 `TOOLS.md` 不再生成或加载；已有自定义约定请合入同一目录的 `AGENT.md` 后再删除旧文件。初始化不会覆盖已有的 `AGENT.md`。
+
+- `.agent/AGENT.md`、`SOUL.md`、`USER.md`
   - OpenClaw 风格的上下文文件
   - 当前会默认加载进 system prompt
   - 若 `.agent/` 与 `workspace/` 同时存在，优先使用 `.agent/`
