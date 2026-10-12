@@ -57,7 +57,7 @@ OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 
 
 `/provider` 会打开独立的分步配置向导，依次设置 Provider ID、API 协议、API 地址、API Key 和模型；Provider 名称直接使用第一步输入的 ID。模型既可从 Provider 的 `/models` 接口自动获取，也可手工输入；多个自定义模型使用英文逗号分隔，第一个模型自动成为默认模型。API Key 使用密码输入并加密保存到全局 `~/.agent/config.json`；编辑已有 Provider 时留空可保留原密钥。保存后新 Provider 会立即成为当前 Provider，并刷新 `/model` 候选。
 
-输入 `/model` 即展示当前 Provider 的模型列表，↑/↓ 选择、Enter 直接切换，Tab 仅补全到输入框；模型超过 8 个时列表随选择滚动。模型列表和右下角统一显示 `provider/模型名称`：优先保留模型 ID 的来源前缀（如 `group`），无前缀时使用当前配置的 Provider，未配置时回退到 API 协议；实际请求仍使用原始模型 ID。`/model` 参数来自当前 Provider 配置；`/skill` 候选会从工作区与全局 Skill/alias 动态刷新。`/clear` 保留旧 Session 文件，但清理当前显示、队列和 Session ID，下一条消息使用默认模型创建新 Session。`/exit` 会先取消并等待活动后台轮次退出。
+输入 `/model` 即展示当前 Provider 的模型列表，↑/↓ 选择、Enter 直接切换，Tab 仅补全到输入框；模型超过 8 个时列表随选择滚动。模型列表和右下角统一显示 `provider/模型名称`：优先保留模型 ID 的来源前缀（如 `group`），无前缀时使用当前配置的 Provider，未配置时回退到 API 协议；实际请求仍使用原始模型 ID。`/model` 参数来自当前 Provider 配置；`/skill` 候选会从工作区与全局 Skill/alias 动态刷新。 `~/.agent/skills/<名称>` 和工作区 `.agent/skills/<名称>` 支持指向含 `SKILL.md` 目录的符号链接（包括绝对、相对和链式链接）；候选名称使用链接名，别名与描述读取目标文件，同名工作区 Skill 优先。失效、循环及非 Skill 目录链接会跳过；`read_file` 可通过原 `.agent/skills/<名称>/…` 路径读取 Skill 和引用文件，读取范围限制在目标目录内。`/clear` 保留旧 Session 文件，但清理当前显示、队列和 Session ID，下一条消息使用默认模型创建新 Session。`/exit` 会先取消并等待活动后台轮次退出。
 
 使用 `--chat --resume <session-id>` 时，只回放最近的用户和助手文本，总显示预算为 200 KiB；会提示省略条数，单条超限消息只在 TUI 中截断，不修改持久 Session。
 

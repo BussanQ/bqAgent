@@ -27,6 +27,10 @@ func ReadFileFromRoot(root string) Function {
 // ReadFileFromRootWithMaxBytes reads selected lines without retaining skipped
 // content, oversized lines, or returned content beyond maxBytes.
 func ReadFileFromRootWithMaxBytes(root string, maxBytes int64) Function {
+	return readFileFromRootWithSkillLinks(root, maxBytes, false)
+}
+
+func readFileFromRootWithSkillLinks(root string, maxBytes int64, allowSkillLinks bool) Function {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, err := requireString(args, "path")
 		if err != nil {
@@ -54,6 +58,18 @@ func ReadFileFromRootWithMaxBytes(root string, maxBytes int64) Function {
 			file, err = os.Open(resolvedPath)
 		} else {
 			rootFS, err = os.OpenRoot(root)
+			if err == nil && allowSkillLinks && isAgentSkillPath(relativePath) {
+				parts := strings.Split(relativePath, string(filepath.Separator))
+				if len(parts) >= 4 {
+					var linked *os.Root
+					linked, err = safepath.OpenLinkedSkill(root, parts[2])
+					if err == nil && linked != nil {
+						_ = rootFS.Close()
+						rootFS = linked
+						relativePath = filepath.Join(parts[3:]...)
+					}
+				}
+			}
 			if err == nil {
 				file, err = rootFS.Open(relativePath)
 			}
@@ -118,8 +134,8 @@ func ReadFileFromRootWithMaxBytes(root string, maxBytes int64) Function {
 // ReadFileFromWorkspaceAndAgent keeps normal paths scoped to the workspace,
 // while routing .agent/* reads to the configured global agent directory.
 func ReadFileFromWorkspaceAndAgent(workspaceRoot, agentDir string, maxBytes int64) Function {
-	workspaceReader := ReadFileFromRootWithMaxBytes(workspaceRoot, maxBytes)
-	agentReader := ReadFileFromRootWithMaxBytes(filepath.Dir(agentDir), maxBytes)
+	workspaceReader := readFileFromRootWithSkillLinks(workspaceRoot, maxBytes, true)
+	agentReader := readFileFromRootWithSkillLinks(filepath.Dir(agentDir), maxBytes, true)
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, _ := args["path"].(string)
 		clean := filepath.Clean(strings.TrimSpace(path))

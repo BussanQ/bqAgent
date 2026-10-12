@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -14,6 +15,37 @@ import (
 	apptui "bqagent/internal/tui"
 	"bqagent/internal/workspace"
 )
+
+func TestTUICommandsDiscoverLinkedSkillsAndRefreshAliases(t *testing.T) {
+	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: filepath.Join(t.TempDir(), ".agent")}
+	directory := filepath.Join(ws.AgentDir(), "skills")
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	backend := &tuiBackend{workspace: ws, service: appserver.NewService(appserver.ServiceOptions{WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir()})}
+	_ = backend.Commands()
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "SKILL.md"), []byte("---\ndescription: Simple explanations.\nalias: explain\n---\nInstructions."), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(directory, "eli5")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	for _, command := range backend.Commands() {
+		if command.Name != "/skill" {
+			continue
+		}
+		found := map[string]bool{}
+		for _, argument := range command.Arguments {
+			found[argument.Value] = true
+		}
+		if !found["eli5"] || !found["explain"] {
+			t.Fatalf("skill candidates = %+v", command.Arguments)
+		}
+		return
+	}
+	t.Fatal("missing /skill command")
+}
 
 func TestShouldUseTUI(t *testing.T) {
 	for _, test := range []struct {

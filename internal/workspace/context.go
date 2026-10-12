@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"bqagent/internal/safepath"
 )
 
 const (
@@ -360,12 +362,25 @@ func (w *Workspace) loadSkills(root *os.Root) ([]Skill, error) {
 
 	skills := make([]Skill, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() && entry.Type()&os.ModeSymlink == 0 {
 			continue
 		}
 
 		skillPath := filepath.Join(w.SkillsDir(), entry.Name(), "SKILL.md")
-		description, aliases, exists, err := w.readSkillMetadata(root, skillPath)
+		var description string
+		var aliases []string
+		var exists bool
+		if entry.Type()&os.ModeSymlink != 0 {
+			linked, linkErr := safepath.OpenLinkedSkill(w.Root, entry.Name())
+			if linkErr != nil || linked == nil {
+				// Stale links, cycles and links to files are not installed skills.
+				continue
+			}
+			description, aliases, exists, err = readSkillMetadataAt(linked, "SKILL.md")
+			_ = linked.Close()
+		} else {
+			description, aliases, exists, err = w.readSkillMetadata(root, skillPath)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -484,6 +499,10 @@ func (w *Workspace) readSkillMetadata(root *os.Root, path string) (description s
 	if err != nil {
 		return "", nil, false, err
 	}
+	return readSkillMetadataAt(root, path)
+}
+
+func readSkillMetadataAt(root *os.Root, path string) (description string, aliases []string, exists bool, err error) {
 	file, err := root.Open(path)
 	if os.IsNotExist(err) {
 		return "", nil, false, nil
