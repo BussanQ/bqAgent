@@ -1893,6 +1893,37 @@
       margin-right: 7px;
       vertical-align: middle;
     }
+    /* When the sidebar closes, its header becomes a compact floating toolbar. */
+    body > header > .actions:has(.workspace-toggle[aria-expanded="false"]) {
+      flex: 0 1 auto;
+      width: auto;
+      max-width: calc(100vw - var(--conversation-width) - 40px);
+      min-height: 0;
+      align-self: center;
+      margin: 8px 12px 8px 0;
+      padding: 5px;
+      gap: 4px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel-strong);
+      box-shadow: var(--bubble-shadow);
+    }
+    body > header > .actions:has(.workspace-toggle[aria-expanded="false"]) .icon-button {
+      border-color: transparent;
+      background: transparent;
+      box-shadow: none;
+    }
+    body > header > .actions:has(.workspace-toggle[aria-expanded="false"]) .icon-button:hover {
+      border-color: var(--line);
+      background: var(--surface-hover);
+    }
+    body > header > .actions:has(.workspace-toggle[aria-expanded="false"]) > .status {
+      max-width: 180px;
+      padding-inline: 8px;
+      border-color: transparent;
+      background: transparent;
+      box-shadow: none;
+    }
     .app-layout > .conversation-sidebar,
     .app-layout > .workspace-sidebar { margin-top: var(--shell-header-height, 62px); }
     .conversation-column { padding-top: var(--conversation-top-inset, 62px); }

@@ -53,6 +53,19 @@ describe("conversation header space", () => {
       for (const button of document.querySelectorAll(".actions > .icon-button, .actions > .account-controls")) {
         expect(getComputedStyle(button).flexShrink).toBe("0");
       }
+      // Closing the sidebar must release its full-width header reservation.
+      const toggle = document.querySelector<HTMLButtonElement>(".actions > .icon-button")!;
+      toggle.classList.add("workspace-toggle");
+      toggle.setAttribute("aria-expanded", "false");
+      const collapsed = getComputedStyle(document.querySelector(".actions")!);
+      expect(collapsed.width).toBe("auto");
+      expect(collapsed.flexBasis).toBe("auto");
+      expect(collapsed.flexShrink).toBe("1");
+      expect(collapsed.borderRadius).toBe("16px");
+      expect(getComputedStyle(toggle).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+      expect(getComputedStyle(document.querySelector(".status")!).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+      toggle.setAttribute("aria-expanded", "true");
+      expect(getComputedStyle(document.querySelector(".actions")!).width).toBe(`${workspaceWidth}px`);
     } finally {
       source.remove(); desktop.remove();
     }
