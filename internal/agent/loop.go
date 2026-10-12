@@ -426,7 +426,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		truncatedToolRecoveries = 0
 		if len(message.ToolCalls) == 0 {
-			if reason := a.continuationReason(ctx, message, continuations); reason != "" {
+			if reason := a.continuationReason(ctx, message); reason != "" {
 				reason = continuations.recoveryPrompt(reason)
 				a.writeProgress("任务尚未完成，继续执行与验证。")
 				updatedMessages, err = a.appendContinuation(updatedMessages, reason)

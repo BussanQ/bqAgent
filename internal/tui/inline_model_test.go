@@ -16,14 +16,16 @@ import (
 // inline renderer. Track the emitted terminal movements independently of its
 // internal cursor so a lost frame origin cannot pass a View-only assertion.
 type inlineRendererProbe struct {
-	output   bytes.Buffer
-	renderer *uv.TerminalRenderer
-	buffer   uv.ScreenBuffer
-	row      int
+	output     bytes.Buffer
+	renderer   *uv.TerminalRenderer
+	buffer     uv.ScreenBuffer
+	row        int
+	width      int
+	lastOutput string
 }
 
 func newInlineRendererProbe(width int) *inlineRendererProbe {
-	probe := &inlineRendererProbe{buffer: uv.NewScreenBuffer(width, 0)}
+	probe := &inlineRendererProbe{buffer: uv.NewScreenBuffer(width, 0), width: width}
 	probe.renderer = uv.NewTerminalRenderer(&probe.output, []string{"TERM=xterm-256color"})
 	probe.renderer.SetRelativeCursor(true)
 	probe.renderer.SetTabStops(-1)
@@ -36,7 +38,7 @@ func (probe *inlineRendererProbe) draw(t *testing.T, view tea.View) {
 	if content.Height() != probe.buffer.Height() {
 		probe.renderer.Erase()
 		probe.buffer.Touched = nil
-		probe.buffer.Resize(probe.buffer.Width(), content.Height())
+		probe.buffer.Resize(probe.width, content.Height())
 	}
 	probe.buffer.Clear()
 	content.Draw(probe.buffer, probe.buffer.Bounds())
@@ -48,6 +50,7 @@ func (probe *inlineRendererProbe) draw(t *testing.T, view tea.View) {
 		t.Fatal(err)
 	}
 	output := probe.output.String()
+	probe.lastOutput = output
 	var state byte
 	for remaining := output; len(remaining) > 0; {
 		sequence, _, n, next := ansi.DecodeSequence(remaining, state, nil)

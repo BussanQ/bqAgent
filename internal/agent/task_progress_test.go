@@ -18,27 +18,31 @@ type memoryTaskStore struct {
 	err   error
 }
 
-func TestRunCloseoutReviewForUnregisteredLongTask(t *testing.T) {
-	client := &stubClient{responses: []AssistantMessage{
-		{ToolCalls: []ToolCall{{ID: "read1", Function: FunctionCall{Name: "read_file", Arguments: `{}`}}}},
-		{ToolCalls: []ToolCall{{ID: "read2", Function: FunctionCall{Name: "read_file", Arguments: `{}`}}}},
-		{Content: "I will implement it"}, taskUpdateMessage(activeTestTask()),
-		{Content: "still working"}, {Content: "still working"},
-	}}
-	store := &memoryTaskStore{}
-	app := NewWithOptions(client, "test", Options{TaskStore: store, Functions: map[string]tools.Function{"read_file": func(context.Context, map[string]any) (string, error) { return "source", nil }}})
-	reply, err := app.Run(context.Background(), "implement fast", 6)
-	if err != nil || !strings.Contains(reply, "maximum of 6 iterations") || store.state == nil || store.state.Status != "active" {
-		t.Fatalf("reply=%q task=%+v err=%v", reply, store.state, err)
-	}
-	found := false
-	for _, m := range client.messages[3] {
-		if strings.Contains(contentText(m["content"]), "Before ending, review") {
-			found = true
+func TestRunOrdinaryAnswerDoesNotRestartAfterToolCalls(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, phase := range []string{"", "final_answer"} {
+			for _, count := range []int{2, 10} {
+				t.Run(fmt.Sprintf("stream=%t/phase=%s/calls=%d", stream, phase, count), func(t *testing.T) {
+					const answer = "主要用 Shell/Bash 编写，Python 为辅助语言。"
+					client := &stubClient{}
+					for i := 0; i < count; i++ {
+						client.responses = append(client.responses, AssistantMessage{ToolCalls: []ToolCall{{ID: fmt.Sprint(i), Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"ls"}`}}}})
+					}
+					client.responses = append(client.responses, AssistantMessage{Content: answer, Phase: phase}, AssistantMessage{Content: "unsolicited follow-up"})
+					store := &memoryTaskStore{}
+					app := NewWithOptions(client, "test", Options{TaskStore: store, Stream: stream, Context: ContextConfig{Enabled: false}, Functions: map[string]tools.Function{"execute_bash": func(context.Context, map[string]any) (string, error) { return "build.sh\nnetwork.py", nil }}})
+					reply, history, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "当前是什么编程语言写的"}}, 20)
+					if err != nil || reply != answer || len(client.messages) != count+1 || store.state != nil {
+						t.Fatalf("ordinary answer restarted: reply=%q requests=%d task=%+v err=%v", reply, len(client.messages), store.state, err)
+					}
+					for _, message := range history {
+						if message["role"] == "developer" && strings.Contains(contentText(message["content"]), "Before ending, review") {
+							t.Fatal("ordinary question acquired an unsolicited closeout instruction")
+						}
+					}
+				})
+			}
 		}
-	}
-	if !found {
-		t.Fatal("missing closeout review")
 	}
 }
 

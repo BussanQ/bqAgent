@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestFinalReplyRemainsVisibleAfterTools(t *testing.T) {
@@ -160,7 +161,35 @@ func TestFinalReplySurvivesInlineCompletionRepaint(t *testing.T) {
 	probe.draw(t, model.View())
 	model, _ = model.Update(inlineRepaintMsg{})
 	probe.draw(t, model.View())
+	if !strings.Contains(ansi.Strip(probe.lastOutput), "最终结论：10 次 ls 均已成功。") {
+		t.Fatalf("renderer did not paint the final answer: %q", probe.lastOutput)
+	}
 	if !strings.Contains(model.View().Content, "最终结论：10 次 ls 均已成功。") || strings.Contains(model.View().Content, "先前的草稿") {
 		t.Fatalf("completion repaint hid the final answer: %q", model.View().Content)
+	}
+}
+
+func TestLanguageAnswerAppearsInTerminalOutput(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		for _, size := range [][2]int{{72, 24}, {48, 12}} {
+			t.Run(fmt.Sprintf("noColor=%t/size=%v", noColor, size), func(t *testing.T) {
+				model := toolDrawerModel(t, 4)
+				model.width, model.height = size[0], size[1]
+				model.config.NoColor = noColor
+				model.styles = newTheme(noColor)
+				model.resizeInput()
+				model.sequence = 1
+				model.active = &activeTurn{sequence: 1, cancel: func() {}}
+				answer := "主要是 **Shell/Bash**，辅助语言是 **Python**。\n\n" + strings.Repeat("具体文件说明。\n\n", 30)
+				model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: answer, Streamed: true}})
+				probe := newInlineRendererProbe(model.width)
+				probe.draw(t, model.View())
+				painted := ansi.Strip(probe.lastOutput)
+				if !strings.Contains(painted, "Shell/Bash") || !strings.Contains(painted, "Python") {
+					t.Fatalf("terminal did not paint the direct answer: %q", painted)
+				}
+				assertLiveFrameFits(t, model)
+			})
+		}
 	}
 }

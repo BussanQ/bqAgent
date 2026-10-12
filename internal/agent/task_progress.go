@@ -11,6 +11,7 @@ import (
 )
 
 const taskProgressInstructions = `For a multi-step programming task, use task_update to persist the original goal, acceptance criteria and remaining implementation/verification work before editing. Update it when real progress changes, then immediately continue substantive work. Ordinary questions and small one-step edits do not need a task.
+Match effort to the request. For a simple factual question, answer briefly and directly from available evidence; inspect only what is necessary to resolve uncertainty. Once the answer is supported, stop: do not perform an exhaustive inventory, append an unsolicited code review, or invent follow-up work. Multiple inspection calls do not turn a question into a programming task. Reserve deeper investigation and extended reasoning for complex analysis or multi-step work, with verification proportional to the user's request and repository constraints.
 An active task remains the objective when the user says continue or asks for status. Answer status briefly and keep working unless the user explicitly asks to stop or wait. A new unrelated question may be answered without continuing the old task: first record awaiting_input with the reason. Replace the goal only when the user explicitly changes or cancels the objective; use replace_goal with a reason.
 Before a final answer, check every criterion against tool evidence and record the actual targeted verification results. Do not claim completion with remaining work or failed/unavailable verification. If genuinely blocked or awaiting a user decision, persist that status and the concrete reason. Preserve existing criteria; never remove requirements merely to finish. Do not invent checks, broaden test scope, or run tests prohibited by repository instructions.`
 
@@ -94,23 +95,16 @@ func (a *Agent) taskContext(ctx context.Context) string {
 const recoveryEscalationThreshold = 2
 
 type continuationGuard struct {
-	stagnant         int
-	progressed       bool
-	substantiveCalls int
-	reviewed         bool
-	taskUpdated      bool
-	stopped          bool
+	stagnant   int
+	progressed bool
+	stopped    bool
 }
 
 func (guard *continuationGuard) observe(call ToolCall, result string) {
-	if call.Function.Name == "task_update" && !strings.HasPrefix(strings.TrimSpace(result), "Error:") {
-		guard.taskUpdated = true
-	}
 	if call.Function.Name == "task_update" || call.Function.Name == "todo_write" || !toolResultMadeProgress(call, result) {
 		return
 	}
 	guard.progressed = true
-	guard.substantiveCalls++
 }
 
 // Recovery changes the next action rather than treating temporary lack of tool
@@ -128,7 +122,7 @@ func (guard *continuationGuard) recoveryPrompt(reason string) string {
 	return reason + fmt.Sprintf("\nRecovery attempt %d: repeated empty replies or progress-only replies have not advanced the task. Change approach now: inspect the latest tool results and saved remaining work, choose the smallest actionable unfinished step, and execute it in this same turn. If a build or test failed, diagnose its actual output, fix the cause, and rerun only the permitted targeted verification. A failed test is evidence to act on, not by itself a blocker. Do not repeat a promise, rewrite only the plan, weaken acceptance criteria, or ask the user to say continue. If truly blocked by missing external information or authorization, record the concrete blocker and explain it; otherwise keep working until verified.", guard.stagnant)
 }
 
-func (a *Agent) continuationReason(ctx context.Context, message AssistantMessage, guard *continuationGuard) string {
+func (a *Agent) continuationReason(ctx context.Context, message AssistantMessage) string {
 	if message.Completion.OutputTruncated || strings.EqualFold(message.Completion.StopReason, "incomplete") {
 		return "The previous response was incomplete (" + message.Completion.IncompleteReason + "). Continue from the saved evidence; do not treat partial text as task completion. Use smaller tool batches if needed."
 	}
@@ -141,13 +135,8 @@ func (a *Agent) continuationReason(ctx context.Context, message AssistantMessage
 	if a.task != nil && a.task.Status == "active" {
 		return "The saved programming task is still active. Check its original goal, remaining work and acceptance criteria. Continue unfinished implementation or targeted verification now. Use task_update to record completion with evidence, or a concrete blocker/required user input. Do not stop at a promise to continue."
 	}
-	// A compatible provider may omit phase and the model may forget to register
-	// a task. After multi-step tool work, allow one explicit closeout review.
-	// This does not classify prose by keywords or turn ordinary answers into jobs.
-	if a.taskStore != nil && (a.task == nil || a.task.Status == "completed" || a.task.Status == "cancelled") && !guard.taskUpdated && guard.substantiveCalls >= 2 && !guard.reviewed {
-		guard.reviewed = true
-		return "Before ending, review the original user request against completed tool evidence. If this is a multi-step programming task, use task_update to record its goal, acceptance criteria, remaining work and actual verification; continue any authorized unfinished work. If this was only a question or analysis, provide the answer directly without creating a task or inventing extra work."
-	}
+	// Tool count alone is not evidence of unfinished programming work. A
+	// complete ordinary answer must not be replaced by an unsolicited review.
 	return ""
 }
 
