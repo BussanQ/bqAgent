@@ -81,7 +81,7 @@ func (model Model) liveBudgets() (tools, stream, auxiliary int) {
 	footer := model.footerLines()
 	remaining := max(0, model.frameLimit()-len(footer))
 	reserved := 0
-	if len(model.tools.items) > 0 {
+	if model.tools.liveVisible() {
 		reserved++
 	}
 	if model.stream != "" || model.reply != "" {
@@ -89,7 +89,7 @@ func (model Model) liveBudgets() (tools, stream, auxiliary int) {
 	}
 	auxiliary = min(len(model.auxiliaryLines()), max(0, remaining-reserved))
 	remaining -= auxiliary
-	if len(model.tools.items) > 0 {
+	if model.tools.liveVisible() {
 		tools = remaining
 		if model.stream != "" || model.reply != "" {
 			tools = max(1, remaining/2)
@@ -112,12 +112,23 @@ func (model Model) toolViewportHeight() int {
 func (model Model) liveView() tea.View {
 	width := model.contentWidth()
 	toolHeight, streamHeight, auxiliaryHeight := model.liveBudgets()
-	lines := append([]string{}, model.tools.viewport(model.styles, width, toolHeight)...)
+	tools := model.tools.viewport(model.styles, width, toolHeight)
+	var lines []string
+	if !model.tools.committed {
+		lines = append(lines, tools...)
+	}
 	stream := model.streamLines(width)
 	if model.reply != "" {
 		lines = append(lines, stream...)
 	} else if streamHeight > 0 && len(stream) > 0 {
 		lines = append(lines, stream[max(0, len(stream)-streamHeight):]...)
+	}
+	if model.tools.committed && len(tools) > 0 {
+		// This is a transient inspector after the conclusion, not another
+		// transcript record inserted between two portions of the answer.
+		tools = append([]string(nil), tools...)
+		tools[0] = model.styles.accent.Render(ansi.Truncate("▼ 本轮工具详情 · Ctrl+O 收起", width, "…"))
+		lines = append(lines, tools...)
 	}
 	auxiliary := model.auxiliaryLines()
 	lines = append(lines, auxiliary[:auxiliaryHeight]...)

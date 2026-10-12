@@ -128,6 +128,8 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 		{name: "next question", answer: "line two line three"},
 		{name: "multiline answer", answer: "line two\n\nline three"},
 		{name: "queued question", queued: true, answer: "line two\n\nline three"},
+		{name: "long answer with few tools", tools: 4, answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
+		{name: "long queued answer with tools", tools: 10, queued: true, answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
 		{name: "long streamed answer with tools", tools: 10, streamed: true, answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
 		{name: "long streamed answer", streamed: true, answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
 		{name: "long answer", answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
@@ -257,6 +259,18 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 					update(turnEvent{sequence: uint64(i), kind: "done", result: TurnResult{Reply: answer}})
 					if strings.HasPrefix(test.name, "long") && (!strings.Contains(screen.text(), fmt.Sprintf("answer-%d", i)) || strings.Count(screen.text(), "last paragraph") != i || strings.Count(screen.text(), "long paragraph") != 60*i) {
 						t.Fatalf("long reply not fully visible immediately after completion: %s", strings.TrimSpace(screen.text()))
+					}
+					if test.tools > 0 {
+						text := screen.text()
+						start := strings.Index(text, fmt.Sprintf("question-%d", i))
+						if start < 0 {
+							t.Fatalf("question-%d disappeared before checking turn order", i)
+						}
+						answerStart := strings.Index(text, fmt.Sprintf("answer-%d", i))
+						toolStart := strings.Index(text[start:], "工具活动") + start
+						if toolStart <= start || answerStart <= toolStart || strings.Count(text, "工具活动") != i {
+							t.Fatalf("turn %d must show question, tools, then answer exactly once: %s", i, strings.TrimSpace(text))
+						}
 					}
 					if test.streamed {
 						// Repaint after completion and exercise the still-interactive drawer.

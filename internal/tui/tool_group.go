@@ -16,10 +16,15 @@ type toolDisplay struct {
 }
 
 type toolGroup struct {
-	items    []toolDisplay
-	expanded bool
-	offset   int
-	cache    *toolViewCache
+	items     []toolDisplay
+	committed bool // History owns the record; the live drawer is only a detail inspector.
+	expanded  bool
+	offset    int
+	cache     *toolViewCache
+}
+
+func (group toolGroup) liveVisible() bool {
+	return len(group.items) > 0 && (!group.committed || group.expanded)
 }
 
 type toolViewCache struct {

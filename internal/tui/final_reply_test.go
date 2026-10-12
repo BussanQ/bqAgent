@@ -172,7 +172,11 @@ func TestLongReplyPreservesRenderedSuffixOnResize(t *testing.T) {
 			answer += "```\n\n**最终结论**"
 			want := ansi.Hardwrap(renderMarkdown(answer, model.contentWidth(), noColor), model.contentWidth(), false)
 			model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: answer}})
-			combined := strings.Join(model.printQueue, "\n") + "\n" + strings.Join(model.streamLines(model.contentWidth()), "\n")
+			// The first history entry is the tool group, before the answer prefix.
+			if !model.tools.committed || !strings.Contains(model.printQueue[0], "工具活动") {
+				t.Fatal("tools were not committed before the answer")
+			}
+			combined := strings.Join(model.printQueue[1:], "\n") + "\n" + strings.Join(model.streamLines(model.contentWidth()), "\n")
 			if combined != want {
 				t.Fatal("splitting the answer changed the rendered Markdown")
 			}
@@ -197,6 +201,91 @@ func TestLongReplyPreservesRenderedSuffixOnResize(t *testing.T) {
 				t.Fatal("resize lost or duplicated the conclusion")
 			}
 		})
+	}
+}
+
+func TestLongReplyToolHistoryPrecedesAnswerAndRemainsInspectable(t *testing.T) {
+	for _, count := range []int{4, 10} {
+		for _, expanded := range []bool{false, true} {
+			t.Run(fmt.Sprintf("tools=%d/expanded=%t", count, expanded), func(t *testing.T) {
+				model := toolDrawerModel(t, count)
+				model.tools.expanded = expanded
+				model.sequence = 1
+				model.active = &activeTurn{sequence: 1, cancel: func() {}}
+				model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: "answer-start\n\n" + strings.Repeat("answer-body\n\n", 50) + "answer-end"}})
+				prefix := strings.Join(model.printQueue, "\n")
+				if !model.tools.committed || strings.Index(prefix, "工具活动") >= strings.Index(prefix, "answer-start") {
+					t.Fatal("history must commit tools before the answer prefix")
+				}
+				if strings.Contains(model.View().Content, "工具活动") || !strings.Contains(model.View().Content, "answer-end") {
+					t.Fatal("live tools split the answer or hid its conclusion")
+				}
+				model.printQueue = nil
+				for i := 0; i < 3; i++ {
+					updated, command := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+					model = updated.(Model)
+					view := model.View().Content
+					if command != nil || !model.tools.expanded || !strings.Contains(view, "file-001.go") || strings.Index(view, "本轮工具详情") < strings.Index(view, "answer-end") {
+						t.Fatal("Ctrl+O must open an inspector after the conclusion without printing history")
+					}
+					for _, key := range []tea.KeyPressMsg{{Code: tea.KeyPgDown}, {Code: tea.KeyPgUp}} {
+						updated, command = model.Update(key)
+						model = updated.(Model)
+						if command != nil {
+							t.Fatal("inspector paging printed history")
+						}
+					}
+					if i == 0 {
+						updated, command = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+					} else if i == 1 {
+						lines := strings.Split(model.View().Content, "\n")
+						y := 0
+						for !strings.Contains(lines[y], "本轮工具详情") {
+							y++
+						}
+						updated, command = model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: model.height - len(lines) + y})
+					} else {
+						updated, command = model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+					}
+					model = updated.(Model)
+					if command != nil || model.tools.expanded || model.toolMouse || strings.Contains(model.View().Content, "本轮工具详情") {
+						t.Fatal("closing the inspector retained tool rows or printed history")
+					}
+					assertLiveFrameFits(t, model)
+				}
+				model.commitTurn()
+				model.commitTurn()
+				text := prefix + "\n" + strings.Join(model.printQueue, "\n")
+				if strings.Count(text, "工具活动") != 1 || strings.Count(text, "answer-start") != 1 || strings.Count(text, "answer-body") != 50 || strings.Count(text, "answer-end") != 1 {
+					t.Fatal("next turn lost or duplicated tools or answer")
+				}
+			})
+		}
+	}
+}
+
+func TestReplyResizeCommitsToolsBeforeFirstAnswerOverflow(t *testing.T) {
+	model := toolDrawerModel(t, 10)
+	model.sequence = 1
+	model.active = &activeTurn{sequence: 1, cancel: func() {}}
+	model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: "answer-start\n\nanswer-middle\n\nanswer-end"}})
+	if model.tools.committed || len(model.printQueue) != 0 {
+		t.Fatal("fitting answer should keep its original interactive tool drawer")
+	}
+	for _, size := range [][2]int{{32, 8}, {72, 24}, {32, 8}} {
+		model.width, model.height = size[0], size[1]
+		model.resizeInput()
+		model.flushOverflowReply()
+		assertLiveFrameFits(t, model)
+		text := strings.Join(model.printQueue, "\n") + "\n" + model.View().Content
+		if strings.Count(text, "工具活动") != 1 || strings.Index(text, "工具活动") >= strings.Index(text, "answer-start") || strings.Count(text, "answer-end") != 1 {
+			t.Fatal("resize reordered or duplicated the tools and answer")
+		}
+	}
+	model.commitTurn()
+	text := strings.Join(model.printQueue, "\n")
+	if strings.Count(text, "工具活动") != 1 || strings.Count(text, "answer-start") != 1 || strings.Count(text, "answer-end") != 1 {
+		t.Fatal("next turn reprinted the tools or lost the resized answer")
 	}
 }
 

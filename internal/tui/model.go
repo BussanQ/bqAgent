@@ -310,6 +310,9 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		}
 		if model.tools.expanded {
 			model.tools.expanded = false
+			if model.tools.committed {
+				model.toolMouse = false
+			}
 			return nil
 		}
 		model.closePanel()
@@ -393,11 +396,20 @@ func (model *Model) cancelActiveTurn() {
 
 func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 	event := message.Mouse()
-	if len(model.tools.items) <= toolCollapseThreshold || event.Button != tea.MouseLeft || model.toolViewportHeight() == 0 {
+	if (!model.tools.committed && len(model.tools.items) <= toolCollapseThreshold) || event.Button != tea.MouseLeft || model.toolViewportHeight() == 0 {
 		return nil
 	}
 	viewLines := strings.Split(model.View().Content, "\n")
 	headerY := max(0, model.height-len(viewLines))
+	if model.tools.committed {
+		toolHeight, _, auxiliaryHeight := model.liveBudgets()
+		panelRows := len(model.tools.viewport(model.styles, model.contentWidth(), toolHeight))
+		headerRow := len(viewLines) - len(model.footerLines()) - auxiliaryHeight - panelRows
+		if headerRow < 0 {
+			return nil
+		}
+		headerY += headerRow
+	}
 	if event.Y != headerY && !(model.height == 0 && event.Y == 0) {
 		return nil
 	}
@@ -406,9 +418,12 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 }
 
 func (model *Model) toggleToolGroup() {
-	if len(model.tools.items) > toolCollapseThreshold {
+	if len(model.tools.items) > toolCollapseThreshold || model.tools.committed {
 		model.tools.expanded = !model.tools.expanded
 		model.tools.offset = 0
+		if model.tools.committed {
+			model.toolMouse = model.tools.expanded
+		}
 	}
 }
 
@@ -710,6 +725,10 @@ func (model *Model) flushOverflowReply() {
 		return
 	}
 	cut := len(lines) - height
+	// Native history must contain the tools before any part of their answer.
+	// Keep the data for Ctrl+O inspection, but do not leave a second tool record
+	// between the answer's committed prefix and its live suffix.
+	model.archiveToolGroup()
 	model.enqueuePrint(strings.Join(lines[:cut], "\n"))
 	model.reply = strings.Join(lines[cut:], "\n")
 	model.replyRendered = true
@@ -752,8 +771,20 @@ func (model *Model) commitToolGroup() tea.Cmd {
 	if len(model.tools.items) == 0 {
 		return nil
 	}
-	model.enqueuePrint(ansi.Hardwrap(model.tools.render(model.styles, false), model.contentWidth(), false))
+	model.archiveToolGroup()
 	return model.discardToolGroup()
+}
+
+func (model *Model) archiveToolGroup() {
+	if len(model.tools.items) == 0 || model.tools.committed {
+		return
+	}
+	model.enqueuePrint(ansi.Hardwrap(model.tools.render(model.styles, false), model.contentWidth(), false))
+	model.tools.committed = true
+	model.tools.expanded = false
+	model.tools.offset = 0
+	model.tools.cache = nil
+	model.toolMouse = false
 }
 
 func (model *Model) discardToolGroup() tea.Cmd {
