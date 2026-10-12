@@ -86,7 +86,7 @@ it("renders provider display names and saves and selects model IDs", async () =>
 });
 
 it.each(["save", "delete"])("shows managed Magpie and excludes it from ordinary provider %s", async (action) => {
-  const magpie = { id: "magpie", name: "Magpie", managed_by: "magpie", api_type: "openai", base_url: "http://localhost:12345/v1", api_key_configured: true, models: ["p/first", "p/second"], default_model: "p/first", model_display_names: { "p/second": "Second Model" } };
+  const magpie = { id: "magpie", name: "Magpie", managed_by: "magpie", api_type: "openai-response", base_url: "http://localhost:12345/v1", api_key_configured: true, models: ["p/first", "p/second"], default_model: "p/first", model_display_names: { "p/second": "Second Model" } };
   const ordinary = { id: "saved", name: "Saved", api_type: "openai", base_url: "", models: ["original"], default_model: "original" };
   const settings = { active_provider: "magpie", providers: [magpie, ordinary] };
   let written: { active_provider: string; providers: typeof ordinary[] } | undefined;
@@ -95,7 +95,7 @@ it.each(["save", "delete"])("shows managed Magpie and excludes it from ordinary 
     const url = String(input);
     if (url.endsWith("/provider-selection")) {
       selection = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify({ provider_id: "magpie", api_type: "openai", model: "p/second", model_display_name: "Second Model" }));
+      return new Response(JSON.stringify({ provider_id: "magpie", api_type: "openai-response", model: "p/second", model_display_name: "Second Model" }));
     }
     if (url.endsWith("/providers")) {
       if (init?.method === "PUT") {
@@ -104,7 +104,7 @@ it.each(["save", "delete"])("shows managed Magpie and excludes it from ordinary 
       }
       return new Response(JSON.stringify(settings));
     }
-    return new Response(JSON.stringify({ llm: { provider_id: "magpie", api_type: "openai", model: "p/first", mode: "run" } }));
+    return new Response(JSON.stringify({ llm: { provider_id: "magpie", api_type: "openai-response", model: "p/first", mode: "run" } }));
   });
   const controller = createProviderController(new APIClient(transport), { statusEl: document.getElementById("status") as HTMLDivElement, sessionId: "s", busy: false, workspaceScopedURL: url => url, setChatMode: () => {} });
   await controller.loadRuntimeModel();
@@ -120,6 +120,7 @@ it.each(["save", "delete"])("shows managed Magpie and excludes it from ordinary 
   expect(document.getElementById("provider-managed-notice")!.hidden).toBe(false);
   expect(document.getElementById("provider-local-notice")!.hidden).toBe(true);
   expect(document.getElementById("provider-api-key-status")!.textContent).toBe("由 Magpie 管理");
+  expect((document.getElementById("provider-api-type") as HTMLSelectElement).value).toBe("openai-response");
   expect((document.getElementById("provider-api-key") as HTMLInputElement).value).toBe("");
   const controls = ["provider-name", "provider-id", "provider-api-type", "provider-base-url", "provider-api-key", "provider-api-key-toggle", "provider-fetch-models", "provider-model-add", "provider-model-manual", "provider-default-model", "provider-settings-save", "provider-settings-delete"];
   controls.forEach(id => expect((document.getElementById(id) as HTMLInputElement).disabled, id).toBe(true));

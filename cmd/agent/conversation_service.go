@@ -110,7 +110,7 @@ func runtimeConfigFromSources(getenv func(string) string, agentDir string) appru
 	config := appruntime.ConfigFromEnv(getenv)
 	if magpie, err := globalconfig.LoadMagpie(agentDir); err == nil && magpie != nil {
 		config.ProviderID = "magpie"
-		config.APIType = agent.APITypeOpenAI
+		config.APIType = agent.APITypeOpenAIResponse
 		config.APIKey = magpie.APIKey
 		config.BaseURL = magpie.BaseURL
 		config.Model = magpie.Model

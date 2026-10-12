@@ -66,7 +66,7 @@ magpie plugin add ./plugins/bqa-magpie
 
 也可以在 Magpie 插件页面添加该文件夹的绝对路径。随后在 Magpie 的 Agent 页面找到 **bqAgent**，开启接入、选择模型，再启动 bqagent。切换模型或关闭接入后，需要重启运行中的 bqagent，包括 WebUI 服务；旧版 bqagent 不读取此接入配置。
 
-插件使用独立的 `~/.agent/magpie.json` 保存网关地址、此 Agent 的专属 key、选中的模型及可用模型列表。后台通过 OpenAI Chat Completions 请求网关，模型 ID 保持 `供应商/模型` 形式，TUI、WebUI 和单次任务使用同一配置读取逻辑。启动时的优先级为：**有效的 Magpie 接入配置 → 全局当前 Provider → 环境变量**。
+插件使用独立的 `~/.agent/magpie.json` 保存网关地址、此 Agent 的专属 key、选中的模型及可用模型列表。后台通过 OpenAI Responses（`openai-response`，`/v1/responses`）请求网关，模型 ID 保持 `供应商/模型` 形式，TUI、WebUI 和单次任务使用同一配置读取逻辑。启动时的优先级为：**有效的 Magpie 接入配置 → 全局当前 Provider → 环境变量**。
 
 原有 `~/.agent/config.json` 及 Provider 加密密钥不被改写。关闭接入时，Magpie 恢复原来的键值或删除首次接入时新增的键；没有完整的 Magpie 接入配置时，bqagent 回到原有 Provider 或环境变量。若此前手动配置过 `magpie.json`，关闭接入会恢复那份配置。该文件内的网关 key 为明文，不应提交到仓库。
 

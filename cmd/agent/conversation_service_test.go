@@ -32,7 +32,7 @@ func TestRuntimeConfigFromSourcesMagpieConnectAndDisconnect(t *testing.T) {
 				t.Fatal(err)
 			}
 			connected := runtimeConfigFromSources(getenv, dir)
-			if connected.ProviderID != "magpie" || connected.APIType != agent.APITypeOpenAI || connected.APIKey != "magpie-test-key" || connected.BaseURL != "http://localhost:12345/v1" || connected.Model != "p/m" || len(connected.Models) != 2 || connected.ModelDisplayNames.Name(connected.Model) != "Magpie model" {
+			if connected.ProviderID != "magpie" || connected.APIType != agent.APITypeOpenAIResponse || connected.APIKey != "magpie-test-key" || connected.BaseURL != "http://localhost:12345/v1" || connected.Model != "p/m" || len(connected.Models) != 2 || connected.ModelDisplayNames.Name(connected.Model) != "Magpie model" {
 				t.Fatal("Magpie did not override the saved provider/environment")
 			}
 			// Magpie disconnects by removing the keys it originally introduced.

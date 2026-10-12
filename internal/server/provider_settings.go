@@ -437,7 +437,7 @@ func parseProviderModels(body []byte) ([]modelcatalog.Model, error) {
 // Magpie owns its connection file. WebUI model choices affect this server only;
 // restarting restores the default selected in Magpie.
 func applyMagpieProvider(service *Service, magpie *globalconfig.MagpieConfig, model string) {
-	service.ConfigureLLM("magpie", agent.APITypeOpenAI, magpie.APIKey, magpie.BaseURL, model, magpie.Models, magpie.ModelDisplayNames)
+	service.ConfigureLLM("magpie", agent.APITypeOpenAIResponse, magpie.APIKey, magpie.BaseURL, model, magpie.Models, magpie.ModelDisplayNames)
 }
 
 func runtimeProviderResponse(config globalconfig.Config, service *Service, magpie *globalconfig.MagpieConfig) providerSettingsResponse {
@@ -445,7 +445,7 @@ func runtimeProviderResponse(config globalconfig.Config, service *Service, magpi
 	if magpie != nil {
 		response.Providers = slices.DeleteFunc(response.Providers, func(provider providerView) bool { return provider.ID == "magpie" })
 		response.Providers = append(response.Providers, providerView{
-			ID: "magpie", Name: "Magpie", ManagedBy: "magpie", APIType: string(agent.APITypeOpenAI),
+			ID: "magpie", Name: "Magpie", ManagedBy: "magpie", APIType: string(agent.APITypeOpenAIResponse),
 			BaseURL: magpie.BaseURL, Models: magpie.Models, ModelDisplayNames: magpie.ModelDisplayNames,
 			DefaultModel: magpie.Model, APIKeyConfigured: true,
 		})

@@ -29,7 +29,7 @@ func TestApplySavedProviderPrefersMagpieUntilDisconnected(t *testing.T) {
 	service := &Service{agentDir: dir}
 	handler := &handler{providers: store}
 	handler.applySavedProvider(service)
-	if service.providerID != "magpie" || service.model != "p/m" || service.apiType != agent.APITypeOpenAI {
+	if service.providerID != "magpie" || service.model != "p/m" || service.apiType != agent.APITypeOpenAIResponse {
 		t.Fatal("HTTP startup replaced the Magpie connection with the saved provider")
 	}
 	if err := os.WriteFile(path, []byte(`{}`), 0600); err != nil {
@@ -80,7 +80,7 @@ func TestMagpieProviderSettingsAndSelection(t *testing.T) {
 		t.Fatalf("settings = %#v", settings)
 	}
 	external := settings.Providers[1]
-	if external.ManagedBy != "magpie" || !external.APIKeyConfigured || external.BaseURL != "http://localhost:12345/v1" || external.ModelDisplayNames["p/second"] != "Second Model" {
+	if external.ManagedBy != "magpie" || external.APIType != string(agent.APITypeOpenAIResponse) || !external.APIKeyConfigured || external.BaseURL != "http://localhost:12345/v1" || external.ModelDisplayNames["p/second"] != "Second Model" {
 		t.Fatalf("external provider = %#v", external)
 	}
 	saved, err := h.service.store.Create(session.CreateOptions{Task: "model selection", Chat: true})
@@ -97,7 +97,7 @@ func TestMagpieProviderSettingsAndSelection(t *testing.T) {
 		}
 	}
 	selectModel("magpie", "p/second", http.StatusOK)
-	if info := h.service.RuntimeLLMInfoForSession(saved.Meta().ID); info.ProviderID != "magpie" || info.Model != "p/second" || info.ModelDisplayName != "Second Model" {
+	if info := h.service.RuntimeLLMInfoForSession(saved.Meta().ID); info.ProviderID != "magpie" || info.APIType != agent.APITypeOpenAIResponse || info.Model != "p/second" || info.ModelDisplayName != "Second Model" {
 		t.Fatalf("runtime = %#v", info)
 	}
 	selectModel("magpie", "unknown", http.StatusBadRequest)

@@ -62,7 +62,7 @@ magpie plugin add ./plugins/bqa-magpie
 
 Alternatively, add the folder's absolute path in Magpie's plugin page. Find **bqAgent** on its Agent page, enable the connection, select a model, and start bqagent. Restart running bqagent processes, including the WebUI server, after changing models or disconnecting. Older bqagent versions do not read this connection configuration.
 
-The plugin stores the gateway URL, dedicated Agent key, selected model, and available model catalog in a separate `~/.agent/magpie.json` file. The backend uses OpenAI Chat Completions with unchanged `provider/model` IDs. TUI, WebUI, and single-run tasks share this configuration loading behavior. Startup precedence is: **valid Magpie connection → active global provider → environment variables**.
+The plugin stores the gateway URL, dedicated Agent key, selected model, and available model catalog in a separate `~/.agent/magpie.json` file. The backend uses OpenAI Responses (`openai-response`, `/v1/responses`) with unchanged `provider/model` IDs. TUI, WebUI, and single-run tasks share this configuration loading behavior. Startup precedence is: **valid Magpie connection → active global provider → environment variables**.
 
 The original `~/.agent/config.json` and encrypted provider keys remain intact. On disconnect, Magpie restores previous values or removes keys introduced by the connection. Without a complete Magpie connection, bqagent returns to the original provider or environment configuration. If `magpie.json` was configured manually before connecting, those earlier values are restored. The gateway key is stored as plaintext in this file; do not commit it to a repository.
 
