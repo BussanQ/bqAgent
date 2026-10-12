@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 const toolCollapseThreshold = 5
@@ -16,12 +18,31 @@ type toolDisplay struct {
 type toolGroup struct {
 	items    []toolDisplay
 	expanded bool
+	offset   int
+	cache    *toolViewCache
+}
+
+type toolViewCache struct {
+	width    int
+	expanded bool
+	lines    []string
 }
 
 func (group *toolGroup) add(event ToolEvent) (crossedThreshold bool) {
 	previous := len(group.items)
+	group.cache = &toolViewCache{}
 	if event.Kind == "tool_start" {
-		group.items = append(group.items, toolDisplay{start: event})
+		// Replayed starts and results update the same call, including a start
+		// arriving after its result. Distinct IDs remain distinct activities.
+		index := -1
+		if event.ID != "" {
+			index = group.find(event)
+		}
+		if index >= 0 {
+			group.items[index].start = event
+		} else {
+			group.items = append(group.items, toolDisplay{start: event})
+		}
 	} else {
 		index := group.find(event)
 		if index < 0 {
@@ -32,6 +53,51 @@ func (group *toolGroup) add(event ToolEvent) (crossedThreshold bool) {
 		}
 	}
 	return previous <= toolCollapseThreshold && len(group.items) > toolCollapseThreshold
+}
+
+// Cache formatting until a tool changes, rather than formatting the whole
+// drawer again for every spinner tick, token and input event.
+func (group toolGroup) viewLines(styles theme, width int) []string {
+	if len(group.items) == 0 {
+		return nil
+	}
+	cache := group.cache
+	if cache != nil && cache.lines != nil && cache.width == width && cache.expanded == group.expanded {
+		return cache.lines
+	}
+	rendered := strings.Split(group.render(styles, true), "\n")
+	// Keep the clickable summary on one physical terminal row.
+	lines := []string{ansi.Truncate(rendered[0], width, "…")}
+	if len(rendered) > 1 {
+		lines = append(lines, strings.Split(ansi.Hardwrap(strings.Join(rendered[1:], "\n"), width, false), "\n")...)
+	}
+	if cache != nil {
+		cache.width, cache.expanded, cache.lines = width, group.expanded, lines
+	}
+	return lines
+}
+
+func (group toolGroup) viewport(styles theme, width, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	lines := group.viewLines(styles, width)
+	if len(lines) <= height {
+		return lines
+	}
+	if height == 1 {
+		return lines[:1]
+	}
+	if height == 2 {
+		return []string{lines[0], styles.dim.Render(ansi.Truncate("增大窗口查看详情", width, "…"))}
+	}
+	// Reserve the summary and paging hint; scrolling never prints to history.
+	count := max(0, height-2)
+	start := min(group.offset, max(0, len(lines)-1-count))
+	visible := []string{lines[0]}
+	visible = append(visible, lines[1+start:1+start+count]...)
+	visible = append(visible, styles.dim.Render(ansi.Truncate(fmt.Sprintf("详情 %d–%d/%d · PgUp/PgDn 翻页", start+1, start+count, len(lines)-1), width, "…")))
+	return visible
 }
 
 func (group toolGroup) find(event ToolEvent) int {

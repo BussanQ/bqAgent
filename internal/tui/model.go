@@ -86,6 +86,8 @@ type Model struct {
 	panelOpen   bool
 	tools       toolGroup
 	toolMouse   bool
+	liveHeight  int
+	liveCache   *streamViewCache
 	provider    *providerWizard
 
 	startup      []string
@@ -127,6 +129,7 @@ func NewModel(backend Backend, config Config) Model {
 		sessionID:    strings.TrimSpace(config.SessionID),
 		initialTask:  strings.TrimSpace(config.InitialTask),
 		historyStore: newHistoryStore(config.AgentDir, config.Workspace),
+		liveCache:    &streamViewCache{},
 	}
 	model.spinner = spinner.New(spinner.WithSpinner(spinner.Dot))
 	if !config.NoColor {
@@ -148,7 +151,7 @@ func NewModel(backend Backend, config Config) Model {
 }
 
 func (model Model) Init() tea.Cmd {
-	return tea.Batch(model.input.area.Focus(), model.spinner.Tick, tickCommand(), func() tea.Msg { return startupMsg{} })
+	return tea.Batch(model.input.area.Focus(), tickCommand(), func() tea.Msg { return startupMsg{} })
 }
 
 func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -185,9 +188,11 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.enqueuePrint(renderMarkdown(message.result.Reply, model.contentWidth(), model.config.NoColor))
 		}
 	case spinner.TickMsg:
-		var command tea.Cmd
-		model.spinner, command = model.spinner.Update(message)
-		commands = append(commands, command)
+		if model.active != nil {
+			var command tea.Cmd
+			model.spinner, command = model.spinner.Update(message)
+			commands = append(commands, command)
+		}
 	case tickMsg:
 		if !time.Time(message).Before(model.quitConfirmUntil) {
 			model.quitConfirmUntil = time.Time{}
@@ -208,6 +213,13 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.refreshSuggestions()
 		model.resizeInput()
 	}
+	if model.provider == nil && (len(model.tools.items) > 0 || model.stream != "") {
+		// Once grown, keep the inline frame stable while the drawer is active.
+		// Shrinking it on collapse can leave old rows in native scrollback.
+		model.liveHeight = strings.Count(model.liveView().Content, "\n") + 1
+	} else {
+		model.liveHeight = 0
+	}
 	if len(model.printQueue) > 0 {
 		text := strings.Join(model.printQueue, "\n")
 		model.printQueue = nil
@@ -227,39 +239,7 @@ func (model Model) View() tea.View {
 		view.ReportFocus = true
 		return view
 	}
-	width := model.contentWidth()
-	sections := make([]string, 0, 7)
-	if tools := model.tools.render(model.styles, true); tools != "" {
-		sections = append(sections, tools)
-	}
-	if model.stream != "" {
-		sections = append(sections, renderStreaming(model.stream, width))
-	}
-	if model.panelOpen && len(model.suggestions) > 0 {
-		sections = append(sections, model.renderSuggestions(width))
-	}
-	if model.queued != nil {
-		preview := strings.ReplaceAll(strings.TrimSpace(model.queued.value), "\n", " ↵ ")
-		if utf8.RuneCountInString(preview) > 100 {
-			preview = string([]rune(preview)[:100]) + "…"
-		}
-		preview = ansi.Truncate(preview, max(4, width-9), "…")
-		sections = append(sections, model.styles.dim.Render("已排队 · "+preview))
-	}
-	sections = append(sections, model.styles.dim.Render(strings.Repeat("─", max(10, width))))
-	inputOffsetY := strings.Count(strings.Join(sections, "\n"), "\n") + 1
-	sections = append(sections, model.input.area.View())
-	sections = append(sections, model.renderStatus(width))
-	view := tea.NewView(strings.Join(sections, "\n"))
-	view.Cursor = model.input.area.Cursor()
-	if view.Cursor != nil {
-		view.Cursor.Position.Y += inputOffsetY
-	}
-	view.ReportFocus = true
-	if model.toolMouse {
-		view.MouseMode = tea.MouseModeCellMotion
-	}
-	return view
+	return model.liveView()
 }
 
 func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
@@ -276,6 +256,17 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		return model.handleProviderKey(key)
 	}
 	switch name {
+	case "pgup", "pgdown":
+		if len(model.tools.items) > 0 && (model.tools.expanded || len(model.tools.items) <= toolCollapseThreshold) {
+			delta := max(1, model.toolViewportHeight()-2)
+			if name == "pgup" {
+				delta = -delta
+			}
+			lines := model.tools.viewLines(model.styles, model.contentWidth())
+			limit := max(0, len(lines)-1-max(1, model.toolViewportHeight()-2))
+			model.tools.offset = min(limit, max(0, min(model.tools.offset, limit)+delta))
+			return nil
+		}
 	case "ctrl+o":
 		model.toggleToolGroup()
 		return nil
@@ -377,11 +368,15 @@ func (model *Model) cancelActiveTurn() {
 
 func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 	event := message.Mouse()
-	if len(model.tools.items) <= toolCollapseThreshold || event.Button != tea.MouseLeft {
+	if len(model.tools.items) <= toolCollapseThreshold || event.Button != tea.MouseLeft || model.toolViewportHeight() == 0 {
 		return nil
 	}
-	viewLines := strings.Count(model.View().Content, "\n") + 1
-	headerY := max(0, model.height-viewLines)
+	viewLines := strings.Split(model.View().Content, "\n")
+	padding := 0
+	for padding < len(viewLines) && viewLines[padding] == "" {
+		padding++
+	}
+	headerY := max(0, model.height-len(viewLines)) + padding
 	if event.Y != headerY && !(model.height == 0 && event.Y == 0) {
 		return nil
 	}
@@ -392,6 +387,7 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 func (model *Model) toggleToolGroup() {
 	if len(model.tools.items) > toolCollapseThreshold {
 		model.tools.expanded = !model.tools.expanded
+		model.tools.offset = 0
 	}
 }
 
@@ -448,7 +444,7 @@ func (model *Model) submit(value string) tea.Cmd {
 	turnContext, cancel := context.WithCancel(model.config.Context)
 	events := make(chan turnEvent, 256)
 	model.active = &activeTurn{sequence: model.sequence, cancel: cancel, events: events}
-	return tea.Batch(toolCommand, launchTurn(model.backend, turnContext, model.sequence, model.sessionID, value, events))
+	return tea.Batch(toolCommand, model.spinner.Tick, launchTurn(model.backend, turnContext, model.sequence, model.sessionID, value, events))
 }
 
 func (model *Model) queue(value string) []tea.Cmd {
@@ -618,6 +614,7 @@ func (model *Model) flushStream() {
 	}
 	model.enqueuePrint(renderMarkdown(model.stream, model.contentWidth(), model.config.NoColor))
 	model.stream = ""
+	model.liveCache = &streamViewCache{}
 }
 
 func (model *Model) enqueueUserTurn(value string) {
@@ -644,12 +641,13 @@ func (model *Model) commitToolGroup() tea.Cmd {
 	if len(model.tools.items) == 0 {
 		return nil
 	}
-	model.enqueuePrint(model.tools.render(model.styles, false))
+	model.enqueuePrint(ansi.Hardwrap(model.tools.render(model.styles, false), model.contentWidth(), false))
 	return model.discardToolGroup()
 }
 
 func (model *Model) discardToolGroup() tea.Cmd {
 	model.tools = toolGroup{}
+	model.liveHeight = 0
 	model.toolMouse = false
 	return nil
 }
@@ -664,7 +662,9 @@ func (model *Model) clearSession() {
 	model.liveRunes = 0
 	model.queued = nil
 	model.stream = ""
+	model.liveCache = &streamViewCache{}
 	model.tools = toolGroup{}
+	model.liveHeight = 0
 	model.toolMouse = false
 	model.input.reset()
 	model.closePanel()
@@ -946,7 +946,7 @@ func (model *Model) resizeInput() {
 	}
 }
 
-func (model Model) contentWidth() int { return max(10, model.width-2) }
+func (model Model) contentWidth() int { return max(1, model.width-2) }
 
 func (model Model) startupLines() []string {
 	mode := displayMode(model.runtime.Mode)
