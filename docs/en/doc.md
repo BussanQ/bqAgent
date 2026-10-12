@@ -21,7 +21,8 @@ Additional capabilities draw on ideas from `agent-claudecode.py` and OpenClaw:
 - Continued support for `.agent/rules/*.md` and `.agent/skills/*/SKILL.md`
 - Plan-first execution with `--plan`
 - An always-streaming inline terminal TUI by default, also available explicitly with `--chat`
-- [Automatic Herdr support](../TUI.md#herdr-集成): asynchronous activity reports, session recovery, and bounded release without blocking model work
+- [Automatic Herdr support](#herdr): asynchronous activity reports, session recovery, and bounded release without blocking model work
+- [Magpie Agent plugin](#magpie): select models in Magpie, connect through its gateway, and restore the original configuration on disconnect
 - Persistent session recovery with `--resume`
 - Request-time context pruning for long conversations
 - Optional request-time summary compaction for older turns
@@ -40,6 +41,32 @@ make build
 `make build` installs the locked frontend dependencies from `internal/server/webui/package-lock.json`, runs strict TypeScript checking and the Vite production build, and then embeds `internal/server/webui/dist` into the Go executable. `dist` and `node_modules` are not committed. Runtime distribution still consists of one `bqagent` binary and does not require Node.js, Vite, a CDN, or static files on disk. Use `make build-amd` for Linux amd64 and `make build-windows` for Windows amd64.
 
 For WebUI-only development, run `npm run dev` in `internal/server/webui`; Vite proxies `/api` to `http://127.0.0.1:8080`. On a fresh checkout, do not invoke the raw `go build` command before generating the WebUI. Run `make webui-build` first or use one of the Makefile build targets above.
+
+## External application integrations
+
+### Herdr
+
+Start `bqagent` in a Herdr pane to enable automatic integration; no plugin is required. It activates only when `HERDR_ENV=1` and `HERDR_PANE_ID`, `HERDR_BIN_PATH`, and `HERDR_SOCKET_PATH` are all present.
+
+Foreground TUI, line-mode conversations, and single-run tasks report activity and session recovery metadata asynchronously, then release the pane on exit. TUI Provider setup reports `blocked` while waiting for a selection. Reporting failures do not block model work, and prompts, replies, and tool output are not sent. HTTP/Bot services, background jobs, and internal workers do not claim a pane.
+
+Recovery requires **Herdr 0.9.2+** and `bqagent` on `PATH`. It opens an interactive conversation with the saved session context. See the [Herdr section in the TUI guide](../TUI.md#herdr-集成) for activation conditions, state mapping, and shutdown behavior; the guide also includes an English summary.
+
+### Magpie
+
+The repository includes the [bqa-magpie Agent plugin](../../plugins/bqa-magpie/README.md). Use a bqagent version that includes the Magpie backend adapter and ensure `bqagent` is on `PATH`. From the repository root, install the plugin:
+
+```sh
+magpie plugin add ./plugins/bqa-magpie
+```
+
+Alternatively, add the folder's absolute path in Magpie's plugin page. Find **bqAgent** on its Agent page, enable the connection, select a model, and start bqagent. Restart running bqagent processes, including the WebUI server, after changing models or disconnecting. Older bqagent versions do not read this connection configuration.
+
+The plugin stores the gateway URL, dedicated Agent key, selected model, and available model catalog in a separate `~/.agent/magpie.json` file. The backend uses OpenAI Chat Completions with unchanged `provider/model` IDs. TUI, WebUI, and single-run tasks share this configuration loading behavior. Startup precedence is: **valid Magpie connection → active global provider → environment variables**.
+
+The original `~/.agent/config.json` and encrypted provider keys remain intact. On disconnect, Magpie restores previous values or removes keys introduced by the connection. Without a complete Magpie connection, bqagent returns to the original provider or environment configuration. If `magpie.json` was configured manually before connecting, those earlier values are restored. The gateway key is stored as plaintext in this file; do not commit it to a repository.
+
+Magpie's resource library can synchronize `~/.agent/AGENT.md` and `~/.agent/skills`. The plugin does not declare MCP synchronization: bqagent currently supports only Streamable HTTP and cannot consume stdio servers from general MCP configurations. See the [plugin README](../../plugins/bqa-magpie/README.md) for installation details, configuration behavior, and focused test commands.
 
 ## Environment variables
 
@@ -74,7 +101,7 @@ set LLM_API_KEY=your-key-here
 
 ### LLM provider
 
-Single-run tasks, Chat, background tasks, subagent workers, and Server all prefer the active provider in global `~/.agent/config.json`; environment variables are used only when no active provider is configured.
+At startup, single-run tasks, Chat, background tasks, subagent workers, and Server prefer a valid [Magpie connection](#magpie), then the active provider in global `~/.agent/config.json`, and finally environment variables.
 
 In the interactive TUI, use `/provider` to open the sequential setup wizard. The WebUI exposes the same configuration through its Provider settings control. Both interfaces share encrypted configuration storage and automatic model discovery.
 
@@ -97,7 +124,7 @@ Generic `LLM_*` values take precedence over provider-specific compatibility vari
 | Variable | Default | Description |
 |---|---|---|
 | `LLM_API_TYPE` | `openai` | Wire protocol: `openai`, `openai-response`, or `anthropic`. |
-| `LLM_API_KEY` | — | Generic API key. Required in server mode. |
+| `LLM_API_KEY` | — | Generic API key for environment-based configuration; not needed separately when a valid provider or Magpie connection supplies it. |
 | `LLM_BASE_URL` | provider default | Generic provider endpoint override. |
 | `LLM_MODEL` | empty | Model ID for the built-in LLM provider; configure it explicitly. |
 | `LLM_MODELS` | empty | Comma-separated switchable models for the same provider; supports `alias=model-id`. Use `/model` to list, `/model <name-or-alias>` to switch the current session, and `/model default` to restore the default. |

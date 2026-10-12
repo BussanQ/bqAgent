@@ -25,7 +25,8 @@ bqagent 的核心仍然很简单：
 - 继续支持 `.agent/rules/*.md` 和 `.agent/skills/*/SKILL.md`
 - 使用 `--plan` 先拆步骤再执行
 - 默认启动始终流式的内联终端 TUI（也可显式使用 `--chat`）
-- [Herdr 自动集成](./TUI.md#herdr-集成)：异步状态上报、会话恢复及退出释放，失败不阻塞主功能
+- [Herdr 自动集成](#herdr)：异步状态上报、会话恢复及退出释放，失败不阻塞主功能
+- [Magpie Agent 插件](#magpie)：在 Magpie 中选择模型，通过统一网关接入，关闭接入后恢复原有配置
 - 使用 `--resume` 恢复持久会话
 - 对长对话做请求时上下文裁剪
 - 可选地对旧对话做请求时摘要压缩
@@ -44,6 +45,32 @@ make build
 `make build` 会根据 `internal/server/webui/package-lock.json` 安装前端依赖，执行 TypeScript 严格检查和 Vite 生产构建，再把 `internal/server/webui/dist` 嵌入 Go 可执行文件。`dist` 和 `node_modules` 不提交到仓库；最终运行和分发仍只需要一个 `bqagent` 文件，不依赖 Node.js、Vite、CDN 或磁盘静态文件。Linux amd64 和 Windows amd64 分别使用 `make build-amd`、`make build-windows`。
 
 仅开发 WebUI 时，可在 `internal/server/webui` 中运行 `npm run dev`；Vite 会把 `/api` 代理到 `http://127.0.0.1:8080`。全新检出后不要直接运行原始 `go build`，应先执行 `make webui-build` 或直接使用上述 Makefile 构建目标。
+
+## 外部应用集成
+
+### Herdr
+
+在 Herdr 窗格中启动 `bqagent` 即可自动接入，无需安装插件。仅当 `HERDR_ENV=1`，且 `HERDR_PANE_ID`、`HERDR_BIN_PATH`、`HERDR_SOCKET_PATH` 均存在时启用。
+
+前台 TUI、逐行对话和单次任务会异步上报工作状态与会话恢复信息，退出时释放窗格；TUI 的 Provider 配置等待选择时会上报 `blocked`。上报失败不阻塞模型工作，不发送提示词、回答或工具输出。HTTP/Bot 服务、后台任务和内部 worker 不接管窗格。
+
+从 Herdr 恢复对话要求 **Herdr 0.9.2+**，并确保 `bqagent` 在 `PATH` 中。恢复后进入交互会话，保留原有会话上下文。协议条件、状态映射和退出行为见 [TUI 指南中的 Herdr 集成](./TUI.md#herdr-集成)。
+
+### Magpie
+
+仓库提供 [bqa-magpie Agent 插件](../plugins/bqa-magpie/README.md)。使用包含 Magpie 后台适配的 bqagent 版本，并确保 `bqagent` 在 `PATH` 中；在仓库根目录添加插件：
+
+```sh
+magpie plugin add ./plugins/bqa-magpie
+```
+
+也可以在 Magpie 插件页面添加该文件夹的绝对路径。随后在 Magpie 的 Agent 页面找到 **bqAgent**，开启接入、选择模型，再启动 bqagent。切换模型或关闭接入后，需要重启运行中的 bqagent，包括 WebUI 服务；旧版 bqagent 不读取此接入配置。
+
+插件使用独立的 `~/.agent/magpie.json` 保存网关地址、此 Agent 的专属 key、选中的模型及可用模型列表。后台通过 OpenAI Chat Completions 请求网关，模型 ID 保持 `供应商/模型` 形式，TUI、WebUI 和单次任务使用同一配置读取逻辑。启动时的优先级为：**有效的 Magpie 接入配置 → 全局当前 Provider → 环境变量**。
+
+原有 `~/.agent/config.json` 及 Provider 加密密钥不被改写。关闭接入时，Magpie 恢复原来的键值或删除首次接入时新增的键；没有完整的 Magpie 接入配置时，bqagent 回到原有 Provider 或环境变量。若此前手动配置过 `magpie.json`，关闭接入会恢复那份配置。该文件内的网关 key 为明文，不应提交到仓库。
+
+Magpie 资源库可同步 `~/.agent/AGENT.md` 和 `~/.agent/skills`。当前插件未声明 MCP 同步，因为 bqagent 仅支持 Streamable HTTP，不能完整接收通用 MCP 配置中的 stdio 服务。插件安装方式、配置行为和定向测试命令见 [插件说明](../plugins/bqa-magpie/README.md)。
 
 ## 环境变量配置
 
@@ -78,7 +105,7 @@ set LLM_API_KEY=your-key-here
 
 ### LLM 供应商
 
-单次任务、Chat、后台任务、子任务和 Server 都会优先读取全局 `~/.agent/config.json` 中的当前 Provider；未配置当前 Provider 时才回退到环境变量。
+启动时，单次任务、Chat、后台任务、子任务和 Server 优先使用有效的 [Magpie 接入配置](#magpie)；未启用时读取全局 `~/.agent/config.json` 中的当前 Provider，再回退到环境变量。
 
 交互式 TUI 中可使用 `/provider` 打开分步配置向导；WebUI 可通过右下角的 Provider 设置入口完成同样的配置。两者共用加密配置存储和模型自动发现逻辑。
 
@@ -101,7 +128,7 @@ set LLM_API_KEY=your-key-here
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `LLM_API_TYPE` | `openai` | 接口协议：`openai`、`openai-response` 或 `anthropic`。 |
-| `LLM_API_KEY` | — | 通用 API Key；Server 模式必填。 |
+| `LLM_API_KEY` | — | 通过环境变量接入时使用的通用 API Key；已配置有效的 Provider 或 Magpie 接入时无需重复设置。 |
 | `LLM_BASE_URL` | 供应商默认值 | 通用供应商端点覆盖。 |
 | `LLM_MODEL` | 空 | 内置 LLM 使用的模型 ID，需要显式配置。 |
 | `LLM_MODELS` | 空 | 同一供应商下可切换的模型列表，逗号分隔；支持 `别名=模型ID`。聊天中使用 `/model` 查看，`/model <名称或别名>` 切换当前会话，`/model default` 恢复默认。 |

@@ -26,6 +26,7 @@ bqagent 是一个为真实本地工作流而生的 Agent Runtime：既保留小�
 | 🧠 | **上下文与工作区是一等公民** | 自动识别 workspace root，叠加全局与项目级配置；长对话支持预算裁剪、摘要压缩、checkpoint 和持久恢复，在控制上下文体积的同时保住任务连续性。 |
 | 🌐 | **多 Channel 对话** | 同一套 Agent 能力可运行于 CLI、TUI、WebUI、微信 iLink、QQ Bot 与 ServerChan Bot；渠道不同，工作流、会话和记忆依然连贯。 |
 | 🔌 | **多模型、多协议接入** | 同时支持 OpenAI Chat Completions、OpenAI Responses 与 Anthropic Messages，可配置兼容端点并在会话中切换模型。 |
+| 🧩 | **扩展能力** | 支持 [Herdr 自动集成](./docs/doc.md#herdr)，上报任务状态并恢复会话；通过 [Magpie Agent 插件](./docs/doc.md#magpie) 选择模型、接入网关，TUI、WebUI 和单次任务共用配置，关闭接入后可回到原有 Provider。 |
 | 🔍 | **可观测、可恢复、可评估** | 持久 Session、结构化 RunTrace、反馈与 replay/live eval 让每次执行都有迹可循；流式 idle watchdog、循环保护与错误重试为长期运行兜底。 |
 
 无论是在终端里完成一次代码修改、在 WebUI 中经营长期项目，还是让多个 Agent 与聊天通道共同协作，bqagent 都提供同一套可控、可扩展、可恢复的执行底座。
