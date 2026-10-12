@@ -27,7 +27,7 @@ func Run(backend Backend, config Config) error {
 	}
 	config.NoColor = config.NoColor || strings.TrimSpace(os.Getenv("NO_COLOR")) != ""
 	program := tea.NewProgram(
-		NewModel(backend, config),
+		newInlineModel(NewModel(backend, config)),
 		tea.WithContext(config.Context),
 		tea.WithInput(config.Input),
 		tea.WithOutput(config.Output),
