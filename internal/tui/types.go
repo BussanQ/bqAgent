@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	"bqagent/internal/chatcommand"
 	"bqagent/internal/modelcatalog"
 	"bqagent/internal/turn"
 )
@@ -136,17 +137,8 @@ type HistoryMessage struct {
 	Tools   []ToolEvent
 }
 
-type Command struct {
-	Name        string
-	Description string
-	Arguments   []CommandArgument
-}
-
-type CommandArgument struct {
-	Label       string
-	Value       string
-	Description string
-}
+type Command = chatcommand.Command
+type CommandArgument = chatcommand.Argument
 
 type Config struct {
 	// ActivitySink must be nonblocking. States are idle, working and blocked.

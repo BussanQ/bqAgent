@@ -75,6 +75,7 @@ func NewHandler(options HandlerOptions) http.Handler {
 	mux.HandleFunc("/api/v1/webui/auth", handler.auth.handle)
 	mux.HandleFunc("/api/v1/webui/password", handler.handleChangePassword)
 	mux.HandleFunc("/api/v1/status", handler.handleStatus)
+	mux.HandleFunc("/api/v1/webui/commands", handler.handleWebUICommands)
 	mux.HandleFunc("/api/v1/webui/providers", handler.handleProviders)
 	mux.HandleFunc("/api/v1/webui/provider-selection", handler.handleProviderSelection)
 	mux.HandleFunc("/api/v1/webui/provider-models", handler.handleProviderModels)

@@ -20,6 +20,7 @@ import { initialTheme } from "./theme";
 import { shouldGroupToolCalls } from "./tool-groups";
 import type { SentFile, SentImage } from "./attachments";
 import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, ConversationType, GenerationMetrics, GroupEventPayload, GroupInfo, MessageSnapshot, PendingFile, PendingImage, ReasoningEffort, ToolEventPayload, WebUIDoneEvent } from "./types";
+import { createSlashCommands } from "./slash-commands";
 import { APIClient, isCancellation } from "./api-client";
 import { createAuthController } from "./auth-controller";
 import { createProviderController } from "./provider-controller";
@@ -113,7 +114,7 @@ import { createDoctorController } from "./doctor-controller";
     setChatMode: (...args) => setChatMode(...args),
   });
   const workspaceController = createWorkspaceController(api, {
-    onSwitch() { api.abort(); providerController.cancel(); conversationLoadID++; },
+    onSwitch() { slashCommands.close(); api.abort(); providerController.cancel(); conversationLoadID++; },
     get thread() { return thread; },
     get input() { return input; },
     get sendBtn() { return sendBtn; },
@@ -142,7 +143,7 @@ import { createDoctorController } from "./doctor-controller";
     input.disabled = true; sendBtn.disabled = true;
     await workspaceController.initializeWorkspaceSelection(); autoGrow();
   }, () => {
-    doctorController.cancel(); providerController.cancel(); workspaceController.cancel(); currentController?.abort(); conversationLoadID++;
+    slashCommands.close(); doctorController.cancel(); providerController.cancel(); workspaceController.cancel(); currentController?.abort(); conversationLoadID++;
     clearPendingAttachments(); thread.textContent = ""; conversationList.textContent = ""; input.value = "";
     input.disabled = true; sendBtn.disabled = true;
   });
@@ -293,6 +294,7 @@ import { createDoctorController } from "./doctor-controller";
   }
 
   function setConversationType(value: unknown, group?: GroupInfo | null): void {
+    if (conversationType !== normalizeConversationType(value)) slashCommands.close();
     conversationType = normalizeConversationType(value);
     currentGroup = conversationType === "group" ? (group || currentGroup) : null;
     closeGroupAddMenu();
@@ -1119,6 +1121,7 @@ import { createDoctorController } from "./doctor-controller";
   }
 
   function setBusy(on: boolean): void {
+    if (on) slashCommands.close();
     busy = on;
     sendBtn.disabled = !workspaceController.workspaceReady;
     sendBtn.classList.toggle("stop", on);
@@ -1336,6 +1339,7 @@ import { createDoctorController } from "./doctor-controller";
       preparingSend = false;
       return;
     }
+    slashCommands.close();
     var text = input.value.trim();
     var sentAttachments = takePendingAttachmentsForSend(pendingImages, pendingFiles);
     var sentImages = sentAttachments.images;
@@ -1598,6 +1602,7 @@ import { createDoctorController } from "./doctor-controller";
 
   function newChat(type: ConversationType = "default"): void {
     if (busy) return;
+    slashCommands.close();
     setNewConversationMenu(false);
     workspaceController.setCurrentWorkspaceSession("");
     setChatMode("run");
@@ -1738,6 +1743,11 @@ import { createDoctorController } from "./doctor-controller";
     var option = eventElement(event.target)?.closest<HTMLButtonElement>("[data-participant]");
     if (option && option.dataset.participant) chooseMention(option.dataset.participant);
   });
+  const slashCommands = createSlashCommands(api, input, byId<HTMLDivElement>("slash-command-menu"), {
+    url: () => workspaceController.workspaceScopedURL("/api/v1/webui/commands?conversation_type=" + conversationType),
+    disabled: () => busy || preparingSend || !workspaceController.workspaceReady,
+    onComplete: () => { autoGrow(); closeMentionMenu(); },
+  });
   input.addEventListener("input", function () { autoGrow(); renderMentionMenu(); });
   input.addEventListener("paste", function (event) {
     if (busy || !event.clipboardData || !event.clipboardData.items) return;
@@ -1758,6 +1768,7 @@ import { createDoctorController } from "./doctor-controller";
     addClipboardImages(files);
   });
   input.addEventListener("keydown", function (e) {
+    if (e.defaultPrevented) return;
     if (!mentionMenu.hidden) {
       var options = Array.prototype.slice.call(mentionMenu.querySelectorAll<HTMLButtonElement>("button")) as HTMLButtonElement[];
       var activeIndex = options.findIndex(function (option) { return option.classList.contains("active"); });

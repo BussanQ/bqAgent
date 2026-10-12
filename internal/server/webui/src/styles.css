@@ -2168,3 +2168,12 @@
   @media (prefers-reduced-motion: reduce) {
     .galaxy-click-layer, .galaxy-trail-layer { display: none; }
   }
+
+/* Slash command discovery shares the composer without duplicating toolbar actions. */
+.slash-command-menu[hidden] { display: none; }
+.slash-command-menu { position: absolute; z-index: 19; left: 0; bottom: calc(100% + 8px); width: min(560px, calc(100vw - 48px)); max-height: min(320px, 45vh); overflow-y: auto; padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); box-shadow: var(--overlay-shadow); }
+.slash-command-hint { padding: 6px 9px; font-size: 11px; color: var(--text-muted); }
+.slash-command-menu button { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; color: var(--text); background: transparent; text-align: left; box-shadow: none; }
+.slash-command-menu button:hover, .slash-command-menu button.active { background: var(--surface-hover); transform: none; }
+.slash-command-menu strong { font-size: 13px; overflow-wrap: anywhere; }
+.slash-command-menu button span { font-size: 12px; color: var(--text-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
