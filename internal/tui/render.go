@@ -9,6 +9,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -59,15 +60,38 @@ func renderStreaming(value string, width int) string {
 }
 
 func (model Model) renderFinalReply(value string, width int) string {
-	lines := strings.Split(renderMarkdown(value, max(1, width-2), model.config.NoColor), "\n")
-	// Markdown headings and code blocks may start with styled blank lines.
-	// Attach the marker to the first visible line, not to that padding.
-	for i, line := range lines {
-		if strings.TrimSpace(ansi.Strip(line)) != "" {
-			return model.styles.accent.Render("●") + " " + strings.Join(lines[i:], "\n")
+	style := styles.DarkStyleConfig
+	if model.config.NoColor {
+		style = styles.NoTTYStyleConfig
+	}
+	// Own the outer indentation for the whole answer. Removing whitespace
+	// from individual lines would also destroy nested lists and code indentation.
+	zero := uint(0)
+	style.Document.Margin = &zero
+	style.CodeBlock.Margin = &zero
+	style.H1.Prefix = ""
+	bodyWidth := max(1, width-2)
+	rendered := strings.TrimSpace(value)
+	if renderer, err := glamour.NewTermRenderer(glamour.WithStyles(style), glamour.WithWordWrap(bodyWidth)); err == nil {
+		if result, err := renderer.Render(rendered); err == nil {
+			rendered = result
 		}
 	}
-	return ""
+	lines := strings.Split(ansi.Hardwrap(rendered, bodyWidth, false), "\n")
+	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[0])) == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[len(lines)-1])) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	for i := range lines {
+		prefix := "  "
+		if i == 0 {
+			prefix = model.styles.accent.Render("●") + " "
+		}
+		lines[i] = prefix + lines[i]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func toolSummary(event ToolEvent, styles theme) string {

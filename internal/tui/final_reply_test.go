@@ -399,9 +399,58 @@ func TestFinalReplyMarkerSharesFirstMarkdownLine(t *testing.T) {
 			model.styles = newTheme(noColor)
 			rendered := ansi.Strip(model.renderFinalReply(answer, model.contentWidth()))
 			first := strings.Split(rendered, "\n")[0]
-			if !strings.HasPrefix(first, "● ") || !strings.Contains(first, "正文第一行") || strings.Contains(rendered, "结论") {
+			if !strings.HasPrefix(first, "● ") || strings.HasPrefix(first, "●  ") || !strings.Contains(first, "正文第一行") || strings.Contains(rendered, "结论") {
 				t.Fatalf("marker is not on the first content line: %q", rendered)
 			}
+			body := strings.TrimPrefix(first, "● ")
+			if body != strings.TrimLeft(body, " \t") {
+				t.Fatalf("Markdown padding separated the marker from the answer: %q", first)
+			}
+		}
+	}
+}
+
+func TestFinalReplyAlignsWholeBodyAndPreservesNestedIndentation(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		for _, width := range []int{32, 72} {
+			t.Run(fmt.Sprintf("noColor=%t/width=%d", noColor, width), func(t *testing.T) {
+				model := toolDrawerModel(t, 0)
+				model.config.NoColor = noColor
+				model.styles = newTheme(noColor)
+				answer := strings.Repeat("正文自动换行测试 ", 20) + "\n\n下一段正文\n\n# 标题\n\n标题后正文"
+				lines := strings.Split(ansi.Strip(model.renderFinalReply(answer, width)), "\n")
+				for i, line := range lines {
+					if ansi.StringWidth(line) > width {
+						t.Fatalf("answer exceeds width: %q", line)
+					}
+					if i == 0 {
+						line = strings.TrimPrefix(line, "● ")
+					} else if strings.TrimSpace(line) != "" {
+						if !strings.HasPrefix(line, "  ") {
+							t.Fatalf("continuation is not aligned: %q", line)
+						}
+						line = strings.TrimPrefix(line, "  ")
+					} else {
+						continue
+					}
+					if line != strings.TrimLeft(line, " \t") {
+						t.Fatalf("paragraph has extra indentation: %q", line)
+					}
+				}
+				answer = "正文\n\n```text\nbase\n    nested-code\n```\n\n- parent-item\n  - child-item"
+				text := ansi.Strip(model.renderFinalReply(answer, width))
+				indents := make(map[string]int)
+				for _, line := range strings.Split(text, "\n") {
+					for _, marker := range []string{"base", "nested-code", "parent-item", "child-item"} {
+						if index := strings.Index(line, marker); index >= 0 {
+							indents[marker] = ansi.StringWidth(line[:index])
+						}
+					}
+				}
+				if len(indents) != 4 || indents["base"] != 2 || indents["nested-code"] != 6 || indents["child-item"] <= indents["parent-item"] {
+					t.Fatalf("alignment destroyed code or list nesting: %v\n%s", indents, text)
+				}
+			})
 		}
 	}
 }
