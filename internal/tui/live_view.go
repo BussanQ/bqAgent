@@ -30,7 +30,10 @@ func (model Model) streamLines(width int) []string {
 	}
 	rendered := text
 	if final && !model.replyRendered {
-		rendered = renderMarkdown(text, width, model.config.NoColor)
+		// Add the marker before splitting history and the live suffix, so it
+		// belongs to the answer exactly once rather than to every repaint.
+		header := model.styles.accent.Render(ansi.Truncate("● 结论", width, ""))
+		rendered = header + "\n" + renderMarkdown(text, width, model.config.NoColor)
 	}
 	lines := strings.Split(ansi.Hardwrap(rendered, width, false), "\n")
 	if cache != nil {

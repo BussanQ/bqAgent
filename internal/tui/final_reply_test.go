@@ -170,7 +170,7 @@ func TestLongReplyPreservesRenderedSuffixOnResize(t *testing.T) {
 				answer += fmt.Sprintf("record-%02d\n", i)
 			}
 			answer += "```\n\n**最终结论**"
-			want := ansi.Hardwrap(renderMarkdown(answer, model.contentWidth(), noColor), model.contentWidth(), false)
+			want := ansi.Hardwrap(model.styles.accent.Render("● 结论")+"\n"+renderMarkdown(answer, model.contentWidth(), noColor), model.contentWidth(), false)
 			model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: answer}})
 			// The first history entry is the tool group, before the answer prefix.
 			if !model.tools.committed || !strings.Contains(model.printQueue[0], "工具活动") {
@@ -348,6 +348,41 @@ func TestLanguageAnswerAppearsInTerminalOutput(t *testing.T) {
 					t.Fatalf("terminal did not paint the direct answer: %q", painted)
 				}
 				assertLiveFrameFits(t, model)
+			})
+		}
+	}
+}
+
+func TestFinalReplyMarkerAppearsOnceBeforeAnswer(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		for _, paragraphs := range []int{0, 40} {
+			t.Run(fmt.Sprintf("noColor=%t/paragraphs=%d", noColor, paragraphs), func(t *testing.T) {
+				model := toolDrawerModel(t, 10)
+				model.config.NoColor = noColor
+				model.styles = newTheme(noColor)
+				model.sequence = 1
+				model.active = &activeTurn{sequence: 1, cancel: func() {}}
+				model.stream = "正在分析"
+				if strings.Contains(model.View().Content, "● 结论") {
+					t.Fatal("unfinished commentary must not be labeled as a conclusion")
+				}
+				answer := "answer-start\n\n" + strings.Repeat("answer-body\n\n", paragraphs) + "answer-end"
+				model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: answer}})
+				for i := 0; i < 4; i++ {
+					text := ansi.Strip(strings.Join(model.printQueue, "\n") + "\n" + model.View().Content)
+					tools, marker, start := strings.Index(text, "工具活动"), strings.Index(text, "● 结论"), strings.Index(text, "answer-start")
+					if strings.Count(text, "● 结论") != 1 || tools < 0 || marker <= tools || start <= marker {
+						t.Fatal("final marker must appear once between tools and the answer")
+					}
+					// Redrawing and inspecting tools must not prepend another marker.
+					model.toggleToolGroup()
+				}
+				model.commitTurn()
+				model.commitTurn()
+				text := ansi.Strip(strings.Join(model.printQueue, "\n"))
+				if strings.Count(text, "● 结论") != 1 || strings.Count(text, "answer-start") != 1 || strings.Count(text, "answer-end") != 1 {
+					t.Fatal("history commit lost or duplicated the marker or answer")
+				}
 			})
 		}
 	}
