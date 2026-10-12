@@ -463,6 +463,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		// runs concurrently and appends results in the original order.
 		guardAction := loopGuardAction{}
 		if recoveredBashCalls || a.hasSpecialToolCalls(message.ToolCalls, allowPlan) {
+			recoveredSuccesses := map[string]bool{}
 			for _, toolCall := range message.ToolCalls {
 				parsedArguments, err := parseArguments(toolCall.Function.Arguments)
 				if err != nil {
@@ -515,7 +516,12 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 
 				_, toolResult := a.runRegularToolCall(explorationCtx, toolCall)
 				continuations.observe(toolCall, toolResult)
-				action := loopGuard.observeTool(toolCall, toolResult)
+				var action loopGuardAction
+				if recoveredBashCalls {
+					action = loopGuard.observeRecoveredTool(toolCall, toolResult, recoveredSuccesses)
+				} else {
+					action = loopGuard.observeTool(toolCall, toolResult)
+				}
 				if action.recoveryPrompt != "" {
 					toolResult = toolResult + "\n\nRecovery instruction: " + action.recoveryPrompt
 				}

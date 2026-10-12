@@ -10,9 +10,10 @@ import (
 
 const maxRecoveredBashCalls = 16
 
-// Recover only the known compatible-provider shape: a sequence of complete,
-// distinct command objects in one execute_bash call. Do this before recording
-// history so every executed operation has valid arguments and its own result.
+// Recover only the known compatible-provider shape: a sequence of complete
+// command objects in one execute_bash call, preserving repeated commands.
+// Do this before recording history so every executed operation has valid
+// arguments and its own result.
 func recoverConcatenatedBashCalls(calls []ToolCall) ([]ToolCall, bool) {
 	usedIDs := make(map[string]bool, len(calls))
 	for _, call := range calls {
@@ -55,7 +56,6 @@ func recoverConcatenatedBashCalls(calls []ToolCall) ([]ToolCall, bool) {
 func concatenatedBashCommands(raw string) []json.RawMessage {
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	var objects []json.RawMessage
-	seenCommands := map[string]bool{}
 	for {
 		var object json.RawMessage
 		err := decoder.Decode(&object)
@@ -77,14 +77,13 @@ func concatenatedBashCommands(raw string) []json.RawMessage {
 			return nil
 		}
 		var command string
-		if err := fields.Decode(&command); err != nil || strings.TrimSpace(command) == "" || seenCommands[command] {
+		if err := fields.Decode(&command); err != nil || strings.TrimSpace(command) == "" {
 			return nil
 		}
 		closing, err := fields.Token()
 		if err != nil || closing != json.Delim('}') {
 			return nil
 		}
-		seenCommands[command] = true
 		objects = append(objects, object)
 	}
 }

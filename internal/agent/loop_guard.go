@@ -43,6 +43,20 @@ func newLoopGuard(config StageConfig) *loopGuard {
 	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, argumentFailures: map[string]int{}, pathFailures: map[string]int{}}
 }
 
+// Repeated successful operations within a recovered batch are intentional parts
+// of one model response. Count them once for loop detection, but still count
+// every failure and repeated requests in later batches.
+func (guard *loopGuard) observeRecoveredTool(call ToolCall, result string, successes map[string]bool) loopGuardAction {
+	if call.Function.Name == "execute_bash" && !strings.HasPrefix(strings.TrimSpace(result), "Error:") {
+		signature := call.Function.Name + "\x00" + strings.TrimSpace(call.Function.Arguments)
+		if successes[signature] {
+			return loopGuardAction{}
+		}
+		successes[signature] = true
+	}
+	return guard.observeTool(call, result)
+}
+
 func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardAction {
 	if guard == nil {
 		return loopGuardAction{}
