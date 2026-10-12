@@ -86,7 +86,6 @@ type Model struct {
 	panelOpen   bool
 	tools       toolGroup
 	toolMouse   bool
-	liveHeight  int
 	liveCache   *streamViewCache
 	provider    *providerWizard
 
@@ -212,13 +211,6 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, command)
 		model.refreshSuggestions()
 		model.resizeInput()
-	}
-	if model.provider == nil && (len(model.tools.items) > 0 || model.stream != "") {
-		// Once grown, keep the inline frame stable while the drawer is active.
-		// Shrinking it on collapse can leave old rows in native scrollback.
-		model.liveHeight = strings.Count(model.liveView().Content, "\n") + 1
-	} else {
-		model.liveHeight = 0
 	}
 	if len(model.printQueue) > 0 {
 		text := strings.Join(model.printQueue, "\n")
@@ -372,11 +364,7 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 		return nil
 	}
 	viewLines := strings.Split(model.View().Content, "\n")
-	padding := 0
-	for padding < len(viewLines) && viewLines[padding] == "" {
-		padding++
-	}
-	headerY := max(0, model.height-len(viewLines)) + padding
+	headerY := max(0, model.height-len(viewLines))
 	if event.Y != headerY && !(model.height == 0 && event.Y == 0) {
 		return nil
 	}
@@ -647,7 +635,6 @@ func (model *Model) commitToolGroup() tea.Cmd {
 
 func (model *Model) discardToolGroup() tea.Cmd {
 	model.tools = toolGroup{}
-	model.liveHeight = 0
 	model.toolMouse = false
 	return nil
 }
@@ -664,7 +651,6 @@ func (model *Model) clearSession() {
 	model.stream = ""
 	model.liveCache = &streamViewCache{}
 	model.tools = toolGroup{}
-	model.liveHeight = 0
 	model.toolMouse = false
 	model.input.reset()
 	model.closePanel()

@@ -40,8 +40,9 @@ func assertLiveFrameFits(t *testing.T, model Model) {
 	}
 }
 
-func TestToolDrawerToggleKeepsBoundedStableFrameAndSingleHistory(t *testing.T) {
+func TestToolDrawerToggleRestoresSingleRowAndSingleHistory(t *testing.T) {
 	model := toolDrawerModel(t, 80)
+	collapsed := model.View().Content
 	var expandedRows int
 	for i := 0; i < 6; i++ {
 		updated, cmd := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
@@ -55,8 +56,11 @@ func TestToolDrawerToggleKeepsBoundedStableFrameAndSingleHistory(t *testing.T) {
 		if i == 0 {
 			expandedRows = rows
 		}
-		if rows != expandedRows {
-			t.Fatalf("toggle resized the inline frame: %d != %d", rows, expandedRows)
+		if i%2 == 0 && (rows != expandedRows || rows <= strings.Count(collapsed, "\n")+1) {
+			t.Fatalf("expanded drawer has unexpected height: %d", rows)
+		}
+		if i%2 == 1 && content != collapsed {
+			t.Fatalf("collapse did not restore compact frame: %q", content)
 		}
 		if strings.Count(content, "工具活动") != 1 {
 			t.Fatalf("duplicated drawer: %q", content)
@@ -68,7 +72,7 @@ func TestToolDrawerToggleKeepsBoundedStableFrameAndSingleHistory(t *testing.T) {
 			t.Fatal("toggle mutated tool records")
 		}
 	}
-	// Click hit testing includes the blank rows retained after collapse.
+	// The summary remains clickable after the frame shrinks.
 	lines := strings.Split(model.View().Content, "\n")
 	header := 0
 	for !strings.Contains(lines[header], "工具活动") {
@@ -77,7 +81,7 @@ func TestToolDrawerToggleKeepsBoundedStableFrameAndSingleHistory(t *testing.T) {
 	updated, _ := model.Update(tea.MouseClickMsg{X: 1, Y: model.height - len(lines) + header, Button: tea.MouseLeft})
 	model = updated.(Model)
 	if !model.tools.expanded {
-		t.Fatal("padded summary was not clickable")
+		t.Fatal("collapsed summary was not clickable")
 	}
 	model.commitToolGroup()
 	model.commitToolGroup()
@@ -85,6 +89,56 @@ func TestToolDrawerToggleKeepsBoundedStableFrameAndSingleHistory(t *testing.T) {
 	if strings.Count(history, "工具活动") != 1 || strings.Count(history, "file-001.go") != 1 || strings.Count(history, "file-080.go") != 1 {
 		t.Fatal("history lost or duplicated tool details")
 	}
+}
+
+func TestToolDrawerCollapseRestoresCompactLayout(t *testing.T) {
+	for _, method := range []string{"keyboard", "escape", "mouse"} {
+		for _, stream := range []string{"", "正在生成回复\n下一行"} {
+			t.Run(method+"/"+stream, func(t *testing.T) {
+				model := toolDrawerModel(t, 80)
+				model.stream = stream
+				before := model.View()
+				if got, want := strings.Count(before.Content, "\n")+1, 1+len(model.streamLines(model.contentWidth()))+len(model.footerLines()); got != want {
+					t.Fatalf("collapsed tool area must occupy one row: got %d rows, want %d", got, want)
+				}
+				updated, _ := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+				model = updated.(Model)
+				var collapse tea.Msg = tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl}
+				switch method {
+				case "escape":
+					collapse = tea.KeyPressMsg{Code: tea.KeyEscape}
+				case "mouse":
+					rows := strings.Count(model.View().Content, "\n") + 1
+					collapse = tea.MouseClickMsg{X: 1, Y: model.height - rows, Button: tea.MouseLeft}
+				}
+				updated, _ = model.Update(collapse)
+				model = updated.(Model)
+				after := model.View()
+				if model.tools.expanded || after.Content != before.Content {
+					t.Fatalf("collapse left extra rows or lost content: %q", after.Content)
+				}
+				if before.Cursor == nil || after.Cursor == nil || after.Cursor.Position != before.Cursor.Position {
+					t.Fatalf("collapse did not restore input cursor: before=%+v, after=%+v", before.Cursor, after.Cursor)
+				}
+				assertLiveFrameFits(t, model)
+			})
+		}
+	}
+}
+
+func TestToolDrawerAutoCollapseRestoresSingleRow(t *testing.T) {
+	model := toolDrawerModel(t, toolCollapseThreshold-1)
+	model.sequence = 1
+	model.active = &activeTurn{sequence: 1, events: make(chan turnEvent), cancel: func() {}}
+	for i := toolCollapseThreshold; i <= toolCollapseThreshold+1; i++ {
+		updated, _ := model.Update(turnEvent{sequence: 1, kind: "tool", tool: ToolEvent{Kind: "tool_start", ID: fmt.Sprint(i), Name: "read_file"}})
+		model = updated.(Model)
+	}
+	lines := strings.Split(model.View().Content, "\n")
+	if len(lines) != 1+len(model.footerLines()) || !strings.Contains(lines[0], "工具活动") {
+		t.Fatalf("automatic collapse left blank rows: %q", model.View().Content)
+	}
+	assertLiveFrameFits(t, model)
 }
 
 func TestToolDrawerPagingResizeAndLongStreamStayWithinTerminal(t *testing.T) {

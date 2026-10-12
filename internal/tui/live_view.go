@@ -117,11 +117,7 @@ func (model Model) liveView() tea.View {
 		inputY -= len(lines) - limit
 		lines = lines[len(lines)-limit:]
 	}
-	padding := max(0, min(model.liveHeight, limit)-len(lines))
-	if padding > 0 {
-		lines = append(make([]string, padding), lines...)
-		inputY += padding
-	}
+	// Use the current content height so collapsed tools occupy only the summary row.
 	view := tea.NewView(strings.Join(lines, "\n"))
 	view.Cursor = model.input.area.Cursor()
 	if view.Cursor != nil {
