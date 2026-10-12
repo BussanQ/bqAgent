@@ -58,6 +58,18 @@ func renderStreaming(value string, width int) string {
 	return strings.TrimRight(ansi.Hardwrap(value, max(10, width-2), false), "\n")
 }
 
+func (model Model) renderFinalReply(value string, width int) string {
+	lines := strings.Split(renderMarkdown(value, max(1, width-2), model.config.NoColor), "\n")
+	// Markdown headings and code blocks may start with styled blank lines.
+	// Attach the marker to the first visible line, not to that padding.
+	for i, line := range lines {
+		if strings.TrimSpace(ansi.Strip(line)) != "" {
+			return model.styles.accent.Render("●") + " " + strings.Join(lines[i:], "\n")
+		}
+	}
+	return ""
+}
+
 func toolSummary(event ToolEvent, styles theme) string {
 	sequence := event.Seq
 	if event.Kind == "tool_start" {
