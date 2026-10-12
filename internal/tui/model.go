@@ -64,7 +64,6 @@ type Model struct {
 	startedAt        time.Time
 	stream           string
 	reply            string
-	replyOffset      int
 	active           *activeTurn
 	sequence         uint64
 	queued           *queuedPrompt
@@ -99,7 +98,13 @@ type Model struct {
 	initialSent   bool
 	printQueue    []string
 	historyPrints int
+	historyQueue  []historyPrint
 	statusNotice  string
+}
+
+type historyPrint struct {
+	text  string
+	after tea.Cmd
 }
 
 type startupMsg struct{}
@@ -226,11 +231,21 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.refreshSuggestions()
 		model.resizeInput()
 	}
+	model.flushOverflowReply()
 	if len(model.printQueue) > 0 {
-		text := strings.Join(model.printQueue, "\n")
+		model.historyQueue = append(model.historyQueue, historyPrint{
+			text: strings.Join(model.printQueue, "\n"), after: tea.Batch(commands...),
+		})
 		model.printQueue = nil
+		commands = nil
+	}
+	if model.historyPrints == 0 && len(model.historyQueue) > 0 {
+		// A new prompt may arrive while a long answer is being printed. Finish
+		// the current batch before inserting the next one, preserving turn order.
+		batch := model.historyQueue[0]
+		model.historyQueue = model.historyQueue[1:]
 		model.historyPrints++
-		return model, tea.Sequence(tea.Println(text), func() tea.Msg { return historyPrintedMsg{} }, tea.Batch(commands...))
+		commands = append(commands, tea.Sequence(printHistoryLines(batch.text, model.contentWidth()), func() tea.Msg { return historyPrintedMsg{} }, batch.after))
 	}
 	return model, tea.Batch(commands...)
 }
@@ -264,17 +279,6 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	}
 	switch name {
 	case "pgup", "pgdown":
-		if model.reply != "" && !model.tools.expanded {
-			_, height, _ := model.liveBudgets()
-			count := max(1, height-1)
-			delta := count
-			if name == "pgup" {
-				delta = -delta
-			}
-			limit := max(0, len(model.streamLines(model.contentWidth()))-count)
-			model.replyOffset = min(limit, max(0, min(model.replyOffset, limit)+delta))
-			return nil
-		}
 		if len(model.tools.items) > 0 && (model.tools.expanded || len(model.tools.items) <= toolCollapseThreshold) {
 			delta := max(1, model.toolViewportHeight()-2)
 			if name == "pgup" {
@@ -292,7 +296,7 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		return model.requestQuit()
 	case "ctrl+l":
 		disableMouse := model.discardToolGroup()
-		model.reply, model.replyOffset = "", 0
+		model.reply = ""
 		model.input.reset()
 		model.closePanel()
 		model.resizeInput()
@@ -569,7 +573,6 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 		if event.result.Outcome.Notice != "" {
 			model.reply += "\n\n" + event.result.Outcome.Notice
 		}
-		model.replyOffset = 0
 		model.stream = ""
 		model.liveCache = &streamViewCache{}
 	}
@@ -598,6 +601,7 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	if model.pendingQuit {
 		return []tea.Cmd{model.commitTurn(), tea.Quit}
 	}
+	model.flushOverflowReply()
 	if model.queued != nil {
 		queued := model.queued.value
 		model.queued = nil
@@ -685,15 +689,47 @@ func (model *Model) enqueuePrint(lines ...string) {
 	}
 }
 
-// Keep the completed answer below the interactive tools until the next turn
-// or exit, then commit the tools and answer together exactly once.
+// Short answers can remain fully visible below the interactive tools. Long
+// answers are committed immediately so native terminal scrolling shows them
+// in full without a reply pager or an oversized mutable frame.
+func (model *Model) flushOverflowReply() {
+	if model.reply == "" {
+		return
+	}
+	_, height, _ := model.liveBudgets()
+	if len(model.streamLines(model.contentWidth())) > height {
+		model.flushReply()
+	}
+}
+
+func (model *Model) flushReply() {
+	if model.reply == "" {
+		return
+	}
+	model.enqueuePrint(renderMarkdown(model.reply, model.contentWidth(), model.config.NoColor))
+	model.reply = ""
+	model.liveCache = &streamViewCache{}
+}
+
+// Insert at most one physical row at a time. A single Println longer than the
+// terminal can push the old live frame into scrollback before clearing it,
+// leaving duplicate drafts and tool rows behind. The live frame reserves one
+// terminal row, so single-row insertions keep it inside the editable screen.
+func printHistoryLines(text string, width int) tea.Cmd {
+	lines := strings.Split(ansi.Hardwrap(text, width, false), "\n")
+	commands := make([]tea.Cmd, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			line = " " // Bubble Tea ignores an empty Println message.
+		}
+		commands = append(commands, tea.Println(line))
+	}
+	return tea.Sequence(commands...)
+}
+
 func (model *Model) commitTurn() tea.Cmd {
 	command := model.commitToolGroup()
-	if model.reply != "" {
-		model.enqueuePrint(renderMarkdown(model.reply, model.contentWidth(), model.config.NoColor))
-		model.reply, model.replyOffset = "", 0
-		model.liveCache = &streamViewCache{}
-	}
+	model.flushReply()
 	return command
 }
 
@@ -722,7 +758,7 @@ func (model *Model) clearSession() {
 	model.liveRunes = 0
 	model.queued = nil
 	model.stream = ""
-	model.reply, model.replyOffset = "", 0
+	model.reply = ""
 	model.liveCache = &streamViewCache{}
 	model.tools = toolGroup{}
 	model.toolMouse = false
@@ -1069,7 +1105,7 @@ func (model Model) helpText() string {
   Esc 打断当前回复；空闲时关闭面板/收起工具详情
   Ctrl+L 清理当前视口和草稿（保留 Session）
   Ctrl+O 展开/收起已合并的工具详情（也可点击工具汇总行）
-  PgUp/PgDn 翻页查看最终结论；展开工具时翻页查看工具详情
+  回答完整展示，使用终端滚动查看；PgUp/PgDn 仅翻页查看工具详情
 
 本地命令
   /help 帮助    /provider 配置模型 Provider    /clear 新建会话并清理显示    /exit 安全退出

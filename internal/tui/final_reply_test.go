@@ -91,7 +91,7 @@ func TestFinalReplyCommitsOnceBeforeNextTurnOrExit(t *testing.T) {
 	}
 }
 
-func TestFinalReplyPagingKeepsWholeConclusion(t *testing.T) {
+func TestLongFinalReplyPrintsWholeConclusionWithoutPaging(t *testing.T) {
 	model := toolDrawerModel(t, 10)
 	model.sequence = 1
 	model.active = &activeTurn{sequence: 1, cancel: func() {}}
@@ -100,21 +100,23 @@ func TestFinalReplyPagingKeepsWholeConclusion(t *testing.T) {
 		lines = append(lines, fmt.Sprintf("结论第%03d行", i))
 	}
 	model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: strings.Join(lines, "\n\n")}})
-	if !strings.Contains(model.View().Content, lines[0]) {
-		t.Fatal("long conclusion did not start at the first line")
+	printed := strings.Join(model.printQueue, "\n")
+	for _, line := range lines {
+		if strings.Count(printed, line) != 1 {
+			t.Fatalf("completion did not immediately print %q exactly once", line)
+		}
 	}
-	for i := 0; i < 30 && !strings.Contains(model.View().Content, lines[59]); i++ {
-		model.handleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if model.reply != "" || strings.Contains(model.View().Content, "结论") || len(model.tools.items) != 10 || model.tools.expanded {
+		t.Fatal("long reply remained paged or changed the tool drawer")
+	}
+	model.printQueue = nil // History has been emitted by Update.
+	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyPgDown}, {Code: tea.KeyPgUp}, {Code: 'o', Mod: tea.ModCtrl}, {Code: 'o', Mod: tea.ModCtrl}} {
+		updated, cmd := model.Update(key)
+		model = updated.(Model)
+		if cmd != nil {
+			t.Fatal("paging/toggling tools reprinted the completed answer")
+		}
 		assertLiveFrameFits(t, model)
-	}
-	if !strings.Contains(model.View().Content, lines[59]) {
-		t.Fatal("last conclusion line is unreachable")
-	}
-	for i := 0; i < 30; i++ {
-		model.handleKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
-	}
-	if !strings.Contains(model.View().Content, lines[0]) {
-		t.Fatal("first conclusion line is unreachable")
 	}
 	for _, size := range [][2]int{{18, 9}, {72, 24}} {
 		updated, _ := model.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
@@ -122,11 +124,30 @@ func TestFinalReplyPagingKeepsWholeConclusion(t *testing.T) {
 		assertLiveFrameFits(t, model)
 	}
 	model.commitTurn()
-	printed := strings.Join(model.printQueue, "\n")
-	for _, line := range lines {
-		if strings.Count(printed, line) != 1 {
-			t.Fatalf("paging lost or duplicated %q in committed history", line)
-		}
+	model.commitTurn()
+	if strings.Contains(strings.Join(model.printQueue, "\n"), "结论") {
+		t.Fatal("next turn reprinted the completed answer")
+	}
+}
+
+func TestReplyBecomingTooTallOnResizePrintsOnce(t *testing.T) {
+	model := toolDrawerModel(t, 0)
+	model.sequence = 1
+	model.active = &activeTurn{sequence: 1, cancel: func() {}}
+	answer := "第一段\n\n第二段\n\n第三段"
+	model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: answer}})
+	if model.reply == "" || len(model.printQueue) != 0 {
+		t.Fatal("short answer should be fully visible in the live area")
+	}
+	updated, command := model.Update(tea.WindowSizeMsg{Width: 18, Height: 6})
+	model = updated.(Model)
+	if command == nil || model.reply != "" || model.historyPrints != 1 {
+		t.Fatal("resize should print the whole answer instead of adding a pager")
+	}
+	updated, _ = model.Update(tea.WindowSizeMsg{Width: 72, Height: 24})
+	model = updated.(Model)
+	if model.reply != "" || model.historyPrints != 1 {
+		t.Fatal("growing the terminal reintroduced or reprinted the reply")
 	}
 }
 
@@ -184,7 +205,7 @@ func TestLanguageAnswerAppearsInTerminalOutput(t *testing.T) {
 				model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: answer, Streamed: true}})
 				probe := newInlineRendererProbe(model.width)
 				probe.draw(t, model.View())
-				painted := ansi.Strip(probe.lastOutput)
+				painted := ansi.Strip(strings.Join(model.printQueue, "\n") + probe.lastOutput)
 				if !strings.Contains(painted, "Shell/Bash") || !strings.Contains(painted, "Python") {
 					t.Fatalf("terminal did not paint the direct answer: %q", painted)
 				}

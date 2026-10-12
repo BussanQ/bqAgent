@@ -14,10 +14,12 @@ import (
 )
 
 // A small terminal surface for checking text survival, not just whether a
-// Println command was emitted. The fixture stays away from screen boundaries.
+// Println command was emitted. Finite-height mode also models native scrollback
+// and cursor clamping, so oversized history insertions cannot hide duplicates.
 type historyScreen struct {
-	x, y int
-	rows map[int]map[int]string
+	x, y        int
+	top, height int
+	rows        map[int]map[int]string
 }
 
 func (s *historyScreen) write(output string) {
@@ -30,6 +32,9 @@ func (s *historyScreen) write(output string) {
 			s.x = 0
 		case "\n", "\x1bD":
 			s.y++
+			if s.height > 0 && s.y >= s.top+s.height {
+				s.top++
+			}
 		case "\x1bM":
 			s.y--
 		case "\b":
@@ -42,8 +47,14 @@ func (s *historyScreen) write(output string) {
 				switch last {
 				case 'A':
 					s.y -= max(1, count)
+					if s.height > 0 {
+						s.y = max(s.top, s.y)
+					}
 				case 'B':
 					s.y += max(1, count)
+					if s.height > 0 {
+						s.y = min(s.top+s.height-1, s.y)
+					}
 				case 'C':
 					s.x += max(1, count)
 				case 'D':
@@ -58,7 +69,7 @@ func (s *historyScreen) write(output string) {
 					}
 				case 'J':
 					for y := range s.rows {
-						if count == 2 || (count == 0 && y > s.y) {
+						if (count == 2 && (s.height == 0 || y >= s.top)) || (count == 0 && y > s.y) {
 							delete(s.rows, y)
 						}
 					}
@@ -75,7 +86,9 @@ func (s *historyScreen) write(output string) {
 						if y >= s.y {
 							y += max(1, count)
 						}
-						rows[y] = row
+						if s.height == 0 || y < s.top+s.height {
+							rows[y] = row
+						}
 					}
 					s.rows = rows
 				}
@@ -113,6 +126,8 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 		{name: "next question", answer: "line two line three"},
 		{name: "multiline answer", answer: "line two\n\nline three"},
 		{name: "queued question", queued: true, answer: "line two\n\nline three"},
+		{name: "long answer", answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
+		{name: "long queued answer", queued: true, answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
 	} {
 		for _, flushBetween := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/flush=%t", test.name, flushBetween), func(t *testing.T) {
@@ -121,7 +136,7 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 				base.resizeInput()
 				var model tea.Model = newInlineModel(base)
 				probe := newInlineRendererProbe(base.width)
-				screen := historyScreen{y: 100, rows: make(map[int]map[int]string)}
+				screen := historyScreen{y: 100, top: 100, height: base.height, rows: make(map[int]map[int]string)}
 				draw := func() {
 					view := model.View()
 					content := uv.NewStyledString(view.Content)
@@ -229,6 +244,9 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 						}
 					}
 					update(turnEvent{sequence: uint64(i), kind: "done", result: TurnResult{Reply: answer}})
+					if strings.HasPrefix(test.name, "long") && (!strings.Contains(screen.text(), fmt.Sprintf("answer-%d", i)) || strings.Count(screen.text(), "last paragraph") != i || strings.Count(screen.text(), "long paragraph") != 60*i) {
+						t.Fatalf("long reply not fully visible immediately after completion: %s", strings.TrimSpace(screen.text()))
+					}
 				}
 				text := screen.text()
 				for i := 1; i <= 3; i++ {
@@ -236,12 +254,66 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 						t.Fatalf("question-%d appears %d times in terminal:\n%s", i, n, strings.TrimSpace(text))
 					}
 				}
-				for i := 1; i <= 2; i++ {
+				for i := 1; i <= 3; i++ {
 					if n := strings.Count(text, fmt.Sprintf("answer-%d", i)); n != 1 {
 						t.Fatalf("answer-%d appears %d times: %s", i, n, strings.TrimSpace(text))
 					}
 				}
 			})
 		}
+	}
+}
+
+func TestLongReplyHistoryFinishesBeforeNextQuestion(t *testing.T) {
+	model := toolDrawerModel(t, 0)
+	model.sequence = 1
+	model.active = &activeTurn{sequence: 1, cancel: func() {}}
+	updated, first := model.Update(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: strings.Repeat("answer paragraph\n\n", 60) + "answer end"}})
+	model = updated.(Model)
+	model.input.setValue("next question")
+	updated, next := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(Model)
+	if first == nil || next != nil || model.historyPrints != 1 || len(model.historyQueue) != 1 {
+		t.Fatal("next question started printing before the answer finished")
+	}
+	var printed []string
+	var collect func(tea.Cmd)
+	collect = func(command tea.Cmd) {
+		if command == nil {
+			return
+		}
+		message := command()
+		if _, ok := message.(tea.BatchMsg); ok {
+			return // Do not launch backend I/O or spinner timers.
+		}
+		value := reflect.ValueOf(message)
+		commands := reflect.TypeOf([]tea.Cmd{})
+		if value.IsValid() && value.Type().ConvertibleTo(commands) {
+			for _, child := range value.Convert(commands).Interface().([]tea.Cmd) {
+				collect(child)
+			}
+		} else if reflect.TypeOf(message) == reflect.TypeOf(tea.Println("")()) {
+			line := value.FieldByName("messageBody").String()
+			if strings.Contains(line, "\n") || ansi.StringWidth(line) > model.contentWidth() {
+				t.Fatal("history insertion exceeds one physical row")
+			}
+			printed = append(printed, line)
+		}
+	}
+	collect(first)
+	if text := strings.Join(printed, "\n"); !strings.Contains(text, "answer end") || strings.Contains(text, "next question") {
+		t.Fatal("answer history was interrupted or mixed with the next question")
+	}
+	updated, next = model.Update(historyPrintedMsg{})
+	model = updated.(Model)
+	collect(next)
+	text := strings.Join(printed, "\n")
+	if strings.Count(text, "answer paragraph") != 60 || strings.Count(text, "next question") != 1 || strings.Index(text, "answer end") > strings.Index(text, "next question") {
+		t.Fatal("history lost, duplicated or reordered the answer and next question")
+	}
+	updated, next = model.Update(historyPrintedMsg{})
+	model = updated.(Model)
+	if next != nil || model.historyPrints != 0 || len(model.historyQueue) != 0 {
+		t.Fatal("history output did not finish")
 	}
 }

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -38,26 +37,6 @@ func (model Model) streamLines(width int) []string {
 		cache.text, cache.width, cache.lines, cache.final = text, width, lines, final
 	}
 	return lines
-}
-
-func (model Model) replyViewport(lines []string, width, height int) []string {
-	if height <= 0 {
-		return nil
-	}
-	if len(lines) <= height {
-		return lines
-	}
-	count := max(1, height-1)
-	start := min(model.replyOffset, len(lines)-count)
-	visible := append([]string{}, lines[start:start+count]...)
-	if height > 1 {
-		hint := fmt.Sprintf("结论 %d–%d/%d · PgUp/PgDn 翻页", start+1, start+count, len(lines))
-		if model.tools.expanded {
-			hint = fmt.Sprintf("结论 %d–%d/%d · 收起工具后 PgUp/PgDn 翻页", start+1, start+count, len(lines))
-		}
-		visible = append(visible, model.styles.dim.Render(ansi.Truncate(hint, width, "…")))
-	}
-	return visible
 }
 
 func (model Model) frameLimit() int {
@@ -136,7 +115,7 @@ func (model Model) liveView() tea.View {
 	lines := append([]string{}, model.tools.viewport(model.styles, width, toolHeight)...)
 	stream := model.streamLines(width)
 	if model.reply != "" {
-		lines = append(lines, model.replyViewport(stream, width, streamHeight)...)
+		lines = append(lines, stream...)
 	} else if streamHeight > 0 && len(stream) > 0 {
 		lines = append(lines, stream[max(0, len(stream)-streamHeight):]...)
 	}
