@@ -26,6 +26,7 @@ import (
 	"bqagent/internal/taskstate"
 	"bqagent/internal/tools"
 	apptrace "bqagent/internal/trace"
+	"bqagent/internal/turn"
 	"bqagent/internal/workspace"
 )
 
@@ -99,6 +100,7 @@ type FileAttachment struct {
 }
 
 type TurnRequest struct {
+	TaskRelation turn.Relation `json:"task_relation,omitempty"`
 	// WorkspaceID routes WebUI control requests to a workspace-specific service.
 	// A Service itself ignores this field after routing.
 	WorkspaceID string `json:"workspace_id,omitempty"`
@@ -156,6 +158,8 @@ type CacheMetrics struct {
 }
 
 type TurnResponse struct {
+	TurnID           string             `json:"turn_id"`
+	Outcome          turn.Outcome       `json:"outcome"`
 	SessionID        string             `json:"session_id"`
 	Reply            string             `json:"reply"`
 	ReplyKind        string             `json:"reply_kind,omitempty"`
@@ -206,6 +210,7 @@ func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *Generation
 }
 
 type TurnOptions struct {
+	MessageSink turn.Sink
 	// SessionSink observes the canonical session before model work starts.
 	// Callers must keep it nonblocking.
 	SessionSink       func(string)
@@ -376,6 +381,29 @@ func commandFromArgs(args map[string]any) string {
 }
 
 func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnRequest, options TurnOptions) (response TurnResponse, err error) {
+	turnID := strings.TrimSpace(request.TurnID)
+	if turnID == "" {
+		turnID = turn.NewID()
+	}
+	if !validTurnID(turnID) {
+		return TurnResponse{}, fmt.Errorf("invalid turn_id")
+	}
+	if !request.TaskRelation.Valid() {
+		return TurnResponse{}, fmt.Errorf("invalid task_relation")
+	}
+	defer func() {
+		response.TurnID = turnID
+		if err != nil {
+			status := turn.Failed
+			if errors.Is(err, context.Canceled) {
+				status = turn.Interrupted
+			}
+			response.Outcome.Set(status, err.Error())
+		} else if response.Outcome.Status == "" {
+			response.Outcome.Set(turn.Completed, "")
+		}
+	}()
+
 	message := strings.TrimSpace(request.Message)
 	if isStopCommand(message) {
 		mode := ChatModeRun
@@ -401,11 +429,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if _, isModeCommand := chatModeCommand(message); isModeCommand && (len(request.Images) > 0 || len(request.Files) > 0) {
 		return TurnResponse{}, fmt.Errorf("模式切换命令不能携带图片或文件附件")
 	}
-	turnID := strings.TrimSpace(request.TurnID)
-	if turnID != "" {
-		if !validTurnID(turnID) {
-			return TurnResponse{}, fmt.Errorf("invalid turn_id")
-		}
+	{
 		turnCtx, cancel := context.WithCancel(ctx)
 		unregister, registered := service.activeTurns.Register(turnID, cancel)
 		if !registered {
@@ -652,7 +676,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	var runRecorder *apptrace.Recorder
 	if service.traceStore != nil {
 		var traceErr error
-		runRecorder, traceErr = service.traceStore.Create(conversation.Session.ID(), apptrace.NewID("turn"), "", string(mode), effectiveModel, systemPrompt)
+		runRecorder, traceErr = service.traceStore.Create(conversation.Session.ID(), turnID, "", string(mode), effectiveModel, systemPrompt)
 		if traceErr != nil {
 			fmt.Fprintf(turnErrorWriter, "trace create failed: %v\n", traceErr)
 		}
@@ -669,7 +693,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			fmt.Fprintf(turnErrorWriter, "trace session link failed: %v\n", setErr)
 		}
 		defer func() {
-			if finishErr := runRecorder.Finish(response.Reply, err); finishErr != nil {
+			if finishErr := runRecorder.FinishTurn(response.Reply, err, response.Outcome); finishErr != nil {
 				fmt.Fprintf(turnErrorWriter, "trace finish failed: %v\n", finishErr)
 			}
 			if response.RunID == "" {
@@ -896,6 +920,9 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		WorkspaceRoot:   service.workspaceRoot,
 		ProgressWriter:  progressWriter,
 		TokenSink:       options.TokenSink,
+		TurnID:          turnID,
+		MessageSink:     options.MessageSink,
+		TaskRelation:    request.TaskRelation,
 		ToolEventSink:   options.ToolEventSink,
 		Context:         service.context,
 		Stage:           options.Stage,
@@ -908,20 +935,25 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if options.MaxIterations > 0 {
 		maxTurns = options.MaxIterations
 	}
-	result, updatedMessages, generation, err := app.RunConversationTurnWithMetrics(ctx, conversation.Messages, maxTurns)
+	turnResult, err := app.RunTurn(ctx, conversation.Messages, maxTurns)
+	result, updatedMessages, generation := turnResult.Reply, turnResult.Messages, turnResult.Generation
+	response = TurnResponse{SessionID: conversation.Session.ID(), Outcome: turnResult.Outcome, Mode: mode, ConversationType: conversationType}
 	if err != nil {
 		conversation.Messages = agent.BoundWorkingMessages(updatedMessages, service.context)
 		// Best effort: even a failed model/tool request may already have pruned a
 		// legacy oversized transcript into a safe working context for the retry.
 		_ = conversation.SaveWorkingContext()
 		writeTurnError(turnErrorWriter, err)
-		markConversationFailed(conversation, err)
-		return TurnResponse{}, err
+		if markErr := conversation.Session.MarkTurnEnded(turnResult.Outcome); markErr != nil {
+			log.Printf("session finish failed: %v", markErr)
+		}
+		return response, err
 	}
 	conversation.Messages = updatedMessages
-	if err := service.completeConversation(conversation); err != nil {
+	if err := service.finishConversationTurn(conversation, turnResult.Outcome); err != nil {
 		writeTurnError(turnErrorWriter, err)
-		return TurnResponse{}, err
+		markConversationFailed(conversation, err)
+		return response, err
 	}
 	if mode == ChatModeRun {
 		service.appendMemory(effectiveText, result)
@@ -934,6 +966,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 	return TurnResponse{
 		SessionID:        conversation.Session.ID(),
+		Outcome:          turnResult.Outcome,
 		Reply:            result,
 		ReplyKind:        replyKind,
 		RunID:            runID,
@@ -944,12 +977,19 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}, nil
 }
 
-func (service *Service) completeConversation(conversation *appruntime.Conversation) error {
+func (service *Service) finishConversationTurn(conversation *appruntime.Conversation, outcome turn.Outcome) error {
 	conversation.Messages = agent.BoundWorkingMessages(conversation.Messages, service.context)
 	if err := conversation.SaveWorkingContext(); err != nil {
 		return err
 	}
-	return conversation.MarkCompleted()
+	if conversation.Session == nil {
+		return nil
+	}
+	return conversation.Session.MarkTurnEnded(outcome)
+}
+
+func (service *Service) completeConversation(conversation *appruntime.Conversation) error {
+	return service.finishConversationTurn(conversation, turn.Outcome{Status: turn.Completed})
 }
 
 func (service *Service) handleFeedbackCommand(message string, savedSession *session.Session) (string, bool, error) {

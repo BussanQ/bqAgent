@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bqagent/internal/turn"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -57,6 +58,12 @@ func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string
 	if err := ctx.Err(); err != nil {
 		return "", messages, err
 	}
+	if state := turnRun(ctx); state == nil || state.outcome.Status == turn.Completed {
+		setTurnStop(ctx, turn.BudgetLimited, reason)
+	}
+	if guard, ok := ctx.Value(continuationContextKey{}).(*continuationGuard); ok {
+		guard.stopped = true
+	}
 	a.writeStageProgress(fmt.Sprintf("Preparing stage summary after %d iterations", iterations))
 	request, compacted := a.buildRequestMessages(ctx, messages, nil, ChatCompletionOptions{})
 	if compacted != nil {
@@ -66,7 +73,7 @@ func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string
 		return "", messages, err
 	}
 	request = append(request, map[string]any{
-		"role":    "user",
+		"role":    "developer",
 		"content": fmt.Sprintf("The current interactive analysis stage must stop now because %s. Based only on the work and tool results above, provide a concise checkpoint with exactly these sections: 已发现, 未完成, 建议下一步. State that the user can reply ‘继续’ to resume from this session. Do not call tools.", reason),
 	})
 	message, summaryErr := a.client.CreateChatCompletion(ctx, a.model, request, nil)

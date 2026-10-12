@@ -75,6 +75,7 @@ func (item *openAIResponseOutput) UnmarshalJSON(data []byte) error {
 }
 
 type openAIResponseEnvelope struct {
+	EndTurn           *bool  `json:"end_turn,omitempty"`
 	Status            string `json:"status"`
 	IncompleteDetails *struct {
 		Reason string `json:"reason"`
@@ -84,7 +85,7 @@ type openAIResponseEnvelope struct {
 }
 
 func completionFromOpenAIResponse(response openAIResponseEnvelope) CompletionState {
-	state := CompletionState{StopReason: strings.TrimSpace(response.Status)}
+	state := CompletionState{StopReason: strings.TrimSpace(response.Status), EndTurn: response.EndTurn}
 	if response.IncompleteDetails != nil {
 		state.IncompleteReason = strings.TrimSpace(response.IncompleteDetails.Reason)
 	}
@@ -275,8 +276,8 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	if finalOutput != nil {
 		final := assistantFromOpenAIResponse(openAIResponseEnvelope{Output: finalOutput})
 		message.ToolCalls, message.ResponseItems, message.Phase = final.ToolCalls, final.ResponseItems, final.Phase
+		message.Content = final.Content
 		if final.Content != "" {
-			message.Content = final.Content
 			if content.Len() == 0 && onChunk != nil {
 				onChunk(final.DisplayContent())
 			}
@@ -310,8 +311,8 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 		}
 		final := assistantFromOpenAIResponse(openAIResponseEnvelope{Output: output})
 		message.ResponseItems, message.Phase = final.ResponseItems, final.Phase
+		message.Content = final.Content
 		if final.Content != "" {
-			message.Content = final.Content
 			if content.Len() == 0 && onChunk != nil {
 				onChunk(final.DisplayContent())
 			}

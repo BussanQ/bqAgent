@@ -13,6 +13,7 @@ import (
 	"bqagent/internal/taskstate"
 	"bqagent/internal/tools"
 	apptrace "bqagent/internal/trace"
+	"bqagent/internal/turn"
 )
 
 const (
@@ -107,6 +108,9 @@ type StageConfig struct {
 }
 
 type Options struct {
+	TurnID          string
+	MessageSink     turn.Sink
+	TaskRelation    turn.Relation
 	TaskStore       taskstate.Store
 	SystemPrompt    string
 	Prompt          PromptSnapshot
@@ -129,6 +133,9 @@ type Options struct {
 }
 
 type Agent struct {
+	turnID          string
+	messageSink     turn.Sink
+	taskRelation    turn.Relation
 	taskStore       taskstate.Store
 	task            *taskstate.State
 	client          ChatCompletionClient
@@ -200,6 +207,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 	}
 
 	app := &Agent{
+		turnID: options.TurnID, messageSink: options.MessageSink, taskRelation: options.TaskRelation,
 		taskStore:       options.TaskStore,
 		client:          client,
 		model:           model,
@@ -246,21 +254,18 @@ func (a *Agent) Run(ctx context.Context, userMessage string, maxIterations int) 
 }
 
 func (a *Agent) RunConversation(ctx context.Context, messages []map[string]any, maxIterations int) (string, error) {
-	result, _, err := a.runConversation(ctx, duplicateMessages(messages), maxIterations, a.planner != nil)
-	return result, err
+	result, err := a.RunTurn(ctx, messages, maxIterations)
+	return result.Reply, err
 }
 
 func (a *Agent) RunConversationTurn(ctx context.Context, messages []map[string]any, maxIterations int) (string, []map[string]any, error) {
-	return a.runConversation(ctx, duplicateMessages(messages), maxIterations, a.planner != nil)
+	result, err := a.RunTurn(ctx, messages, maxIterations)
+	return result.Reply, result.Messages, err
 }
 
 func (a *Agent) RunConversationTurnWithMetrics(ctx context.Context, messages []map[string]any, maxIterations int) (string, []map[string]any, TurnGenerationMetrics, error) {
-	metricsCtx, collector := withTurnGenerationCollector(ctx)
-	result, updatedMessages, err := a.runConversation(metricsCtx, duplicateMessages(messages), maxIterations, a.planner != nil)
-	if err != nil {
-		return result, updatedMessages, TurnGenerationMetrics{}, err
-	}
-	return result, updatedMessages, collector.metricsFor(result), nil
+	result, err := a.RunTurn(ctx, messages, maxIterations)
+	return result.Reply, result.Messages, result.Generation, err
 }
 
 func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, maxIterations int, allowPlan bool) (result string, updatedMessages []map[string]any, err error) {
@@ -319,8 +324,16 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			requestErr error
 		)
 		modelStartedAt := time.Now()
+		state := turnRun(ctx)
+		itemID := state.newItem()
+		var streamedText strings.Builder
 		if a.stream {
 			onChunk := func(chunk string) {
+				streamedText.WriteString(chunk)
+				state.emit(itemID, "message.updated", "draft", streamedText.String())
+				if a.messageSink != nil {
+					return
+				}
 				sink := a.tokenSink
 				if sink == nil {
 					sink = a.logWriter
@@ -412,6 +425,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			a.logf("[Agent] %s\n", message.DisplayContent())
 		}
 		if truncatedToolBatch {
+			state.emit(itemID, "message.completed", "commentary", contentText(message.Content))
 			truncatedToolRecoveries++
 			var recoveryErr error
 			updatedMessages, recoveryErr = a.appendTruncatedToolRecovery(updatedMessages, message.ToolCalls, truncatedToolRecoveries)
@@ -420,6 +434,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				return "", updatedMessages, recoveryErr
 			}
 			if truncatedToolRecoveries > maxTruncatedToolRecoveries {
+				setTurnStop(ctx, turn.Blocked, "tool_output_truncated")
 				return truncatedToolRecoveryStoppedMessage, updatedMessages, nil
 			}
 			continue
@@ -427,6 +442,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		truncatedToolRecoveries = 0
 		if len(message.ToolCalls) == 0 {
 			if reason := a.continuationReason(ctx, message); reason != "" {
+				state.emit(itemID, "message.completed", "commentary", contentText(message.Content))
 				reason = continuations.recoveryPrompt(reason)
 				a.writeProgress("任务尚未完成，继续执行与验证。")
 				updatedMessages, err = a.appendContinuation(updatedMessages, reason)
@@ -438,9 +454,13 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 			finalContent := message.FinalContent()
 			if message.Content != nil && strings.TrimSpace(finalContent) != "" {
+				if state != nil {
+					state.finalItem = itemID
+				}
 				return finalContent, updatedMessages, nil
 			}
 
+			state.emit(itemID, "message.completed", "commentary", "")
 			emptyFinalRecoveries++
 			if emptyFinalRecoveries > maxEmptyFinalRecoveries {
 				return "", updatedMessages, fmt.Errorf("%w after %d consecutive attempts", errEmptyFinalResponse, emptyFinalRecoveries)
@@ -453,6 +473,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 			continue
 		}
+		state.emit(itemID, "message.completed", "commentary", contentText(message.Content))
 		emptyFinalRecoveries = 0
 		if !a.stageConfig.ImmediateProgress {
 			a.writeStageProgress(fmt.Sprintf("Analyzing tool requests in iteration %d", actualIterations))
@@ -532,6 +553,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					return "", updatedMessages, recordErr
 				}
 				if action.checkpointReason != "" && !action.todoCheckpoint {
+					setTurnStop(ctx, turn.Blocked, action.checkpointReason)
 					return a.finishStageCheckpoint(ctx, updatedMessages, action.checkpointReason, actualIterations)
 				}
 				guardAction = guardAction.merge(action)
@@ -568,6 +590,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 		}
 		if guardAction.checkpointReason != "" && (!guardAction.todoCheckpoint || loopGuard.todoNoProgressCount > 1) {
+			setTurnStop(ctx, turn.Blocked, guardAction.checkpointReason)
 			return a.finishStageCheckpoint(ctx, updatedMessages, guardAction.checkpointReason, actualIterations)
 		}
 		if guardAction.recoveryPrompt != "" && loopGuard.todoNoProgressCount > 0 {
@@ -580,6 +603,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 	if a.stageConfig.MaxIterations > 0 || a.stageConfig.Timeout > 0 || a.stageConfig.LoopProtection {
 		return a.finishStageCheckpoint(ctx, updatedMessages, fmt.Sprintf("maximum turn iterations reached (%d)", maxIterations), actualIterations)
 	}
+	setTurnStop(ctx, turn.BudgetLimited, "max_iterations")
 	return fmt.Sprintf("Agent stopped: reached maximum of %d iterations without completing.", maxIterations), updatedMessages, nil
 }
 

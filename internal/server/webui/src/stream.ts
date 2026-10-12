@@ -1,5 +1,5 @@
 import { parseSSE } from "./api";
-import type { SSEEvent } from "./types";
+import type { SSEEvent, MessageSnapshot } from "./types";
 
 const TERMINAL_EVENTS = new Set(["done", "stopped", "error"]);
 
@@ -34,5 +34,22 @@ export class SSEBuffer {
     if (lf < 0 && crlf < 0) return null;
     if (crlf >= 0 && (lf < 0 || crlf < lf)) return { index: crlf, length: 4 };
     return { index: lf, length: 2 };
+  }
+}
+
+// Project backend snapshots by identity; rendering never decides task completion.
+export class MessageSnapshots {
+  readonly items = new Map<string, MessageSnapshot>();
+  latest: MessageSnapshot | null = null;
+  constructor(private turnId = "") {}
+
+  apply(event: MessageSnapshot): boolean {
+    if (!event.turn_id || !event.item_id || (this.turnId && this.turnId !== event.turn_id)) return false;
+    const old = this.items.get(event.item_id);
+    if (old && (event.seq <= old.seq || old.kind === "message.completed")) return false;
+    this.turnId = event.turn_id;
+    this.items.set(event.item_id, event);
+    if (!this.latest || event.seq > this.latest.seq) this.latest = event;
+    return true;
   }
 }

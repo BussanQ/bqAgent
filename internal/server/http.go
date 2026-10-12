@@ -14,6 +14,8 @@ import (
 
 	"bqagent/internal/extagent"
 	"bqagent/internal/globalconfig"
+
+	"bqagent/internal/turn"
 )
 
 const (
@@ -37,6 +39,8 @@ type handler struct {
 }
 
 type chatResponse struct {
+	TurnID             string           `json:"turn_id,omitempty"`
+	Outcome            *turn.Outcome    `json:"outcome,omitempty"`
 	SessionID          string           `json:"session_id,omitempty"`
 	RunID              string           `json:"run_id,omitempty"`
 	Reply              string           `json:"reply,omitempty"`
@@ -219,7 +223,7 @@ func (handler *handler) handleChat(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
 		return
 	}
-	writeJSON(writer, http.StatusOK, chatResponse{SessionID: response.SessionID, RunID: response.RunID, Reply: response.Reply, ReplyKind: response.ReplyKind, ConversationType: response.ConversationType})
+	writeJSON(writer, http.StatusOK, chatResponse{TurnID: response.TurnID, Outcome: &response.Outcome, SessionID: response.SessionID, RunID: response.RunID, Reply: response.Reply, ReplyKind: response.ReplyKind, ConversationType: response.ConversationType})
 }
 
 func (handler *handler) handleStopTurn(writer http.ResponseWriter, request *http.Request) {

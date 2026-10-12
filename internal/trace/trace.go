@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"bqagent/internal/turn"
 )
 
 type contextKey string
@@ -84,6 +86,7 @@ type VerifierResult struct {
 }
 
 type RunTrace struct {
+	Outcome              *turn.Outcome    `json:"outcome,omitempty"`
 	SchemaVersion        int              `json:"schema_version"`
 	RunID                string           `json:"run_id"`
 	ParentRunID          string           `json:"parent_run_id,omitempty"`
@@ -320,6 +323,10 @@ func (r *Recorder) AddVerifier(result VerifierResult) {
 }
 
 func (r *Recorder) Finish(result string, err error) error {
+	return r.FinishTurn(result, err, turn.Outcome{})
+}
+
+func (r *Recorder) FinishTurn(result string, err error, outcome turn.Outcome) error {
 	if r == nil {
 		return nil
 	}
@@ -328,11 +335,16 @@ func (r *Recorder) Finish(result string, err error) error {
 	r.meta.FinishedAt = &now
 	r.meta.FinalSummary = Summarize(result, 4096)
 	if err != nil {
-		r.meta.Status = StatusFailed
+		outcome.Set(turn.Failed, err.Error())
+		if errors.Is(err, context.Canceled) {
+			outcome.Set(turn.Interrupted, err.Error())
+		}
 		r.meta.Error = &ErrorInfo{Category: ClassifyError(err), Message: Summarize(err.Error(), 2048)}
-	} else {
-		r.meta.Status = StatusCompleted
+	} else if outcome.Status == "" {
+		outcome.Set(turn.Completed, "")
 	}
+	r.meta.Status = Status(outcome.Status)
+	r.meta.Outcome = &outcome
 	persistErr := r.persistMetaLocked()
 	r.mu.Unlock()
 	data := map[string]any{"status": r.meta.Status}

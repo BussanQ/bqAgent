@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"bqagent/internal/modelcatalog"
+	"bqagent/internal/turn"
 )
 
 const ResumeHistoryBudget = 200 << 10
@@ -22,6 +23,7 @@ type Backend interface {
 }
 
 type TurnEvents struct {
+	Message  turn.Sink
 	Session  func(string)
 	Token    func(string)
 	Progress func(string)
@@ -50,6 +52,8 @@ type ToolEvent struct {
 }
 
 type TurnResult struct {
+	TurnID           string
+	Outcome          turn.Outcome
 	SessionID        string
 	Reply            string
 	Model            string

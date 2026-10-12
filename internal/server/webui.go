@@ -25,6 +25,7 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
+	"bqagent/internal/turn"
 )
 
 const (
@@ -43,6 +44,7 @@ const (
 )
 
 type webUIChatRequest struct {
+	TaskRelation     turn.Relation       `json:"task_relation,omitempty"`
 	WorkspaceID      string              `json:"workspace_id,omitempty"`
 	SessionID        string              `json:"session_id"`
 	TurnID           string              `json:"turn_id"`
@@ -55,6 +57,8 @@ type webUIChatRequest struct {
 }
 
 type webUIDoneEvent struct {
+	TurnID           string             `json:"turn_id"`
+	Outcome          turn.Outcome       `json:"outcome"`
 	WorkspaceID      string             `json:"workspace_id,omitempty"`
 	SessionID        string             `json:"session_id"`
 	RunID            string             `json:"run_id,omitempty"`
@@ -481,13 +485,19 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		SessionID:        turnRequest.SessionID,
 		Message:          turnRequest.Message,
 		TurnID:           turnRequest.TurnID,
+		TaskRelation:     turnRequest.TaskRelation,
 		Images:           turnRequest.Images,
 		Files:            turnRequest.Files,
 		ReasoningEffort:  turnRequest.ReasoningEffort,
 		Mode:             turnRequest.Mode,
 		ConversationType: turnRequest.ConversationType,
 	}, TurnOptions{
-		Stream:            true,
+		Stream: true,
+		MessageSink: func(event turn.Event) {
+			stream.mu.Lock()
+			defer stream.mu.Unlock()
+			writeSSEEvent(writer, flusher, "message_snapshot", event)
+		},
 		TokenSink:         sseEventWriter{stream: stream, event: "message"},
 		ProgressWriter:    sseEventWriter{stream: stream, event: "progress"},
 		ToolEventSink:     sseToolEventSink{stream: stream},
@@ -503,10 +513,10 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			writeSSEEvent(writer, flusher, "stopped", map[string]string{"message": "已停止生成。"})
+			writeSSEEvent(writer, flusher, "stopped", map[string]any{"message": "已停止生成。", "turn_id": response.TurnID, "outcome": response.Outcome})
 			return
 		}
-		writeSSEEvent(writer, flusher, "error", map[string]string{"error": err.Error()})
+		writeSSEEvent(writer, flusher, "error", map[string]any{"error": err.Error(), "turn_id": response.TurnID, "outcome": response.Outcome})
 		return
 	}
 
@@ -517,7 +527,8 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		}
 	}
 	writeSSEEvent(writer, flusher, "done", webUIDoneEvent{
-		WorkspaceID:      workspaceInfo.ID,
+		WorkspaceID: workspaceInfo.ID,
+		TurnID:      response.TurnID, Outcome: response.Outcome,
 		SessionID:        response.SessionID,
 		RunID:            response.RunID,
 		Reply:            sanitizeChannelReply(response.Reply),

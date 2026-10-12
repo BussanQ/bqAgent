@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"bqagent/internal/modelcatalog"
+	"bqagent/internal/turn"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -49,13 +50,14 @@ const quitConfirmWindow = 2 * time.Second
 const quitConfirmHint = "再次按 Ctrl+C 退出（2 秒内）"
 
 type Model struct {
-	backend Backend
-	config  Config
-	styles  theme
-	input   promptInput
-	spinner spinner.Model
-	width   int
-	height  int
+	messages turn.Messages
+	backend  Backend
+	config   Config
+	styles   theme
+	input    promptInput
+	spinner  spinner.Model
+	width    int
+	height   int
 
 	phase            phase
 	progress         string
@@ -102,6 +104,7 @@ type startupMsg struct{}
 type tickMsg time.Time
 
 type turnEvent struct {
+	message  turn.Event
 	sequence uint64
 	kind     string
 	text     string
@@ -435,6 +438,7 @@ func (model *Model) submit(value string) tea.Cmd {
 	model.enqueueUserTurn(value)
 	model.sequence++
 	model.phase = phaseThinking
+	model.messages = turn.Messages{}
 	model.reportActivity("working")
 	model.progress = "正在思考"
 	model.startedAt = time.Now()
@@ -499,7 +503,20 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 		case "usage":
 			usage := event.usage
 			model.usage = &usage
+		case "message":
+			before := utf8.RuneCountInString(model.messages.Items[event.message.ItemID].Text)
+			if model.messages.Apply(event.message) {
+				model.liveRunes += max(0, utf8.RuneCountInString(event.message.Text)-before)
+				model.liveTokens = estimateTokensFromRunes(model.liveRunes)
+				model.phase = phaseStreaming
+				model.progress = "正在生成"
+				model.stream = model.messages.Latest.Text
+				model.liveCache = &streamViewCache{}
+			}
 		case "token":
+			if model.messages.TurnID != "" {
+				break
+			}
 			model.phase = phaseStreaming
 			model.progress = "正在生成"
 			model.stream += event.text
@@ -510,7 +527,9 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 				model.progress = text
 			}
 		case "tool":
-			model.flushStream()
+			if model.messages.TurnID == "" {
+				model.flushStream()
+			}
 			model.phase = phaseTool
 			model.progress = "正在运行工具 " + event.tool.Name
 			if model.tools.add(event.tool) && !model.toolMouse {
@@ -533,6 +552,9 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 		model.reply = event.result.Reply
 		if strings.TrimSpace(model.reply) == "" {
 			model.reply = model.stream
+		}
+		if event.result.Outcome.Notice != "" {
+			model.reply += "\n\n" + event.result.Outcome.Notice
 		}
 		model.replyOffset = 0
 		model.stream = ""
@@ -590,6 +612,7 @@ func launchTurn(backend Backend, ctx context.Context, sequence uint64, sessionID
 			}
 		}
 		sink := TurnEvents{
+			Message:  func(event turn.Event) { send(turnEvent{kind: "message", message: event}) },
 			Session:  func(id string) { send(turnEvent{kind: "session", text: id}) },
 			Usage:    func(usage TokenUsage) { send(turnEvent{kind: "usage", usage: usage}) },
 			Token:    func(text string) { send(turnEvent{kind: "token", text: text}) },

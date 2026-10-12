@@ -123,6 +123,7 @@ type Client struct {
 }
 
 type CompletionState struct {
+	EndTurn          *bool  `json:"-"`
 	StopReason       string `json:"-"`
 	OutputTruncated  bool   `json:"-"`
 	IncompleteReason string `json:"-"`

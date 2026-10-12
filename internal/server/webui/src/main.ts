@@ -15,11 +15,11 @@ import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
 import { renderMarkdown } from "./markdown";
 import { waitForModelSelection } from "./model-selection";
 import { initParticleField, redrawParticleField, refreshParticleCapability, refreshParticlePalette } from "./particles";
-import { SSEBuffer } from "./stream";
+import { SSEBuffer, MessageSnapshots } from "./stream";
 import { initialTheme } from "./theme";
 import { shouldGroupToolCalls } from "./tool-groups";
 import type { SentFile, SentImage } from "./attachments";
-import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, ConversationType, GenerationMetrics, GroupEventPayload, GroupInfo, PendingFile, PendingImage, ReasoningEffort, ToolEventPayload, WebUIDoneEvent } from "./types";
+import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, ConversationType, GenerationMetrics, GroupEventPayload, GroupInfo, MessageSnapshot, PendingFile, PendingImage, ReasoningEffort, ToolEventPayload, WebUIDoneEvent } from "./types";
 import { APIClient, isCancellation } from "./api-client";
 import { createAuthController } from "./auth-controller";
 import { createProviderController } from "./provider-controller";
@@ -1370,6 +1370,7 @@ import { createDoctorController } from "./doctor-controller";
       return bubble;
     }
     if (bubble) ensureCoordinatorBubble();
+    var snapshots = new MessageSnapshots(currentTurnId);
     var streamed = "";
     var progress = "";
     function closeCoordinatorSegment(): void {
@@ -1431,7 +1432,17 @@ import { createDoctorController } from "./doctor-controller";
         var events = eventBuffer.push(decoder.decode(chunk.value, { stream: true }));
         for (var eventIndex = 0; eventIndex < events.length; eventIndex++) {
           var evt = events[eventIndex];
-          if (evt.event === "tool_start" || evt.event === "tool_result") {
+          if (evt.event === "message_snapshot") {
+            var snapshot = parseJSONEvent<MessageSnapshot>(evt.data);
+            if (snapshots.apply(snapshot) && snapshots.latest) {
+              streamed = snapshots.latest.text;
+              var snapshotBubble = ensureCoordinatorBubble();
+              caret.remove();
+              snapshotBubble.classList.remove("notice");
+              snapshotBubble.textContent = streamed;
+              snapshotBubble.appendChild(caret);
+            }
+          } else if (evt.event === "tool_start" || evt.event === "tool_result") {
             var toolPayload = parseJSONEvent<ToolEventPayload>(evt.data);
             if (toolPayload.name !== "consult_group_agent") updateToolTimeline(ensureCoordinatorBubble(), toolCards, evt.event, toolPayload);
           } else if (evt.event === "acp_permission") {
@@ -1490,7 +1501,7 @@ import { createDoctorController } from "./doctor-controller";
               statusEl.classList.remove("busy");
               statusEl.classList.add("error");
             } else {
-              renderReply(finalBubble, finalReply);
+              renderReply(finalBubble, finalReply + (done.outcome?.notice ? "\n\n> " + done.outcome.notice : ""));
               addMessageMeta(finalBubble, done.generation);
               addMessageControls(finalBubble, done.run_id || "", finalReply);
             }
@@ -1529,7 +1540,7 @@ import { createDoctorController } from "./doctor-controller";
             }
           } else {
             var payload = parseJSONEvent<{ delta?: string }>(evt.data);
-            if (payload.delta) {
+            if (payload.delta && !snapshots.latest) {
               var streamBubble = ensureCoordinatorBubble();
               streamed += payload.delta;
               caret.remove();

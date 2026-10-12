@@ -88,6 +88,7 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 		ReasoningEffort: backend.currentEffort(),
 	}, appserver.TurnOptions{
 		SessionSink:    events.Session,
+		MessageSink:    events.Message,
 		OutputWriter:   eventWriter{write: events.Progress},
 		TokenSink:      eventWriter{write: events.Token},
 		ProgressWriter: eventWriter{write: events.Progress},
@@ -95,6 +96,7 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 		Stream:         true,
 	})
 	result := apptui.TurnResult{
+		TurnID: response.TurnID, Outcome: response.Outcome,
 		SessionID:        response.SessionID,
 		Reply:            response.Reply,
 		Model:            response.Model,

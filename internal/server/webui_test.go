@@ -747,7 +747,7 @@ func TestWebUIStreamChat(t *testing.T) {
 	if ct := first.contentType; !strings.Contains(ct, "text/event-stream") {
 		t.Fatalf("content-type = %q, want text/event-stream", ct)
 	}
-	if !strings.Contains(first.raw, `"delta":"Hello"`) {
+	if !strings.Contains(first.raw, `"text":"Hello"`) || !strings.Contains(first.raw, "event: message_snapshot") {
 		t.Fatalf("stream missing delta events:\n%s", first.raw)
 	}
 	if !strings.Contains(first.raw, "event: progress") || !strings.Contains(first.raw, `"message":`) {

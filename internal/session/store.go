@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,6 +18,7 @@ import (
 
 	"bqagent/internal/atomicfile"
 	"bqagent/internal/safepath"
+	"bqagent/internal/turn"
 )
 
 type Status string
@@ -29,24 +31,25 @@ const (
 )
 
 type Meta struct {
-	FastMode            bool      `json:"fast_mode,omitempty"`
-	ID                  string    `json:"id"`
-	WorkspaceRoot       string    `json:"workspace_root"`
-	Task                string    `json:"task,omitempty"`
-	Planned             bool      `json:"planned,omitempty"`
-	Background          bool      `json:"background,omitempty"`
-	Chat                bool      `json:"chat,omitempty"`
-	Status              Status    `json:"status"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
-	LastError           string    `json:"last_error,omitempty"`
-	LastRunID           string    `json:"last_run_id,omitempty"`
-	CurrentModel        string    `json:"current_model,omitempty"`
-	CurrentMode         string    `json:"current_mode,omitempty"`
-	ConversationType    string    `json:"conversation_type,omitempty"`
-	PromptSchemaVersion int       `json:"prompt_schema_version,omitempty"`
-	PromptStableHash    string    `json:"prompt_stable_hash,omitempty"`
-	PromptMessageCount  int       `json:"prompt_message_count,omitempty"`
+	LastTurnOutcome     *turn.Outcome `json:"last_turn_outcome,omitempty"`
+	FastMode            bool          `json:"fast_mode,omitempty"`
+	ID                  string        `json:"id"`
+	WorkspaceRoot       string        `json:"workspace_root"`
+	Task                string        `json:"task,omitempty"`
+	Planned             bool          `json:"planned,omitempty"`
+	Background          bool          `json:"background,omitempty"`
+	Chat                bool          `json:"chat,omitempty"`
+	Status              Status        `json:"status"`
+	CreatedAt           time.Time     `json:"created_at"`
+	UpdatedAt           time.Time     `json:"updated_at"`
+	LastError           string        `json:"last_error,omitempty"`
+	LastRunID           string        `json:"last_run_id,omitempty"`
+	CurrentModel        string        `json:"current_model,omitempty"`
+	CurrentMode         string        `json:"current_mode,omitempty"`
+	ConversationType    string        `json:"conversation_type,omitempty"`
+	PromptSchemaVersion int           `json:"prompt_schema_version,omitempty"`
+	PromptStableHash    string        `json:"prompt_stable_hash,omitempty"`
+	PromptMessageCount  int           `json:"prompt_message_count,omitempty"`
 }
 
 type Store struct {
@@ -611,8 +614,18 @@ func (session *Session) MarkRunning() error {
 	return session.updateStatus(StatusRunning, "")
 }
 
+// MarkTurnEnded preserves the distinction between success and a recoverable stop.
+func (session *Session) MarkTurnEnded(outcome turn.Outcome) error {
+	message := ""
+	if outcome.Status == turn.Failed {
+		message = outcome.Reason
+	}
+	session.meta.LastTurnOutcome = &outcome
+	return session.updateStatus(Status(outcome.Status), message)
+}
+
 func (session *Session) MarkCompleted() error {
-	return session.updateStatus(StatusCompleted, "")
+	return session.MarkTurnEnded(turn.Outcome{Status: turn.Completed})
 }
 
 func (session *Session) MarkFailed(err error) error {
@@ -620,7 +633,13 @@ func (session *Session) MarkFailed(err error) error {
 	if err != nil {
 		message = err.Error()
 	}
-	return session.updateStatus(StatusFailed, message)
+	outcome := turn.Outcome{}
+	status := turn.Failed
+	if errors.Is(err, context.Canceled) {
+		status = turn.Interrupted
+	}
+	outcome.Set(status, message)
+	return session.MarkTurnEnded(outcome)
 }
 
 func (session *Session) SetLastRunID(runID string) error {

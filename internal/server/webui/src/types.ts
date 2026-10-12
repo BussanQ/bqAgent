@@ -163,7 +163,26 @@ export interface GenerationMetrics {
   };
 }
 
+export interface TurnOutcome {
+  status: "completed" | "failed" | "interrupted" | "budget_limited" | "blocked" | "awaiting_input";
+  reason?: string;
+  notice?: string;
+  task_relation?: "continue" | "side_question";
+  task_status?: string;
+}
+
+export interface MessageSnapshot {
+  turn_id: string;
+  item_id: string;
+  seq: number;
+  kind: "message.updated" | "message.completed";
+  phase: string;
+  text: string;
+}
+
 export interface WebUIDoneEvent {
+  turn_id?: string;
+  outcome?: TurnOutcome;
   workspace_id?: string;
   session_id: string;
   run_id?: string;
