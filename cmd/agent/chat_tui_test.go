@@ -25,7 +25,7 @@ func TestTUICommandsDiscoverLinkedSkillsAndRefreshAliases(t *testing.T) {
 	backend := &tuiBackend{workspace: ws, service: appserver.NewService(appserver.ServiceOptions{WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir()})}
 	_ = backend.Commands()
 	target := t.TempDir()
-	if err := os.WriteFile(filepath.Join(target, "SKILL.md"), []byte("---\ndescription: Simple explanations.\nalias: explain\n---\nInstructions."), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(target, "SKILL.md"), []byte("\\---  \ndescription: |\n  Simple explanations.\n  With pictures.\nalias: explain\n\\---\nInstructions."), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, filepath.Join(directory, "eli5")); err != nil {
@@ -38,6 +38,9 @@ func TestTUICommandsDiscoverLinkedSkillsAndRefreshAliases(t *testing.T) {
 		found := map[string]bool{}
 		for _, argument := range command.Arguments {
 			found[argument.Value] = true
+			if argument.Value == "eli5" && argument.Description != "Simple explanations. With pictures." {
+				t.Fatalf("skill description = %q", argument.Description)
+			}
 		}
 		if !found["eli5"] || !found["explain"] {
 			t.Fatalf("skill candidates = %+v", command.Arguments)

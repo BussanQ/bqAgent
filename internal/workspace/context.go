@@ -521,7 +521,7 @@ func readSkillMetadataAt(root *os.Root, path string) (description string, aliase
 
 func parseSkillMetadata(content string) (string, []string) {
 	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+	if len(lines) == 0 || !isSkillMetadataDelimiter(lines[0]) {
 		return defaultSkillDescription, nil
 	}
 
@@ -532,7 +532,7 @@ func parseSkillMetadata(content string) (string, []string) {
 	closed := false
 	for index := 1; index < len(lines); index++ {
 		line := strings.TrimSpace(lines[index])
-		if line == "---" {
+		if isSkillMetadataDelimiter(line) {
 			closed = true
 			break
 		}
@@ -556,6 +556,21 @@ func parseSkillMetadata(content string) (string, []string) {
 		value = strings.TrimSpace(value)
 		switch key {
 		case "description":
+			// Descriptions are discovery summaries, so flatten YAML block
+			// scalars into one display line while respecting field boundaries.
+			if isSkillDescriptionBlock(value) {
+				indent := len(lines[index]) - len(strings.TrimLeft(lines[index], " \t"))
+				var parts []string
+				for index+1 < len(lines) {
+					next := lines[index+1]
+					if strings.TrimSpace(next) != "" && len(next)-len(strings.TrimLeft(next, " \t")) <= indent {
+						break
+					}
+					index++
+					parts = append(parts, strings.TrimSpace(next))
+				}
+				value = strings.Join(parts, " ")
+			}
 			description = cleanSkillDescription(value)
 		case "alias":
 			aliases = appendUniqueAlias(aliases, seen, value)
@@ -578,8 +593,39 @@ func parseSkillMetadata(content string) (string, []string) {
 	return description, aliases
 }
 
+func isSkillMetadataDelimiter(line string) bool {
+	line = strings.TrimSpace(line)
+	return line == "---" || line == `\---`
+}
+
+func isSkillDescriptionBlock(value string) bool {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return false
+	}
+	// Accept literal/folded blocks with optional chomping and indentation
+	// indicators (e.g. |-, >+, |2, >2-), followed by an optional comment.
+	header := fields[0]
+	if header[0] != '|' && header[0] != '>' {
+		return false
+	}
+	chomp, indent := false, false
+	for _, character := range header[1:] {
+		switch {
+		case (character == '+' || character == '-') && !chomp:
+			chomp = true
+		case character >= '1' && character <= '9' && !indent:
+			indent = true
+		default:
+			return false
+		}
+	}
+	return len(fields) == 1 || strings.HasPrefix(fields[1], "#")
+}
+
 func cleanSkillDescription(raw string) string {
 	description := strings.TrimSpace(strings.Trim(strings.TrimSpace(raw), `"'`))
+	description = strings.Join(strings.Fields(description), " ")
 	if len(description) <= maxSkillDescriptionBytes {
 		return description
 	}
