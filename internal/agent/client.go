@@ -130,6 +130,9 @@ type CompletionState struct {
 }
 
 type AssistantMessage struct {
+	// ResponseDiagnostics contains protocol metadata only, never response text
+	// or tool arguments. It is logged when a response has no usable output.
+	ResponseDiagnostics string `json:"-"`
 	// ResponseItems preserves ordered Responses output, including message phase
 	// and opaque reasoning items, across persistence and manual history replay.
 	ResponseItems []json.RawMessage       `json:"-"`

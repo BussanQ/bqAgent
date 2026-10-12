@@ -311,9 +311,12 @@ func TestRunConversationRejectsRepeatedEmptyFinalResponses(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{
 		{},
 		{Content: " \n\t"},
-		{Content: ""},
+		{Content: "", Completion: CompletionState{StopReason: "completed"},
+			Usage:               TokenUsage{CompletionTokens: 12, ReasoningTokens: 12},
+			ResponseDiagnostics: `{"events":{"response.completed":1},"terminal_output_items":0}`},
 	}}
-	app := NewWithOptions(client, "", Options{Context: ContextConfig{Enabled: false}, Stream: true})
+	var logs bytes.Buffer
+	app := NewWithOptions(client, "", Options{Context: ContextConfig{Enabled: false}, Stream: true, LogWriter: &logs})
 
 	result, updated, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "finish the task"}}, 6)
 	if !errors.Is(err, errEmptyFinalResponse) {
@@ -327,6 +330,11 @@ func TestRunConversationRejectsRepeatedEmptyFinalResponses(t *testing.T) {
 	}
 	if len(updated) == 0 {
 		t.Fatal("updated messages should preserve failed responses for retry")
+	}
+	for _, want := range []string{"[EmptyFinalResponse] attempt=3", `stop_reason="completed"`, "output_tokens=12 reasoning_tokens=12", `"terminal_output_items":0`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("missing %q in diagnostics: %s", want, logs.String())
+		}
 	}
 }
 

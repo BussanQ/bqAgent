@@ -66,8 +66,9 @@ func TestResponsesStreamFinalToolArguments(t *testing.T) {
 			want:   []ToolCall{call("call_1", first)},
 		},
 		{
-			name:   "terminal empty output removes stale calls",
+			name:   "terminal empty output preserves streamed calls",
 			events: []map[string]any{itemEvent("added", 0, "call_1", ""), delta(0, first), terminal("completed", []any{}...)},
+			want:   []ToolCall{call("call_1", first)},
 		},
 		{
 			name:   "invalid final arguments remain invalid for recovery",
@@ -87,6 +88,11 @@ func TestResponsesStreamFinalToolArguments(t *testing.T) {
 		{
 			name:   "incomplete final snapshot preserves truncation guard",
 			events: []map[string]any{terminal("incomplete", item("call_1", first))},
+			want:   []ToolCall{call("call_1", first)}, truncated: true,
+		},
+		{
+			name:   "incomplete empty snapshot preserves truncation guard",
+			events: []map[string]any{itemEvent("added", 0, "call_1", ""), delta(0, first), terminal("incomplete", []any{}...)},
 			want:   []ToolCall{call("call_1", first)}, truncated: true,
 		},
 	}
@@ -113,7 +119,13 @@ func TestResponsesStreamFinalToolArguments(t *testing.T) {
 			if !slices.Equal(message.ToolCalls, test.want) {
 				t.Fatalf("tool calls = %#v, want %#v", message.ToolCalls, test.want)
 			}
-			if chunks.String() != "checking" || message.FinalContent() != "checking" || message.Usage.TotalTokens != 5 || message.Completion.OutputTruncated != test.truncated {
+			wantContent := "checking"
+			// A nonempty terminal snapshot replaces intermediate commentary.
+			terminalResponse := test.events[len(test.events)-1]["response"].(map[string]any)
+			if output, _ := terminalResponse["output"].([]any); len(output) > 0 {
+				wantContent = ""
+			}
+			if chunks.String() != "checking" || message.FinalContent() != wantContent || message.Usage.TotalTokens != 5 || message.Completion.OutputTruncated != test.truncated {
 				t.Fatalf("stream content, usage or completion lost: chunks=%q message=%#v", chunks.String(), message)
 			}
 		})

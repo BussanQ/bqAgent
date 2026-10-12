@@ -139,6 +139,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	var finalOutput []openAIResponseOutput
 	messageItems := map[int]openAIResponseOutput{}
 	messageDeltas := map[int]string{}
+	eventCounts := map[string]int{}
 
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -168,6 +169,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			return AssistantMessage{}, providerProtocolError("invalid responses stream event", err)
 		}
+		eventCounts[event.Type]++
 		if event.Type == "response.failed" || event.Type == "error" {
 			message := firstNonBlank(strings.TrimSpace(event.Error.Message), strings.TrimSpace(event.Message))
 			if message == "" {
@@ -272,8 +274,9 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	}
 	// The terminal response contains the final output snapshot. Prefer it to
 	// accumulated deltas, which compatible providers may revise or repeat.
-	// A missing output field still allows delta-only streams to work.
-	if finalOutput != nil {
+	// Compatible providers may send an empty output array even after emitting
+	// text or tool calls. Treat it like an omitted snapshot, not a retraction.
+	if len(finalOutput) > 0 {
 		final := assistantFromOpenAIResponse(openAIResponseEnvelope{Output: finalOutput})
 		message.ToolCalls, message.ResponseItems, message.Phase = final.ToolCalls, final.ResponseItems, final.Phase
 		message.Content = final.Content
@@ -285,6 +288,16 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	} else if len(messageItems) > 0 {
 		// Some compatible streams omit terminal output. Reconstruct item order
 		// from output_index, keeping the final function arguments already parsed.
+		for index, text := range messageDeltas {
+			if _, exists := messageItems[index]; !exists && calls[index] == nil {
+				// A provider may emit reasoning items and text deltas without
+				// the corresponding message-added event.
+				raw, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": text}}})
+				var item openAIResponseOutput
+				_ = json.Unmarshal(raw, &item)
+				messageItems[index] = item
+			}
+		}
 		for index, call := range calls {
 			raw, _ := json.Marshal(map[string]any{"type": "function_call", "call_id": call.id, "name": call.name, "arguments": call.arguments.String()})
 			messageItems[index] = openAIResponseOutput{Type: "function_call", CallID: call.id, Name: call.name, Arguments: call.arguments.String(), Raw: raw}
@@ -318,6 +331,12 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			}
 		}
 	}
+	diagnostics, _ := json.Marshal(map[string]any{
+		"events": eventCounts, "terminal_output_present": finalOutput != nil,
+		"terminal_output_items": len(finalOutput), "stream_text_bytes": content.Len(),
+		"stream_tool_calls": len(calls), "stream_message_items": len(messageItems),
+	})
+	message.ResponseDiagnostics = string(diagnostics)
 	message.normalizeInlineToolCalls()
 	return message, nil
 }

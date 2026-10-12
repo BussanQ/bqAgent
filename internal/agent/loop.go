@@ -464,6 +464,10 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 
 			state.emit(itemID, "message.completed", "commentary", "")
 			emptyFinalRecoveries++
+			a.logf("[EmptyFinalResponse] attempt=%d stop_reason=%q incomplete_reason=%q truncated=%t phase=%q response_items=%d output_tokens=%d reasoning_tokens=%d diagnostics=%s\n",
+				emptyFinalRecoveries, message.Completion.StopReason, message.Completion.IncompleteReason,
+				message.Completion.OutputTruncated, message.Phase, len(message.ResponseItems),
+				message.Usage.CompletionTokens, message.Usage.ReasoningTokens, message.ResponseDiagnostics)
 			if emptyFinalRecoveries > maxEmptyFinalRecoveries {
 				return "", updatedMessages, fmt.Errorf("%w after %d consecutive attempts", errEmptyFinalResponse, emptyFinalRecoveries)
 			}
