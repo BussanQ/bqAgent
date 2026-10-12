@@ -29,7 +29,7 @@ func (model Model) streamLines(width int) []string {
 		return cache.lines
 	}
 	rendered := text
-	if final {
+	if final && !model.replyRendered {
 		rendered = renderMarkdown(text, width, model.config.NoColor)
 	}
 	lines := strings.Split(ansi.Hardwrap(rendered, width, false), "\n")
@@ -107,8 +107,8 @@ func (model Model) toolViewportHeight() int {
 }
 
 // The inline renderer cannot erase rows that have escaped into native
-// scrollback. Bound every live frame in physical rows, and retain the complete
-// stream or final reply until its single history commit.
+// scrollback. Bound every live frame in physical rows, retaining the uncommitted
+// reply suffix so the conclusion remains visible after completion.
 func (model Model) liveView() tea.View {
 	width := model.contentWidth()
 	toolHeight, streamHeight, auxiliaryHeight := model.liveBudgets()

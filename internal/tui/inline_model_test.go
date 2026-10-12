@@ -29,6 +29,7 @@ func newInlineRendererProbe(width int) *inlineRendererProbe {
 	probe.renderer = uv.NewTerminalRenderer(&probe.output, []string{"TERM=xterm-256color"})
 	probe.renderer.SetRelativeCursor(true)
 	probe.renderer.SetTabStops(-1)
+	probe.renderer.SetScrollOptim(true)
 	return probe
 }
 

@@ -119,19 +119,23 @@ func (s *historyScreen) text() string {
 
 func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 	for _, test := range []struct {
-		name   string
-		queued bool
-		answer string
+		name     string
+		queued   bool
+		streamed bool
+		tools    int
+		answer   string
 	}{
 		{name: "next question", answer: "line two line three"},
 		{name: "multiline answer", answer: "line two\n\nline three"},
 		{name: "queued question", queued: true, answer: "line two\n\nline three"},
+		{name: "long streamed answer with tools", tools: 10, streamed: true, answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
+		{name: "long streamed answer", streamed: true, answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
 		{name: "long answer", answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
 		{name: "long queued answer", queued: true, answer: strings.Repeat("long paragraph\n\n", 60) + "last paragraph"},
 	} {
 		for _, flushBetween := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/flush=%t", test.name, flushBetween), func(t *testing.T) {
-				base := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+				base := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: !test.streamed})
 				base.width, base.height = 72, 24
 				base.resizeInput()
 				var model tea.Model = newInlineModel(base)
@@ -236,16 +240,33 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 					if !test.queued || i == 1 {
 						ask(i)
 					}
+					if test.tools > 0 {
+						inner := model.(inlineModel)
+						m := inner.model.(Model)
+						m.tools = toolDrawerModel(t, test.tools).tools
+						inner.model = m
+						model = inner
+					}
 					answer := fmt.Sprintf("answer-%d\n\n%s", i, test.answer)
-					if test.queued {
+					if test.queued || test.streamed {
 						update(turnEvent{sequence: uint64(i), kind: "token", text: answer})
-						if i < 3 {
+						if test.queued && i < 3 {
 							ask(i + 1)
 						}
 					}
 					update(turnEvent{sequence: uint64(i), kind: "done", result: TurnResult{Reply: answer}})
 					if strings.HasPrefix(test.name, "long") && (!strings.Contains(screen.text(), fmt.Sprintf("answer-%d", i)) || strings.Count(screen.text(), "last paragraph") != i || strings.Count(screen.text(), "long paragraph") != 60*i) {
 						t.Fatalf("long reply not fully visible immediately after completion: %s", strings.TrimSpace(screen.text()))
+					}
+					if test.streamed {
+						// Repaint after completion and exercise the still-interactive drawer.
+						update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+						update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+						draw()
+						visible := strings.Join(strings.Split(screen.text(), "\n")[screen.top:screen.top+screen.height], "\n")
+						if !strings.Contains(visible, "last paragraph") || strings.Count(visible, "long paragraph") < 3 {
+							t.Fatalf("final conclusion disappeared from visible terminal: %s", visible)
+						}
 					}
 				}
 				text := screen.text()
@@ -301,7 +322,7 @@ func TestLongReplyHistoryFinishesBeforeNextQuestion(t *testing.T) {
 		}
 	}
 	collect(first)
-	if text := strings.Join(printed, "\n"); !strings.Contains(text, "answer end") || strings.Contains(text, "next question") {
+	if text := strings.Join(printed, "\n"); !strings.Contains(text, "answer paragraph") || strings.Contains(text, "answer end") || strings.Contains(text, "next question") {
 		t.Fatal("answer history was interrupted or mixed with the next question")
 	}
 	updated, next = model.Update(historyPrintedMsg{})

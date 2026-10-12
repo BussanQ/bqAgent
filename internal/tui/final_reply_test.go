@@ -100,14 +100,15 @@ func TestLongFinalReplyPrintsWholeConclusionWithoutPaging(t *testing.T) {
 		lines = append(lines, fmt.Sprintf("结论第%03d行", i))
 	}
 	model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: strings.Join(lines, "\n\n")}})
-	printed := strings.Join(model.printQueue, "\n")
+	prefix := strings.Join(model.printQueue, "\n")
+	printed := prefix + "\n" + model.View().Content
 	for _, line := range lines {
 		if strings.Count(printed, line) != 1 {
 			t.Fatalf("completion did not immediately print %q exactly once", line)
 		}
 	}
-	if model.reply != "" || strings.Contains(model.View().Content, "结论") || len(model.tools.items) != 10 || model.tools.expanded {
-		t.Fatal("long reply remained paged or changed the tool drawer")
+	if model.reply == "" || !strings.Contains(model.View().Content, "结论第060行") || len(model.tools.items) != 10 || model.tools.expanded {
+		t.Fatal("completion hid the conclusion or changed the tool drawer")
 	}
 	model.printQueue = nil // History has been emitted by Update.
 	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyPgDown}, {Code: tea.KeyPgUp}, {Code: 'o', Mod: tea.ModCtrl}, {Code: 'o', Mod: tea.ModCtrl}} {
@@ -116,18 +117,23 @@ func TestLongFinalReplyPrintsWholeConclusionWithoutPaging(t *testing.T) {
 		if cmd != nil {
 			t.Fatal("paging/toggling tools reprinted the completed answer")
 		}
-		assertLiveFrameFits(t, model)
-	}
-	for _, size := range [][2]int{{18, 9}, {72, 24}} {
-		updated, _ := model.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-		model = updated.(Model)
+		if !strings.Contains(model.View().Content, "结论第060行") {
+			t.Fatal("tool interaction hid the conclusion")
+		}
 		assertLiveFrameFits(t, model)
 	}
 	model.commitTurn()
 	model.commitTurn()
-	if strings.Contains(strings.Join(model.printQueue, "\n"), "结论") {
-		t.Fatal("next turn reprinted the completed answer")
+	printed = prefix + "\n" + strings.Join(model.printQueue, "\n")
+	for _, line := range lines {
+		if strings.Count(printed, line) != 1 {
+			t.Fatalf("next turn lost or duplicated %q", line)
+		}
 	}
+	if model.reply != "" {
+		t.Fatal("committed suffix remained in the live frame")
+	}
+
 }
 
 func TestReplyBecomingTooTallOnResizePrintsOnce(t *testing.T) {
@@ -141,13 +147,56 @@ func TestReplyBecomingTooTallOnResizePrintsOnce(t *testing.T) {
 	}
 	updated, command := model.Update(tea.WindowSizeMsg{Width: 18, Height: 6})
 	model = updated.(Model)
-	if command == nil || model.reply != "" || model.historyPrints != 1 {
-		t.Fatal("resize should print the whole answer instead of adding a pager")
+	if command == nil || !strings.Contains(model.reply, "第三段") || model.historyPrints != 1 {
+		t.Fatal("resize must preserve the conclusion and commit only overflow")
 	}
 	updated, _ = model.Update(tea.WindowSizeMsg{Width: 72, Height: 24})
 	model = updated.(Model)
-	if model.reply != "" || model.historyPrints != 1 {
+	if !strings.Contains(model.reply, "第三段") || model.historyPrints != 1 {
 		t.Fatal("growing the terminal reintroduced or reprinted the reply")
+	}
+}
+
+func TestLongReplyPreservesRenderedSuffixOnResize(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		t.Run(fmt.Sprintf("noColor=%t", noColor), func(t *testing.T) {
+			model := toolDrawerModel(t, 10)
+			model.config.NoColor = noColor
+			model.styles = newTheme(noColor)
+			model.sequence = 1
+			model.active = &activeTurn{sequence: 1, cancel: func() {}}
+			answer := "## 结果\n\n```text\n"
+			for i := 0; i < 30; i++ {
+				answer += fmt.Sprintf("record-%02d\n", i)
+			}
+			answer += "```\n\n**最终结论**"
+			want := ansi.Hardwrap(renderMarkdown(answer, model.contentWidth(), noColor), model.contentWidth(), false)
+			model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: answer}})
+			combined := strings.Join(model.printQueue, "\n") + "\n" + strings.Join(model.streamLines(model.contentWidth()), "\n")
+			if combined != want {
+				t.Fatal("splitting the answer changed the rendered Markdown")
+			}
+			for _, size := range [][2]int{{32, 10}, {72, 24}, {32, 10}} {
+				model.width, model.height = size[0], size[1]
+				model.resizeInput()
+				model.flushOverflowReply()
+				assertLiveFrameFits(t, model)
+				if !strings.Contains(ansi.Strip(model.View().Content), "最终结论") {
+					t.Fatal("resize removed the conclusion from the live frame")
+				}
+			}
+			model.commitTurn()
+			model.commitTurn()
+			printed := ansi.Strip(strings.Join(model.printQueue, "\n"))
+			for i := 0; i < 30; i++ {
+				if strings.Count(printed, fmt.Sprintf("record-%02d", i)) != 1 {
+					t.Fatalf("resize lost or duplicated code block line %d", i)
+				}
+			}
+			if strings.Count(printed, "最终结论") != 1 {
+				t.Fatal("resize lost or duplicated the conclusion")
+			}
+		})
 	}
 }
 

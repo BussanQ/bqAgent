@@ -64,6 +64,7 @@ type Model struct {
 	startedAt        time.Time
 	stream           string
 	reply            string
+	replyRendered    bool
 	active           *activeTurn
 	sequence         uint64
 	queued           *queuedPrompt
@@ -297,6 +298,7 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	case "ctrl+l":
 		disableMouse := model.discardToolGroup()
 		model.reply = ""
+		model.replyRendered = false
 		model.input.reset()
 		model.closePanel()
 		model.resizeInput()
@@ -567,6 +569,7 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 		// The final snapshot is authoritative: streamed text can include prior
 		// commentary, an incomplete draft or a superseded closeout answer.
 		model.reply = event.result.Reply
+		model.replyRendered = false
 		if strings.TrimSpace(model.reply) == "" {
 			model.reply = model.stream
 		}
@@ -689,25 +692,37 @@ func (model *Model) enqueuePrint(lines ...string) {
 	}
 }
 
-// Short answers can remain fully visible below the interactive tools. Long
-// answers are committed immediately so native terminal scrolling shows them
-// in full without a reply pager or an oversized mutable frame.
+// Commit only the overflow. Keep the conclusion in the live frame so finishing
+// a streamed answer cannot leave only tools and the input on screen. The history
+// prefix and live suffix are disjoint; subsequent commits print only the suffix.
 func (model *Model) flushOverflowReply() {
 	if model.reply == "" {
 		return
 	}
 	_, height, _ := model.liveBudgets()
-	if len(model.streamLines(model.contentWidth())) > height {
-		model.flushReply()
+	if len(model.tools.items) > 0 {
+		// Reserve the same answer space when the tool drawer is expanded, so
+		// toggling tools does not transfer more of the answer into history.
+		height = min(height, max(1, (model.frameLimit()-len(model.footerLines())-len(model.auxiliaryLines()))/2))
 	}
+	lines := model.streamLines(model.contentWidth())
+	if height <= 0 || len(lines) <= height {
+		return
+	}
+	cut := len(lines) - height
+	model.enqueuePrint(strings.Join(lines[:cut], "\n"))
+	model.reply = strings.Join(lines[cut:], "\n")
+	model.replyRendered = true
+	model.liveCache = &streamViewCache{}
 }
 
 func (model *Model) flushReply() {
 	if model.reply == "" {
 		return
 	}
-	model.enqueuePrint(renderMarkdown(model.reply, model.contentWidth(), model.config.NoColor))
+	model.enqueuePrint(strings.Join(model.streamLines(model.contentWidth()), "\n"))
 	model.reply = ""
+	model.replyRendered = false
 	model.liveCache = &streamViewCache{}
 }
 
@@ -759,6 +774,7 @@ func (model *Model) clearSession() {
 	model.queued = nil
 	model.stream = ""
 	model.reply = ""
+	model.replyRendered = false
 	model.liveCache = &streamViewCache{}
 	model.tools = toolGroup{}
 	model.toolMouse = false
