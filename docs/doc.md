@@ -189,7 +189,7 @@ LLM_MODEL=claude-sonnet-4-5
 | `CONTEXT_TARGET_INPUT_TOKENS` | `18000` | 裁剪或摘要后的输入目标，为默认触发阈值的 9%；不会作为提前压缩的触发条件。 |
 | `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | 为模型回复预留的 token。 |
 | `CONTEXT_KEEP_LAST_TURNS` | `6` | 压缩时保留的最近轮次。 |
-| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `80` | 完整请求的本地/usage 估算达到压缩触发阈值的该百分比后，尝试调用 Provider 精确计数（OpenAI Responses、Anthropic）；不支持或失败时自动回退估算。 |
+| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `85` | 完整请求的本地/usage 估算达到压缩触发阈值的该百分比后，尝试调用 Provider 精确计数（OpenAI Responses、Anthropic）；不支持或失败时自动回退估算。 |
 | `CONTEXT_SUMMARIZATION_ENABLED` | `true` | 启用旧对话摘要。 |
 | `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `200000` | 已进入压缩流程后，超过此值才尝试摘要；失败时回退裁剪。 |
 | `CONTEXT_SUMMARY_MODEL` | 主模型 | 可选的低成本摘要模型。 |
@@ -197,7 +197,7 @@ LLM_MODEL=claude-sonnet-4-5
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | 每个 `output.log` 保留的尾部大小；`0` 禁用裁剪。 |
 | `RUN_TRACE_ENABLED` | `false` | 保存 `.agent/runs/<run-id>/` Trace 并启用运行反馈接口。 |
 
-默认请求超过 200K token 后压缩到 18K（9%）目标；精确计数从约 160K 开始尝试。固定系统指令不会被裁剪，因此系统指令或工具定义本身超过目标时无法保证压到 18K。TUI 状态栏展示最近请求的上下文占比（相对于压缩触发阈值），以 `45%/200K` 格式显示，数值可能为估算，压缩后刷新；它不同于累计 `in/out` 用量。
+默认请求超过 200K token 后压缩到 18K（9%）目标；精确计数从约 170K 开始尝试。固定系统指令不会被裁剪，因此系统指令或工具定义本身超过目标时无法保证压到 18K。TUI 状态栏展示最近请求的上下文占比（相对于压缩触发阈值），以 `45%/200K` 格式显示，数值可能为估算，压缩后刷新；它不同于累计 `in/out` 用量。
 
 ### 外部编码 Agent
 

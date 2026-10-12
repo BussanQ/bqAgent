@@ -71,12 +71,12 @@ func TestContextExactCountUsesCompressionTrigger(t *testing.T) {
 		app := NewWithOptions(client, "test", Options{Context: config})
 		var usage turn.ContextUsage
 		ctx := WithContextUsage(context.Background(), func(value turn.ContextUsage) { usage = value })
-		// Above the target but below 80% of the trigger: no exact count yet.
-		app.buildRequestMessages(ctx, []map[string]any{{"role": "user", "content": strings.Repeat("a", 80000)}}, nil, ChatCompletionOptions{})
+		// Between 80% and 85% of the trigger: no exact count yet.
+		app.buildRequestMessages(ctx, []map[string]any{{"role": "user", "content": strings.Repeat("a", 650000)}}, nil, ChatCompletionOptions{})
 		if len(client.countMessages) != 0 {
 			t.Fatal("exact counting used the post-compaction target")
 		}
-		_, compacted := app.buildRequestMessages(ctx, []map[string]any{{"role": "user", "content": strings.Repeat("b", 650000)}}, nil, ChatCompletionOptions{})
+		_, compacted := app.buildRequestMessages(ctx, []map[string]any{{"role": "user", "content": strings.Repeat("b", 690000)}}, nil, ChatCompletionOptions{})
 		if (compacted != nil) != (count > 200000) || usage.Estimated {
 			t.Fatalf("provider count %d: compacted=%t usage=%+v", count, compacted != nil, usage)
 		}

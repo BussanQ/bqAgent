@@ -185,7 +185,7 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `CONTEXT_TARGET_INPUT_TOKENS` | `18000` | Post-compaction input target (9% of the default trigger); does not trigger early compaction. |
 | `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | Tokens reserved for the model response. |
 | `CONTEXT_KEEP_LAST_TURNS` | `6` | Recent turns retained during compaction. |
-| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `80` | Attempts provider-side exact counting (OpenAI Responses and Anthropic) after the full-request local/usage estimate reaches this percentage of the compaction trigger; unsupported or failed counts fall back safely. |
+| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `85` | Attempts provider-side exact counting (OpenAI Responses and Anthropic) after the full-request local/usage estimate reaches this percentage of the compaction trigger; unsupported or failed counts fall back safely. |
 | `CONTEXT_SUMMARIZATION_ENABLED` | `true` | Enables summarization of older dialogue. |
 | `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `200000` | Once compaction starts, attempts summarization above this input size; falls back to pruning on failure. |
 | `CONTEXT_SUMMARY_MODEL` | main model | Optional cheaper model used for summaries. |
@@ -193,7 +193,7 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | Retained tail of each `output.log`; `0` disables trimming. |
 | `RUN_TRACE_ENABLED` | `false` | Persists `.agent/runs/<run-id>/` traces and enables run feedback APIs. |
 
-By default, requests above 200K tokens compact toward 18K (9%); exact counting starts around 160K. Fixed system instructions are preserved, so instructions or tool definitions exceeding the target can prevent reaching 18K. The TUI shows the latest request size relative to the compaction trigger, using the format `45%/200K`, and refreshes after compaction; values may be estimated. This differs from cumulative `in/out` usage.
+By default, requests above 200K tokens compact toward 18K (9%); exact counting starts around 170K. Fixed system instructions are preserved, so instructions or tool definitions exceeding the target can prevent reaching 18K. The TUI shows the latest request size relative to the compaction trigger, using the format `45%/200K`, and refreshes after compaction; values may be estimated. This differs from cumulative `in/out` usage.
 
 ### External coding agents
 

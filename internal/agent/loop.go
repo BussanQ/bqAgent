@@ -26,7 +26,7 @@ const (
 	DefaultContextResponseReserveTokens = 4000
 	DefaultContextMaxInputTokens        = DefaultContextCompressionTokens + DefaultContextResponseReserveTokens
 	DefaultContextKeepLastTurns         = 6
-	DefaultExactCountTriggerPercent     = 80
+	DefaultExactCountTriggerPercent     = 85
 	EarlierConversationSummaryPrefix    = "Summary of earlier conversation:\n"
 	// maxParallelTools caps how many independent tool calls in one assistant turn
 	// run concurrently.

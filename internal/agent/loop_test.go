@@ -21,8 +21,8 @@ func TestDefaultContextConfigUses200KTriggerAndSmallTarget(t *testing.T) {
 	if config.MaxInputTokens != 204000 || config.ResponseReserveTokens != 4000 {
 		t.Fatalf("context budget = max %d reserve %d, want 204000 and 4000", config.MaxInputTokens, config.ResponseReserveTokens)
 	}
-	if config.ExactCountTriggerPercent != 80 {
-		t.Fatalf("exact count trigger = %d, want 80 percent", config.ExactCountTriggerPercent)
+	if config.ExactCountTriggerPercent != 85 {
+		t.Fatalf("exact count trigger = %d, want 85 percent", config.ExactCountTriggerPercent)
 	}
 }
 
