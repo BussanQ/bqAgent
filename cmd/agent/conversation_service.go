@@ -108,6 +108,16 @@ func groupExternalAgentTimeoutFromEnv(getenv func(string) string) time.Duration 
 
 func runtimeConfigFromSources(getenv func(string) string, agentDir string) appruntime.Config {
 	config := appruntime.ConfigFromEnv(getenv)
+	if magpie, err := globalconfig.LoadMagpie(agentDir); err == nil && magpie != nil {
+		config.ProviderID = "magpie"
+		config.APIType = agent.APITypeOpenAI
+		config.APIKey = magpie.APIKey
+		config.BaseURL = magpie.BaseURL
+		config.Model = magpie.Model
+		config.Models = magpie.Models
+		config.ModelDisplayNames = magpie.ModelDisplayNames
+		return config
+	}
 	store := globalconfig.NewStore(agentDir)
 	saved, err := store.Load()
 	if err != nil || strings.TrimSpace(saved.ActiveProvider) == "" {

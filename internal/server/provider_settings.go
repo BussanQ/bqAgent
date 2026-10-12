@@ -279,6 +279,10 @@ func (handler *handler) buildProviderConfig(input providerSettingsInput, existin
 }
 
 func (handler *handler) applySavedProvider(service *Service) {
+	if magpie, err := globalconfig.LoadMagpie(service.agentDir); err == nil && magpie != nil {
+		service.ConfigureLLM("magpie", agent.APITypeOpenAI, magpie.APIKey, magpie.BaseURL, magpie.Model, magpie.Models, magpie.ModelDisplayNames)
+		return
+	}
 	config, err := handler.providers.Load()
 	if err == nil {
 		_ = handler.applyProvider(service, config)

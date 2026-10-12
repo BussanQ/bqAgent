@@ -1,0 +1,9 @@
+{
+  "name": "bqa-magpie",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Magpie Agent plugin for bqagent",
+  "magpie": { "agent": "./agent.js" },
+  "scripts": { "test": "node --test agent.test.js" }
+}
