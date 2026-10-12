@@ -61,6 +61,8 @@ type Model struct {
 	progress         string
 	startedAt        time.Time
 	stream           string
+	reply            string
+	replyOffset      int
 	active           *activeTurn
 	sequence         uint64
 	queued           *queuedPrompt
@@ -249,6 +251,17 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	}
 	switch name {
 	case "pgup", "pgdown":
+		if model.reply != "" && !model.tools.expanded {
+			_, height, _ := model.liveBudgets()
+			count := max(1, height-1)
+			delta := count
+			if name == "pgup" {
+				delta = -delta
+			}
+			limit := max(0, len(model.streamLines(model.contentWidth()))-count)
+			model.replyOffset = min(limit, max(0, min(model.replyOffset, limit)+delta))
+			return nil
+		}
 		if len(model.tools.items) > 0 && (model.tools.expanded || len(model.tools.items) <= toolCollapseThreshold) {
 			delta := max(1, model.toolViewportHeight()-2)
 			if name == "pgup" {
@@ -266,6 +279,7 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		return model.requestQuit()
 	case "ctrl+l":
 		disableMouse := model.discardToolGroup()
+		model.reply, model.replyOffset = "", 0
 		model.input.reset()
 		model.closePanel()
 		model.resizeInput()
@@ -348,7 +362,7 @@ func (model *Model) requestQuit() []tea.Cmd {
 		return nil
 	}
 	model.provider = nil
-	return []tea.Cmd{model.commitToolGroup(), tea.Quit}
+	return []tea.Cmd{model.commitTurn(), tea.Quit}
 }
 
 func (model *Model) cancelActiveTurn() {
@@ -397,7 +411,7 @@ func (model *Model) submit(value string) tea.Cmd {
 		model.clearSession()
 		return tea.Batch(disableMouse, tea.ClearScreen)
 	}
-	toolCommand := model.commitToolGroup()
+	toolCommand := model.commitTurn()
 	switch lowerValue {
 	case "/help":
 		model.enqueuePrint(model.helpText())
@@ -507,13 +521,22 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	}
 	cancelled := model.active.cancelled || errors.Is(event.err, context.Canceled)
 	model.active = nil
-	model.flushStream()
 	if event.err != nil && !cancelled {
+		model.flushStream()
 		model.enqueuePrint(model.styles.error.Render("本轮失败：" + event.err.Error()))
 	} else if cancelled {
+		model.flushStream()
 		model.enqueuePrint(model.styles.dim.Render("已取消本轮任务"))
-	} else if (!event.result.Streamed || model.liveRunes == 0) && strings.TrimSpace(event.result.Reply) != "" {
-		model.enqueuePrint(renderMarkdown(event.result.Reply, model.contentWidth(), model.config.NoColor))
+	} else {
+		// The final snapshot is authoritative: streamed text can include prior
+		// commentary, an incomplete draft or a superseded closeout answer.
+		model.reply = event.result.Reply
+		if strings.TrimSpace(model.reply) == "" {
+			model.reply = model.stream
+		}
+		model.replyOffset = 0
+		model.stream = ""
+		model.liveCache = &streamViewCache{}
 	}
 	if event.result.SessionID != "" {
 		model.sessionID = event.result.SessionID
@@ -538,7 +561,7 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 		return []tea.Cmd{disableMouse, tea.ClearScreen}
 	}
 	if model.pendingQuit {
-		return []tea.Cmd{model.commitToolGroup(), tea.Quit}
+		return []tea.Cmd{model.commitTurn(), tea.Quit}
 	}
 	if model.queued != nil {
 		queued := model.queued.value
@@ -625,6 +648,18 @@ func (model *Model) enqueuePrint(lines ...string) {
 	}
 }
 
+// Keep the completed answer below the interactive tools until the next turn
+// or exit, then commit the tools and answer together exactly once.
+func (model *Model) commitTurn() tea.Cmd {
+	command := model.commitToolGroup()
+	if model.reply != "" {
+		model.enqueuePrint(renderMarkdown(model.reply, model.contentWidth(), model.config.NoColor))
+		model.reply, model.replyOffset = "", 0
+		model.liveCache = &streamViewCache{}
+	}
+	return command
+}
+
 func (model *Model) commitToolGroup() tea.Cmd {
 	if len(model.tools.items) == 0 {
 		return nil
@@ -649,6 +684,7 @@ func (model *Model) clearSession() {
 	model.liveRunes = 0
 	model.queued = nil
 	model.stream = ""
+	model.reply, model.replyOffset = "", 0
 	model.liveCache = &streamViewCache{}
 	model.tools = toolGroup{}
 	model.toolMouse = false
@@ -990,6 +1026,7 @@ func (model Model) helpText() string {
   Esc 打断当前回复；空闲时关闭面板/收起工具详情
   Ctrl+L 清理当前视口和草稿（保留 Session）
   Ctrl+O 展开/收起已合并的工具详情（也可点击工具汇总行）
+  PgUp/PgDn 翻页查看最终结论；展开工具时翻页查看工具详情
 
 本地命令
   /help 帮助    /provider 配置模型 Provider    /clear 新建会话并清理显示    /exit 安全退出

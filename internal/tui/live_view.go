@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -12,21 +13,51 @@ type streamViewCache struct {
 	text  string
 	width int
 	lines []string
+	final bool
 }
 
 func (model Model) streamLines(width int) []string {
-	if model.stream == "" {
+	text := model.stream
+	final := model.reply != ""
+	if final {
+		text = model.reply
+	}
+	if text == "" {
 		return nil
 	}
 	cache := model.liveCache
-	if cache != nil && cache.text == model.stream && cache.width == width {
+	if cache != nil && cache.text == text && cache.width == width && cache.final == final {
 		return cache.lines
 	}
-	lines := strings.Split(ansi.Hardwrap(model.stream, width, false), "\n")
+	rendered := text
+	if final {
+		rendered = renderMarkdown(text, width, model.config.NoColor)
+	}
+	lines := strings.Split(ansi.Hardwrap(rendered, width, false), "\n")
 	if cache != nil {
-		cache.text, cache.width, cache.lines = model.stream, width, lines
+		cache.text, cache.width, cache.lines, cache.final = text, width, lines, final
 	}
 	return lines
+}
+
+func (model Model) replyViewport(lines []string, width, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	if len(lines) <= height {
+		return lines
+	}
+	count := max(1, height-1)
+	start := min(model.replyOffset, len(lines)-count)
+	visible := append([]string{}, lines[start:start+count]...)
+	if height > 1 {
+		hint := fmt.Sprintf("结论 %d–%d/%d · PgUp/PgDn 翻页", start+1, start+count, len(lines))
+		if model.tools.expanded {
+			hint = fmt.Sprintf("结论 %d–%d/%d · 收起工具后 PgUp/PgDn 翻页", start+1, start+count, len(lines))
+		}
+		visible = append(visible, model.styles.dim.Render(ansi.Truncate(hint, width, "…")))
+	}
+	return visible
 }
 
 func (model Model) frameLimit() int {
@@ -74,14 +105,14 @@ func (model Model) liveBudgets() (tools, stream, auxiliary int) {
 	if len(model.tools.items) > 0 {
 		reserved++
 	}
-	if model.stream != "" {
+	if model.stream != "" || model.reply != "" {
 		reserved++
 	}
 	auxiliary = min(len(model.auxiliaryLines()), max(0, remaining-reserved))
 	remaining -= auxiliary
 	if len(model.tools.items) > 0 {
 		tools = remaining
-		if model.stream != "" {
+		if model.stream != "" || model.reply != "" {
 			tools = max(1, remaining/2)
 		}
 		tools = min(tools, len(model.tools.viewLines(model.styles, model.contentWidth())))
@@ -97,14 +128,16 @@ func (model Model) toolViewportHeight() int {
 }
 
 // The inline renderer cannot erase rows that have escaped into native
-// scrollback. Bound every live frame in physical rows, and keep the full text
-// in model.stream for its single final history commit.
+// scrollback. Bound every live frame in physical rows, and retain the complete
+// stream or final reply until its single history commit.
 func (model Model) liveView() tea.View {
 	width := model.contentWidth()
 	toolHeight, streamHeight, auxiliaryHeight := model.liveBudgets()
 	lines := append([]string{}, model.tools.viewport(model.styles, width, toolHeight)...)
 	stream := model.streamLines(width)
-	if streamHeight > 0 && len(stream) > 0 {
+	if model.reply != "" {
+		lines = append(lines, model.replyViewport(stream, width, streamHeight)...)
+	} else if streamHeight > 0 && len(stream) > 0 {
 		lines = append(lines, stream[max(0, len(stream)-streamHeight):]...)
 	}
 	auxiliary := model.auxiliaryLines()
