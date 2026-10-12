@@ -16,6 +16,7 @@ export interface GroupInfo {
 }
 
 export interface ProviderView {
+  managed_by?: string;
   id: string;
   name: string;
   api_type: string;

@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +21,7 @@ import (
 const maxProviderModelsResponseBytes = 2 << 20
 
 type providerView struct {
+	ManagedBy         string             `json:"managed_by,omitempty"`
 	ID                string             `json:"id"`
 	Name              string             `json:"name"`
 	APIType           string             `json:"api_type"`
@@ -57,6 +60,16 @@ func (handler *handler) handleProviders(writer http.ResponseWriter, request *htt
 	}
 	handler.providerMu.Lock()
 	defer handler.providerMu.Unlock()
+	service, err := handler.serviceForWorkspace(request.URL.Query().Get("workspace_id"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
+		return
+	}
+	magpie, err := globalconfig.LoadMagpie(filepath.Dir(handler.providers.Path()))
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
+		return
+	}
 	switch request.Method {
 	case http.MethodGet:
 		config, err := handler.providers.Load()
@@ -64,14 +77,40 @@ func (handler *handler) handleProviders(writer http.ResponseWriter, request *htt
 			writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
 			return
 		}
-		writeJSON(writer, http.StatusOK, providerResponse(config))
+		writeJSON(writer, http.StatusOK, runtimeProviderResponse(config, service, magpie))
 	case http.MethodPut:
 		var input providerSettingsInput
 		if err := decodeProviderJSON(writer, request, &input); err != nil {
 			writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
 			return
 		}
+		useMagpie := magpie != nil && input.ActiveProvider == "magpie"
+		if magpie != nil {
+			for _, provider := range input.Providers {
+				if strings.TrimSpace(provider.ID) == "magpie" {
+					writeError(writer, http.StatusBadRequest, chatResponse{Error: "Magpie 连接由 Magpie 管理，不能在此修改"})
+					return
+				}
+			}
+		}
 		config, err := handler.providers.UpdateProviders(func(active *string, providers *[]globalconfig.Provider) error {
+			// An external connection is never copied into the encrypted provider store.
+			// Keep any pre-existing ordinary provider with the same reserved ID.
+			if magpie != nil {
+				for _, provider := range *providers {
+					if provider.ID == "magpie" {
+						input.Providers = append(input.Providers, providerInput{ID: provider.ID, Name: provider.Name, APIType: provider.APIType, BaseURL: provider.BaseURL, Models: provider.Models, ModelDisplayNames: provider.ModelDisplayNames, DefaultModel: provider.DefaultModel})
+					}
+				}
+			}
+			if useMagpie {
+				input.ActiveProvider = ""
+				for _, provider := range input.Providers {
+					if input.ActiveProvider == "" || provider.ID == *active {
+						input.ActiveProvider = provider.ID
+					}
+				}
+			}
 			updated, err := handler.buildProviderConfig(input, globalconfig.Config{ActiveProvider: *active, Providers: *providers})
 			if err != nil {
 				return err
@@ -83,11 +122,17 @@ func (handler *handler) handleProviders(writer http.ResponseWriter, request *htt
 			writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
 			return
 		}
-		service, err := handler.serviceForWorkspace(request.URL.Query().Get("workspace_id"))
-		if err == nil {
-			_ = handler.applyProvider(service, config)
+		if useMagpie {
+			model := magpie.Model
+			if info := service.RuntimeLLMInfo(); info.ProviderID == "magpie" && slices.Contains(magpie.Models, info.Model) {
+				model = info.Model
+			}
+			applyMagpieProvider(service, magpie, model)
+		} else if err := handler.applyProvider(service, config); err != nil {
+			writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
+			return
 		}
-		writeJSON(writer, http.StatusOK, providerResponse(config))
+		writeJSON(writer, http.StatusOK, runtimeProviderResponse(config, service, magpie))
 	default:
 		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
 	}
@@ -113,6 +158,31 @@ func (handler *handler) handleProviderSelection(writer http.ResponseWriter, requ
 	}
 	handler.providerMu.Lock()
 	defer handler.providerMu.Unlock()
+	if selection.ProviderID == "magpie" {
+		magpie, err := globalconfig.LoadMagpie(filepath.Dir(handler.providers.Path()))
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
+			return
+		}
+		if magpie != nil {
+			if !slices.Contains(magpie.Models, selection.Model) {
+				writeError(writer, http.StatusBadRequest, chatResponse{Error: "unknown Magpie model"})
+				return
+			}
+			service, err := handler.serviceForWorkspace(request.URL.Query().Get("workspace_id"))
+			if err != nil {
+				writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
+				return
+			}
+			applyMagpieProvider(service, magpie, selection.Model)
+			if err := service.setSessionModel(selection.SessionID, selection.Model); err != nil {
+				writeError(writer, http.StatusBadRequest, chatResponse{Error: fmt.Sprintf("apply session model: %v", err)})
+				return
+			}
+			writeJSON(writer, http.StatusOK, service.RuntimeLLMInfoForSession(selection.SessionID))
+			return
+		}
+	}
 	config, err := handler.providers.UpdateProviders(func(active *string, providers *[]globalconfig.Provider) error {
 		found := false
 		for index := range *providers {
@@ -280,7 +350,7 @@ func (handler *handler) buildProviderConfig(input providerSettingsInput, existin
 
 func (handler *handler) applySavedProvider(service *Service) {
 	if magpie, err := globalconfig.LoadMagpie(service.agentDir); err == nil && magpie != nil {
-		service.ConfigureLLM("magpie", agent.APITypeOpenAI, magpie.APIKey, magpie.BaseURL, magpie.Model, magpie.Models, magpie.ModelDisplayNames)
+		applyMagpieProvider(service, magpie, magpie.Model)
 		return
 	}
 	config, err := handler.providers.Load()
@@ -362,4 +432,33 @@ func parseProviderModels(body []byte) ([]modelcatalog.Model, error) {
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].ID < models[j].ID })
 	return models, nil
+}
+
+// Magpie owns its connection file. WebUI model choices affect this server only;
+// restarting restores the default selected in Magpie.
+func applyMagpieProvider(service *Service, magpie *globalconfig.MagpieConfig, model string) {
+	service.ConfigureLLM("magpie", agent.APITypeOpenAI, magpie.APIKey, magpie.BaseURL, model, magpie.Models, magpie.ModelDisplayNames)
+}
+
+func runtimeProviderResponse(config globalconfig.Config, service *Service, magpie *globalconfig.MagpieConfig) providerSettingsResponse {
+	response := providerResponse(config)
+	if magpie != nil {
+		response.Providers = slices.DeleteFunc(response.Providers, func(provider providerView) bool { return provider.ID == "magpie" })
+		response.Providers = append(response.Providers, providerView{
+			ID: "magpie", Name: "Magpie", ManagedBy: "magpie", APIType: string(agent.APITypeOpenAI),
+			BaseURL: magpie.BaseURL, Models: magpie.Models, ModelDisplayNames: magpie.ModelDisplayNames,
+			DefaultModel: magpie.Model, APIKeyConfigured: true,
+		})
+	}
+	info := service.RuntimeLLMInfo()
+	for index := range response.Providers {
+		provider := &response.Providers[index]
+		if provider.ID == info.ProviderID {
+			response.ActiveProvider = info.ProviderID
+			if slices.Contains(provider.Models, info.Model) {
+				provider.DefaultModel = info.Model
+			}
+		}
+	}
+	return response
 }

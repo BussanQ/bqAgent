@@ -84,3 +84,65 @@ it("renders provider display names and saves and selects model IDs", async () =>
   await vi.waitFor(() => expect(controller.runtimeModelOptions()[0].textContent).toBe("Updated Name"));
   controller.dispose();
 });
+
+it.each(["save", "delete"])("shows managed Magpie and excludes it from ordinary provider %s", async (action) => {
+  const magpie = { id: "magpie", name: "Magpie", managed_by: "magpie", api_type: "openai", base_url: "http://localhost:12345/v1", api_key_configured: true, models: ["p/first", "p/second"], default_model: "p/first", model_display_names: { "p/second": "Second Model" } };
+  const ordinary = { id: "saved", name: "Saved", api_type: "openai", base_url: "", models: ["original"], default_model: "original" };
+  const settings = { active_provider: "magpie", providers: [magpie, ordinary] };
+  let written: { active_provider: string; providers: typeof ordinary[] } | undefined;
+  let selection: unknown;
+  const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/provider-selection")) {
+      selection = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ provider_id: "magpie", api_type: "openai", model: "p/second", model_display_name: "Second Model" }));
+    }
+    if (url.endsWith("/providers")) {
+      if (init?.method === "PUT") {
+        written = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ active_provider: written!.active_provider, providers: [magpie, ...written!.providers] }));
+      }
+      return new Response(JSON.stringify(settings));
+    }
+    return new Response(JSON.stringify({ llm: { provider_id: "magpie", api_type: "openai", model: "p/first", mode: "run" } }));
+  });
+  const controller = createProviderController(new APIClient(transport), { statusEl: document.getElementById("status") as HTMLDivElement, sessionId: "s", busy: false, workspaceScopedURL: url => url, setChatMode: () => {} });
+  await controller.loadRuntimeModel();
+  expect(controller.runtimeModelOptions().map(option => option.textContent)).toEqual(["p/first", "Second Model", "original"]);
+  Object.assign(controller.modelSelect, { selectedOptions: [controller.runtimeModelOptions()[1]] });
+  controller.modelSelect.dispatchEvent(new Event("change"));
+  await controller.runtimeModelSelectionPromise;
+  expect(selection).toEqual({ provider_id: "magpie", model: "p/second", session_id: "s" });
+  expect(controller.modelSelect.title).toBe("magpie / Second Model");
+
+  controller.providerSettingsTrigger.click();
+  await vi.waitFor(() => expect(controller.providerSettingsBackdrop.hidden).toBe(false));
+  expect(document.getElementById("provider-managed-notice")!.hidden).toBe(false);
+  expect(document.getElementById("provider-local-notice")!.hidden).toBe(true);
+  expect(document.getElementById("provider-api-key-status")!.textContent).toBe("由 Magpie 管理");
+  expect((document.getElementById("provider-api-key") as HTMLInputElement).value).toBe("");
+  const controls = ["provider-name", "provider-id", "provider-api-type", "provider-base-url", "provider-api-key", "provider-api-key-toggle", "provider-fetch-models", "provider-model-add", "provider-model-manual", "provider-default-model", "provider-settings-save", "provider-settings-delete"];
+  controls.forEach(id => expect((document.getElementById(id) as HTMLInputElement).disabled, id).toBe(true));
+  expect(Array.from(document.querySelectorAll<HTMLButtonElement>(".provider-model-row")).every(row => row.disabled)).toBe(true);
+  document.getElementById("provider-settings-save")!.click();
+  document.getElementById("provider-settings-delete")!.click();
+  expect(written).toBeUndefined();
+
+  document.querySelector<HTMLButtonElement>('.provider-settings-item[data-index="1"]')!.click();
+  controls.forEach(id => expect((document.getElementById(id) as HTMLInputElement).disabled, id).toBe(false));
+  expect(document.getElementById("provider-managed-notice")!.hidden).toBe(true);
+  if (action === "save") {
+    (document.getElementById("provider-name") as HTMLInputElement).value = "Renamed";
+    document.getElementById("provider-settings-save")!.click();
+  } else {
+    document.getElementById("provider-settings-delete")!.click();
+    document.getElementById("provider-settings-delete")!.click();
+  }
+  await vi.waitFor(() => expect(written).toBeDefined());
+  expect(written!.active_provider).toBe(action === "save" ? "saved" : "magpie");
+  expect(written!.providers.map(provider => provider.id)).toEqual(action === "save" ? ["saved"] : []);
+  if (action === "save") expect(written!.providers[0].name).toBe("Renamed");
+  await vi.waitFor(() => expect(controller.providerSettingsState.providers).toHaveLength(action === "save" ? 2 : 1));
+  expect(controller.runtimeModelOptions().some(option => option.dataset.providerId === "magpie")).toBe(true);
+  controller.dispose();
+});

@@ -47,6 +47,9 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
   var editingProviderIndex = -1;
   var providerCatalogModels: ProviderModelOption[] = [];
   var providerDeleteArmed = false;
+  function isManagedProvider(): boolean {
+    return !!providerSettingsState.providers[editingProviderIndex]?.managed_by;
+  }
   function runtimeModelOptions(): WaOption[] {
     return Array.from(modelSelect.querySelectorAll<WaOption>("wa-option"));
   }
@@ -164,7 +167,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     if (!models.length) providerDefaultModelInput.add(new Option("请先启用模型", ""));
     models.forEach(function (model) { providerDefaultModelInput.add(new Option(modelDisplayName(model, providerCatalogModels.find(item => item.id === model)?.display_name), model)); });
     providerDefaultModelInput.value = current;
-    providerDefaultModelInput.disabled = models.length === 0;
+    providerDefaultModelInput.disabled = isManagedProvider() || models.length === 0;
     providerModelCount.textContent = models.length + " 已启用";
   }
 
@@ -190,6 +193,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     visible.forEach(function (item) {
       var row = document.createElement("button");
       row.type = "button";
+      row.disabled = isManagedProvider();
       row.className = "provider-model-row" + (item.selected ? " selected" : "");
       row.setAttribute("role", "option");
       row.setAttribute("aria-selected", item.selected ? "true" : "false");
@@ -254,14 +258,21 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     editingProviderIndex = index;
     resetProviderDeleteArmed();
     setProviderAPIKeyVisible(false);
-    providerSettingsDelete.disabled = index < 0;
+    const managed = isManagedProvider();
+    providerSettingsDelete.disabled = index < 0 || managed;
+    [providerIDInput, providerNameInput, providerAPITypeInput, providerBaseURLInput,
+      providerAPIKeyInput, providerAPIKeyToggle, providerFetchModels, providerModelManual,
+      providerModelAdd, providerSettingsSave].forEach(control => { control.disabled = managed; });
+    byId("provider-managed-notice").hidden = !managed;
+    byId("provider-local-notice").hidden = managed;
     providerIDInput.value = provider ? provider.id : "";
     providerNameInput.value = provider ? provider.name : "";
     providerAPITypeInput.value = provider ? provider.api_type : "openai";
     providerBaseURLInput.value = provider ? provider.base_url || "" : "";
     providerAPIKeyInput.value = "";
     var configured = !!(provider && provider.api_key_configured);
-    providerAPIKeyInput.placeholder = providerAPIKeyPlaceholder(configured);
+    providerAPIKeyInput.placeholder = managed ? "由 Magpie 提供" : providerAPIKeyPlaceholder(configured);
+    providerAPIKeyStatus.textContent = managed ? "由 Magpie 管理" : "已加密保存";
     providerAPIKeyStatus.hidden = !configured;
     providerModelFilter.value = "";
     providerCatalogModels = providerModelOptions(provider ? provider.models : [], true, provider?.model_display_names);
@@ -275,7 +286,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     providerSettingsList.innerHTML = "";
     if (index < 0) providerSettingsList.appendChild(createProviderNavItem("新 Provider", "填写后保存", -1, true, false));
     providerSettingsState.providers.forEach(function (provider, providerIndex) {
-      providerSettingsList.appendChild(createProviderNavItem(provider.name || provider.id || "未命名", providerListSubtitle(provider), providerIndex, providerIndex === index, provider.id === providerSettingsState.active_provider));
+      providerSettingsList.appendChild(createProviderNavItem(provider.name || provider.id || "未命名", providerListSubtitle(provider) + (provider.managed_by ? " · Magpie 管理" : ""), providerIndex, providerIndex === index, provider.id === providerSettingsState.active_provider));
     });
     if (!providerSettingsList.children.length) {
       var empty = document.createElement("div");
@@ -301,11 +312,13 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
   }
 
   function addProviderModel(model: string, selected: boolean): void {
+    if (isManagedProvider()) return;
     providerCatalogModels = upsertProviderModel(providerCatalogModels, model, selected);
     renderProviderModelCatalog();
   }
 
   async function fetchAvailableProviderModels(): Promise<void> {
+    if (isManagedProvider()) return;
     discoveryController?.abort();
     const controller = new AbortController();
     discoveryController = controller;
@@ -328,18 +341,20 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     } finally {
       if (discoveryController === controller) {
         discoveryController = null;
-        providerFetchModels.disabled = false;
+        providerFetchModels.disabled = isManagedProvider();
         setIconButtonLabel(providerFetchModels, "download", "获取可用模型");
       }
     }
   }
 
   async function saveProviderSettings(): Promise<void> {
+    if (isManagedProvider()) return;
     var models = selectedProviderModels();
     var provider = { id: providerIDInput.value.trim(), name: providerNameInput.value.trim(), api_type: providerAPITypeInput.value, base_url: providerBaseURLInput.value.trim(), api_key: providerAPIKeyInput.value, models: models, model_display_names: selectedProviderModelNames(providerCatalogModels), default_model: providerDefaultModelInput.value || models[0] || "" };
     var index = editingProviderIndex;
-    var providers = providerSettingsState.providers.map(providerPayload);
-    if (index >= 0) providers[index] = provider; else providers.push(provider);
+    var providers = providerSettingsState.providers
+      .flatMap((value, providerIndex) => value.managed_by ? [] : [providerIndex === index ? provider : providerPayload(value)]);
+    if (index < 0) providers.push(provider);
     var response = await requests.request(deps.workspaceScopedURL("/api/v1/webui/providers"), { method: "PUT", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ active_provider: provider.id, providers: providers }) });
     var payload = await requests.readJSON<ProviderSettings & { error?: string }>(response);
     if (!response.ok) throw new Error(payload.error || "保存 Provider 失败");
@@ -382,6 +397,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     renderProviderSettingsList(index);
   }, { signal: lifetime.signal });
   providerModelsInput.addEventListener("click", function (event) {
+    if (isManagedProvider()) return;
     var row = eventElement(event.target)?.closest(".provider-model-row") as HTMLElement | null;
     if (!row || !providerModelsInput.contains(row) || !row.dataset.model) return;
     providerCatalogModels = toggleProviderModel(providerCatalogModels, row.dataset.model, row.getAttribute("aria-selected") !== "true");
@@ -411,6 +427,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
     providerNameInput.focus();
   }, { signal: lifetime.signal });
   providerSettingsDelete.addEventListener("click", async function () {
+    if (isManagedProvider()) return;
     var index = editingProviderIndex;
     if (index < 0) { renderProviderSettingsList(); return; }
     if (!providerDeleteArmed) {
@@ -419,8 +436,9 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
       providerSettingsDelete.classList.add("armed");
       return;
     }
-    var providers = providerSettingsState.providers.filter(function (_, providerIndex) { return providerIndex !== index; }).map(providerPayload);
-    var active = remainingActiveProvider(providers, providerSettingsState.active_provider);
+    var remaining = providerSettingsState.providers.filter(function (_, providerIndex) { return providerIndex !== index; });
+    var active = remainingActiveProvider(remaining, providerSettingsState.active_provider);
+    var providers = remaining.filter(provider => !provider.managed_by).map(providerPayload);
     try {
       var response = await requests.request(deps.workspaceScopedURL("/api/v1/webui/providers"), { method: "PUT", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ active_provider: active, providers: providers }) });
       var payload = await requests.readJSON<ProviderSettings & { error?: string }>(response);
@@ -432,7 +450,7 @@ export function createProviderController(api: APIClient, deps: ProviderDependenc
   }, { signal: lifetime.signal });
   providerSettingsSave.addEventListener("click", function () {
     providerSettingsSave.disabled = true;
-    saveProviderSettings().catch(function (error: unknown) { if (isCancellation(error)) return; deps.statusEl.textContent = errorMessage(error); deps.statusEl.classList.add("error"); }).finally(function () { providerSettingsSave.disabled = false; });
+    saveProviderSettings().catch(function (error: unknown) { if (isCancellation(error)) return; deps.statusEl.textContent = errorMessage(error); deps.statusEl.classList.add("error"); }).finally(function () { providerSettingsSave.disabled = isManagedProvider(); });
   }, { signal: lifetime.signal });
   modelSelect.addEventListener("change", beginRuntimeModelSelection, { signal: lifetime.signal });
 

@@ -326,6 +326,7 @@
           <div class="provider-settings-list" id="provider-settings-list" role="listbox" aria-label="Provider 列表"></div>
         </aside>
         <div class="provider-settings-editor">
+          <p class="provider-settings-note" id="provider-managed-notice" hidden>连接和模型目录由 Magpie 管理，请在 Magpie 中修改或断开接入。可在底部模型选择器切换模型；重启服务后使用 Magpie 设置的默认模型。</p>
           <section class="provider-settings-section">
             <div class="provider-settings-section-head">
               <div>
@@ -387,7 +388,7 @@
             </div>
             <label class="provider-field">默认模型<select id="provider-default-model"></select></label>
           </section>
-          <p class="provider-settings-note">API Key 使用本机随机主密钥、随机盐及 AES-256-GCM 加密后保存到 ~/.agent/config.json，页面不会读取已保存的 Key。</p>
+          <p class="provider-settings-note" id="provider-local-notice">API Key 使用本机随机主密钥、随机盐及 AES-256-GCM 加密后保存到 ~/.agent/config.json，页面不会读取已保存的 Key。</p>
         </div>
       </div>
       <div class="provider-settings-footer">
