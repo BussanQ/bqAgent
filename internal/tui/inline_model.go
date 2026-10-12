@@ -34,6 +34,22 @@ func (model inlineModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	var command tea.Cmd
 	model.model, command = model.model.Update(message)
+	if inner, ok := model.model.(Model); ok && inner.historyPrints > 0 && !model.pending {
+		// Keep the rendered frame intact until Println has inserted the old
+		// answer and the next user question above it. The insertion itself
+		// anchors the renderer, so this transition needs no ClearScreen.
+		// An intervening flush must keep that origin instead of restoring the
+		// old input cursor before the history acknowledgement arrives.
+		model.view.Cursor = tea.NewCursor(0, 0)
+		return model, command
+	}
+	if _, printed := message.(historyPrintedMsg); printed && !model.pending {
+		// insertAbove has placed the native cursor at the new frame origin.
+		// Publish the shorter frame directly: ClearScreen would enqueue a
+		// cursor movement that can flush after the newly printed question.
+		model.view = model.model.View()
+		return model, command
+	}
 	if model.pending {
 		// Keep both the old dimensions and the origin cursor until ClearScreen
 		// has reached the renderer, even if another event or frame intervenes.

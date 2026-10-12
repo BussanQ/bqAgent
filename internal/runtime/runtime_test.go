@@ -85,6 +85,9 @@ func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	if config.ContextMaxInputTokens != defaults.MaxInputTokens {
 		t.Fatalf("ContextMaxInputTokens = %d, want %d", config.ContextMaxInputTokens, defaults.MaxInputTokens)
 	}
+	if config.ContextCompressionTriggerTokens != defaults.CompressionTriggerTokens {
+		t.Fatalf("compression trigger = %d, want %d", config.ContextCompressionTriggerTokens, defaults.CompressionTriggerTokens)
+	}
 	if config.ContextTargetInputTokens != defaults.TargetInputTokens {
 		t.Fatalf("ContextTargetInputTokens = %d, want %d", config.ContextTargetInputTokens, defaults.TargetInputTokens)
 	}
@@ -105,6 +108,20 @@ func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	}
 	if config.ContextSummaryModel != defaults.SummaryModel {
 		t.Fatalf("ContextSummaryModel = %q, want %q", config.ContextSummaryModel, defaults.SummaryModel)
+	}
+}
+
+func TestContextThresholdOverridesReachRuntime(t *testing.T) {
+	values := map[string]string{
+		"CONTEXT_MAX_INPUT_TOKENS":           "164000",
+		"CONTEXT_COMPRESSION_TRIGGER_TOKENS": "160000",
+		"CONTEXT_TARGET_INPUT_TOKENS":        "12000",
+		"CONTEXT_SUMMARY_TRIGGER_TOKENS":     "160000",
+	}
+	config := ConfigFromEnv(func(key string) string { return values[key] })
+	runtime := (Factory{Config: config, WorkspaceRoot: t.TempDir(), AgentDir: t.TempDir(), Getenv: func(string) string { return "" }}).Build(false)
+	if runtime.Context.MaxInputTokens != 164000 || runtime.Context.CompressionTriggerTokens != 160000 || runtime.Context.TargetInputTokens != 12000 || runtime.Context.SummaryTriggerTokens != 160000 {
+		t.Fatalf("runtime lost context overrides: %+v", runtime.Context)
 	}
 }
 
@@ -197,7 +214,7 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 			return "bad"
 		case "CONTEXT_MAX_INPUT_TOKENS":
 			return "bad"
-		case "CONTEXT_TARGET_INPUT_TOKENS":
+		case "CONTEXT_COMPRESSION_TRIGGER_TOKENS", "CONTEXT_TARGET_INPUT_TOKENS":
 			return "bad"
 		case "CONTEXT_RESPONSE_RESERVE_TOKENS":
 			return "bad"
@@ -223,6 +240,9 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 	}
 	if config.ContextMaxInputTokens != defaults.MaxInputTokens {
 		t.Fatalf("ContextMaxInputTokens = %d, want fallback %d", config.ContextMaxInputTokens, defaults.MaxInputTokens)
+	}
+	if config.ContextCompressionTriggerTokens != defaults.CompressionTriggerTokens {
+		t.Fatalf("compression trigger = %d, want %d", config.ContextCompressionTriggerTokens, defaults.CompressionTriggerTokens)
 	}
 	if config.ContextTargetInputTokens != defaults.TargetInputTokens {
 		t.Fatalf("ContextTargetInputTokens = %d, want fallback %d", config.ContextTargetInputTokens, defaults.TargetInputTokens)

@@ -13,13 +13,13 @@ import (
 	"bqagent/internal/tools"
 )
 
-func TestDefaultContextConfigUses128KCompressionThreshold(t *testing.T) {
+func TestDefaultContextConfigUses200KTriggerAndSmallTarget(t *testing.T) {
 	config := DefaultContextConfig()
-	if config.TargetInputTokens != 128000 || config.SummaryTriggerTokens != 128000 {
-		t.Fatalf("compression thresholds = target %d summary %d, want 128000", config.TargetInputTokens, config.SummaryTriggerTokens)
+	if config.TargetInputTokens != 18000 || config.CompressionTriggerTokens != 200000 || config.SummaryTriggerTokens != 200000 {
+		t.Fatalf("compression thresholds = target %d summary %d, want 18000 and 200000", config.TargetInputTokens, config.SummaryTriggerTokens)
 	}
-	if config.MaxInputTokens != 132000 || config.ResponseReserveTokens != 4000 {
-		t.Fatalf("context budget = max %d reserve %d, want 132000 and 4000", config.MaxInputTokens, config.ResponseReserveTokens)
+	if config.MaxInputTokens != 204000 || config.ResponseReserveTokens != 4000 {
+		t.Fatalf("context budget = max %d reserve %d, want 204000 and 4000", config.MaxInputTokens, config.ResponseReserveTokens)
 	}
 	if config.ExactCountTriggerPercent != 80 {
 		t.Fatalf("exact count trigger = %d, want 80 percent", config.ExactCountTriggerPercent)

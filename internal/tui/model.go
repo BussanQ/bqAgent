@@ -72,12 +72,13 @@ type Model struct {
 	pendingClear     bool
 	quitConfirmUntil time.Time
 
-	sessionID  string
-	runtime    RuntimeInfo
-	metrics    *GenerationMetrics
-	usage      *TokenUsage
-	liveTokens int
-	liveRunes  int
+	sessionID    string
+	runtime      RuntimeInfo
+	metrics      *GenerationMetrics
+	usage        *TokenUsage
+	contextUsage *turn.ContextUsage
+	liveTokens   int
+	liveRunes    int
 
 	historyStore *historyStore
 	history      []string
@@ -93,25 +94,31 @@ type Model struct {
 	liveCache   *streamViewCache
 	provider    *providerWizard
 
-	startup      []string
-	initialTask  string
-	initialSent  bool
-	printQueue   []string
-	statusNotice string
+	startup       []string
+	initialTask   string
+	initialSent   bool
+	printQueue    []string
+	historyPrints int
+	statusNotice  string
 }
 
 type startupMsg struct{}
 type tickMsg time.Time
 
+// historyPrintedMsg follows the native history insertion, allowing the inline
+// wrapper to publish a shorter frame without erasing the newly inserted text.
+type historyPrintedMsg struct{}
+
 type turnEvent struct {
-	message  turn.Event
-	sequence uint64
-	kind     string
-	text     string
-	tool     ToolEvent
-	usage    TokenUsage
-	result   TurnResult
-	err      error
+	message      turn.Event
+	sequence     uint64
+	kind         string
+	text         string
+	tool         ToolEvent
+	usage        TokenUsage
+	contextUsage turn.ContextUsage
+	result       TurnResult
+	err          error
 }
 
 type controlResultMsg struct {
@@ -161,6 +168,8 @@ func (model Model) Init() tea.Cmd {
 func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	commands := make([]tea.Cmd, 0, 4)
 	switch message := message.(type) {
+	case historyPrintedMsg:
+		model.historyPrints = max(0, model.historyPrints-1)
 	case startupMsg:
 		model.reportActivity("idle")
 		model.enqueuePrint(model.startup...)
@@ -220,7 +229,8 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if len(model.printQueue) > 0 {
 		text := strings.Join(model.printQueue, "\n")
 		model.printQueue = nil
-		return model, tea.Sequence(tea.Println(text), tea.Batch(commands...))
+		model.historyPrints++
+		return model, tea.Sequence(tea.Println(text), func() tea.Msg { return historyPrintedMsg{} }, tea.Batch(commands...))
 	}
 	return model, tea.Batch(commands...)
 }
@@ -497,6 +507,9 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 			return commands
 		}
 		switch event.kind {
+		case "context":
+			usage := event.contextUsage
+			model.contextUsage = &usage
 		case "session":
 			model.sessionID = event.text
 			model.reportActivity("working")
@@ -615,6 +628,7 @@ func launchTurn(backend Backend, ctx context.Context, sequence uint64, sessionID
 			Message:  func(event turn.Event) { send(turnEvent{kind: "message", message: event}) },
 			Session:  func(id string) { send(turnEvent{kind: "session", text: id}) },
 			Usage:    func(usage TokenUsage) { send(turnEvent{kind: "usage", usage: usage}) },
+			Context:  func(usage turn.ContextUsage) { send(turnEvent{kind: "context", contextUsage: usage}) },
 			Token:    func(text string) { send(turnEvent{kind: "token", text: text}) },
 			Progress: func(text string) { send(turnEvent{kind: "progress", text: text}) },
 			Tool:     func(event ToolEvent) { send(turnEvent{kind: "tool", tool: event}) },
@@ -698,6 +712,7 @@ func (model *Model) discardToolGroup() tea.Cmd {
 }
 
 func (model *Model) clearSession() {
+	model.contextUsage = nil
 	model.sessionID = ""
 	model.reportActivity("idle")
 	model.runtime = model.backend.RuntimeInfo("")
@@ -923,6 +938,15 @@ func (model Model) renderStatus(width int) string {
 	}
 	if right == "" {
 		right = "Enter 发送 · Alt+Enter 换行 · / 命令"
+	}
+	if usage := model.contextUsage; usage != nil && usage.Limit > 0 && !model.quitConfirmationActive() {
+		estimate := ""
+		if usage.Estimated {
+			estimate = "≈"
+		}
+		// Keep the context indicator visible even on narrow terminals. Unlike
+		// in/out billing totals, each backend snapshot replaces the previous one.
+		right = fmt.Sprintf("上下文 %s%.0f%% · %s/%s · %s", estimate, 100*float64(max(0, usage.Tokens))/float64(usage.Limit), formatTokenCount(usage.Tokens), formatTokenCount(usage.Limit), right)
 	}
 	left, right = right, left
 	left = ansi.Truncate(left, width, "…")

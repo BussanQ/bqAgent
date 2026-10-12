@@ -186,7 +186,10 @@ func (a *Agent) generateSummary(ctx context.Context, messages []map[string]any) 
 	if model == "" {
 		model = a.model
 	}
-	messages = hardPruneMessagesToBudget(messages, a.contextConfig.TargetInputTokens)
+	// The summarizer must see the history being compressed, not just the small
+	// post-compaction target. Reserve room for its prompt and message framing.
+	inputLimit := a.contextConfig.MaxInputTokens - a.contextConfig.ResponseReserveTokens
+	messages = hardPruneMessagesToBudget(messages, max(1, inputLimit-max(1, inputLimit/100)))
 	promptMessages := []map[string]any{
 		{"role": "system", "content": "Summarize the earlier conversation for future continuation. Preserve goals, constraints, decisions, unresolved questions, and important factual context. Be concise."},
 		{"role": "user", "content": buildSummaryInput(messages)},

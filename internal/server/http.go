@@ -220,7 +220,13 @@ func (handler *handler) handleChat(writer http.ResponseWriter, request *http.Req
 
 	response, err := handler.service.HandleTurn(ctx, turnRequest)
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
+		writeError(writer, http.StatusInternalServerError, chatResponse{
+			TurnID:    response.TurnID,
+			Outcome:   &response.Outcome,
+			SessionID: response.SessionID,
+			RunID:     response.RunID,
+			Error:     err.Error(),
+		})
 		return
 	}
 	writeJSON(writer, http.StatusOK, chatResponse{TurnID: response.TurnID, Outcome: &response.Outcome, SessionID: response.SessionID, RunID: response.RunID, Reply: response.Reply, ReplyKind: response.ReplyKind, ConversationType: response.ConversationType})
@@ -308,6 +314,10 @@ func parseTurnRequest(values map[string]string) (TurnRequest, error) {
 	if turnID != "" && !validTurnID(turnID) {
 		return TurnRequest{}, fmt.Errorf("invalid turn_id")
 	}
+	taskRelation := turn.Relation(strings.TrimSpace(values["task_relation"]))
+	if !taskRelation.Valid() {
+		return TurnRequest{}, fmt.Errorf("invalid task_relation")
+	}
 	var conversationType ConversationType
 	if rawConversationType := strings.TrimSpace(values["conversation_type"]); rawConversationType != "" {
 		parsedConversationType, parseErr := parseConversationType(rawConversationType)
@@ -320,6 +330,7 @@ func parseTurnRequest(values map[string]string) (TurnRequest, error) {
 		SessionID:        strings.TrimSpace(firstNonEmpty(values["session_id"], values["session"])),
 		Message:          message,
 		TurnID:           turnID,
+		TaskRelation:     taskRelation,
 		ConversationType: conversationType,
 	}, nil
 }

@@ -29,6 +29,7 @@ type TurnEvents struct {
 	Progress func(string)
 	Tool     func(ToolEvent)
 	Usage    func(TokenUsage)
+	Context  func(turn.ContextUsage)
 }
 
 type TokenUsage struct {

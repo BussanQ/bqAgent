@@ -66,6 +66,13 @@ type Event struct {
 
 type Sink func(Event)
 
+// ContextUsage is the latest request size, not accumulated per-turn billing.
+type ContextUsage struct {
+	Tokens    int
+	Limit     int
+	Estimated bool
+}
+
 func NewID() string { return rand.Text() }
 
 // Messages is a projection of server events. It never decides whether work is done.

@@ -16,7 +16,8 @@ func DefaultContextConfig() ContextConfig {
 		Enabled:                  true,
 		MaxInputTokens:           DefaultContextMaxInputTokens,
 		ResponseReserveTokens:    DefaultContextResponseReserveTokens,
-		TargetInputTokens:        DefaultContextCompressionTokens,
+		CompressionTriggerTokens: DefaultContextCompressionTokens,
+		TargetInputTokens:        DefaultContextTargetInputTokens,
 		KeepLastTurns:            DefaultContextKeepLastTurns,
 		ExactCountTriggerPercent: DefaultExactCountTriggerPercent,
 		SummarizationEnabled:     true,
@@ -30,7 +31,7 @@ func DefaultContextConfig() ContextConfig {
 func BoundWorkingMessages(messages []map[string]any, config ContextConfig) []map[string]any {
 	config = normalizeContextConfig(config)
 	working := sanitizeCompletedToolHistory(duplicateMessages(messages))
-	if !config.Enabled || estimateMessagesTokens(working) <= config.TargetInputTokens {
+	if !config.Enabled || estimateMessagesTokens(working) <= config.CompressionTriggerTokens {
 		return working
 	}
 	working = pruneMessagesToBudget(working, config)
@@ -53,6 +54,14 @@ func normalizeContextConfig(config ContextConfig) ContextConfig {
 	if config.TargetInputTokens <= 0 {
 		config.TargetInputTokens = config.MaxInputTokens
 	}
+	// Preserve the old single-threshold behavior for programmatic callers that
+	// do not specify a compression trigger. Runtime defaults set both explicitly.
+	if config.CompressionTriggerTokens <= 0 {
+		config.CompressionTriggerTokens = config.TargetInputTokens
+	}
+	inputLimit := config.MaxInputTokens - config.ResponseReserveTokens
+	config.CompressionTriggerTokens = min(config.CompressionTriggerTokens, inputLimit)
+	config.TargetInputTokens = min(config.TargetInputTokens, config.CompressionTriggerTokens)
 	if config.KeepLastTurns < 0 {
 		config.KeepLastTurns = DefaultContextKeepLastTurns
 	}
@@ -60,7 +69,7 @@ func normalizeContextConfig(config ContextConfig) ContextConfig {
 		config.ExactCountTriggerPercent = DefaultExactCountTriggerPercent
 	}
 	if config.SummaryTriggerTokens <= 0 {
-		config.SummaryTriggerTokens = config.TargetInputTokens
+		config.SummaryTriggerTokens = config.CompressionTriggerTokens
 	}
 	return config
 }
@@ -91,8 +100,8 @@ func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]
 	}
 
 	measurement := a.measureRequestTokens(ctx, sanitized, definitions, options, false)
-	if measurement.tokens <= a.contextConfig.TargetInputTokens {
-		a.logContextBudget(len(messages), len(sanitized), len(sanitized), measurement, false, false)
+	if measurement.tokens <= a.contextConfig.CompressionTriggerTokens {
+		a.logContextBudget(ctx, len(messages), len(sanitized), len(sanitized), measurement, false, false)
 		return sanitized, nil
 	}
 
@@ -101,18 +110,18 @@ func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]
 	pruned = hardPruneMessagesToBudget(pruned, messageTarget)
 	if !a.contextConfig.SummarizationEnabled || !shouldSummarize(measurement.tokens, a.contextConfig) {
 		pruned, prunedMeasurement := a.finalizeRequestBudget(ctx, pruned, definitions, options, measurement.exact)
-		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedMeasurement, true, false)
+		a.logContextBudget(ctx, len(messages), len(sanitized), len(pruned), prunedMeasurement, true, false)
 		return pruned, pruned
 	}
 
 	summarized, ok := a.summarizeMessages(ctx, sanitized, messageTarget)
 	if !ok {
 		pruned, prunedMeasurement := a.finalizeRequestBudget(ctx, pruned, definitions, options, measurement.exact)
-		a.logContextBudget(len(messages), len(sanitized), len(pruned), prunedMeasurement, true, false)
+		a.logContextBudget(ctx, len(messages), len(sanitized), len(pruned), prunedMeasurement, true, false)
 		return pruned, pruned
 	}
 	summarized, summaryMeasurement := a.finalizeRequestBudget(ctx, summarized, definitions, options, measurement.exact)
-	a.logContextBudget(len(messages), len(sanitized), len(summarized), summaryMeasurement, true, true)
+	a.logContextBudget(ctx, len(messages), len(sanitized), len(summarized), summaryMeasurement, true, true)
 	return summarized, summarized
 }
 
@@ -147,7 +156,7 @@ func messageBudgetForRequest(messages []map[string]any, requestTokens int, targe
 func (a *Agent) measureRequestTokens(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, forceExact bool) requestTokenMeasurement {
 	estimated, source := a.estimateRequestTokens(messages, definitions, options)
 	measurement := requestTokenMeasurement{tokens: estimated, source: source}
-	trigger := a.contextConfig.TargetInputTokens * a.contextConfig.ExactCountTriggerPercent / 100
+	trigger := a.contextConfig.CompressionTriggerTokens * a.contextConfig.ExactCountTriggerPercent / 100
 	if !forceExact && estimated < trigger {
 		return measurement
 	}
@@ -570,9 +579,10 @@ func estimateDataURIImageTokens(dataURI string) int {
 	return 256 + (rawBytes+1023)/1024
 }
 
-func (a *Agent) logContextBudget(rawCount, sanitizedCount, requestCount int, measurement requestTokenMeasurement, pruned bool, summarized bool) {
+func (a *Agent) logContextBudget(ctx context.Context, rawCount, sanitizedCount, requestCount int, measurement requestTokenMeasurement, pruned bool, summarized bool) {
+	a.reportContextUsage(ctx, measurement)
 	if a.logWriter == nil {
 		return
 	}
-	fmt.Fprintf(a.logWriter, "[Context] raw_messages=%d sanitized_messages=%d request_messages=%d input_tokens=%d token_source=%s exact=%t pruned=%t summarized=%t target_tokens=%d\n", rawCount, sanitizedCount, requestCount, measurement.tokens, measurement.source, measurement.exact, pruned, summarized, a.contextConfig.TargetInputTokens)
+	fmt.Fprintf(a.logWriter, "[Context] raw_messages=%d sanitized_messages=%d request_messages=%d input_tokens=%d token_source=%s exact=%t pruned=%t summarized=%t target_tokens=%d trigger_tokens=%d\n", rawCount, sanitizedCount, requestCount, measurement.tokens, measurement.source, measurement.exact, pruned, summarized, a.contextConfig.TargetInputTokens, a.contextConfig.CompressionTriggerTokens)
 }

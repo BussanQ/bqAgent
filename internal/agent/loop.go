@@ -21,7 +21,8 @@ const (
 	// With auto-compaction the loop continues on a budget-bounded context, so this
 	// is a runaway safety valve, not a task limit. Override with AGENT_MAX_ITERATIONS.
 	DefaultMaxIterations                = 1000
-	DefaultContextCompressionTokens     = 128000
+	DefaultContextCompressionTokens     = 200000
+	DefaultContextTargetInputTokens     = 18000 // 9% of the compression threshold.
 	DefaultContextResponseReserveTokens = 4000
 	DefaultContextMaxInputTokens        = DefaultContextCompressionTokens + DefaultContextResponseReserveTokens
 	DefaultContextKeepLastTurns         = 6
@@ -72,6 +73,7 @@ type PromptContextCheckpointRecorder interface {
 type ContextConfig struct {
 	Enabled                  bool
 	MaxInputTokens           int
+	CompressionTriggerTokens int
 	TargetInputTokens        int
 	ResponseReserveTokens    int
 	KeepLastTurns            int

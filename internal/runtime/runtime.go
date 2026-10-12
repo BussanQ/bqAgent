@@ -42,6 +42,7 @@ type Config struct {
 	SearchBaseURL                   string
 	ContextManagementEnabled        bool
 	ContextMaxInputTokens           int
+	ContextCompressionTriggerTokens int
 	ContextTargetInputTokens        int
 	ContextResponseReserveTokens    int
 	ContextKeepLastTurns            int
@@ -121,6 +122,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		SearchBaseURL:                   searchBaseURL,
 		ContextManagementEnabled:        envBool(getenv("CONTEXT_MANAGEMENT_ENABLED"), defaults.Enabled),
 		ContextMaxInputTokens:           envInt(getenv("CONTEXT_MAX_INPUT_TOKENS"), defaults.MaxInputTokens),
+		ContextCompressionTriggerTokens: envInt(getenv("CONTEXT_COMPRESSION_TRIGGER_TOKENS"), defaults.CompressionTriggerTokens),
 		ContextTargetInputTokens:        envInt(getenv("CONTEXT_TARGET_INPUT_TOKENS"), defaults.TargetInputTokens),
 		ContextResponseReserveTokens:    envInt(getenv("CONTEXT_RESPONSE_RESERVE_TOKENS"), defaults.ResponseReserveTokens),
 		ContextKeepLastTurns:            envInt(getenv("CONTEXT_KEEP_LAST_TURNS"), defaults.KeepLastTurns),
@@ -278,6 +280,7 @@ func (factory Factory) Build(includePlan bool) Runtime {
 		Context: agent.ContextConfig{
 			Enabled:                  factory.Config.ContextManagementEnabled,
 			MaxInputTokens:           factory.Config.ContextMaxInputTokens,
+			CompressionTriggerTokens: factory.Config.ContextCompressionTriggerTokens,
 			TargetInputTokens:        factory.Config.ContextTargetInputTokens,
 			ResponseReserveTokens:    factory.Config.ContextResponseReserveTokens,
 			KeepLastTurns:            factory.Config.ContextKeepLastTurns,

@@ -180,17 +180,20 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `GROUP_EXTERNAL_AGENT_TIMEOUT` | `10m` | Independent timeout for each external Agent call in group chat; expiry cancels and invalidates the group's ACP session. |
 | `WEBUI_WORKSPACE_ROOTS` | — | Additional server-side roots the WebUI may browse and select, separated with the OS path-list separator (`:` on Unix/macOS, `;` on Windows). The user home and startup workspace are always allowed. |
 | `CONTEXT_MANAGEMENT_ENABLED` | `true` | Enables request-time context budgeting. |
-| `CONTEXT_MAX_INPUT_TOKENS` | `132000` | Maximum estimated context budget, including the response reserve. |
-| `CONTEXT_TARGET_INPUT_TOKENS` | `128000` | Target size after pruning or summarization. |
+| `CONTEXT_MAX_INPUT_TOKENS` | `204000` | Maximum estimated context budget, including the response reserve. |
+| `CONTEXT_COMPRESSION_TRIGGER_TOKENS` | `200000` | Compaction starts above this full-request input size, capped by the total budget minus the response reserve. |
+| `CONTEXT_TARGET_INPUT_TOKENS` | `18000` | Post-compaction input target (9% of the default trigger); does not trigger early compaction. |
 | `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | Tokens reserved for the model response. |
 | `CONTEXT_KEEP_LAST_TURNS` | `6` | Recent turns retained during compaction. |
-| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `80` | Attempts provider-side exact counting (OpenAI Responses and Anthropic) after the full-request local/usage estimate reaches this percentage of the target; unsupported or failed counts fall back safely. |
+| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `80` | Attempts provider-side exact counting (OpenAI Responses and Anthropic) after the full-request local/usage estimate reaches this percentage of the compaction trigger; unsupported or failed counts fall back safely. |
 | `CONTEXT_SUMMARIZATION_ENABLED` | `true` | Enables summarization of older dialogue. |
-| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `128000` | Estimated input size that triggers summarization. |
+| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `200000` | Once compaction starts, attempts summarization above this input size; falls back to pruning on failure. |
 | `CONTEXT_SUMMARY_MODEL` | main model | Optional cheaper model used for summaries. |
 | `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` uses only bounded `messages.jsonl`; `full` keeps append-only audit history and a separate working snapshot. |
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | Retained tail of each `output.log`; `0` disables trimming. |
 | `RUN_TRACE_ENABLED` | `false` | Persists `.agent/runs/<run-id>/` traces and enables run feedback APIs. |
+
+By default, requests above 200K tokens compact toward 18K (9%); exact counting starts around 160K. Fixed system instructions are preserved, so instructions or tool definitions exceeding the target can prevent reaching 18K. The TUI shows the latest request size relative to the compaction trigger, marks estimates with `≈`, and refreshes after compaction. This differs from cumulative `in/out` usage.
 
 ### External coding agents
 

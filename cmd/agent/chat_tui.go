@@ -82,6 +82,7 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 			})
 		})
 	}
+	ctx = agent.WithContextUsage(ctx, events.Context)
 	response, err := backend.service.HandleTurnWithOptions(ctx, appserver.TurnRequest{
 		SessionID:       sessionID,
 		Message:         message,
