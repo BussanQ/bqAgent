@@ -193,7 +193,7 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | Retained tail of each `output.log`; `0` disables trimming. |
 | `RUN_TRACE_ENABLED` | `false` | Persists `.agent/runs/<run-id>/` traces and enables run feedback APIs. |
 
-By default, requests above 200K tokens compact toward 18K (9%); exact counting starts around 160K. Fixed system instructions are preserved, so instructions or tool definitions exceeding the target can prevent reaching 18K. The TUI shows the latest request size relative to the compaction trigger, marks estimates with `≈`, and refreshes after compaction. This differs from cumulative `in/out` usage.
+By default, requests above 200K tokens compact toward 18K (9%); exact counting starts around 160K. Fixed system instructions are preserved, so instructions or tool definitions exceeding the target can prevent reaching 18K. The TUI shows the latest request size relative to the compaction trigger, using the format `45%/200K`, and refreshes after compaction; values may be estimated. This differs from cumulative `in/out` usage.
 
 ### External coding agents
 

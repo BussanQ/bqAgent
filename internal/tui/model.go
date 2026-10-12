@@ -940,13 +940,9 @@ func (model Model) renderStatus(width int) string {
 		right = "Enter 发送 · Alt+Enter 换行 · / 命令"
 	}
 	if usage := model.contextUsage; usage != nil && usage.Limit > 0 && !model.quitConfirmationActive() {
-		estimate := ""
-		if usage.Estimated {
-			estimate = "≈"
-		}
 		// Keep the context indicator visible even on narrow terminals. Unlike
 		// in/out billing totals, each backend snapshot replaces the previous one.
-		right = fmt.Sprintf("上下文 %s%.0f%% · %s/%s · %s", estimate, 100*float64(max(0, usage.Tokens))/float64(usage.Limit), formatTokenCount(usage.Tokens), formatTokenCount(usage.Limit), right)
+		right = fmt.Sprintf("%.0f%%/%s · %s", 100*float64(max(0, usage.Tokens))/float64(usage.Limit), formatTokenCount(usage.Limit), right)
 	}
 	left, right = right, left
 	left = ansi.Truncate(left, width, "…")

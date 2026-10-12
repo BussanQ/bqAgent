@@ -18,9 +18,9 @@ func TestContextStatusReplacesSnapshotsAndSurvivesTurns(t *testing.T) {
 		{Tokens: 18000, Limit: 200000, Estimated: true},
 	} {
 		model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "context", contextUsage: usage})
-		want := "上下文 45% · 90K/200K"
+		want := "45%/200K"
 		if usage.Estimated {
-			want = "上下文 ≈9% · 18K/200K"
+			want = "9%/200K"
 		}
 		for _, width := range []int{40, 180} {
 			status := ansi.Strip(model.renderStatus(width))
@@ -37,11 +37,11 @@ func TestContextStatusReplacesSnapshotsAndSurvivesTurns(t *testing.T) {
 	model.handleTurnEvent(turnEvent{sequence: model.sequence - 1, kind: "context", contextUsage: turn.ContextUsage{Tokens: 199000, Limit: 200000}})
 	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "done", result: TurnResult{Reply: "done"}})
 	model.submit("next")
-	if model.contextUsage == nil || model.contextUsage.Tokens != 18000 || !strings.Contains(model.renderStatus(180), "18K/200K") {
+	if model.contextUsage == nil || model.contextUsage.Tokens != 18000 || !strings.Contains(model.renderStatus(180), "9%/200K") {
 		t.Fatal("context snapshot lost at completion or between turns")
 	}
 	model.clearSession()
-	if model.contextUsage != nil || strings.Contains(model.renderStatus(180), "18K/200K") {
+	if model.contextUsage != nil || strings.Contains(model.renderStatus(180), "9%/200K") {
 		t.Fatal("clear retained previous session context")
 	}
 }
