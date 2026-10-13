@@ -166,6 +166,8 @@ The effective model and API type are injected into every built-in LLM system pro
 | `FIRECRAWL_API_KEY` | — | Firecrawl key used when `SEARCH_*` is not configured. |
 | `FIRECRAWL_BASE_URL` | provider default | Firecrawl endpoint override. |
 
+When both `SEARCH_API_KEY` and `FIRECRAWL_API_KEY` are empty or whitespace-only, the built-in `web_search` is omitted from the model's tool list and execution registry. Setting only a base URL does not enable search. `web_fetch` remains available.
+
 ### MCP
 
 | Variable | Default | Description |

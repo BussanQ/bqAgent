@@ -12,6 +12,7 @@ import (
 )
 
 func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
+	t.Setenv("SEARCH_API_KEY", "test-search-key")
 	definitions := Definitions()
 	if len(definitions) != 11 {
 		t.Fatalf("definitions length = %d, want 11", len(definitions))
@@ -99,7 +100,7 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 }
 
 func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
-	catalog := NewCatalog(Options{IncludePlan: true})
+	catalog := NewCatalog(Options{IncludePlan: true, SearchAPIKey: "test-search-key"})
 	definitions := catalog.Definitions()
 	if len(definitions) != 12 {
 		t.Fatalf("definitions length = %d, want 12", len(definitions))

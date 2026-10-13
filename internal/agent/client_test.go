@@ -46,6 +46,9 @@ func TestTokenUsageTracksPromptCache(t *testing.T) {
 
 func TestClientCreateChatCompletionUsesOpenAICompatibleRequest(t *testing.T) {
 	t.Helper()
+	t.Setenv("SEARCH_API_KEY", "")
+	t.Setenv("FIRECRAWL_API_KEY", "")
+	definitions := tools.Definitions()
 
 	var seenPath string
 	var seenAuth string
@@ -71,7 +74,7 @@ func TestClientCreateChatCompletionUsesOpenAICompatibleRequest(t *testing.T) {
 		context.Background(),
 		testModel,
 		[]map[string]any{{"role": "user", "content": "hello"}},
-		tools.Definitions(),
+		definitions,
 	)
 	if err != nil {
 		t.Fatalf("CreateChatCompletion returned error: %v", err)
@@ -88,8 +91,13 @@ func TestClientCreateChatCompletionUsesOpenAICompatibleRequest(t *testing.T) {
 	if len(seenRequest.Messages) != 1 {
 		t.Fatalf("messages length = %d, want 1", len(seenRequest.Messages))
 	}
-	if len(seenRequest.Tools) != 12 {
-		t.Fatalf("tools length = %d, want 12", len(seenRequest.Tools))
+	if len(seenRequest.Tools) != len(definitions) {
+		t.Fatalf("tools length = %d, want %d", len(seenRequest.Tools), len(definitions))
+	}
+	for _, definition := range seenRequest.Tools {
+		if definition.Function.Name == "web_search" {
+			t.Fatal("request exposed web_search without a search key")
+		}
 	}
 	if message.FinalContent() != "done" {
 		t.Fatalf("final content = %q, want %q", message.FinalContent(), "done")

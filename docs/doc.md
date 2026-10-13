@@ -170,6 +170,8 @@ LLM_MODEL=claude-sonnet-4-5
 | `FIRECRAWL_API_KEY` | — | 未配置 `SEARCH_*` 时使用的 Firecrawl Key。 |
 | `FIRECRAWL_BASE_URL` | 供应商默认值 | Firecrawl 端点覆盖。 |
 
+未配置非空的搜索 Key（`SEARCH_API_KEY` 和 `FIRECRAWL_API_KEY` 均为空或仅含空白）时，内置 `web_search` 不会出现在模型工具列表或执行注册表中；仅设置 Base URL 不会启用搜索。`web_fetch` 不受影响。
+
 ### MCP
 
 | 变量 | 默认值 | 说明 |

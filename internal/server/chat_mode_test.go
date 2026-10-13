@@ -77,7 +77,7 @@ func TestAskAndRunCommandsSelectAndPersistSessionMode(t *testing.T) {
 
 func TestAskModeExposesOnlyReadOnlyToolsAndSkipsMemoryWrite(t *testing.T) {
 	root := t.TempDir()
-	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
+	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root, SearchAPIKey: "test-search-key"})
 	client := &chatModeRecordingClient{}
 	memoryWrites := 0
 	service := NewService(ServiceOptions{

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	appmemory "bqagent/internal/memory"
@@ -89,7 +90,16 @@ type Catalog struct {
 }
 
 func Definitions() []Definition {
-	return cloneDefinitions(builtinDefinitions())
+	return configuredSearchDefinitions(cloneDefinitions(builtinDefinitions()), searchAPIKeyFromEnv())
+}
+
+func configuredSearchDefinitions(definitions []Definition, apiKey string) []Definition {
+	if strings.TrimSpace(apiKey) == "" {
+		return slices.DeleteFunc(definitions, func(definition Definition) bool {
+			return definition.Function.Name == "web_search"
+		})
+	}
+	return definitions
 }
 
 func Registry() map[string]Function {
@@ -131,6 +141,9 @@ func RegistryWithOptions(options Options) map[string]Function {
 		}
 		registry[name] = function
 	}
+	if searchAPIKey == "" {
+		delete(registry, "web_search")
+	}
 	return registry
 }
 
@@ -144,7 +157,9 @@ func firstConfigured(values ...string) string {
 }
 
 func NewCatalog(options Options) Catalog {
-	definitions := Definitions()
+	// Start with all builtins: an explicit key can enable search even when the
+	// environment has none, and disabled builtin names remain reserved.
+	definitions := cloneDefinitions(builtinDefinitions())
 	if options.MemoryStore != nil {
 		definitions = append(definitions, StructuredMemoryDefinition())
 	}
@@ -163,7 +178,7 @@ func NewCatalog(options Options) Catalog {
 		existing[definition.Function.Name] = struct{}{}
 	}
 	return Catalog{
-		definitions: definitions,
+		definitions: configuredSearchDefinitions(definitions, firstConfigured(options.SearchAPIKey, searchAPIKeyFromEnv())),
 		functions:   RegistryWithOptions(options),
 	}
 }
