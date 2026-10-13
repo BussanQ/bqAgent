@@ -265,12 +265,12 @@ func TestPromptChipHistoryMarkdownAndNarrowResize(t *testing.T) {
 	if !strings.Contains(rendered, "中文") || strings.Contains(rendered, "\x1b[") {
 		t.Fatalf("markdown = %q", rendered)
 	}
-	todo := toolSummary(ToolEvent{Kind: "tool_start", Seq: 2, Name: "todo_write", Arguments: map[string]any{"todos": `[{"content":"完成 TUI","status":"in_progress"}]`}}, newTheme(true))
+	todo := toolSummary(ToolEvent{Kind: "tool_start", Seq: 2, Name: "todo_write", Arguments: map[string]any{"todos": `[{"content":"完成 TUI","status":"in_progress"}]`}}, newTheme(true), 80, false)
 	if !strings.Contains(todo, "任务进度 0/1") || !strings.Contains(todo, "完成 TUI") {
 		t.Fatalf("todo summary = %q", todo)
 	}
-	failure := toolSummary(ToolEvent{Kind: "tool_result", Seq: 3, Name: "bash", Status: "failed", Preview: strings.Repeat("错误\n", 20)}, newTheme(true))
-	if strings.Count(failure, "\n") > 9 || len(failure) > 2200 {
+	failure := toolSummary(ToolEvent{Kind: "tool_result", Seq: 3, Name: "bash", Status: "failed", Preview: strings.Repeat("错误\n", 20)}, newTheme(true), 80, false)
+	if strings.Count(failure, "\n") > 3 || len(failure) > 2200 {
 		t.Fatalf("failure preview was not bounded: lines=%d bytes=%d", strings.Count(failure, "\n")+1, len(failure))
 	}
 	model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})

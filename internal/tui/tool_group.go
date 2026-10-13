@@ -27,14 +27,26 @@ func (group toolGroup) liveVisible() bool {
 	return len(group.items) > 0 && (!group.committed || group.expanded)
 }
 
+func (group toolGroup) canExpand() bool {
+	if len(group.items) > toolCollapseThreshold || group.committed {
+		return true
+	}
+	for _, item := range group.items {
+		if strings.TrimSpace(item.result.Preview) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 type toolViewCache struct {
 	width    int
 	expanded bool
 	lines    []string
 }
 
-func (group *toolGroup) add(event ToolEvent) (crossedThreshold bool) {
-	previous := len(group.items)
+func (group *toolGroup) add(event ToolEvent) (becameExpandable bool) {
+	previous := group.canExpand()
 	group.cache = &toolViewCache{}
 	if event.Kind == "tool_start" {
 		// Replayed starts and results update the same call, including a start
@@ -57,7 +69,7 @@ func (group *toolGroup) add(event ToolEvent) (crossedThreshold bool) {
 			group.items[index].hasResult = true
 		}
 	}
-	return previous <= toolCollapseThreshold && len(group.items) > toolCollapseThreshold
+	return !previous && group.canExpand()
 }
 
 // Cache formatting until a tool changes, rather than formatting the whole
@@ -70,7 +82,7 @@ func (group toolGroup) viewLines(styles theme, width int) []string {
 	if cache != nil && cache.lines != nil && cache.width == width && cache.expanded == group.expanded {
 		return cache.lines
 	}
-	rendered := strings.Split(group.render(styles, true), "\n")
+	rendered := strings.Split(group.render(styles, true, width), "\n")
 	// Keep the clickable summary on one physical terminal row.
 	lines := []string{ansi.Truncate(rendered[0], width, "…")}
 	if len(rendered) > 1 {
@@ -118,7 +130,7 @@ func (group toolGroup) find(event ToolEvent) int {
 	return -1
 }
 
-func (group toolGroup) render(styles theme, interactive bool) string {
+func (group toolGroup) render(styles theme, interactive bool, width int) string {
 	if len(group.items) == 0 {
 		return ""
 	}
@@ -150,11 +162,18 @@ func (group toolGroup) render(styles theme, interactive bool) string {
 		header = fmt.Sprintf("%s %s · %s", marker, header, hint)
 	} else {
 		header = "◆ " + header
+		if interactive && group.canExpand() {
+			if group.expanded {
+				header += " · 点击或 Ctrl+O 收起详情"
+			} else {
+				header += " · 点击或 Ctrl+O 展开详情"
+			}
+		}
 	}
 	lines := []string{styles.accent.Render(header)}
 	if !collapsible || group.expanded {
 		for _, item := range group.items {
-			lines = append(lines, indentToolItem(item.render(styles)))
+			lines = append(lines, indentToolItem(item.render(styles, max(1, width-2), interactive && group.expanded)))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -176,16 +195,16 @@ func (group toolGroup) counts() (running, succeeded, failed int) {
 	return running, succeeded, failed
 }
 
-func (item toolDisplay) render(styles theme) string {
+func (item toolDisplay) render(styles theme, width int, expanded bool) string {
 	if !item.hasResult {
-		return toolSummary(item.start, styles)
+		return toolSummary(item.start, styles, width, expanded)
 	}
 	result := item.result
 	result.Seq = item.start.Seq
 	if len(result.Arguments) == 0 {
 		result.Arguments = item.start.Arguments
 	}
-	rendered := toolSummary(result, styles)
+	rendered := toolSummary(result, styles, width, expanded)
 	if result.Name != "todo_write" {
 		if arguments := summarizeArguments(item.start.Arguments, 180); arguments != "" {
 			parts := strings.SplitN(rendered, "\n", 2)
@@ -193,6 +212,10 @@ func (item toolDisplay) render(styles theme) string {
 			rendered = strings.Join(parts, "\n")
 		}
 	}
+	// Long arguments must not turn the one-row tool heading into a screenful.
+	parts := strings.SplitN(rendered, "\n", 2)
+	parts[0] = ansi.Truncate(parts[0], width, "…")
+	rendered = strings.Join(parts, "\n")
 	return rendered
 }
 

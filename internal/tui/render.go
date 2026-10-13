@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
@@ -94,10 +95,12 @@ func (model Model) renderFinalReply(value string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func toolSummary(event ToolEvent, styles theme) string {
+func toolSummary(event ToolEvent, styles theme, width int, expanded bool) string {
+	width = max(1, width)
 	sequence := event.Seq
 	if event.Kind == "tool_start" {
 		line := fmt.Sprintf("%s %s %s", styles.accent.Render(fmt.Sprintf("⚙ #%d", sequence)), event.Name, summarizeArguments(event.Arguments, 180))
+		line = ansi.Truncate(line, width, "…")
 		if event.Name == "todo_write" {
 			if block := todoProgress(event.Arguments); block != "" {
 				line += "\n" + block
@@ -115,11 +118,24 @@ func toolSummary(event ToolEvent, styles theme) string {
 	if event.DurationMS > 0 {
 		line += fmt.Sprintf(" · %s", time.Duration(event.DurationMS)*time.Millisecond)
 	}
-	if event.Truncated {
+	preview := ""
+	clipped := false
+	if (failed || expanded) && strings.TrimSpace(event.Preview) != "" {
+		if expanded {
+			preview = plainToolOutput(event.Preview)
+		} else {
+			// Account for preview indentation before bounding physical rows.
+			preview, clipped = boundedPreview(event.Preview, max(1, width-2))
+		}
+	}
+	if event.Truncated || clipped {
 		line += " · 输出已截断"
 	}
-	if failed && strings.TrimSpace(event.Preview) != "" {
-		line += "\n" + styles.error.Render(indentPreview(boundedPreview(event.Preview)))
+	line = ansi.Truncate(line, width, "…")
+	if preview != "" {
+		// Only the failure marker is red: a recoverable tool error is not a
+		// failed turn, and command-provided ANSI must not repaint the transcript.
+		line += "\n" + styles.dim.Render(indentPreview(preview))
 	}
 	if event.Name == "todo_write" && !failed {
 		if block := todoProgress(event.Arguments); block != "" {
@@ -153,15 +169,40 @@ func summarizeArguments(arguments map[string]any, limit int) string {
 	return result
 }
 
-func boundedPreview(value string) string {
-	if len(value) > 2048 {
-		value = utf8Prefix(value, 2048) + "…"
+const toolPreviewLines = 3
+
+func turnFailureSummary(message string, styles theme, width int) string {
+	preview, clipped := boundedPreview(message, width)
+	heading := "本轮失败："
+	if clipped {
+		heading += "错误详情已截断"
 	}
-	lines := strings.Split(value, "\n")
-	if len(lines) > 8 {
-		lines = append(lines[:8], "…")
+	return styles.error.Render(ansi.Truncate(heading, width, "…")) + "\n" + styles.dim.Render(preview)
+}
+
+func plainToolOutput(value string) string {
+	value = ansi.Strip(value)
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	value = strings.ReplaceAll(value, "\t", "    ")
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r != '\n' && unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, value))
+}
+
+func boundedPreview(value string, width int) (string, bool) {
+	width = max(1, width)
+	lines := strings.Split(ansi.Hardwrap(plainToolOutput(value), width, true), "\n")
+	clipped := len(lines) > toolPreviewLines
+	if clipped {
+		lines = lines[:toolPreviewLines]
+		// The ellipsis belongs to the third row, never an extra fourth row.
+		lines[toolPreviewLines-1] = ansi.Truncate(lines[toolPreviewLines-1], width-1, "") + "…"
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), clipped
 }
 
 func utf8Prefix(value string, limit int) string {

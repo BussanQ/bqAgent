@@ -401,7 +401,7 @@ func (model *Model) cancelActiveTurn() {
 
 func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 	event := message.Mouse()
-	if (!model.tools.committed && len(model.tools.items) <= toolCollapseThreshold) || event.Button != tea.MouseLeft || model.toolViewportHeight() == 0 {
+	if !model.tools.canExpand() || event.Button != tea.MouseLeft || model.toolViewportHeight() == 0 {
 		return nil
 	}
 	viewLines := strings.Split(model.View().Content, "\n")
@@ -423,7 +423,7 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 }
 
 func (model *Model) toggleToolGroup() {
-	if len(model.tools.items) > toolCollapseThreshold || model.tools.committed {
+	if model.tools.canExpand() {
 		model.tools.expanded = !model.tools.expanded
 		model.tools.offset = 0
 		if model.tools.committed {
@@ -581,7 +581,7 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	model.active = nil
 	if event.err != nil && !cancelled {
 		model.flushStream()
-		model.enqueuePrint(model.styles.error.Render("本轮失败：" + event.err.Error()))
+		model.enqueuePrint(turnFailureSummary(event.err.Error(), model.styles, model.contentWidth()))
 	} else if cancelled {
 		model.flushStream()
 		model.enqueuePrint(model.styles.dim.Render("已取消本轮任务"))
@@ -784,7 +784,7 @@ func (model *Model) archiveToolGroup() {
 	if len(model.tools.items) == 0 || model.tools.committed {
 		return
 	}
-	model.enqueuePrint(ansi.Hardwrap(model.tools.render(model.styles, false), model.contentWidth(), false))
+	model.enqueuePrint(ansi.Hardwrap(model.tools.render(model.styles, false, model.contentWidth()), model.contentWidth(), false))
 	model.tools.committed = true
 	model.tools.expanded = false
 	model.tools.offset = 0
@@ -1146,7 +1146,7 @@ func (model Model) renderHistory(history History) []string {
 			lines = append(lines, model.renderTurnSeparator(), model.renderUserMessage(message.Content))
 			continue
 		}
-		if rendered := historyToolGroup(message.Tools).render(model.styles, false); rendered != "" {
+		if rendered := historyToolGroup(message.Tools).render(model.styles, false, model.contentWidth()); rendered != "" {
 			lines = append(lines, rendered)
 		}
 		if strings.TrimSpace(message.Content) != "" {
@@ -1163,7 +1163,8 @@ func (model Model) helpText() string {
   连按两次 Ctrl+C（2 秒内）或 Ctrl+Q 安全退出
   Esc 打断当前回复；空闲时关闭面板/收起工具详情
   Ctrl+L 清理当前视口和草稿（保留 Session）
-  Ctrl+O 展开/收起已合并的工具详情（也可点击工具汇总行）
+  Ctrl+O 展开/收起工具详情（也可点击工具汇总行）
+  工具错误默认最多预览 3 行；展开后可查看已有输出详情
   回答完整展示，使用终端滚动查看；PgUp/PgDn 仅翻页查看工具详情
 
 本地命令
