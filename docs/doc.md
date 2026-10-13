@@ -426,13 +426,15 @@ project/
 - `~/.agent/sessions/<workspace-key>/<session-id>/output.log`
   - 人类可读的执行日志
 - `.agent/mcp.json`
-  - MCP 服务器配置（`mcpServers` 映射）。这里配置的 **Streamable HTTP** 服务器会在启动时连接，
+  - MCP 服务器配置（`mcpServers` 映射）。这里配置的 **Streamable HTTP** 服务器会在启动时并行连接，
     通过 `tools/list` 发现其工具，并以 `mcp__<server>__<tool>` 的形式暴露给大模型。header 环境变量展开
     统一说明在[环境变量配置](#环境变量配置)章节。
   - 默认文件不配置远程 server。Server URL 必须是字面量 `http` 或 `https` URL；只有 header 值可以使用
     allowlist 中的环境变量占位符。
+  - TUI、Chat 和 WebUI 服务先完成本地初始化，后台发现 MCP 工具；TUI 状态栏显示连接中、已连接和失败数量，WebUI 系统诊断可查看各服务状态。每个服务发现完成后立即发布工具，新轮次使用最新快照，已开始的轮次保持原有工具集合。普通问答无需等待 MCP。
+  - 后台发现保留整体 15 秒超时，多个服务并行使用这段预算；退出界面或关闭服务时取消未完成连接。单次命令仍在执行任务前等待发现，但服务间也并行连接。没有跨进程工具缓存。
   - 发现过程是 best-effort：标记 `"disabled": true`、文件缺失、服务器不可达或配置非法都会被跳过（仅记录一条
-    警告），不会阻塞启动。当前仅支持 Streamable HTTP 传输。
+    警告），不会导致启动失败。当前仅支持 Streamable HTTP 传输。
 
 ## 内建工具
 

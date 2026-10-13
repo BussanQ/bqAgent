@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -68,11 +69,13 @@ type Factory struct {
 	// MCPConfigPaths are loaded in order; later files override same-named servers.
 	MCPConfigPaths []string
 	MCPReport      func(mcp.ServerStatus)
+	MCPHTTPClient  *http.Client
 	// LogWriter receives best-effort MCP discovery warnings. Nil discards them.
 	LogWriter io.Writer
 }
 
 type Runtime struct {
+	MCP             *mcp.Discovery
 	Client          agent.ChatCompletionClient
 	ClientOptions   agent.ClientOptions
 	Planner         *agent.Planner
@@ -227,6 +230,16 @@ func envDurationAllowZero(raw string, fallback time.Duration) time.Duration {
 }
 
 func (factory Factory) Build(includePlan bool) Runtime {
+	return factory.build(includePlan, nil)
+}
+
+// BuildBackground leaves remote MCP discovery off the interactive startup path.
+// The caller must cancel ctx when the UI/server workspace closes.
+func (factory Factory) BuildBackground(ctx context.Context, includePlan bool) Runtime {
+	return factory.build(includePlan, ctx)
+}
+
+func (factory Factory) build(includePlan bool, background context.Context) Runtime {
 	apiType := agent.NormalizeAPIType(string(factory.Config.APIType))
 	model := agent.EffectiveModel(factory.Config.Model)
 	clientOptions := agent.ClientOptions{StreamIdleTimeout: factory.Config.StreamIdleTimeout}
@@ -238,7 +251,14 @@ func (factory Factory) Build(includePlan bool) Runtime {
 		planner = agent.NewPlanner(client, model)
 	}
 
-	mcpDefinitions, mcpFunctions := factory.discoverMCPTools()
+	var mcpDefinitions []tools.Definition
+	var mcpFunctions map[string]tools.Function
+	var discovery *mcp.Discovery
+	if background == nil {
+		mcpDefinitions, mcpFunctions = factory.discoverMCPTools()
+	} else {
+		discovery = mcp.StartDiscovery(background, factory.loadMCPConfig(), factory.Getenv, factory.MCPHTTPClient, factory.logf, factory.MCPReport, mcpDiscoveryTimeout)
+	}
 	memoryStore := openMemoryStore(factory.MemoryDir)
 	globalMemoryStore := memoryStore
 	if globalDir := factory.resolvedGlobalMemoryDir(); globalDir != "" && !sameMemoryPath(globalDir, factory.MemoryDir) {
@@ -262,6 +282,7 @@ func (factory Factory) Build(includePlan bool) Runtime {
 	})
 
 	return Runtime{
+		MCP:             discovery,
 		Client:          client,
 		ClientOptions:   clientOptions,
 		Planner:         planner,
@@ -321,10 +342,8 @@ func sameMemoryPath(left, right string) bool {
 	return filepath.Clean(left) == filepath.Clean(right)
 }
 
-// discoverMCPTools loads .agent/mcp.json and, when it lists enabled servers,
-// connects to each to discover its tools. It is best-effort: a missing config
-// or an unreachable server yields no tools and never aborts startup.
-func (factory Factory) discoverMCPTools() ([]tools.Definition, map[string]tools.Function) {
+// loadMCPConfig reads the local MCP configuration without making network requests.
+func (factory Factory) loadMCPConfig() mcp.Config {
 	paths := append([]string(nil), factory.MCPConfigPaths...)
 	if len(paths) == 0 && strings.TrimSpace(factory.MCPConfigPath) != "" {
 		paths = append(paths, factory.MCPConfigPath)
@@ -332,14 +351,19 @@ func (factory Factory) discoverMCPTools() ([]tools.Definition, map[string]tools.
 	cfg, err := mcp.LoadMergedConfig(paths, factory.Getenv)
 	if err != nil {
 		factory.logf("[MCP] failed to load config: %v\n", err)
-		return nil, nil
+		return mcp.Config{}
 	}
+	return cfg
+}
+
+func (factory Factory) discoverMCPTools() ([]tools.Definition, map[string]tools.Function) {
+	cfg := factory.loadMCPConfig()
 	if !cfg.HasEnabledServers() {
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), mcpDiscoveryTimeout)
 	defer cancel()
-	return mcp.DiscoverWithStatus(ctx, cfg, factory.Getenv, nil, factory.logf, factory.MCPReport)
+	return mcp.DiscoverWithStatus(ctx, cfg, factory.Getenv, factory.MCPHTTPClient, factory.logf, factory.MCPReport)
 }
 
 func (factory Factory) logf(format string, args ...any) {

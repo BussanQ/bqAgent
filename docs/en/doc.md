@@ -420,14 +420,16 @@ Tool usage guidance lives in `AGENT.md`; tool parameters come from the definitio
 - `~/.agent/sessions/<workspace-key>/<session-id>/output.log`
   - human-readable execution log
 - `.agent/mcp.json`
-  - MCP server config (`mcpServers` map). **Streamable HTTP** servers listed here are connected at
+  - MCP server config (`mcpServers` map). **Streamable HTTP** servers listed here are connected in parallel at
     startup; their tools are discovered via `tools/list` and exposed to the model as
     `mcp__<server>__<tool>`. Header environment expansion is described under
     [environment variables](#environment-variables).
   - The default file has no remote servers. Server URLs must be literal `http` or `https` URLs; only header
     values can use allowlisted environment placeholders.
+  - TUI, Chat, and WebUI services finish local initialization before waiting for any remote MCP server. Discovery runs in the background. The TUI status bar shows connecting, connected, and failed counts; WebUI diagnostics exposes per-server status. Each completed server publishes its tools for new turns; in-flight turns retain their original tool snapshot. Ordinary chat does not wait for MCP.
+  - Parallel background discovery retains the shared 15-second budget and is cancelled when the UI or service closes. Single-run commands still wait for discovery before executing their task, with servers connected in parallel. There is no cross-process tool cache.
   - Discovery is best-effort: a server marked `"disabled": true`, missing, unreachable, or invalid is skipped
-    (a warning is logged) and never blocks startup. Only the Streamable HTTP transport is supported.
+    (a warning is logged) and never aborts startup. Only the Streamable HTTP transport is supported.
 
 ## Built-in tools
 

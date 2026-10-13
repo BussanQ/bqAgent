@@ -5,7 +5,7 @@ import "./doctor.css";
 
 interface Check { id: string; group: string; state: string; reason?: string; hint?: string; source: string; checked_at: string; required: boolean }
 export interface DoctorReport { ready: boolean; status: string; checked_at: string; mode: string; checks: Check[] }
-const labels: Record<string,string> = { healthy: "状态良好", degraded: "服务就绪 · 部分能力待处理", not_ready: "服务未就绪", available: "可用", error: "异常", disabled: "未启用", detecting: "检测中", unverified: "未验证", config: "全局配置", storage: "存储", external_agents: "外部 Agent", mcp: "MCP 服务", channels: "对话渠道", runtime: "运行时快照", local: "本地检查", active: "主动检测" };
+const labels: Record<string,string> = { healthy: "状态良好", degraded: "服务就绪 · 部分能力待处理", not_ready: "服务未就绪", available: "可用", error: "异常", disabled: "未启用", detecting: "检测中", connecting: "连接中", unverified: "未验证", config: "全局配置", storage: "存储", external_agents: "外部 Agent", mcp: "MCP 服务", channels: "对话渠道", runtime: "运行时快照", local: "本地检查", active: "主动检测" };
 
 export function renderDoctorReport(container: HTMLElement, report: DoctorReport): void {
   container.replaceChildren();

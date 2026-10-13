@@ -9,6 +9,7 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/globalconfig"
+	"bqagent/internal/mcp"
 	"bqagent/internal/modelcatalog"
 	appserver "bqagent/internal/server"
 	apptui "bqagent/internal/tui"
@@ -20,10 +21,12 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 	if !interactiveTerminal(stdin, stdout, getenv) {
 		return runChatLegacy(ctx, stdin, stdout, stderr, getenv, ws, systemPrompt, initialTask, options)
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	herdrReporter := newHerdrReporter(getenv, options)
 	defer herdrReporter.Close()
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, nil)
-	defer externalBroker.Close()
+	defer func() { cancel(); _ = externalBroker.Close() }()
 	backend := &tuiBackend{service: service, workspace: ws}
 	noColor := getenv != nil && strings.TrimSpace(getenv("NO_COLOR")) != ""
 	err := apptui.Run(backend, apptui.Config{
@@ -353,4 +356,8 @@ func (sink toolEventSink) EmitToolEvent(event agent.ToolEvent) {
 			Truncated:  event.Truncated,
 		})
 	}
+}
+
+func (backend *tuiBackend) MCPStatus() []mcp.ServerStatus {
+	return backend.service.MCPStatus()
 }

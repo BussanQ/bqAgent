@@ -18,6 +18,7 @@ import (
 	"bqagent/internal/doctor"
 	"bqagent/internal/extagent"
 	"bqagent/internal/logging"
+	"bqagent/internal/mcp"
 	appmemory "bqagent/internal/memory"
 	"bqagent/internal/modelcatalog"
 	appruntime "bqagent/internal/runtime"
@@ -31,6 +32,7 @@ import (
 )
 
 type ServiceOptions struct {
+	MCP                       *mcp.Discovery
 	ProviderID                string
 	Doctor                    *doctor.Engine
 	WorkspaceRoot             string
@@ -60,6 +62,7 @@ type ServiceOptions struct {
 }
 
 type Service struct {
+	mcp                       *mcp.Discovery
 	doctor                    *doctor.Engine
 	store                     *session.Store
 	workspaceRoot             string
@@ -250,6 +253,7 @@ func NewService(options ServiceOptions) *Service {
 		log.Printf("session maintenance: %v", maintenanceErr)
 	}
 	service := &Service{
+		mcp:                       options.MCP,
 		providerID:                strings.TrimSpace(options.ProviderID),
 		store:                     store,
 		workspaceRoot:             options.WorkspaceRoot,
@@ -892,7 +896,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 
 	functions := service.functionsForTurn(request.PeerKey, conversation.Session.ID())
-	toolDefinitions, functions := toolsetForChatMode(mode, service.toolDefinitions, functions)
+	definitions := append([]tools.Definition(nil), service.toolDefinitions...)
+	mcpDefinitions, mcpFunctions := service.mcp.Snapshot()
+	definitions = append(definitions, mcpDefinitions...)
+	for name, function := range mcpFunctions {
+		functions[name] = function
+	}
+	toolDefinitions, functions := toolsetForChatMode(mode, definitions, functions)
 	if groupCoordinator != nil {
 		if definition, ok := groupCoordinator.toolDefinition(); ok {
 			toolDefinitions = append(toolDefinitions, definition)
@@ -1546,4 +1556,9 @@ func writeTurnError(writer io.Writer, err error) {
 		return
 	}
 	_, _ = fmt.Fprintln(writer, err)
+}
+
+// MCPStatus returns the nonblocking discovery snapshot used by interactive UIs.
+func (service *Service) MCPStatus() []mcp.ServerStatus {
+	return service.mcp.Status()
 }

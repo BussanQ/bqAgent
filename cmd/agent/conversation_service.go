@@ -32,7 +32,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		MCPConfigPaths:  ws.MCPConfigPaths(),
 		MCPReport:       diagnostics.RecordMCP,
 		LogWriter:       statusWriter,
-	}.Build(includePlan)
+	}.BuildBackground(ctx, includePlan)
 
 	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
 	if statusWriter != nil {
@@ -60,6 +60,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 
 	service := appserver.NewService(appserver.ServiceOptions{
 		ProviderID:        runtimeConfig.ProviderID,
+		MCP:               runtime.MCP,
 		Doctor:            diagnostics,
 		WorkspaceRoot:     ws.Root,
 		AgentDir:          ws.AgentDir(),

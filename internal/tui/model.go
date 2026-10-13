@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"bqagent/internal/chatcommand"
+	"bqagent/internal/mcp"
 	"bqagent/internal/modelcatalog"
 	"bqagent/internal/turn"
 
@@ -102,6 +103,7 @@ type Model struct {
 	historyPrints int
 	historyQueue  []historyPrint
 	statusNotice  string
+	mcpStatus     []mcp.ServerStatus
 }
 
 type historyPrint struct {
@@ -153,6 +155,7 @@ func NewModel(backend Backend, config Config) Model {
 	if !config.NoColor {
 		model.spinner.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(accentColor))
 	}
+	model.refreshMCPStatus()
 	model.runtime = backend.RuntimeInfo(model.sessionID)
 	model.commands = mergeCommands(backend.Commands())
 	model.history, _ = model.historyStore.load()
@@ -214,6 +217,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			commands = append(commands, command)
 		}
 	case tickMsg:
+		model.refreshMCPStatus()
 		if !time.Time(message).Before(model.quitConfirmUntil) {
 			model.quitConfirmUntil = time.Time{}
 		}
@@ -1017,6 +1021,13 @@ func (model Model) renderStatus(width int) string {
 		}
 		right = strings.Join(parts, " · ")
 	}
+	if status := model.mcpStatusLabel(); status != "" {
+		if right == "" {
+			right = status
+		} else {
+			right = status + " · " + right
+		}
+	}
 	if model.quitConfirmationActive() {
 		right = quitConfirmHint
 	}
@@ -1218,4 +1229,39 @@ func localizedProgress(value string) string {
 		return "正在处理阶段"
 	}
 	return ""
+}
+
+// MCP status is optional to keep alternate backends independent of discovery.
+func (model *Model) refreshMCPStatus() {
+	if backend, ok := model.backend.(interface{ MCPStatus() []mcp.ServerStatus }); ok {
+		model.mcpStatus = backend.MCPStatus()
+	}
+}
+
+func (model Model) mcpStatusLabel() string {
+	var connecting, available, failed int
+	for _, status := range model.mcpStatus {
+		switch status.State {
+		case "connecting", "unverified":
+			connecting++
+		case "available":
+			available++
+		case "error":
+			failed++
+		}
+	}
+	var parts []string
+	if connecting > 0 {
+		parts = append(parts, fmt.Sprintf("连接中 %d", connecting))
+	}
+	if available > 0 {
+		parts = append(parts, fmt.Sprintf("已连接 %d", available))
+	}
+	if failed > 0 {
+		parts = append(parts, fmt.Sprintf("失败 %d", failed))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "MCP " + strings.Join(parts, " · ")
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/mcp"
 	appserver "bqagent/internal/server"
 	"bqagent/internal/tools"
 	apptui "bqagent/internal/tui"
@@ -47,5 +48,16 @@ func TestTUIBackendForwardsContextUsage(t *testing.T) {
 		if usage.Tokens <= 0 || usage.Limit != 200000 || !usage.Estimated {
 			t.Fatalf("invalid context usage: %+v", usage)
 		}
+	}
+}
+
+func TestTUIBackendForwardsMCPStatus(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	discovery := mcp.StartDiscovery(ctx, mcp.Config{Servers: map[string]mcp.ServerConfig{"disabled": {Disabled: true}}}, nil, nil, nil, nil, 0)
+	<-discovery.Done()
+	backend := &tuiBackend{service: appserver.NewService(appserver.ServiceOptions{WorkspaceRoot: t.TempDir(), MCP: discovery})}
+	if statuses := backend.MCPStatus(); len(statuses) != 1 || statuses[0].State != "disabled" {
+		t.Fatalf("statuses = %#v", statuses)
 	}
 }

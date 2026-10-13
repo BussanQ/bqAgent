@@ -147,3 +147,10 @@ it.each(["save", "delete"])("shows managed Magpie and excludes it from ordinary 
   expect(controller.runtimeModelOptions().some(option => option.dataset.providerId === "magpie")).toBe(true);
   controller.dispose();
 });
+
+it("renders background MCP connecting status", () => {
+  const container = document.createElement("div");
+  renderDoctorReport(container, { ready: true, status: "degraded", mode: "snapshot", checked_at: "2026-10-13T00:00:00Z",
+    checks: [{ id: "search", group: "mcp", state: "connecting", source: "runtime", checked_at: "2026-10-13T00:00:00Z", required: false }] });
+  expect(container.querySelector(".doctor-badge")?.textContent).toBe("连接中");
+});

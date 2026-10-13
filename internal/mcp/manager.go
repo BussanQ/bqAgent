@@ -33,59 +33,96 @@ func Discover(ctx context.Context, cfg Config, getenv func(string) string, httpC
 }
 
 func DiscoverWithStatus(ctx context.Context, cfg Config, getenv func(string) string, httpClient *http.Client, logf Logf, report func(ServerStatus)) ([]tools.Definition, map[string]tools.Function) {
-	return discover(ctx, cfg, getenv, httpClient, logf, report, 0)
+	return discover(ctx, cfg, getenv, httpClient, logf, report, 0, nil)
 }
 
 // Probe uses independent clients and a per-server timeout. Its discovered tools
 // are intentionally not registered with a running agent.
 func Probe(ctx context.Context, cfg Config, getenv func(string) string, httpClient *http.Client, report func(ServerStatus)) {
-	discover(ctx, cfg, getenv, httpClient, nil, report, 5*time.Second)
+	discover(ctx, cfg, getenv, httpClient, nil, report, 5*time.Second, nil)
 }
 
-func discover(ctx context.Context, cfg Config, getenv func(string) string, httpClient *http.Client, logf Logf, report func(ServerStatus), timeout time.Duration) ([]tools.Definition, map[string]tools.Function) {
+type discoveryResult struct {
+	name   string
+	client *Client
+	specs  []ToolSpec
+	reason string
+	err    error
+}
+
+func discover(ctx context.Context, cfg Config, getenv func(string) string, httpClient *http.Client, logf Logf, report func(ServerStatus), timeout time.Duration, publish func([]tools.Definition, map[string]tools.Function)) ([]tools.Definition, map[string]tools.Function) {
 	if report == nil {
 		report = func(ServerStatus) {}
-	}
-	for _, status := range cfg.Status(getenv) {
-		report(status)
 	}
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	for _, status := range cfg.Status(getenv) {
+		if status.State == "unverified" {
+			status.State, status.Reason = "connecting", "discovery_in_progress"
+		}
+		report(status)
+	}
+	enabled, invalid := cfg.enabledServers(getenv)
+	for _, name := range sortedMapKeys(invalid) {
+		logf("[MCP] server %q: invalid configuration, skipping: %v\n", name, invalid[name])
+	}
+	// Network work is parallel; callbacks and catalog publication remain serialized.
+	results := make(chan discoveryResult, len(enabled))
+	for _, name := range sortedMapKeys(enabled) {
+		server := enabled[name]
+		go func() {
+			client := NewClient(httpClient, server.URL, server.Headers)
+			probeCtx, cancel := ctx, func() {}
+			if timeout > 0 {
+				probeCtx, cancel = context.WithTimeout(ctx, timeout)
+			}
+			defer cancel()
+			result := discoveryResult{name: name, client: client}
+			if err := client.Initialize(probeCtx); err != nil {
+				result.err, result.reason = err, "initialize_"+FailureReason(err)
+			} else {
+				result.specs, result.err = client.ListTools(probeCtx)
+				if result.err != nil {
+					result.reason = "tools_list_" + FailureReason(result.err)
+				}
+			}
+			results <- result
+		}()
+	}
+	completed := make(map[string]discoveryResult)
 	var definitions []tools.Definition
 	functions := make(map[string]tools.Function)
-	// seen maps a sanitized tool name to the "server/tool" that first claimed it,
-	// so collisions (two servers whose names differ only in special chars) are
-	// detected and skipped rather than silently producing a schema/function mismatch.
-	seen := make(map[string]string)
-
-	enabled, invalid := cfg.enabledServers(getenv)
-	invalidNames := sortedMapKeys(invalid)
-	for _, name := range invalidNames {
-		err := invalid[name]
-		logf("[MCP] server %q: invalid configuration, skipping: %v\n", name, err)
+	for range enabled {
+		result := <-results
+		if result.err != nil {
+			report(ServerStatus{Name: result.name, State: "error", Reason: result.reason, CheckedAt: time.Now().UTC()})
+			logf("[MCP] server %q: %s: %v\n", result.name, result.reason, result.err)
+			continue
+		}
+		completed[result.name] = result
+		// Rebuild in name order so completion timing never changes collision winners
+		// or schema order. Previously published snapshots are never mutated.
+		var statuses []ServerStatus
+		definitions, functions = collectDiscoveredTools(completed, func(string, ...any) {}, func(status ServerStatus) { statuses = append(statuses, status) })
+		if publish != nil {
+			publish(definitions, functions)
+		}
+		for _, status := range statuses {
+			report(status)
+		}
 	}
-	serverNames := sortedMapKeys(enabled)
-	for _, name := range serverNames {
-		server := enabled[name]
-		client := NewClient(httpClient, server.URL, server.Headers)
-		probeCtx, cancel := ctx, func() {}
-		if timeout > 0 {
-			probeCtx, cancel = context.WithTimeout(ctx, timeout)
-		}
-		if err := client.Initialize(probeCtx); err != nil {
-			cancel()
-			report(ServerStatus{Name: name, State: "error", Reason: "initialize_" + FailureReason(err), CheckedAt: time.Now().UTC()})
-			logf("[MCP] server %q: initialize failed: %v\n", name, err)
-			continue
-		}
-		specs, err := client.ListTools(probeCtx)
-		cancel()
-		if err != nil {
-			report(ServerStatus{Name: name, State: "error", Reason: "tools_list_" + FailureReason(err), CheckedAt: time.Now().UTC()})
-			logf("[MCP] server %q: tools/list failed: %v\n", name, err)
-			continue
-		}
+	// Emit the final registration/collision diagnostics once.
+	return collectDiscoveredTools(completed, logf, func(ServerStatus) {})
+}
+
+func collectDiscoveredTools(completed map[string]discoveryResult, logf Logf, report func(ServerStatus)) ([]tools.Definition, map[string]tools.Function) {
+	var definitions []tools.Definition
+	functions := make(map[string]tools.Function)
+	seen := make(map[string]string)
+	for _, name := range sortedMapKeys(completed) {
+		result := completed[name]
+		client, specs := result.client, result.specs
 		sort.SliceStable(specs, func(left, right int) bool {
 			leftName := toolNamePrefix + sanitizeName(name) + "__" + sanitizeName(specs[left].Name)
 			rightName := toolNamePrefix + sanitizeName(name) + "__" + sanitizeName(specs[right].Name)

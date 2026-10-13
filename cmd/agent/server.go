@@ -46,6 +46,8 @@ func runServerInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace
 }
 
 func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, options cliOptions) int {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	configureServerChannelLimits(stderr, getenv)
 
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, stdout)
@@ -58,12 +60,16 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 			appserver.SplitWorkspaceRoots(getenv("WEBUI_WORKSPACE_ROOTS")),
 		),
 		Factory: func(factoryContext context.Context, root string) (*appserver.Service, io.Closer, error) {
+			if err := factoryContext.Err(); err != nil {
+				return nil, nil, err
+			}
 			selected := &workspace.Workspace{Root: root, GlobalAgentDir: ws.AgentDir()}
 			prompt, promptErr := selected.BuildSystemPrompt("")
 			if promptErr != nil {
 				return nil, nil, promptErr
 			}
-			selectedService, broker := newConversationService(factoryContext, getenv, selected, prompt, options.plan, stdout)
+			// Discovery belongs to the server, not the short-lived workspace-open request.
+			selectedService, broker := newConversationService(ctx, getenv, selected, prompt, options.plan, stdout)
 			return selectedService, broker, nil
 		},
 	})

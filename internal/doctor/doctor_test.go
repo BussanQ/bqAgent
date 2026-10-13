@@ -268,3 +268,11 @@ func TestDoctorSummarizesOptionalAndDisabledChecks(t *testing.T) {
 		t.Fatal(report)
 	}
 }
+
+func TestDoctorConnectingMCPIsOptionalAndDegraded(t *testing.T) {
+	report := Report{Checks: []Check{{ID: "search", Group: "mcp", State: "connecting"}}}
+	Summarize(&report)
+	if !report.Ready || report.Status != "degraded" {
+		t.Fatalf("connecting optional MCP: %#v", report)
+	}
+}

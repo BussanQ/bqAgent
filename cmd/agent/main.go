@@ -506,12 +506,14 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 }
 
 func runChatLegacy(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt, initialTask string, options cliOptions) int {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	sessionID := effectiveSessionID(options)
 	herdrReporter := newHerdrReporter(getenv, options)
 	defer herdrReporter.Close()
 	herdrReporter.Report("idle", sessionID)
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, nil)
-	defer externalBroker.Close()
+	defer func() { cancel(); _ = externalBroker.Close() }()
 
 	executeTurn := func(input string) error {
 		herdrReporter.Report("working", sessionID)

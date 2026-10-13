@@ -159,7 +159,7 @@ func Summarize(report *Report) {
 		if check.State == "error" && check.Required {
 			report.Ready = false
 		}
-		if check.State == "error" || check.State == "unverified" || check.State == "detecting" {
+		if check.State == "error" || check.State == "unverified" || check.State == "detecting" || check.State == "connecting" {
 			report.Status = "degraded"
 		}
 	}
