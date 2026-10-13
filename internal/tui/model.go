@@ -87,14 +87,15 @@ type Model struct {
 	historyIndex int
 	historyDraft string
 
-	commands    []Command
-	suggestions []suggestion
-	suggested   int
-	panelOpen   bool
-	tools       toolGroup
-	toolMouse   bool
-	liveCache   *streamViewCache
-	provider    *providerWizard
+	commands      []Command
+	suggestions   []suggestion
+	suggested     int
+	panelOpen     bool
+	tools         toolGroup
+	toolMouse     bool
+	toolInspector bool
+	liveCache     *streamViewCache
+	provider      *providerWizard
 
 	startup       []string
 	initialTask   string
@@ -223,6 +224,9 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		commands = append(commands, tickCommand())
 	default:
+		if model.toolInspector {
+			break // The completed-turn inspector must not edit the hidden prompt.
+		}
 		if _, pasted := message.(tea.PasteMsg); pasted {
 			model.quitConfirmUntil = time.Time{}
 		}
@@ -257,6 +261,9 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) View() tea.View {
+	if model.toolInspector && model.historyPrints == 0 && len(model.historyQueue) == 0 && len(model.printQueue) == 0 {
+		return model.toolInspectorView()
+	}
 	if model.provider != nil {
 		content, cursor := model.provider.render(model.styles)
 		if model.quitConfirmationActive() {
@@ -282,6 +289,16 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	}
 	if model.provider != nil {
 		return model.handleProviderKey(key)
+	}
+	if model.toolInspector {
+		switch name {
+		case "ctrl+o", "esc":
+			model.toolInspector = false
+		case "ctrl+q":
+			model.toolInspector = false
+			return model.requestQuit()
+		}
+		return nil
 	}
 	switch name {
 	case "ctrl+o":
@@ -390,6 +407,12 @@ func (model *Model) cancelActiveTurn() {
 
 func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 	event := message.Mouse()
+	if model.toolInspector {
+		if event.Button == tea.MouseLeft && event.Y == 0 {
+			model.toolInspector = false
+		}
+		return nil
+	}
 	if !model.tools.canExpand() || event.Button != tea.MouseLeft || model.toolViewportHeight() == 0 {
 		return nil
 	}
@@ -413,6 +436,10 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 
 func (model *Model) toggleToolGroup() {
 	if model.tools.canExpand() {
+		if model.active == nil && (model.reply != "" || model.tools.committed) {
+			model.toolInspector = !model.toolInspector
+			return
+		}
 		model.tools.expanded = !model.tools.expanded
 		if model.tools.committed {
 			model.toolMouse = model.tools.expanded
@@ -585,6 +612,7 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 			model.reply += "\n\n" + event.result.Outcome.Notice
 		}
 		model.stream = ""
+		model.tools.expanded = false
 		model.liveCache = &streamViewCache{}
 	}
 	if event.result.SessionID != "" {
@@ -704,7 +732,7 @@ func (model *Model) enqueuePrint(lines ...string) {
 // a streamed answer cannot leave only tools and the input on screen. The history
 // prefix and live suffix are disjoint; subsequent commits print only the suffix.
 func (model *Model) flushOverflowReply() {
-	if model.reply == "" {
+	if model.reply == "" || model.toolInspector {
 		return
 	}
 	_, height, _ := model.liveBudgets()
@@ -780,12 +808,14 @@ func (model *Model) archiveToolGroup() {
 }
 
 func (model *Model) discardToolGroup() tea.Cmd {
+	model.toolInspector = false
 	model.tools = toolGroup{}
 	model.toolMouse = false
 	return nil
 }
 
 func (model *Model) clearSession() {
+	model.toolInspector = false
 	model.contextUsage = nil
 	model.sessionID = ""
 	model.reportActivity("idle")

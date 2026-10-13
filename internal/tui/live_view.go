@@ -108,6 +108,24 @@ func (model Model) toolViewportHeight() int {
 	return height
 }
 
+// Completed replies may already live partly in native scrollback. Inspect on
+// the alternate screen so opening details never splits or relocates that reply.
+func (model Model) toolInspectorView() tea.View {
+	width := model.contentWidth()
+	lines := []string{model.styles.accent.Render(ansi.Truncate("本轮工具详情 · Ctrl+O / Esc 返回", width, "…"))}
+	if model.quitConfirmationActive() {
+		lines = append(lines, model.styles.dim.Render(ansi.Truncate(quitConfirmHint, width, "…")))
+	}
+	group := model.tools
+	group.expanded = true
+	lines = append(lines, group.viewport(model.styles, width, max(0, model.frameLimit()-len(lines)))...)
+	view := tea.NewView(strings.Join(lines, "\n"))
+	view.AltScreen = true
+	view.ReportFocus = true
+	view.MouseMode = tea.MouseModeCellMotion
+	return view
+}
+
 // The inline renderer cannot erase rows that have escaped into native
 // scrollback. Bound every live frame in physical rows, retaining the uncommitted
 // reply suffix so the conclusion remains visible after completion.
@@ -124,13 +142,6 @@ func (model Model) liveView() tea.View {
 		lines = append(lines, stream...)
 	} else if streamHeight > 0 && len(stream) > 0 {
 		lines = append(lines, stream[max(0, len(stream)-streamHeight):]...)
-	}
-	if model.tools.committed && len(tools) > 0 {
-		// This is a transient inspector after the conclusion, not another
-		// transcript record inserted between two portions of the answer.
-		tools = append([]string(nil), tools...)
-		tools[0] = model.styles.accent.Render(ansi.Truncate("▼ 本轮工具详情 · Ctrl+O 收起", width, "…"))
-		lines = append(lines, tools...)
 	}
 	auxiliary := model.auxiliaryLines()
 	lines = append(lines, auxiliary[:auxiliaryHeight]...)

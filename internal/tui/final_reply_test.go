@@ -33,10 +33,10 @@ func TestFinalReplyRemainsVisibleAfterTools(t *testing.T) {
 			model = updated.(Model)
 			for i := 0; i < 5; i++ {
 				content := model.View().Content
-				if strings.Count(content, test.want) != 1 || strings.Contains(content, "7 个文件") {
+				if !model.View().AltScreen && (strings.Count(content, test.want) != 1 || strings.Contains(content, "7 个文件")) {
 					t.Fatalf("final conclusion missing, stale or duplicated: %q", content)
 				}
-				if strings.Index(content, "工具活动") > strings.Index(content, test.want) {
+				if !model.View().AltScreen && strings.Index(content, "工具活动") > strings.Index(content, test.want) {
 					t.Fatal("conclusion must follow tool activity")
 				}
 				updated, command := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
@@ -117,7 +117,7 @@ func TestLongFinalReplyPrintsWholeConclusionWithoutPaging(t *testing.T) {
 		if cmd != nil {
 			t.Fatal("paging/toggling tools reprinted the completed answer")
 		}
-		if !strings.Contains(model.View().Content, "结论第060行") {
+		if !model.View().AltScreen && !strings.Contains(model.View().Content, "结论第060行") {
 			t.Fatal("tool interaction hid the conclusion")
 		}
 		assertLiveFrameFits(t, model)
@@ -225,8 +225,8 @@ func TestLongReplyToolHistoryPrecedesAnswerAndRemainsInspectable(t *testing.T) {
 					updated, command := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 					model = updated.(Model)
 					view := model.View().Content
-					if command != nil || !model.tools.expanded || !strings.Contains(view, "file-001.go") || strings.Index(view, "本轮工具详情") < strings.Index(view, "answer-end") {
-						t.Fatal("Ctrl+O must open an inspector after the conclusion without printing history")
+					if command != nil || !model.toolInspector || !model.View().AltScreen || !strings.Contains(view, "file-001.go") || strings.Contains(view, "answer-end") {
+						t.Fatal("Ctrl+O must inspect tools on a separate screen without printing history")
 					}
 					for _, key := range []tea.KeyPressMsg{{Code: tea.KeyPgDown}, {Code: tea.KeyPgUp}} {
 						updated, command = model.Update(key)
@@ -243,12 +243,12 @@ func TestLongReplyToolHistoryPrecedesAnswerAndRemainsInspectable(t *testing.T) {
 						for !strings.Contains(lines[y], "本轮工具详情") {
 							y++
 						}
-						updated, command = model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: model.height - len(lines) + y})
+						updated, command = model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: y})
 					} else {
 						updated, command = model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 					}
 					model = updated.(Model)
-					if command != nil || model.tools.expanded || model.toolMouse || strings.Contains(model.View().Content, "本轮工具详情") {
+					if command != nil || model.toolInspector || model.View().AltScreen || model.tools.expanded || model.toolMouse || strings.Contains(model.View().Content, "本轮工具详情") {
 						t.Fatal("closing the inspector retained tool rows or printed history")
 					}
 					assertLiveFrameFits(t, model)

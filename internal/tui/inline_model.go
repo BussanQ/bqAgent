@@ -34,6 +34,15 @@ func (model inlineModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	var command tea.Cmd
 	model.model, command = model.model.Update(message)
+	view := model.model.View()
+	if model.view.AltScreen && !view.AltScreen {
+		// Leave the inspector before any newly queued history is inserted.
+		// Keeping its old frame here would print a resized reply or quit-time
+		// transcript into the alternate screen instead of the conversation.
+		model.view = view
+		model.pending = false
+		return model, command
+	}
 	if inner, ok := model.model.(Model); ok && inner.historyPrints > 0 && !model.pending {
 		// Keep the rendered frame intact until Println has inserted the old
 		// answer and the next user question above it. The insertion itself
@@ -55,7 +64,6 @@ func (model inlineModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// has reached the renderer, even if another event or frame intervenes.
 		return model, command
 	}
-	view := model.model.View()
 	if !model.view.AltScreen && !view.AltScreen && strings.Count(view.Content, "\n") < strings.Count(model.view.Content, "\n") {
 		model.pending = true
 		model.view.Cursor = tea.NewCursor(0, 0)

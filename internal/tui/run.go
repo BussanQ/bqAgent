@@ -9,9 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// Run starts the inline Bubble Tea program. It deliberately avoids AltScreen;
-// mouse tracking is enabled only while an interactive collapsed tool drawer is
-// visible, and is disabled again when that drawer is committed or cleared.
+// Run starts the inline Bubble Tea conversation. Completed-turn tool inspection
+// temporarily uses AltScreen to preserve the native transcript and its position.
 func Run(backend Backend, config Config) error {
 	if backend == nil {
 		return fmt.Errorf("tui backend is required")
