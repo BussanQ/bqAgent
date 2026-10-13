@@ -298,6 +298,7 @@ func (service *Service) ConfigureLLM(providerID string, apiType agent.APIType, a
 	apiType = agent.NormalizeAPIType(string(apiType))
 	service.providerID = strings.TrimSpace(providerID)
 	service.apiType = apiType
+	service.clientOptions.ProviderID = service.providerID
 	service.client = agent.NewClientWithOptions(apiKey, baseURL, apiType, nil, service.clientOptions)
 	service.model = agent.EffectiveModel(model)
 	service.models = parseConfiguredModels(models)
@@ -918,6 +919,8 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		taskStore = conversation.Session
 	}
 	app := agent.NewWithOptions(service.client, effectiveModel, agent.Options{
+		EnableNativeWebSearch: true,
+
 		TaskStore:       taskStore,
 		Prompt:          conversation.Prompt,
 		APIType:         service.apiType,

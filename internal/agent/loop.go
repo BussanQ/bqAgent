@@ -110,6 +110,10 @@ type StageConfig struct {
 }
 
 type Options struct {
+	// EnableNativeWebSearch allows adding model-backed search to an explicitly
+	// supplied toolset. Default toolsets enable it automatically.
+	EnableNativeWebSearch bool
+
 	TurnID          string
 	MessageSink     turn.Sink
 	TaskRelation    turn.Relation
@@ -135,6 +139,8 @@ type Options struct {
 }
 
 type Agent struct {
+	webSearchAvailable func() bool
+
 	turnID          string
 	messageSink     turn.Sink
 	taskRelation    turn.Relation
@@ -172,6 +178,7 @@ func New(client ChatCompletionClient, model string, logWriter io.Writer) *Agent 
 
 func NewWithOptions(client ChatCompletionClient, model string, options Options) *Agent {
 	model = EffectiveModel(model)
+	searchClient, _ := client.(nativeWebSearcher)
 
 	logWriter := synchronizeLogWriter(options.LogWriter)
 	progressWriter := synchronizeLogWriter(options.ProgressWriter)
@@ -233,6 +240,9 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		serviceTier:     options.ServiceTier,
 		trace:           options.Trace,
 	}
+	if options.EnableNativeWebSearch || (options.ToolDefinitions == nil && options.Functions == nil) {
+		app.installNativeWebSearch(searchClient)
+	}
 	app.installTaskTool()
 	return app
 }
@@ -285,7 +295,6 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		maxIterations = DefaultMaxIterations
 	}
 
-	definitions := a.toolDefinitionsForRun(allowPlan)
 	actualIterations := 0
 	explorationCtx := ctx
 	cancelExploration := func() {}
@@ -314,6 +323,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if a.stageConfig.ImmediateProgress {
 			a.writeStageProgress(selectModelProgressMessage(modelProgressMessages))
 		}
+		definitions := a.toolDefinitionsForRun(allowPlan)
 		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort, ServiceTier: a.serviceTier}
 		completionOptions.PromptCache = buildPromptCacheOptions(a.apiType, a.model, a.prompt, definitions, completionOptions)
 		requestMessages, compacted := a.buildRequestMessages(explorationCtx, messages, definitions, completionOptions)

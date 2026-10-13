@@ -212,6 +212,23 @@ func PlanDefinition() Definition {
 	}
 }
 
+// WebSearchDefinition is also used when the agent enables provider-native search
+// without a standalone search API key.
+func WebSearchDefinition() Definition {
+	return Definition{
+		Type: "function",
+		Function: FunctionDefinition{
+			Name:        "web_search",
+			Description: "Search the web for up-to-date information using available search backends. Returns source URLs; cite the relevant sources in your answer.",
+			Parameters: JSONSchema{
+				Type:       "object",
+				Properties: map[string]JSONSchemaProperty{"query": {Type: "string", Description: "The search query"}},
+				Required:   []string{"query"},
+			},
+		},
+	}
+}
+
 func builtinDefinitions() []Definition {
 	return []Definition{
 		{
@@ -323,20 +340,7 @@ func builtinDefinitions() []Definition {
 				},
 			},
 		},
-		{
-			Type: "function",
-			Function: FunctionDefinition{
-				Name:        "web_search",
-				Description: "Search the web for up-to-date information via Tavily. Requires SEARCH_API_KEY; Firecrawl env vars are supported as a compatibility fallback.",
-				Parameters: JSONSchema{
-					Type: "object",
-					Properties: map[string]JSONSchemaProperty{
-						"query": {Type: "string", Description: "The search query"},
-					},
-					Required: []string{"query"},
-				},
-			},
-		},
+		WebSearchDefinition(),
 		{
 			Type: "function",
 			Function: FunctionDefinition{

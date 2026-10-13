@@ -445,7 +445,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		_ = conversation.Session.SetLastRunID(runRecorder.RunID())
 		ctx = apptrace.WithRunID(ctx, runRecorder.RunID())
 	}
-	app := agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{Prompt: conversation.Prompt, APIType: runtime.APIType, LogWriter: outputWriter, ProgressWriter: stdout, ToolDefinitions: runtime.Catalog.Definitions(), Functions: runtime.Catalog.Registry(), Planner: runtime.Planner, Recorder: conversation.Recorder(), WorkspaceRoot: runtime.WorkspaceRoot, Context: runtime.Context, Trace: runRecorder})
+	app := agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{EnableNativeWebSearch: true, Prompt: conversation.Prompt, APIType: runtime.APIType, LogWriter: outputWriter, ProgressWriter: stdout, ToolDefinitions: runtime.Catalog.Definitions(), Functions: runtime.Catalog.Registry(), Planner: runtime.Planner, Recorder: conversation.Recorder(), WorkspaceRoot: runtime.WorkspaceRoot, Context: runtime.Context, Trace: runRecorder})
 
 	if strings.TrimSpace(task) != "" && !options.plan {
 		if err := conversation.AddUserMessage(task); err != nil {

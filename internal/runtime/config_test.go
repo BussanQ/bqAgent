@@ -156,3 +156,48 @@ func TestConfigFromEnvDefaultsToTavilySearchProvider(t *testing.T) {
 		t.Fatalf("SearchProvider = %q, want tavily", config.SearchProvider)
 	}
 }
+
+func TestConfigFromEnvNativeWebSearch(t *testing.T) {
+	for _, mode := range []string{"", "auto", "on", "off"} {
+		t.Run(mode, func(t *testing.T) {
+			config := ConfigFromEnv(func(key string) string {
+				switch key {
+				case "AGENT_NATIVE_WEB_SEARCH":
+					return mode
+				case "LLM_API_TYPE":
+					return "openai-response"
+				case "LLM_BASE_URL":
+					return "http://127.0.0.1:3425/v1"
+				case "LLM_MODEL":
+					return "codex/gpt-6-astra"
+				}
+				return ""
+			})
+			if config.NativeWebSearch != mode {
+				t.Fatalf("NativeWebSearch = %q", config.NativeWebSearch)
+			}
+			runtime := (Factory{Config: config, WorkspaceRoot: t.TempDir(), AgentDir: t.TempDir()}).Build(false)
+			if got := runtime.Client.(*agent.Client).SupportsNativeWebSearch("codex/gpt-6-astra"); got != (mode != "off") {
+				t.Fatalf("Magpie native search in mode %q = %v", mode, got)
+			}
+			if runtime.ClientOptions.NativeWebSearch != mode {
+				t.Fatalf("client mode = %q", runtime.ClientOptions.NativeWebSearch)
+			}
+		})
+	}
+}
+
+func TestRuntimeMagpieSearchProviderIdentity(t *testing.T) {
+	for _, provider := range []string{"magpie", "other"} {
+		t.Run(provider, func(t *testing.T) {
+			config := Config{ProviderID: provider, APIType: agent.APITypeOpenAI, BaseURL: "http://localhost:3425/v1", Model: "workbuddy/deepseek-v4.1-flash"}
+			runtime := (Factory{Config: config, WorkspaceRoot: t.TempDir(), AgentDir: t.TempDir()}).Build(false)
+			if runtime.ClientOptions.ProviderID != provider {
+				t.Fatal("runtime lost provider identity")
+			}
+			if got := runtime.Client.(*agent.Client).SupportsNativeWebSearch(config.Model); got != (provider == "magpie") {
+				t.Fatalf("search for %s = %v", provider, got)
+			}
+		})
+	}
+}

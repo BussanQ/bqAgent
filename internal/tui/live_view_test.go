@@ -141,24 +141,21 @@ func TestToolDrawerAutoCollapseRestoresSingleRow(t *testing.T) {
 	assertLiveFrameFits(t, model)
 }
 
-func TestToolDrawerPagingResizeAndLongStreamStayWithinTerminal(t *testing.T) {
+func TestToolDrawerWithoutPagingResizeAndLongStreamStayWithinTerminal(t *testing.T) {
 	model := toolDrawerModel(t, 60)
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 	model = updated.(Model)
-	for i := 0; i < 100 && !strings.Contains(model.View().Content, "file-060.go"); i++ {
-		updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	before := model.View().Content
+	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyPgDown}, {Code: tea.KeyPgUp}} {
+		updated, _ = model.Update(key)
 		model = updated.(Model)
+		if model.View().Content != before {
+			t.Fatal("page keys must not change tool details")
+		}
 		assertLiveFrameFits(t, model)
 	}
-	if !strings.Contains(model.View().Content, "file-060.go") {
-		t.Fatal("last tool is unreachable")
-	}
-	for i := 0; i < 100 && !strings.Contains(model.View().Content, "file-001.go"); i++ {
-		updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
-		model = updated.(Model)
-	}
-	if !strings.Contains(model.View().Content, "file-001.go") {
-		t.Fatal("first tool is unreachable")
+	if strings.Contains(before+model.helpText(), "翻页") || strings.Contains(before+model.helpText(), "PgUp") || strings.Contains(before, "详情 1") {
+		t.Fatal("tool drawer still advertises paging")
 	}
 	text := strings.Repeat("长回复🙂带有很长的行", 200) + "\n最后一行"
 	model.stream = text

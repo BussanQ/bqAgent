@@ -19,7 +19,6 @@ type toolGroup struct {
 	items     []toolDisplay
 	committed bool // History owns the record; the live drawer is only a detail inspector.
 	expanded  bool
-	offset    int
 	cache     *toolViewCache
 }
 
@@ -99,22 +98,7 @@ func (group toolGroup) viewport(styles theme, width, height int) []string {
 		return nil
 	}
 	lines := group.viewLines(styles, width)
-	if len(lines) <= height {
-		return lines
-	}
-	if height == 1 {
-		return lines[:1]
-	}
-	if height == 2 {
-		return []string{lines[0], styles.dim.Render(ansi.Truncate("增大窗口查看详情", width, "…"))}
-	}
-	// Reserve the summary and paging hint; scrolling never prints to history.
-	count := max(0, height-2)
-	start := min(group.offset, max(0, len(lines)-1-count))
-	visible := []string{lines[0]}
-	visible = append(visible, lines[1+start:1+start+count]...)
-	visible = append(visible, styles.dim.Render(ansi.Truncate(fmt.Sprintf("详情 %d–%d/%d · PgUp/PgDn 翻页", start+1, start+count, len(lines)-1), width, "…")))
-	return visible
+	return lines[:min(len(lines), height)]
 }
 
 func (group toolGroup) find(event ToolEvent) int {

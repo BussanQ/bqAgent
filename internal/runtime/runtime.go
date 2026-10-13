@@ -41,6 +41,7 @@ type Config struct {
 	SearchProvider                  string
 	SearchAPIKey                    string
 	SearchBaseURL                   string
+	NativeWebSearch                 string
 	ContextManagementEnabled        bool
 	ContextMaxInputTokens           int
 	ContextCompressionTriggerTokens int
@@ -123,6 +124,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		SearchProvider:                  searchProvider,
 		SearchAPIKey:                    searchAPIKey,
 		SearchBaseURL:                   searchBaseURL,
+		NativeWebSearch:                 strings.TrimSpace(getenv("AGENT_NATIVE_WEB_SEARCH")),
 		ContextManagementEnabled:        envBool(getenv("CONTEXT_MANAGEMENT_ENABLED"), defaults.Enabled),
 		ContextMaxInputTokens:           envInt(getenv("CONTEXT_MAX_INPUT_TOKENS"), defaults.MaxInputTokens),
 		ContextCompressionTriggerTokens: envInt(getenv("CONTEXT_COMPRESSION_TRIGGER_TOKENS"), defaults.CompressionTriggerTokens),
@@ -242,7 +244,7 @@ func (factory Factory) BuildBackground(ctx context.Context, includePlan bool) Ru
 func (factory Factory) build(includePlan bool, background context.Context) Runtime {
 	apiType := agent.NormalizeAPIType(string(factory.Config.APIType))
 	model := agent.EffectiveModel(factory.Config.Model)
-	clientOptions := agent.ClientOptions{StreamIdleTimeout: factory.Config.StreamIdleTimeout}
+	clientOptions := agent.ClientOptions{StreamIdleTimeout: factory.Config.StreamIdleTimeout, ProviderID: factory.Config.ProviderID, NativeWebSearch: factory.Config.NativeWebSearch}
 	client := agent.NewClientWithOptions(factory.Config.APIKey, factory.Config.BaseURL, apiType, nil, clientOptions)
 	factory.logf("[Runtime] api_type=%s model=%s\n", apiType, model)
 
@@ -380,6 +382,8 @@ func (runtime Runtime) NewAgent(logWriter io.Writer, systemPrompt string, record
 func (runtime Runtime) NewAgentWithProgress(logWriter io.Writer, progressWriter io.Writer, systemPrompt string, recorder agent.MessageRecorder, stream bool) *agent.Agent {
 	taskStore, _ := recorder.(taskstate.Store)
 	return agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{
+		EnableNativeWebSearch: true,
+
 		TaskStore:       taskStore,
 		SystemPrompt:    systemPrompt,
 		APIType:         runtime.APIType,

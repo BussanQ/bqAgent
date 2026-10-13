@@ -165,12 +165,27 @@ LLM_MODEL=claude-sonnet-4-5
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
+| `AGENT_NATIVE_WEB_SEARCH` | `auto` | 原生搜索：`auto` 按协议启用，包含兼容网关；`on` 显式启用；`off` 仅使用搜索 API。原生搜索支持 `openai-response` / `anthropic`；Magpie 另支持供应商代搜。 |
 | `SEARCH_API_KEY` | — | Tavily 兼容搜索 Key，优先于 Firecrawl 配置。 |
 | `SEARCH_BASE_URL` | 供应商默认值 | Tavily 兼容端点覆盖。 |
 | `FIRECRAWL_API_KEY` | — | 未配置 `SEARCH_*` 时使用的 Firecrawl Key。 |
 | `FIRECRAWL_BASE_URL` | 供应商默认值 | Firecrawl 端点覆盖。 |
 
-未配置非空的搜索 Key（`SEARCH_API_KEY` 和 `FIRECRAWL_API_KEY` 均为空或仅含空白）时，内置 `web_search` 不会出现在模型工具列表或执行注册表中；仅设置 Base URL 不会启用搜索。`web_fetch` 不受影响。
+`web_search(query)` 在普通供应商上优先使用当前会话模型的原生搜索：单独发送带搜索工具的模型请求，将摘要和来源链接返回给主模型。Responses 使用 `web_search`，Anthropic 使用 `web_search_20250305` 并支持 `pause_turn` 续行。TUI、WebUI、Ask/Run 和命令行使用同一入口，切换模型或供应商后重新判断能力。
+
+原生搜索复用模型的 API 凭据，即使没有 `SEARCH_API_KEY` / `FIRECRAWL_API_KEY` 也会开放 `web_search`；这不代表免除模型供应商的搜索及 token 费用。默认 `auto` 根据 `openai-response` / `anthropic` 协议开放原生搜索，不限制官方端点、模型名称或本地网关的认证方式；Magpie 等兼容网关无需额外设置 `on`。实际搜索能力由供应商决定，不支持时按下述规则回退。Responses 使用流式请求并保留搜索事件与来源，兼容 Codex 经 Magpie 转发时结束事件的空 `output`，也兼容返回普通 JSON 的网关。
+
+通过 `~/.agent/magpie.json` 接入或当前 Provider ID 为 `magpie` 时，搜索子请求优先使用同一网关、同一模型和凭据的 Anthropic `/v1/messages`，声明 `web_search_20250305`，按 Claude Code 的 WebSearch 方式触发 Magpie 的供应商代搜。DeepSeek 等模型不必自行具备搜索能力；具体搜索供应商由 Magpie 的联网搜索配置决定。主对话继续使用原有协议，无需配置 MCP，两个搜索 API Key 均为空时仍开放 `web_search`。不依据模型名称或端口猜测 Magpie，不向普通供应商额外发送跨协议请求。
+
+搜索子请求及其回退不设置强制 `tool_choice`，避免与 thinking 模式冲突，也让 Magpie 内部取得搜索结果后能够结束工具调用并返回摘要。提示词要求先搜索、有相关来源后结束搜索；最终仍校验实际搜索记录和来源 URL，不接受未搜索的普通回答。
+
+Magpie 的 Messages 搜索使用流式请求。收到完整、相互匹配的搜索调用和结果块，且结果包含有效来源 URL 后，立即将来源列表返回主模型并关闭该搜索请求，不再等待网关继续搜索或生成摘要。主模型可按需抓取来源页面作答；搜索前的计划文字不会冒充搜索结论。仍兼容网关返回完整 JSON；不完整结果、无来源或服务端搜索错误继续走原有回退。提前返回时仅累计流中已经上报的 token 用量。
+
+Magpie 代搜失败时，Responses 会话继续尝试原有 Responses 原生搜索，再回退到已有的 Tavily / Firecrawl 配置；Anthropic 不重复尝试同一路径，Chat Completions 直接回退到搜索 API。原生搜索不额外设置固定总超时，各次尝试继承调用方的取消信号和主动设置的 deadline；任务取消或调用方 deadline 到期时不再回退。流式请求复用 `LLM_STREAM_IDLE_TIMEOUT`（默认 `2m`，`0` 禁用）：等待响应头或连续收不到响应体字节时触发，数据和心跳会续期；空闲超时仍可触发搜索回退。非流式请求保留 HTTP 客户端自身的超时。原生搜索明确不受支持的结果在当前客户端内按模型缓存 30 分钟，但不会禁用独立的 Magpie 代搜入口。普通供应商缺少原生能力且两个搜索 Key 均为空时才禁用 `web_search`；限流、网络故障和单次无结果不缓存为不支持。非 Magpie 的 Chat Completions 仍使用搜索 API，`web_fetch` 不受影响。
+
+Responses 默认请求最多 3 次内置工具调用和 4096 个输出 token。若 Codex 或兼容网关明确以 HTTP 400/422 拒绝 `max_tool_calls` / `max_output_tokens`，只移除被拒绝的参数并重试，每个参数最多重试一次，合计最多 3 次请求；兼容结果按当前客户端和模型缓存 30 分钟。这类参数拒绝不会禁用搜索能力；被省略的限制改用服务端默认值。Anthropic 每次请求最多搜索 3 次，`pause_turn` 最多续行 2 次，合计最多 3 次请求。结果必须包含实际搜索记录和有效来源 URL，普通模型回答不会被当作搜索结果。模型侧搜索请求返回的 token 用量计入当前对话统计。
+
+协议参考：[Responses 原生搜索](https://developers.openai.com/api/docs/guides/tools-web-search)、[Anthropic 原生搜索](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)。
 
 ### MCP
 

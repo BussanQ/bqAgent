@@ -119,6 +119,9 @@ func (a *Agent) toolDefinitionsForRun(allowPlan bool) []tools.Definition {
 	filtered := make([]tools.Definition, 0, len(a.toolDefinitions))
 	var optionalTodo *tools.Definition
 	for _, definition := range a.toolDefinitions {
+		if definition.Function.Name == "web_search" && a.webSearchAvailable != nil && !a.webSearchAvailable() {
+			continue
+		}
 		if definition.Function.Name == "plan" && (!allowPlan || a.planner == nil) {
 			continue
 		}

@@ -134,6 +134,12 @@ func (err *providerRequestError) ProviderRequestMetadata() ProviderRequestMetada
 
 type ClientOptions struct {
 	StreamIdleTimeout time.Duration
+	// ProviderID enables provider-specific extensions only for a configured
+	// provider, never inferred from a model name or a localhost port.
+	ProviderID string
+	// NativeWebSearch is auto (enabled by Responses/Anthropic protocol), on
+	// (explicitly enabled), or off. Magpie's Messages search bridge also works with Chat.
+	NativeWebSearch string
 }
 
 type streamAttemptState struct {

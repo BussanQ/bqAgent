@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"bqagent/internal/tools"
@@ -118,8 +119,13 @@ type Client struct {
 	baseURL           string
 	apiType           APIType
 	streamIdleTimeout time.Duration
+	nativeWebSearch   string
+	searchUnsupported sync.Map // model -> expiry; scoped to this endpoint and credential
 	retrySleep        func(context.Context, time.Duration) error
 	retryJitter       func(time.Duration) time.Duration
+
+	searchUnsupportedParameters sync.Map // nativeSearchParameterKey -> expiry
+	magpieSearch                bool
 }
 
 type CompletionState struct {
@@ -295,6 +301,7 @@ func NewClientWithAPIType(apiKey, baseURL string, apiType APIType, httpClient *h
 
 func NewClientWithOptions(apiKey, baseURL string, apiType APIType, httpClient *http.Client, options ClientOptions) *Client {
 	apiType = NormalizeAPIType(string(apiType))
+	magpieSearch := strings.EqualFold(strings.TrimSpace(options.ProviderID), "magpie") && strings.TrimSpace(baseURL) != ""
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = defaultBaseURLForAPIType(apiType)
 	}
@@ -307,6 +314,8 @@ func NewClientWithOptions(apiKey, baseURL string, apiType APIType, httpClient *h
 		baseURL:           strings.TrimRight(baseURL, "/"),
 		apiType:           apiType,
 		streamIdleTimeout: options.StreamIdleTimeout,
+		nativeWebSearch:   strings.ToLower(strings.TrimSpace(options.NativeWebSearch)),
+		magpieSearch:      magpieSearch,
 		retryJitter:       defaultProviderRetryJitter,
 	}
 }

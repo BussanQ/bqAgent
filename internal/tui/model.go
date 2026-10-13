@@ -284,17 +284,6 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		return model.handleProviderKey(key)
 	}
 	switch name {
-	case "pgup", "pgdown":
-		if len(model.tools.items) > 0 && (model.tools.expanded || len(model.tools.items) <= toolCollapseThreshold) {
-			delta := max(1, model.toolViewportHeight()-2)
-			if name == "pgup" {
-				delta = -delta
-			}
-			lines := model.tools.viewLines(model.styles, model.contentWidth())
-			limit := max(0, len(lines)-1-max(1, model.toolViewportHeight()-2))
-			model.tools.offset = min(limit, max(0, min(model.tools.offset, limit)+delta))
-			return nil
-		}
 	case "ctrl+o":
 		model.toggleToolGroup()
 		return nil
@@ -425,7 +414,6 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 func (model *Model) toggleToolGroup() {
 	if model.tools.canExpand() {
 		model.tools.expanded = !model.tools.expanded
-		model.tools.offset = 0
 		if model.tools.committed {
 			model.toolMouse = model.tools.expanded
 		}
@@ -787,7 +775,6 @@ func (model *Model) archiveToolGroup() {
 	model.enqueuePrint(ansi.Hardwrap(model.tools.render(model.styles, false, model.contentWidth()), model.contentWidth(), false))
 	model.tools.committed = true
 	model.tools.expanded = false
-	model.tools.offset = 0
 	model.tools.cache = nil
 	model.toolMouse = false
 }
@@ -1165,7 +1152,7 @@ func (model Model) helpText() string {
   Ctrl+L 清理当前视口和草稿（保留 Session）
   Ctrl+O 展开/收起工具详情（也可点击工具汇总行）
   工具错误默认最多预览 3 行；展开后可查看已有输出详情
-  回答完整展示，使用终端滚动查看；PgUp/PgDn 仅翻页查看工具详情
+  回答完整展示，使用终端滚动查看
 
 本地命令
   /help 帮助    /provider 配置模型 Provider    /clear 新建会话并清理显示    /exit 安全退出
