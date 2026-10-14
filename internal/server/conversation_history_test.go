@@ -181,3 +181,45 @@ func TestSplitHistoryAttachments(t *testing.T) {
 		t.Fatalf("malformed attachment changed: text = %q, files = %#v", text, files)
 	}
 }
+
+func TestConversationHistoryRestoresStructuredToolBatches(t *testing.T) {
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir})
+	saved, err := service.store.Create(session.CreateOptions{Task: "structured-tools", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saved.RecordMessages(
+		map[string]any{"role": "user", "content": "读取文件"},
+		map[string]any{"role": "assistant", "content": nil, "tool_calls": []agent.ToolCall{
+			{ID: "call-1", Function: agent.FunctionCall{Name: "read_file", Arguments: `{"path":"a.go"}`}},
+			{ID: "call-2", Function: agent.FunctionCall{Name: "read_file", Arguments: `{"path":"missing.go"}`}},
+		}},
+		map[string]any{"role": "tool", "tool_call_id": "call-1", "content": "package a"},
+		map[string]any{"role": "tool", "tool_call_id": "call-2", "content": "Error: not found"},
+		map[string]any{"role": "assistant", "content": "读取完成"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	history, err := service.ConversationHistory(saved.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Messages) != 3 {
+		t.Fatalf("history = %#v, want user, tool batch, reply", history.Messages)
+	}
+	batch := history.Messages[1]
+	if batch.Role != "assistant" || batch.Content != "" || len(batch.Tools) != 2 {
+		t.Fatalf("tool batch = %#v", batch)
+	}
+	first, second := batch.Tools[0], batch.Tools[1]
+	if first.ID != "call-1" || first.Name != "read_file" || first.Arguments["path"] != "a.go" || first.Result != "package a" || first.Status != "succeeded" {
+		t.Fatalf("first tool = %#v", first)
+	}
+	if second.ID != "call-2" || second.Status != "failed" || !strings.Contains(second.Result, "not found") {
+		t.Fatalf("second tool = %#v", second)
+	}
+	if history.Messages[2].Content != "读取完成" {
+		t.Fatalf("reply = %#v", history.Messages[2])
+	}
+}

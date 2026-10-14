@@ -1129,7 +1129,7 @@ func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
 	}
 }
 
-func TestRunConversationTurnPreservesCompletedToolHistoryAsEvidence(t *testing.T) {
+func TestRunConversationTurnKeepsCompletedToolHistoryStructured(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "next reply"}}}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{LogWriter: &logs, Context: ContextConfig{Enabled: false}})
@@ -1153,35 +1153,17 @@ func TestRunConversationTurnPreservesCompletedToolHistoryAsEvidence(t *testing.T
 	if len(client.messages) != 1 {
 		t.Fatalf("client saw %d requests, want 1", len(client.messages))
 	}
-	request := client.messages[0]
-	if len(request) != 5 {
-		t.Fatalf("request messages = %d, want 5 after compacting tool history", len(request))
-	}
-	preservedEvidence := false
-	for _, message := range request {
-		role, _ := message["role"].(string)
-		if role == "tool" {
-			t.Fatalf("request still contains tool message: %#v", message)
-		}
-		if role == "assistant" {
-			if _, ok := message["tool_calls"]; ok {
-				t.Fatalf("request still contains assistant tool call scaffolding: %#v", message)
-			}
-			content, _ := message["content"].(string)
-			if strings.Contains(content, "search results") && strings.Contains(content, "web_search") {
-				preservedEvidence = true
-			}
-		}
-	}
-	if !preservedEvidence {
-		t.Fatalf("request did not preserve completed tool evidence: %#v", request)
+	request, _ := json.Marshal(client.messages[0])
+	original, _ := json.Marshal(messages)
+	if string(request) != string(original) {
+		t.Fatalf("request rewrote completed tool history:\n got %s\nwant %s", request, original)
 	}
 	if len(updated) != 7 {
 		t.Fatalf("updated messages = %d, want 7 after appending final assistant reply to full conversation history", len(updated))
 	}
 }
 
-func TestRunSanitizesEarlierCompletedToolHistoryBetweenIterations(t *testing.T) {
+func TestRunKeepsToolHistoryPrefixStableBetweenIterations(t *testing.T) {
 	client := &stubClient{
 		responses: []AssistantMessage{
 			{
@@ -1212,38 +1194,75 @@ func TestRunSanitizesEarlierCompletedToolHistoryBetweenIterations(t *testing.T) 
 	if len(client.messages) != 3 {
 		t.Fatalf("client saw %d requests, want 3", len(client.messages))
 	}
-	secondRequest := client.messages[1]
-	assistantToolCalls := 0
-	for _, message := range secondRequest {
-		role, _ := message["role"].(string)
-		if role == "assistant" {
-			if _, ok := message["tool_calls"]; ok {
-				assistantToolCalls++
-			}
-		}
+	second, third := client.messages[1], client.messages[2]
+	if len(third) <= len(second) {
+		t.Fatalf("third request length = %d, want longer than second (%d)", len(third), len(second))
 	}
-	if assistantToolCalls != 1 {
-		t.Fatalf("second request assistant tool call count = %d, want 1 pending call", assistantToolCalls)
+	secondJSON, _ := json.Marshal(second)
+	prefixJSON, _ := json.Marshal(third[:len(second)])
+	if string(secondJSON) != string(prefixJSON) {
+		t.Fatalf("third request does not extend second request verbatim:\nsecond %s\nprefix %s", secondJSON, prefixJSON)
 	}
-	thirdRequest := client.messages[2]
-	assistantToolCalls = 0
-	toolMessages := 0
-	for _, message := range thirdRequest {
-		role, _ := message["role"].(string)
-		if role == "tool" {
+	assistantToolCalls, toolMessages := 0, 0
+	for _, message := range third {
+		if message["role"] == "tool" {
 			toolMessages++
 		}
-		if role == "assistant" {
-			if _, ok := message["tool_calls"]; ok {
-				assistantToolCalls++
-			}
+		if _, ok := message["tool_calls"]; ok {
+			assistantToolCalls++
 		}
 	}
-	if assistantToolCalls != 1 {
-		t.Fatalf("third request assistant tool call count = %d, want 1 latest call", assistantToolCalls)
+	if assistantToolCalls != 2 || toolMessages != 2 {
+		t.Fatalf("third request tool calls = %d, tool results = %d, want 2 structured batches", assistantToolCalls, toolMessages)
 	}
-	if toolMessages != 1 {
-		t.Fatalf("third request tool message count = %d, want 1 latest tool result", toolMessages)
+}
+
+func TestRepairToolHistoryFoldsOnlyBrokenBatches(t *testing.T) {
+	complete := []map[string]any{
+		{"role": "assistant", "tool_calls": []ToolCall{{ID: "ok-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"a"}`}}}},
+		{"role": "tool", "tool_call_id": "ok-1", "content": "a body"},
+	}
+	messages := append([]map[string]any{{"role": "system", "content": "sys"}, {"role": "user", "content": "go"}}, complete...)
+	messages = append(messages,
+		map[string]any{"role": "tool", "tool_call_id": "orphan-1", "content": "orphan body"},
+		map[string]any{"role": "assistant", "tool_calls": []ToolCall{
+			{ID: "part-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"b"}`}},
+			{ID: "part-2", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"c"}`}},
+		}},
+		map[string]any{"role": "tool", "tool_call_id": "part-1", "content": "b body"},
+		map[string]any{"role": "user", "content": "next"},
+	)
+
+	repaired := repairToolHistory(messages)
+	if len(repaired) != 7 {
+		t.Fatalf("repaired length = %d, want 7: %#v", len(repaired), repaired)
+	}
+	kept, _ := json.Marshal(repaired[2:4])
+	want, _ := json.Marshal(complete)
+	if string(kept) != string(want) {
+		t.Fatalf("complete batch changed:\n got %s\nwant %s", kept, want)
+	}
+	if content, _ := repaired[4]["content"].(string); repaired[4]["role"] != "assistant" || !strings.HasPrefix(content, completedToolResultLead) || !strings.Contains(content, "orphan body") {
+		t.Fatalf("orphan result = %#v, want folded assistant text", repaired[4])
+	}
+	if _, ok := repaired[5]["tool_calls"]; ok {
+		t.Fatalf("incomplete batch kept structured calls: %#v", repaired[5])
+	}
+	if content, _ := repaired[5]["content"].(string); !strings.HasPrefix(content, CompletedToolActivityLead) || !strings.Contains(content, "b body") || !strings.Contains(content, "part-2") {
+		t.Fatalf("incomplete batch = %#v, want folded evidence", repaired[5])
+	}
+}
+
+func TestBuildSummaryInputIncludesStructuredToolActivity(t *testing.T) {
+	input := buildSummaryInput([]map[string]any{
+		{"role": "user", "content": "inspect"},
+		{"role": "assistant", "content": nil, "tool_calls": []ToolCall{{ID: "tc-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"main.go"}`}}}},
+		{"role": "tool", "tool_call_id": "tc-1", "content": "package main"},
+	})
+	for _, want := range []string{"user: inspect", "assistant tool call tc-1 read_file: {\"path\":\"main.go\"}", "tool result tc-1: package main"} {
+		if !strings.Contains(input, want) {
+			t.Fatalf("summary input = %q, want %q", input, want)
+		}
 	}
 }
 
@@ -1652,13 +1671,13 @@ func TestRunConversationReadsWorkspaceSkillThroughRegularTool(t *testing.T) {
 	}
 }
 
-func TestSanitizeCompletedToolHistoryRemovesLegacyRunSkillCall(t *testing.T) {
+func TestRepairToolHistoryRemovesLegacyRunSkillCall(t *testing.T) {
 	messages := []map[string]any{
 		{"role": "system", "content": "sys"},
 		{"role": "assistant", "tool_calls": []ToolCall{{ID: "legacy-1", Function: FunctionCall{Name: "run_skill", Arguments: `{"skill":"demo"}`}}}},
 	}
 
-	sanitized := sanitizeCompletedToolHistory(messages)
+	sanitized := repairToolHistory(messages)
 	if len(sanitized) != 2 {
 		t.Fatalf("sanitized length = %d, want 2", len(sanitized))
 	}
@@ -1671,7 +1690,7 @@ func TestSanitizeCompletedToolHistoryRemovesLegacyRunSkillCall(t *testing.T) {
 	}
 }
 
-func TestSanitizeCompletedToolHistoryPreservesNonSkillCallsInMixedLegacyBatch(t *testing.T) {
+func TestRepairToolHistoryPreservesNonSkillCallsInMixedLegacyBatch(t *testing.T) {
 	messages := []map[string]any{
 		{"role": "system", "content": "sys"},
 		{"role": "assistant", "tool_calls": []ToolCall{
@@ -1682,7 +1701,7 @@ func TestSanitizeCompletedToolHistoryPreservesNonSkillCallsInMixedLegacyBatch(t 
 		{"role": "tool", "tool_call_id": "read-1", "content": "read result"},
 	}
 
-	sanitized := sanitizeCompletedToolHistory(messages)
+	sanitized := repairToolHistory(messages)
 	joined, _ := json.Marshal(sanitized)
 	if strings.Contains(string(joined), `"name":"run_skill"`) {
 		t.Fatalf("sanitized history still contains run_skill: %s", joined)

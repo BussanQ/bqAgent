@@ -205,12 +205,23 @@ func buildSummaryInput(messages []map[string]any) string {
 	parts := make([]string, 0, len(messages))
 	for _, message := range messages {
 		role, _ := message["role"].(string)
-		content, _ := message["content"].(string)
-		content = strings.TrimSpace(content)
-		if role == "" || content == "" {
+		content := strings.TrimSpace(contentText(message["content"]))
+		if role == "" {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s: %s", role, content))
+		if role == "tool" {
+			callID, _ := message["tool_call_id"].(string)
+			parts = append(parts, fmt.Sprintf("tool result %s: %s", callID, content))
+			continue
+		}
+		if content != "" {
+			parts = append(parts, fmt.Sprintf("%s: %s", role, content))
+		}
+		if role == "assistant" {
+			for _, call := range messageToolCalls(message) {
+				parts = append(parts, fmt.Sprintf("assistant tool call %s %s: %s", call.ID, call.Function.Name, call.Function.Arguments))
+			}
+		}
 	}
 	return strings.Join(parts, "\n")
 }
@@ -328,27 +339,17 @@ func legacyRunSkillEvidence(calls []legacyRunSkillCall, results map[string]strin
 	return map[string]any{"role": "assistant", "content": strings.Join(parts, "\n")}
 }
 
-func sanitizeCompletedToolHistory(messages []map[string]any) []map[string]any {
+// repairToolHistory keeps well-formed tool batches byte-for-byte so request
+// prefixes stay stable across iterations and turns (prompt caching). Only
+// history that providers would reject is folded into assistant text: legacy
+// run_skill calls, batches whose results are missing or mismatched, and
+// orphan tool results.
+func repairToolHistory(messages []map[string]any) []map[string]any {
 	if len(messages) == 0 {
 		return messages
 	}
 	messages = normalizeLegacyRunSkillHistory(messages)
 
-	pendingAssistantIndex := -1
-	pendingToolStart := len(messages)
-	for i := len(messages) - 1; i >= 0; i-- {
-		role, _ := messages[i]["role"].(string)
-		if role == "tool" {
-			pendingToolStart = i
-			continue
-		}
-		if role == "assistant" && len(extractToolCallsFromMessageMap(messages[i])) > 0 && pendingToolStart == i+1 {
-			pendingAssistantIndex = i
-		}
-		break
-	}
-
-	sanitized := make([]map[string]any, 0, len(messages))
 	nativeCalls := map[string]bool{}
 	for _, message := range messages {
 		if len(responseItemsFromMessage(message)) > 0 {
@@ -357,43 +358,74 @@ func sanitizeCompletedToolHistory(messages []map[string]any) []map[string]any {
 			}
 		}
 	}
+	repaired := make([]map[string]any, 0, len(messages))
 	for i := 0; i < len(messages); i++ {
 		message := messages[i]
 		role, _ := message["role"].(string)
 		if role == "assistant" && len(responseItemsFromMessage(message)) > 0 {
-			sanitized = append(sanitized, message)
+			repaired = append(repaired, message)
 			continue
 		}
 		if role == "tool" {
 			callID, _ := message["tool_call_id"].(string)
-			if nativeCalls[callID] || pendingAssistantIndex >= 0 && i >= pendingToolStart {
-				sanitized = append(sanitized, message)
+			if nativeCalls[callID] {
+				repaired = append(repaired, message)
 			} else {
 				content, _ := message["content"].(string)
-				sanitized = append(sanitized, map[string]any{"role": "assistant", "content": "Completed tool result:\n" + content})
+				repaired = append(repaired, map[string]any{"role": "assistant", "content": completedToolResultLead + "\n" + content})
 			}
 			continue
 		}
 		if role == "assistant" && len(extractToolCallsFromMessageMap(message)) > 0 {
-			if i == pendingAssistantIndex {
-				sanitized = append(sanitized, message)
-				continue
+			callIDs := map[string]bool{}
+			for _, call := range messageToolCalls(message) {
+				callIDs[call.ID] = true
 			}
+			// Results answering other calls are orphans, not part of this batch.
 			end := i + 1
 			for end < len(messages) {
 				nextRole, _ := messages[end]["role"].(string)
-				if nextRole != "tool" {
+				nextID, _ := messages[end]["tool_call_id"].(string)
+				if nextRole != "tool" || !callIDs[nextID] {
 					break
 				}
 				end++
 			}
-			sanitized = append(sanitized, summarizeCompletedToolBatch(message, messages[i+1:end]))
+			if toolBatchComplete(message, messages[i+1:end]) {
+				repaired = append(repaired, messages[i:end]...)
+			} else {
+				repaired = append(repaired, summarizeCompletedToolBatch(message, messages[i+1:end]))
+			}
 			i = end - 1
 			continue
 		}
-		sanitized = append(sanitized, message)
+		repaired = append(repaired, message)
 	}
-	return sanitized
+	return repaired
+}
+
+// toolBatchComplete reports whether every call has exactly one result and
+// every result answers a call in the batch.
+func toolBatchComplete(assistant map[string]any, results []map[string]any) bool {
+	calls := messageToolCalls(assistant)
+	if len(calls) == 0 || len(calls) != len(results) {
+		return false
+	}
+	pending := make(map[string]bool, len(calls))
+	for _, call := range calls {
+		if call.ID == "" || pending[call.ID] {
+			return false
+		}
+		pending[call.ID] = true
+	}
+	for _, result := range results {
+		id, _ := result["tool_call_id"].(string)
+		if !pending[id] {
+			return false
+		}
+		delete(pending, id)
+	}
+	return true
 }
 
 func summarizeCompletedToolBatch(assistant map[string]any, results []map[string]any) map[string]any {

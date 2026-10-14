@@ -111,6 +111,20 @@ func ParseCompletedToolActivity(content string) (note string, tools []HistoryToo
 	return note, tools, true
 }
 
+// HistoryToolFromCall converts a structured tool call and its recorded result
+// into the display form used by restored transcripts.
+func HistoryToolFromCall(call ToolCall, result string) HistoryTool {
+	preview, truncated := boundedToolEventPreview(result)
+	return HistoryTool{
+		ID:        call.ID,
+		Name:      strings.TrimSpace(call.Function.Name),
+		Arguments: parseHistoryToolArguments(json.RawMessage(call.Function.Arguments)),
+		Result:    preview,
+		Status:    historyToolStatus(result),
+		Truncated: truncated,
+	}
+}
+
 func extractCompletedToolResults(body string, calls []completedToolCall) []namedToolResult {
 	results := make([]namedToolResult, 0, len(calls))
 	for index, call := range calls {

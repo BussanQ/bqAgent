@@ -237,12 +237,15 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 	conversationType := storedConversationType(saved.Meta().ConversationType)
 	filtered := make([]ConversationHistoryMessage, 0, len(messages))
 	pendingGroupCalls := map[string]string{}
+	pendingTools := map[string]pendingHistoryTool{}
 	for _, message := range messages {
 		role, _ := message["role"].(string)
 		content := conversationMessageText(message["content"])
+		ordinaryCalls := []agent.ToolCall{}
 		if role == "assistant" {
 			for _, call := range historyToolCalls(message) {
 				if call.Function.Name != groupConsultTool {
+					ordinaryCalls = append(ordinaryCalls, call)
 					continue
 				}
 				var arguments map[string]any
@@ -265,6 +268,24 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 				filtered = append(filtered, ConversationHistoryMessage{Role: "assistant", Sender: participant, Kind: kind, Content: text})
 				delete(pendingGroupCalls, callID)
 			}
+			if pending, ok := pendingTools[callID]; ok {
+				filtered[pending.message].Tools[pending.tool] = agent.HistoryToolFromCall(pending.call, content)
+				delete(pendingTools, callID)
+			}
+			continue
+		}
+		if len(ordinaryCalls) > 0 {
+			// Structured tool batches stay in session history so model requests
+			// keep a stable prefix; results arrive in the following tool messages.
+			historyTools := make([]agent.HistoryTool, len(ordinaryCalls))
+			for index, call := range ordinaryCalls {
+				historyTools[index] = agent.HistoryToolFromCall(call, "")
+				historyTools[index].Status = ""
+				if call.ID != "" {
+					pendingTools[call.ID] = pendingHistoryTool{message: len(filtered), tool: index, call: call}
+				}
+			}
+			filtered = append(filtered, ConversationHistoryMessage{Role: role, Sender: groupHistorySender(conversationType, role), Content: content, Tools: historyTools})
 			continue
 		}
 		if role == "assistant" {
@@ -325,6 +346,12 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 	}
 	result.Messages = selected
 	return result, nil
+}
+
+type pendingHistoryTool struct {
+	message int
+	tool    int
+	call    agent.ToolCall
 }
 
 func historyToolCalls(message map[string]any) []agent.ToolCall {

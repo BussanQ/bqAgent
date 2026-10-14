@@ -30,7 +30,7 @@ func DefaultContextConfig() ContextConfig {
 // shortcuts that do not pass through runConversation's context manager.
 func BoundWorkingMessages(messages []map[string]any, config ContextConfig) []map[string]any {
 	config = normalizeContextConfig(config)
-	working := sanitizeCompletedToolHistory(duplicateMessages(messages))
+	working := repairToolHistory(duplicateMessages(messages))
 	if !config.Enabled || estimateMessagesTokens(working) <= config.CompressionTriggerTokens {
 		return working
 	}
@@ -75,7 +75,7 @@ func normalizeContextConfig(config ContextConfig) ContextConfig {
 }
 
 func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (request []map[string]any, compacted []map[string]any) {
-	sanitized := sanitizeCompletedToolHistory(duplicateMessages(messages))
+	sanitized := repairToolHistory(duplicateMessages(messages))
 	if text := a.taskContext(ctx); text != "" {
 		sanitized = append(sanitized, map[string]any{"role": "developer", "content": text})
 		// The current task is stored separately. Never accumulate stale snapshots

@@ -107,8 +107,8 @@ func TestRunConversationHandlesPlanTool(t *testing.T) {
 		t.Fatalf("client saw %d requests, want 3", len(client.messages))
 	}
 	toolMessages := extractToolMessages(client.messages[2])
-	if len(toolMessages) != 0 {
-		t.Fatalf("tool messages = %d, want 0 after sanitizing completed tool history", len(toolMessages))
+	if len(toolMessages) != 1 || toolMessages[0]["tool_call_id"] != "plan-1" {
+		t.Fatalf("tool messages = %#v, want structured plan result kept in history", toolMessages)
 	}
 	if !strings.Contains(logs.String(), "[Model] request=chat") {
 		t.Fatalf("logs = %q, want model timing log", logs.String())
