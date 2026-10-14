@@ -57,7 +57,7 @@ func (body *nativeSearchTimedBody) Close() error {
 }
 
 func TestNativeWebSearchActiveStreamsHaveNoTotalTimeout(t *testing.T) {
-	for _, provider := range []string{"Responses", "Magpie"} {
+	for _, provider := range []string{"Responses", "Magpie Responses", "Magpie Messages"} {
 		for _, mode := range []string{"heartbeats renew idle timeout", "idle timeout explicitly disabled"} {
 			t.Run(provider+"/"+mode, func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
@@ -73,8 +73,12 @@ func TestNativeWebSearchActiveStreamsHaveNoTotalTimeout(t *testing.T) {
 					}
 					items, terminal := nativeSearchSSE(t, false)
 					options := ClientOptions{NativeWebSearch: "on", StreamIdleTimeout: idle}
-					if provider == "Magpie" {
+					apiType := APITypeOpenAIResponse
+					if strings.HasPrefix(provider, "Magpie") {
 						options.ProviderID = "magpie"
+					}
+					if provider == "Magpie Messages" {
+						apiType = APITypeAnthropic
 						start, call, result := magpieSearchStreamParts(t)
 						items, terminal = start+call, result
 					}
@@ -89,7 +93,7 @@ func TestNativeWebSearchActiveStreamsHaveNoTotalTimeout(t *testing.T) {
 						body = &nativeSearchTimedBody{ctx: request.Context(), steps: steps}
 						return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: body}, nil
 					})}
-					client := NewClientWithOptions("", "https://relay.example/v1", APITypeOpenAIResponse, httpClient, options)
+					client := NewClientWithOptions("", "https://relay.example/v1", apiType, httpClient, options)
 					started := time.Now()
 					output, err := client.NativeWebSearch(context.Background(), "model", "query")
 					if err != nil || !strings.Contains(output, "Sources:") || calls != 1 || time.Since(started) != 3*time.Minute {
@@ -105,7 +109,7 @@ func TestNativeWebSearchActiveStreamsHaveNoTotalTimeout(t *testing.T) {
 }
 
 func TestNativeWebSearchIdleAndCallerCancellationRemainEffective(t *testing.T) {
-	for _, provider := range []string{"Responses", "Magpie"} {
+	for _, provider := range []string{"Responses", "Magpie Responses", "Magpie Messages"} {
 		for _, stage := range []string{"headers", "body"} {
 			for _, stop := range []string{"idle", "user cancellation", "caller deadline"} {
 				t.Run(provider+"/"+stage+"/"+stop, func(t *testing.T) {
@@ -125,8 +129,11 @@ func TestNativeWebSearchIdleAndCallerCancellationRemainEffective(t *testing.T) {
 						deadline, hasDeadline := ctx.Deadline()
 						options := ClientOptions{NativeWebSearch: "on", StreamIdleTimeout: idle}
 						apiType := APITypeOpenAIResponse
-						if provider == "Magpie" {
-							options.ProviderID, apiType = "magpie", APITypeAnthropic
+						if strings.HasPrefix(provider, "Magpie") {
+							options.ProviderID = "magpie"
+						}
+						if provider == "Magpie Messages" {
+							apiType = APITypeAnthropic
 						}
 						var requestCtx context.Context
 						var body *nativeSearchTimedBody

@@ -301,7 +301,9 @@ func NewClientWithAPIType(apiKey, baseURL string, apiType APIType, httpClient *h
 
 func NewClientWithOptions(apiKey, baseURL string, apiType APIType, httpClient *http.Client, options ClientOptions) *Client {
 	apiType = NormalizeAPIType(string(apiType))
-	magpieSearch := strings.EqualFold(strings.TrimSpace(options.ProviderID), "magpie") && strings.TrimSpace(baseURL) != ""
+	// Magpie supports search directly through Responses. Keep the Messages
+	// compatibility path only for its other configured protocols.
+	magpieSearch := apiType != APITypeOpenAIResponse && strings.EqualFold(strings.TrimSpace(options.ProviderID), "magpie") && strings.TrimSpace(baseURL) != ""
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = defaultBaseURLForAPIType(apiType)
 	}

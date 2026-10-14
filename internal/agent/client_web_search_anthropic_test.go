@@ -73,7 +73,7 @@ func TestNativeWebSearchMagpieReturnsCompletedSourcesBeforeGatewayTimeout(t *tes
 	start, call, result := magpieSearchStreamParts(t)
 	// Do not pass speculative text preceding the search back as a summary.
 	plan := magpieSearchBlockEvents(t, 2, map[string]any{"type": "text", "text": "UNVERIFIED_PLAN"})
-	for _, apiType := range []APIType{APITypeOpenAIResponse, APITypeAnthropic, APITypeOpenAI} {
+	for _, apiType := range []APIType{APITypeAnthropic, APITypeOpenAI} {
 		t.Run(string(apiType), func(t *testing.T) {
 			body := &stalledMagpieSearchBody{Reader: strings.NewReader(start + plan + call + result)}
 			var requestContext context.Context
@@ -153,7 +153,7 @@ func TestNativeWebSearchMagpieStreamCancellationDiscardsRacingResult(t *testing.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	calls := 0
-	client := magpieMessagesTestClient(t, APITypeOpenAIResponse, func(*http.Request, map[string]any) (int, string) {
+	client := magpieMessagesTestClient(t, APITypeAnthropic, func(*http.Request, map[string]any) (int, string) {
 		calls++
 		cancel()
 		return 200, start + call + result
@@ -176,7 +176,7 @@ func TestNativeWebSearchMagpieStreamPausePreservesContentAndUsage(t *testing.T) 
 	textStop := magpieSearchEvent(t, map[string]any{"type": "content_block_stop", "index": 1})
 	pause := magpieSearchEvent(t, map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "pause_turn"}, "usage": map[string]any{"output_tokens": 5}}) + magpieSearchEvent(t, map[string]any{"type": "message_stop"})
 	calls := 0
-	client := magpieMessagesTestClient(t, APITypeOpenAIResponse, func(_ *http.Request, body map[string]any) (int, string) {
+	client := magpieMessagesTestClient(t, APITypeAnthropic, func(_ *http.Request, body map[string]any) (int, string) {
 		calls++
 		if calls == 1 {
 			return 200, start + thinking + textStart + textDelta + textStop + pause

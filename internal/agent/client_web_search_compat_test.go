@@ -14,26 +14,21 @@ import (
 
 func TestNativeWebSearchThinkingToolChoiceCompatibility(t *testing.T) {
 	for _, tc := range []struct {
-		name                string
-		apiType             APIType
-		magpie              bool
-		messagesUnavailable bool
-		wantPaths           []string
+		name      string
+		apiType   APIType
+		magpie    bool
+		wantPaths []string
 	}{
-		{"Responses", APITypeOpenAIResponse, false, false, []string{"/v1/responses"}},
-		{"Anthropic", APITypeAnthropic, false, false, []string{"/v1/messages"}},
-		{"Magpie Responses", APITypeOpenAIResponse, true, false, []string{"/prefix/v1/messages"}},
-		{"Magpie Anthropic", APITypeAnthropic, true, false, []string{"/prefix/v1/messages"}},
-		{"Magpie Chat", APITypeOpenAI, true, false, []string{"/prefix/v1/messages"}},
-		{"Magpie Responses fallback", APITypeOpenAIResponse, true, true, []string{"/prefix/v1/messages", "/prefix/v1/responses"}},
+		{"Responses", APITypeOpenAIResponse, false, []string{"/v1/responses"}},
+		{"Anthropic", APITypeAnthropic, false, []string{"/v1/messages"}},
+		{"Magpie Responses", APITypeOpenAIResponse, true, []string{"/prefix/v1/responses"}},
+		{"Magpie Anthropic", APITypeAnthropic, true, []string{"/prefix/v1/messages"}},
+		{"Magpie Chat", APITypeOpenAI, true, []string{"/prefix/v1/messages"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var paths []string
 			respond := func(request *http.Request, body map[string]any) (int, string) {
 				paths = append(paths, request.URL.Path)
-				if tc.messagesUnavailable && strings.HasSuffix(request.URL.Path, "/messages") {
-					return http.StatusNotFound, "Messages unavailable"
-				}
 				// Reproduce Bailian's upstream 400 wrapped in Magpie's HTTP 502.
 				// Neither the primary route nor its fallback may force a tool.
 				_, objectChoice := body["tool_choice"].(map[string]any)

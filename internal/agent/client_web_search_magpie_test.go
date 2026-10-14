@@ -34,7 +34,7 @@ func magpieMessagesTestClient(t *testing.T, apiType APIType, respond func(*http.
 func TestNativeWebSearchMagpieMessagesDelegatesWithoutSearchKeys(t *testing.T) {
 	t.Setenv("SEARCH_API_KEY", "")
 	t.Setenv("FIRECRAWL_API_KEY", "")
-	for _, apiType := range []APIType{APITypeOpenAIResponse, APITypeAnthropic, APITypeOpenAI} {
+	for _, apiType := range []APIType{APITypeAnthropic, APITypeOpenAI} {
 		for _, model := range []string{"workbuddy/deepseek-v4.1-flash", "another/provider-model"} {
 			t.Run(string(apiType)+"/"+model, func(t *testing.T) {
 				calls := 0
@@ -77,25 +77,23 @@ func TestNativeWebSearchMagpieMessagesDelegatesWithoutSearchKeys(t *testing.T) {
 
 func TestNativeWebSearchMagpieMessagesFallbacks(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		status        int
-		body          string
-		nativeSuccess bool
-		apiType       APIType
+		name    string
+		status  int
+		body    string
+		apiType APIType
 	}{
-		{"Messages unavailable falls back to Responses", 404, "not found", true, APITypeOpenAIResponse},
-		{"proxy search failure falls back to API", 503, "search unavailable", false, APITypeOpenAIResponse},
-		{"text links without search are rejected", 200, `{"stop_reason":"end_turn","content":[{"type":"text","text":"See https://example.com/releases"}]}`, false, APITypeOpenAIResponse},
-		{"no sources falls back to API", 200, `{"stop_reason":"end_turn","content":[{"type":"server_tool_use","name":"web_search"},{"type":"web_search_tool_result","content":[]}]}`, false, APITypeOpenAIResponse},
-		{"server search error falls back to API", 200, `{"stop_reason":"end_turn","content":[{"type":"web_search_tool_result","content":{"type":"web_search_tool_result_error","error_code":"unavailable"}}]}`, false, APITypeOpenAIResponse},
-		{"Anthropic does not retry identical route", 503, "search unavailable", false, APITypeAnthropic},
-		{"Chat skips unsupported native protocol", 503, "search unavailable", false, APITypeOpenAI},
+		{"proxy search failure falls back to API", 503, "search unavailable", APITypeAnthropic},
+		{"text links without search are rejected", 200, `{"stop_reason":"end_turn","content":[{"type":"text","text":"See https://example.com/releases"}]}`, APITypeAnthropic},
+		{"no sources falls back to API", 200, `{"stop_reason":"end_turn","content":[{"type":"server_tool_use","name":"web_search"},{"type":"web_search_tool_result","content":[]}]}`, APITypeAnthropic},
+		{"server search error falls back to API", 200, `{"stop_reason":"end_turn","content":[{"type":"web_search_tool_result","content":{"type":"web_search_tool_result_error","error_code":"unavailable"}}]}`, APITypeAnthropic},
+		{"Anthropic does not retry identical route", 503, "search unavailable", APITypeAnthropic},
+		{"Chat skips unsupported native protocol", 503, "search unavailable", APITypeOpenAI},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			callerCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 			callerDeadline, _ := callerCtx.Deadline()
-			messagesCalls, nativeCalls, fallbackCalls := 0, 0, 0
+			messagesCalls, fallbackCalls := 0, 0
 			client := magpieMessagesTestClient(t, tc.apiType, func(request *http.Request, body map[string]any) (int, string) {
 				current, ok := request.Context().Deadline()
 				if !ok || !callerDeadline.Equal(current) {
@@ -105,12 +103,6 @@ func TestNativeWebSearchMagpieMessagesFallbacks(t *testing.T) {
 				case "/prefix/v1/messages":
 					messagesCalls++
 					return tc.status, tc.body
-				case "/prefix/v1/responses":
-					nativeCalls++
-					if tc.nativeSuccess {
-						return 200, responsesSearchFixture
-					}
-					return 400, "web_search is not supported"
 				default:
 					t.Fatalf("unexpected endpoint (must never call MCP): %s", request.URL)
 					return 500, "unexpected"
@@ -121,19 +113,8 @@ func TestNativeWebSearchMagpieMessagesFallbacks(t *testing.T) {
 				return "API fallback", nil
 			}}})
 			result, err := app.functions["web_search"](callerCtx, map[string]any{"query": "query"})
-			if err != nil || messagesCalls != 1 || (result == "API fallback") == tc.nativeSuccess {
-				t.Fatalf("result=%q messages=%d native=%d fallback=%d err=%v", result, messagesCalls, nativeCalls, fallbackCalls, err)
-			}
-			wantNative := 0
-			if tc.apiType == APITypeOpenAIResponse {
-				wantNative = 1
-			}
-			wantFallback := 1
-			if tc.nativeSuccess {
-				wantFallback = 0
-			}
-			if nativeCalls != wantNative || fallbackCalls != wantFallback || !client.SupportsNativeWebSearch("deepseek") {
-				t.Fatalf("incorrect fallback or search hidden: native=%d fallback=%d", nativeCalls, fallbackCalls)
+			if err != nil || messagesCalls != 1 || result != "API fallback" || fallbackCalls != 1 || !client.SupportsNativeWebSearch("deepseek") {
+				t.Fatalf("result=%q messages=%d fallback=%d err=%v", result, messagesCalls, fallbackCalls, err)
 			}
 		})
 	}
@@ -143,7 +124,7 @@ func TestNativeWebSearchMagpieMessagesCancellationDoesNotFallback(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	calls := 0
-	client := magpieMessagesTestClient(t, APITypeOpenAIResponse, func(request *http.Request, body map[string]any) (int, string) {
+	client := magpieMessagesTestClient(t, APITypeAnthropic, func(request *http.Request, body map[string]any) (int, string) {
 		calls++
 		cancel()
 		return 503, "cancelled"
