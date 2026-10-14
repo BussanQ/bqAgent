@@ -102,7 +102,7 @@ func TestAnthropicMalformedArgumentsReplay(t *testing.T) {
 				{"role": "tool", "tool_call_id": "bad", "content": "Error: Invalid tool arguments. Reissue separate tool calls."},
 				{"role": "tool", "tool_call_id": "good", "content": "file content"},
 			}
-			_, converted := anthropicMessages(messages, PromptCacheOptions{})
+			_, converted, _ := anthropicMessages(messages, PromptCacheOptions{})
 			if len(converted) != 2 || len(converted[0].Content) != 2 || len(converted[1].Content) != 2 {
 				t.Fatalf("unexpected message structure: %#v", converted)
 			}

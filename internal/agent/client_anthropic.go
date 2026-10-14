@@ -290,7 +290,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 }
 
 func buildAnthropicRequest(model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, stream bool) (anthropicRequest, error) {
-	system, converted := anthropicMessages(messages, options.PromptCache)
+	system, converted, tailBreakpoint := anthropicMessages(messages, options.PromptCache)
 	if responseType, _ := options.ResponseFormat["type"].(string); responseType == "json_object" {
 		system = append(system, anthropicSystemBlock{Type: "text", Text: "Return the response as a valid JSON object."})
 	}
@@ -298,7 +298,9 @@ func buildAnthropicRequest(model string, messages []map[string]any, definitions 
 		Model: model, System: system, Messages: converted,
 		MaxTokens: anthropicDefaultMaxTokens, Stream: stream,
 	}
-	if options.PromptCache.Enabled {
+	// Automatic caching would land on the volatile in-history context at the
+	// end, so it is used only when the request ends with ordinary history.
+	if options.PromptCache.Enabled && !tailBreakpoint {
 		request.CacheControl = &anthropicCacheControl{Type: "ephemeral"}
 	}
 	if options.ReasoningEffort != ReasoningEffortAuto {
@@ -320,10 +322,19 @@ func buildAnthropicRequest(model string, messages []map[string]any, definitions 
 	return request, nil
 }
 
-func anthropicMessages(messages []map[string]any, cache PromptCacheOptions) ([]anthropicSystemBlock, []anthropicMessage) {
-	systemParts := make([]anthropicSystemBlock, 0, 2)
-	converted := make([]anthropicMessage, 0, len(messages))
+// anthropicMessages hoists only the leading system/developer prefix into the
+// top-level system field. Later system/developer messages (task state, stage
+// notes) stay at their history position as user text so a change to them does
+// not invalidate the cached conversation that precedes them. When the request
+// ends with such context, the last ordinary history block gets an explicit
+// breakpoint and tailBreakpoint reports it.
+func anthropicMessages(messages []map[string]any, cache PromptCacheOptions) (systemParts []anthropicSystemBlock, converted []anthropicMessage, tailBreakpoint bool) {
+	systemParts = make([]anthropicSystemBlock, 0, 2)
+	converted = make([]anthropicMessage, 0, len(messages))
 	invalidArguments := map[string]string{}
+	historyStarted := false
+	lastHistoryMessage, lastHistoryBlock := -1, -1
+	trailingContext := false
 	appendMessage := func(role string, blocks []any) {
 		if len(blocks) == 0 {
 			return
@@ -337,6 +348,17 @@ func anthropicMessages(messages []map[string]any, cache PromptCacheOptions) ([]a
 
 	for index, message := range messages {
 		role, _ := message["role"].(string)
+		if (role == "system" || role == "developer") && historyStarted {
+			if text := strings.TrimSpace(contentText(message["content"])); text != "" {
+				appendMessage("user", []any{map[string]any{"type": "text", "text": "<system-reminder>\n" + text + "\n</system-reminder>"}})
+				trailingContext = true
+			}
+			continue
+		}
+		historyBlocks := anthropicBlockCount(converted)
+		if role != "system" && role != "developer" {
+			historyStarted = true
+		}
 		switch role {
 		case "system", "developer":
 			if text := strings.TrimSpace(contentText(message["content"])); text != "" {
@@ -379,8 +401,27 @@ func anthropicMessages(messages []map[string]any, cache PromptCacheOptions) ([]a
 		case "user":
 			appendMessage("user", anthropicContent(message["content"]))
 		}
+		if historyStarted && anthropicBlockCount(converted) > historyBlocks {
+			lastHistoryMessage = len(converted) - 1
+			lastHistoryBlock = len(converted[lastHistoryMessage].Content) - 1
+			trailingContext = false
+		}
 	}
-	return systemParts, converted
+	if trailingContext && cache.Enabled && cache.ExplicitBreakpoint && lastHistoryMessage >= 0 {
+		if block, ok := converted[lastHistoryMessage].Content[lastHistoryBlock].(map[string]any); ok {
+			block["cache_control"] = map[string]any{"type": "ephemeral"}
+			tailBreakpoint = true
+		}
+	}
+	return systemParts, converted, tailBreakpoint
+}
+
+func anthropicBlockCount(messages []anthropicMessage) int {
+	count := 0
+	for _, message := range messages {
+		count += len(message.Content)
+	}
+	return count
 }
 
 func anthropicContent(content any) []any {

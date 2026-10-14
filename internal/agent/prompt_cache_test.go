@@ -232,3 +232,78 @@ func assertOpenAIBreakpoint(t *testing.T, raw any) {
 		t.Fatalf("content block = %#v, want explicit cache breakpoint", block)
 	}
 }
+
+func TestAnthropicKeepsLaterDeveloperContextAfterCachedHistory(t *testing.T) {
+	definitions := tools.Definitions()[:2]
+	prompt := NewFrozenPromptSnapshot("stable instructions", "session memory")
+	history := []map[string]any{
+		{"role": "system", "content": "stable instructions"},
+		{"role": "system", "content": "session memory"},
+		{"role": "user", "content": "fix the bug"},
+		{"role": "assistant", "content": nil, "tool_calls": []ToolCall{{ID: "tc-1", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"a.go"}`}}}},
+		{"role": "tool", "tool_call_id": "tc-1", "content": "package a"},
+	}
+	build := func(messages []map[string]any) anthropicRequest {
+		t.Helper()
+		options := ChatCompletionOptions{}
+		options.PromptCache = buildPromptCacheOptions(APITypeAnthropic, "claude-sonnet", prompt, definitions, options)
+		request, err := buildAnthropicRequest("claude-sonnet", messages, definitions, options, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return request
+	}
+	withTask := func(messages []map[string]any, state string) []map[string]any {
+		return append(duplicateMessages(messages), map[string]any{"role": "developer", "content": taskProgressInstructions + "\n" + state})
+	}
+
+	first := build(withTask(history, `{"status":"reading"}`))
+	if first.CacheControl != nil {
+		t.Fatalf("top-level automatic cache would land on volatile task state: %#v", first.CacheControl)
+	}
+	if len(first.System) != 2 {
+		t.Fatalf("system blocks = %#v, want only the leading stable prompt and memory", first.System)
+	}
+	last := first.Messages[len(first.Messages)-1]
+	if last.Role != "user" || len(last.Content) != 2 {
+		t.Fatalf("last message = %#v, want tool_result followed by task reminder", last)
+	}
+	result, _ := last.Content[0].(map[string]any)
+	reminder, _ := last.Content[1].(map[string]any)
+	if result["type"] != "tool_result" || result["cache_control"] == nil {
+		t.Fatalf("tool result = %#v, want explicit breakpoint before task state", result)
+	}
+	if text, _ := reminder["text"].(string); !strings.Contains(text, `"status":"reading"`) || reminder["cache_control"] != nil {
+		t.Fatalf("task reminder = %#v", reminder)
+	}
+
+	grown := append(duplicateMessages(history),
+		map[string]any{"role": "assistant", "content": nil, "tool_calls": []ToolCall{{ID: "tc-2", Function: FunctionCall{Name: "task_update", Arguments: `{"status":"editing"}`}}}},
+		map[string]any{"role": "tool", "tool_call_id": "tc-2", "content": "ok"},
+	)
+	second := build(withTask(grown, `{"status":"editing"}`))
+	firstSystem, _ := json.Marshal(first.System)
+	secondSystem, _ := json.Marshal(second.System)
+	if string(firstSystem) != string(secondSystem) {
+		t.Fatalf("task state change altered system prefix:\n%s\n%s", firstSystem, secondSystem)
+	}
+	stripCache := func(messages []anthropicMessage) string {
+		encoded, _ := json.Marshal(messages)
+		var decoded []map[string]any
+		_ = json.Unmarshal(encoded, &decoded)
+		for _, message := range decoded {
+			content, _ := message["content"].([]any)
+			for _, block := range content {
+				delete(block.(map[string]any), "cache_control")
+			}
+		}
+		normalized, _ := json.Marshal(decoded)
+		return string(normalized)
+	}
+	firstHistory := append([]anthropicMessage{}, first.Messages...)
+	firstHistory[len(firstHistory)-1].Content = firstHistory[len(firstHistory)-1].Content[:1]
+	prefix := strings.TrimSuffix(stripCache(firstHistory), "]")
+	if !strings.HasPrefix(stripCache(second.Messages), prefix) {
+		t.Fatalf("second request does not extend cached history:\nfirst  %s\nsecond %s", stripCache(firstHistory), stripCache(second.Messages))
+	}
+}
