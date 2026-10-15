@@ -13,6 +13,14 @@ type toolDisplay struct {
 	start     ToolEvent
 	result    ToolEvent
 	hasResult bool
+	// number is the call's position in this turn. Event Seq counts starts and
+	// results together, so it skips numbers and keeps growing across turns.
+	number int
+}
+
+func (item toolDisplay) numbered(event ToolEvent) ToolEvent {
+	event.Seq = uint64(item.number)
+	return event
 }
 
 type toolGroup struct {
@@ -60,12 +68,12 @@ func (group *toolGroup) add(event ToolEvent) (becameExpandable bool) {
 		if index >= 0 {
 			group.items[index].start = event
 		} else {
-			group.items = append(group.items, toolDisplay{start: event})
+			group.items = append(group.items, toolDisplay{start: event, number: len(group.items) + 1})
 		}
 	} else {
 		index := group.find(event)
 		if index < 0 {
-			group.items = append(group.items, toolDisplay{start: ToolEvent{Kind: "tool_start", Seq: event.Seq, ID: event.ID, Name: event.Name}, result: event, hasResult: true})
+			group.items = append(group.items, toolDisplay{start: ToolEvent{Kind: "tool_start", Seq: event.Seq, ID: event.ID, Name: event.Name}, result: event, hasResult: true, number: len(group.items) + 1})
 		} else {
 			group.items[index].result = event
 			group.items[index].hasResult = true
@@ -198,10 +206,9 @@ func (group toolGroup) counts() (running, succeeded, failed int) {
 
 func (item toolDisplay) render(styles theme, width int, expanded bool) string {
 	if !item.hasResult {
-		return toolSummary(item.start, styles, width, expanded)
+		return toolSummary(item.numbered(item.start), styles, width, expanded)
 	}
-	result := item.result
-	result.Seq = item.start.Seq
+	result := item.numbered(item.result)
 	if len(result.Arguments) == 0 {
 		result.Arguments = item.start.Arguments
 	}

@@ -188,6 +188,53 @@ func TestToolDrawerWithoutPagingResizeAndLongStreamStayWithinTerminal(t *testing
 	}
 }
 
+func TestToolNumbersFollowCallOrderNotEventSeq(t *testing.T) {
+	// The agent numbers every start and result event, so starts arrive with
+	// Seq 1, 3, 5, 7 and later turns continue from the previous counter.
+	seq := uint64(100)
+	next := func() uint64 { seq++; return seq }
+	start := func(id string) ToolEvent {
+		return ToolEvent{Kind: "tool_start", Seq: next(), ID: id, Name: "execute_bash"}
+	}
+	result := func(id string) ToolEvent {
+		return ToolEvent{Kind: "tool_result", Seq: next(), ID: id, Name: "execute_bash", Status: "succeeded", Preview: "out-" + id}
+	}
+	var group toolGroup
+	for _, id := range []string{"a", "b"} {
+		group.add(start(id))
+		group.add(result(id))
+	}
+	// Parallel calls, a replayed start and a result arriving before its start.
+	group.add(start("c"))
+	group.add(start("d"))
+	group.add(result("d"))
+	group.add(start("c"))
+	group.add(result("e"))
+	group.add(start("e"))
+	group.add(result("c"))
+
+	styles := newTheme(true)
+	rendered := group.render(styles, false, 120)
+	for number, id := range []string{"a", "b", "c", "d", "e"} {
+		item := group.items[number]
+		if item.start.ID != id {
+			t.Fatalf("item %d = %q, want %q", number, item.start.ID, id)
+		}
+		label := fmt.Sprintf("#%d execute_bash", number+1)
+		if !strings.Contains(rendered, label) || !strings.Contains(item.inspectorSummary(styles, 120), label) || !strings.HasPrefix(item.detailLines(120)[0], label) {
+			t.Fatalf("missing %s in summary, inspector or detail:\n%s", label, rendered)
+		}
+	}
+	if strings.Contains(rendered, "#101") || strings.Contains(rendered, "#6 ") {
+		t.Fatalf("display leaked event sequence numbers:\n%s", rendered)
+	}
+
+	history := historyToolGroup([]ToolEvent{{ID: "h1", Name: "read_file", Status: "succeeded"}, {ID: "h2", Name: "read_file", Status: "succeeded"}})
+	if restored := history.render(styles, false, 120); !strings.Contains(restored, "#1 read_file") || !strings.Contains(restored, "#2 read_file") || strings.Contains(restored, "#0") {
+		t.Fatalf("restored history should number tools from 1: %q", restored)
+	}
+}
+
 func TestToolEventsMergeReplayedAndOutOfOrderCalls(t *testing.T) {
 	model := toolDrawerModel(t, 0)
 	result := ToolEvent{Kind: "tool_result", ID: "same", Name: "read_file", Status: "failed", Preview: "first failure"}
@@ -200,7 +247,7 @@ func TestToolEventsMergeReplayedAndOutOfOrderCalls(t *testing.T) {
 	model.tools.add(result)
 	model.tools.add(result)
 	view := model.View().Content
-	if len(model.tools.items) != 1 || strings.Count(view, "original.go") != 1 || strings.Contains(view, "first failure") || !strings.Contains(view, "✓ #7") {
+	if len(model.tools.items) != 1 || strings.Count(view, "original.go") != 1 || strings.Contains(view, "first failure") || !strings.Contains(view, "✓ #1 ") {
 		t.Fatalf("replayed call wasn't updated in place: %q", view)
 	}
 	start.ID = "different"

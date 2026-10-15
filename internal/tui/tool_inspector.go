@@ -31,10 +31,9 @@ func (model Model) toolHistoryReady() bool {
 func (item toolDisplay) inspectorSummary(styles theme, width int) string {
 	// A list row must not format output or todo bodies that will be discarded.
 	if !item.hasResult {
-		return ansi.Truncate(fmt.Sprintf("⚙ #%d %s %s", item.start.Seq, item.start.Name, summarizeArguments(item.start.Arguments, 180)), width, "…")
+		return ansi.Truncate(fmt.Sprintf("⚙ #%d %s %s", item.number, item.start.Name, summarizeArguments(item.start.Arguments, 180)), width, "…")
 	}
-	event := item.result
-	event.Seq = item.start.Seq
+	event := item.numbered(item.result)
 	event.Preview = ""
 	event.Arguments = nil
 	line := toolSummary(event, styles, width, false)
@@ -186,7 +185,7 @@ func (item toolDisplay) detailLines(width int) []string {
 	if name == "" {
 		name = event.Name
 	}
-	lines := []string{fmt.Sprintf("#%d %s · %s", item.start.Seq, name, status)}
+	lines := []string{fmt.Sprintf("#%d %s · %s", item.number, name, status)}
 	if event.DurationMS > 0 {
 		lines = append(lines, fmt.Sprintf("耗时：%dms", event.DurationMS))
 	}
