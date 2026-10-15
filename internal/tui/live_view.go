@@ -178,12 +178,41 @@ func (model Model) liveLayout() (lines []string, toolRow int) {
 		lines = make([]string, padding, model.frameLimit())
 		if model.sequence == 0 || model.active != nil {
 			copy(lines, retained)
+			if model.sequence == 0 && model.sessionID == "" && model.active == nil && len(retained) > 0 && len(model.tools.items) == 0 && model.stream == "" && model.reply == "" {
+				model.drawStartupArt(lines[len(retained):])
+			}
 		} else {
 			copy(lines[padding-len(retained):], retained)
 		}
 		lines = append(lines, body...)
 	}
 	return
+}
+
+func (model Model) drawStartupArt(space []string) {
+	art := []string{
+		"       .---.       ",
+		"       | o |       ",
+		"   .---'---'---.   ",
+		"   |  o     o  |   ",
+		"   |    ---    |   ",
+		"   '-----------'   ",
+		"     /|     |\\     ",
+		"    /_|_____|_\\    ",
+		"      bqAgent      ",
+	}
+	width := 0
+	for _, row := range art {
+		width = max(width, len(row))
+	}
+	if len(space) < len(art)+2 || model.contentWidth() < width+2 {
+		return
+	}
+	top := (len(space) - len(art)) / 2
+	left := strings.Repeat(" ", (model.contentWidth()-width)/2)
+	for i, row := range art {
+		space[top+i] = model.styles.dim.Render(left + strings.TrimRight(row, " "))
+	}
 }
 
 // A constant physical height lets the renderer scroll changed rows without

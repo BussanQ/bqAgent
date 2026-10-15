@@ -91,6 +91,78 @@ func TestTranscriptResizeAndClearPreserveOnlyUnprintedRows(t *testing.T) {
 	}
 }
 
+func TestStartupArtCentersInUnusedSpace(t *testing.T) {
+	model := toolDrawerModel(t, 0)
+	model.width, model.height = 100, 60
+	model.resizeInput()
+	updated, _ := model.Update(startupMsg{})
+	model = updated.(Model)
+	rows := strings.Split(model.View().Content, "\n")
+	first, last := -1, -1
+	for i, row := range rows {
+		if strings.TrimSpace(row) == ".---." {
+			first = i
+		}
+		if strings.TrimSpace(row) == "bqAgent" {
+			last = i
+		}
+	}
+	if first < 0 || last < first {
+		t.Fatal("startup ASCII robot missing")
+	}
+	spaceEnd := len(rows) - len(model.liveLines())
+	above, below := first-len(model.transcript), spaceEnd-last-1
+	if above < 1 || below < above || below-above > 1 {
+		t.Fatalf("art is not vertically centered: above=%d below=%d", above, below)
+	}
+	label := rows[last]
+	left := len(label) - len(strings.TrimLeft(label, " "))
+	right := model.contentWidth() - len(label)
+	if left-right < -1 || left-right > 1 {
+		t.Fatalf("art is not horizontally centered: left=%d right=%d", left, right)
+	}
+	if !strings.Contains(rows[0], "bqAgent") || len(rows) != model.frameLimit() {
+		t.Fatal("startup art moved the banner or changed frame height")
+	}
+	if strings.Contains(strings.Join(model.transcript, "\n"), ".---.") {
+		t.Fatal("decorative art must not enter conversation history")
+	}
+	assertLiveFrameFits(t, model)
+	model.input.setValue("first question")
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(Model)
+	defer model.active.cancel()
+	if strings.Contains(model.View().Content, ".---.") {
+		t.Fatal("startup art must disappear after submitting a question")
+	}
+}
+
+func TestStartupArtHidesWhenUnavailable(t *testing.T) {
+	for _, state := range []string{"short", "narrow", "resumed", "completed"} {
+		t.Run(state, func(t *testing.T) {
+			model := toolDrawerModel(t, 0)
+			model.width, model.height = 100, 60
+			switch state {
+			case "short":
+				model.height = 12
+			case "narrow":
+				model.width = 20
+			case "resumed":
+				model.sessionID = "existing-session"
+			case "completed":
+				model.sequence = 1
+			}
+			model.resizeInput()
+			updated, _ := model.Update(startupMsg{})
+			model = updated.(Model)
+			if strings.Contains(model.View().Content, ".---.") {
+				t.Fatal("startup art should be hidden")
+			}
+			assertLiveFrameFits(t, model)
+		})
+	}
+}
+
 func TestStartupContentStaysAtTopThroughFirstResponse(t *testing.T) {
 	model := toolDrawerModel(t, 0)
 	model.height = 60
