@@ -66,10 +66,6 @@ func TestShouldUseTUI(t *testing.T) {
 			t.Fatalf("shouldUseTUI(%v,%v,%q) = %v, want %v", test.inputTTY, test.outputTTY, test.term, got, test.want)
 		}
 	}
-	options, _, err := parseCLI([]string{"--chat", "--stream"})
-	if err != nil || !options.chat || !options.stream {
-		t.Fatalf("--stream compatibility: options=%#v err=%v", options, err)
-	}
 }
 
 func TestTUIBackendProviderSaveAndDiscovery(t *testing.T) {

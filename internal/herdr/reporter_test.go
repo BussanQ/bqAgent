@@ -59,7 +59,7 @@ func TestReporterCoalescesWithoutBlockingAndReleases(t *testing.T) {
 	calls := make(chan []string, 8)
 	gate := make(chan struct{})
 	first := true
-	r := newReporter(testEnv, []string{"bqagent", "--chat", "--stream"}, func(ctx context.Context, bin string, args []string) error {
+	r := newReporter(testEnv, []string{"bqagent", "--chat"}, func(ctx context.Context, bin string, args []string) error {
 		if bin != testEnv("HERDR_BIN_PATH") {
 			t.Errorf("binary path was split: %q", bin)
 		}
@@ -102,7 +102,7 @@ func TestReporterCoalescesWithoutBlockingAndReleases(t *testing.T) {
 			break
 		}
 	}
-	if !reflect.DeepEqual(latest[separator:], []string{"bqagent", "--chat", "--stream", "--resume", "two"}) {
+	if !reflect.DeepEqual(latest[separator:], []string{"bqagent", "--chat", "--resume", "two"}) {
 		t.Fatalf("resume argv=%v", latest)
 	}
 	r.Close()

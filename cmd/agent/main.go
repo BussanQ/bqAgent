@@ -31,7 +31,6 @@ type cliOptions struct {
 	background    bool
 	chat          bool
 	server        bool
-	stream        bool
 	ilinkLogin    bool
 	ilinkStatus   bool
 	listen        string
@@ -210,7 +209,6 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.BoolVar(&daemon, "d", false, "run the HTTP server in the background")
 	fs.BoolVar(&options.chat, "chat", false, "interactive multi-turn conversation mode")
 	fs.BoolVar(&options.server, "server", false, "run a long-lived HTTP server")
-	fs.BoolVar(&options.stream, "stream", false, "stream responses token by token (requires --chat)")
 	fs.BoolVar(&options.ilinkLogin, "ilink-login", false, "trigger the running server's iLink login flow")
 	fs.BoolVar(&options.ilinkStatus, "ilink-status", false, "fetch the running server's iLink login status")
 	fs.StringVar(&options.listen, "listen", "127.0.0.1:8080", "HTTP listen address for server mode")
@@ -231,7 +229,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if (options.doctorActive || options.doctorJSON) && !options.doctor {
 		return cliOptions{}, nil, fmt.Errorf("--doctor-active and --doctor-json require --doctor")
 	}
-	if options.doctor && (daemon || options.background || options.chat || options.server || options.stream || options.ilinkLogin || options.ilinkStatus || options.sessionRun || options.serverRun || options.resumeID != "" || options.sessionID != "" || options.subagentRun != "" || options.subagentLease != "" || len(fs.Args()) > 0) {
+	if options.doctor && (daemon || options.background || options.chat || options.server || options.ilinkLogin || options.ilinkStatus || options.sessionRun || options.serverRun || options.resumeID != "" || options.sessionID != "" || options.subagentRun != "" || options.subagentLease != "" || len(fs.Args()) > 0) {
 		return cliOptions{}, nil, fmt.Errorf("--doctor cannot be combined with task execution flags")
 	}
 	if daemon {
@@ -256,16 +254,10 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if options.server && effectiveSessionID(options) != "" {
 		return cliOptions{}, nil, fmt.Errorf("--server cannot be combined with --resume or --session-id")
 	}
-	if options.server && options.stream {
-		return cliOptions{}, nil, fmt.Errorf("--server cannot be combined with --stream")
-	}
-	if options.stream && !options.chat {
-		return cliOptions{}, nil, fmt.Errorf("--stream requires --chat")
-	}
 	if options.ilinkLogin && options.ilinkStatus {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-login cannot be combined with --ilink-status")
 	}
-	if (options.ilinkLogin || options.ilinkStatus) && (options.background || options.chat || options.server || options.stream || options.sessionRun || options.serverRun || effectiveSessionID(options) != "") {
+	if (options.ilinkLogin || options.ilinkStatus) && (options.background || options.chat || options.server || options.sessionRun || options.serverRun || effectiveSessionID(options) != "") {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-login and --ilink-status cannot be combined with execution or server flags")
 	}
 	if options.ilinkLogin && len(fs.Args()) > 0 {
@@ -277,7 +269,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if options.subagentLease != "" && options.subagentRun == "" {
 		return cliOptions{}, nil, fmt.Errorf("--subagent-lease requires --subagent-run")
 	}
-	if options.subagentRun != "" && (options.background || options.chat || options.server || options.stream || options.sessionRun || options.serverRun || effectiveSessionID(options) != "" || len(fs.Args()) > 0) {
+	if options.subagentRun != "" && (options.background || options.chat || options.server || options.sessionRun || options.serverRun || effectiveSessionID(options) != "" || len(fs.Args()) > 0) {
 		return cliOptions{}, nil, fmt.Errorf("--subagent-run cannot be combined with other execution flags or a task")
 	}
 	if options.ilinkStatus && len(fs.Args()) > 0 {
@@ -510,7 +502,7 @@ func runChatLegacy(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 				herdrReporter.Report("working", id)
 			},
 			OutputWriter: stdout,
-			Stream:       options.stream,
+			Stream:       true,
 		})
 		if err != nil {
 			return err
