@@ -41,7 +41,7 @@ func (*sessionEventBackend) RunTurn(_ context.Context, _, _ string, events TurnE
 
 func TestLaunchTurnForwardsSessionBeforeTokens(t *testing.T) {
 	events := make(chan turnEvent, 3)
-	first := launchTurn(&sessionEventBackend{}, context.Background(), 8, "", "hello", events)().(turnEvent)
+	first := launchTurn(&sessionEventBackend{}, context.Background(), 8, "", "hello", nil, events)().(turnEvent)
 	if first.kind != "session" || first.text != "session-before-output" || first.sequence != 8 {
 		t.Fatalf("first=%+v", first)
 	}

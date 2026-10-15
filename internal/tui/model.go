@@ -37,7 +37,10 @@ type activeTurn struct {
 	cancelled bool
 }
 
-type queuedPrompt struct{ value string }
+type queuedPrompt struct {
+	value  string
+	images []Image
+}
 
 type suggestion struct {
 	label       string
@@ -107,7 +110,11 @@ type Model struct {
 	historyPrints int
 	historyQueue  []historyPrint
 	statusNotice  string
-	mcpStatus     []mcp.ServerStatus
+	// inputNotice reports prompt-editing results such as image attachments.
+	// It outranks the status line until the next key press.
+	inputNotice string
+	clipboard   clipboardReader
+	mcpStatus   []mcp.ServerStatus
 }
 
 type historyPrint struct {
@@ -154,6 +161,7 @@ func NewModel(backend Backend, config Config) Model {
 		initialTask:  strings.TrimSpace(config.InitialTask),
 		historyStore: newHistoryStore(config.AgentDir, config.Workspace),
 		liveCache:    &streamViewCache{},
+		clipboard:    systemClipboardReader(),
 	}
 	model.spinner = spinner.New(spinner.WithSpinner(spinner.Dot))
 	if !config.NoColor {
@@ -233,6 +241,8 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, model.handleProviderModels(message)...)
 	case providerSavedMsg:
 		commands = append(commands, model.handleProviderSaved(message)...)
+	case imageAttachMsg:
+		commands = append(commands, model.handleImageAttach(message)...)
 	case controlResultMsg:
 		if message.err != nil {
 			model.enqueuePrint(model.styles.error.Render("停止命令失败：" + message.err.Error()))
@@ -262,6 +272,12 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if model.provider != nil {
 			commands = append(commands, model.provider.updateInput(message))
 			break
+		}
+		if paste, pasted := message.(tea.PasteMsg); pasted {
+			if paths := pastedImagePaths(paste.Content); len(paths) > 0 {
+				commands = append(commands, loadPastedImages(paths, paste.Content))
+				break
+			}
 		}
 		// Textarea clipboard reads complete asynchronously. Forward messages
 		// unknown to the model so Ctrl+V and bracketed paste reach the input.
@@ -322,6 +338,7 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	} else {
 		model.quitConfirmUntil = time.Time{}
 	}
+	model.inputNotice = ""
 	if model.provider != nil {
 		return model.handleProviderKey(key)
 	}
@@ -337,6 +354,9 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		model.closePanel()
 		model.resizeInput()
 		return nil
+	case "ctrl+v", "alt+v":
+		// Windows Terminal keeps Ctrl+V for its own paste; Alt+V reaches us.
+		return []tea.Cmd{pasteClipboard(model.clipboard)}
 	case "ctrl+o":
 		model.toggleToolGroup()
 		return nil
@@ -402,13 +422,24 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		if value == "" {
 			return nil
 		}
+		images := model.input.images()
+		if len(images) > 0 {
+			if strings.HasPrefix(value, "/") {
+				model.inputNotice = "Slash 命令不能附带图片"
+				return nil
+			}
+			if err := validateImageSet(images); err != nil {
+				model.inputNotice = err.Error()
+				return nil
+			}
+		}
 		model.input.reset()
 		model.closePanel()
 		model.resizeInput()
 		if model.active != nil {
-			return model.queue(value)
+			return model.queue(value, images)
 		}
-		return []tea.Cmd{model.submit(value)}
+		return []tea.Cmd{model.submit(value, images...)}
 	}
 	command := model.input.update(key)
 	model.refreshSuggestions()
@@ -500,9 +531,15 @@ func (model *Model) toggleToolGroup() {
 	}
 }
 
-func (model *Model) submit(value string) tea.Cmd {
+func (model *Model) submit(value string, images ...Image) tea.Cmd {
 	value = strings.TrimSpace(value)
 	if value == "" {
+		return nil
+	}
+	if _, ok := model.backend.(ImageBackend); len(images) > 0 && !ok {
+		model.input.restoreDraft(value, images)
+		model.resizeInput()
+		model.inputNotice = "当前后端不支持图片输入"
 		return nil
 	}
 	lowerValue := strings.ToLower(value)
@@ -538,7 +575,7 @@ func (model *Model) submit(value string) tea.Cmd {
 		}
 		return tea.Batch(toolCommand, tea.Quit)
 	}
-	model.recordHistory(value)
+	model.recordHistory(stripImageLabels(value, images))
 	model.enqueueUserTurn(value)
 	model.sequence++
 	model.phase = phaseThinking
@@ -554,10 +591,10 @@ func (model *Model) submit(value string) tea.Cmd {
 	turnContext, cancel := context.WithCancel(model.config.Context)
 	events := make(chan turnEvent, 256)
 	model.active = &activeTurn{sequence: model.sequence, cancel: cancel, events: events}
-	return tea.Batch(toolCommand, model.spinner.Tick, launchTurn(model.backend, turnContext, model.sequence, model.sessionID, value, events))
+	return tea.Batch(toolCommand, model.spinner.Tick, launchTurn(model.backend, turnContext, model.sequence, model.sessionID, value, images, events))
 }
 
-func (model *Model) queue(value string) []tea.Cmd {
+func (model *Model) queue(value string, images []Image) []tea.Cmd {
 	if strings.EqualFold(strings.TrimSpace(value), "/exit") {
 		model.pendingQuit = true
 		model.active.cancelled = true
@@ -578,16 +615,24 @@ func (model *Model) queue(value string) []tea.Cmd {
 		return []tea.Cmd{runControl(model.backend, model.config.Context, model.sessionID, value)}
 	}
 	if model.queued == nil {
-		model.queued = &queuedPrompt{value: value}
+		model.queued = &queuedPrompt{value: value, images: images}
 		model.statusNotice = "消息已排队"
 		return nil
 	}
 	if strings.HasPrefix(strings.TrimSpace(value), "/") || strings.HasPrefix(strings.TrimSpace(model.queued.value), "/") {
-		model.input.setValue(value)
+		model.input.restoreDraft(value, images)
 		model.statusNotice = "Slash 命令需单独排队"
 		return nil
 	}
+	merged := append(append([]Image(nil), model.queued.images...), images...)
+	if err := validateImageSet(merged); err != nil {
+		model.input.restoreDraft(value, images)
+		model.resizeInput()
+		model.inputNotice = "无法合并到排队消息：" + err.Error()
+		return nil
+	}
 	model.queued.value += "\n" + value
+	model.queued.images = merged
 	return nil
 }
 
@@ -695,23 +740,24 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	}
 	model.flushOverflowReply()
 	if model.queued != nil {
-		queued := model.queued.value
+		queued := *model.queued
 		model.queued = nil
 		if cancelled {
 			if draft := strings.TrimSpace(model.input.value()); draft != "" {
-				queued += "\n" + draft
+				queued.value += "\n" + draft
+				queued.images = append(queued.images, model.input.images()...)
 			}
-			model.input.setValue(queued)
+			model.input.restoreDraft(queued.value, queued.images)
 			model.resizeInput()
 			model.statusNotice = "已将排队内容恢复到输入框"
 			return nil
 		}
-		return []tea.Cmd{model.submit(queued)}
+		return []tea.Cmd{model.submit(queued.value, queued.images...)}
 	}
 	return nil
 }
 
-func launchTurn(backend Backend, ctx context.Context, sequence uint64, sessionID, value string, events chan turnEvent) tea.Cmd {
+func launchTurn(backend Backend, ctx context.Context, sequence uint64, sessionID, value string, images []Image, events chan turnEvent) tea.Cmd {
 	return func() tea.Msg {
 		send := func(event turnEvent) {
 			event.sequence = sequence
@@ -730,7 +776,13 @@ func launchTurn(backend Backend, ctx context.Context, sequence uint64, sessionID
 			Tool:     func(event ToolEvent) { send(turnEvent{kind: "tool", tool: event}) },
 		}
 		go func() {
-			result, err := backend.RunTurn(ctx, sessionID, value, sink)
+			var result TurnResult
+			var err error
+			if imageBackend, ok := backend.(ImageBackend); ok && len(images) > 0 {
+				result, err = imageBackend.RunTurnWithImages(ctx, sessionID, value, images, sink)
+			} else {
+				result, err = backend.RunTurn(ctx, sessionID, value, sink)
+			}
 			events <- turnEvent{sequence: sequence, kind: "done", result: result, err: err}
 		}()
 		return <-events
@@ -905,6 +957,38 @@ func (model Model) reportActivity(state string) {
 	}
 }
 
+// handleImageAttach links prepared images into the prompt. When nothing could
+// be attached, the original text is pasted so Ctrl+V still works for text.
+func (model *Model) handleImageAttach(message imageAttachMsg) []tea.Cmd {
+	if model.toolInspector || model.provider != nil {
+		return nil
+	}
+	failure := message.err
+	var labels []string
+	size := 0
+	for _, image := range message.images {
+		if err := model.input.attachImage(image); err != nil {
+			failure = err
+			break
+		}
+		labels = append(labels, fmt.Sprintf("[图片 #%d]", model.input.nextImage))
+		size += len(image.Data)
+	}
+	var commands []tea.Cmd
+	if len(labels) == 0 && message.text != "" {
+		commands = append(commands, model.input.update(tea.PasteMsg{Content: message.text}))
+	}
+	switch {
+	case failure != nil:
+		model.inputNotice = "图片未添加：" + failure.Error()
+	case len(labels) > 0:
+		model.inputNotice = fmt.Sprintf("已添加 %s · %s", strings.Join(labels, " "), formatImageBytes(size))
+	}
+	model.refreshSuggestions()
+	model.resizeInput()
+	return commands
+}
+
 func (model *Model) recordHistory(value string) {
 	model.history, _ = model.historyStore.append(model.history, value)
 	model.historyIndex = len(model.history)
@@ -1072,7 +1156,9 @@ func (model Model) renderStatus(width int) string {
 	left = modelcatalog.QualifiedName(left, model.runtime.Model, model.runtime.ModelDisplayName)
 	left += " · " + displayMode(model.runtime.Mode)
 	right := model.statusNotice
-	if model.phase != phaseIdle {
+	if model.inputNotice != "" {
+		right = model.inputNotice
+	} else if model.phase != phaseIdle {
 		elapsed := time.Since(model.startedAt).Round(100 * time.Millisecond)
 		right = fmt.Sprintf("%s · %s %s · %s", model.tokenUsageStatus(), model.spinner.View(), model.phaseLabel(), elapsed)
 	} else if model.metrics != nil || model.usage != nil {
@@ -1238,7 +1324,8 @@ func (model Model) renderHistory(history History) []string {
 func (model Model) helpText() string {
 	return `快捷键
   Enter 发送    Alt+Enter 换行    Tab/Shift+Tab 补全
-  ↑/↓ 历史      Ctrl+C 复制选中文本    Ctrl+V 粘贴
+  ↑/↓ 历史      Ctrl+C 清空输入框
+  Ctrl+V / Alt+V 粘贴；剪贴板有图片或粘贴图片路径时作为 [图片 #N] 附件发送
   连按两次 Ctrl+C（2 秒内）或 Ctrl+Q 安全退出
   Esc 打断当前回复；空闲时关闭面板/收起工具详情
   Ctrl+L 清理当前视口和草稿（保留 Session）

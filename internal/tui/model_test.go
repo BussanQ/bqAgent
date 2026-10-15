@@ -56,7 +56,7 @@ func TestModelStreamingToolQueueAndLateEvents(t *testing.T) {
 	if model.phase != phaseTool || model.stream != "" {
 		t.Fatalf("tool state = %v, stream=%q", model.phase, model.stream)
 	}
-	model.queue("下一条")
+	model.queue("下一条", nil)
 	commands := model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "done", result: TurnResult{SessionID: "session-1", Streamed: true}})
 	if len(commands) == 0 || model.phase != phaseThinking || model.queued != nil {
 		t.Fatalf("queued turn was not promoted: commands=%d phase=%v queued=%#v", len(commands), model.phase, model.queued)
@@ -149,7 +149,7 @@ func TestModelCancelRestoresQueueAndCommands(t *testing.T) {
 	model.input.setValue("普通")
 	model.active = &activeTurn{cancel: func() {}}
 	model.queued = &queuedPrompt{value: "/model fast"}
-	model.queue("普通消息")
+	model.queue("普通消息", nil)
 	if model.input.value() != "普通消息" || model.queued.value != "/model fast" {
 		t.Fatal("slash boundary should preserve queued command and restore new draft")
 	}
@@ -177,17 +177,23 @@ func TestClipboardShortcutsAndCtrlQExit(t *testing.T) {
 	cancelled := false
 	model.active = &activeTurn{cancel: func() { cancelled = true }}
 
-	copyCommands := model.handleKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-	if len(copyCommands) != 1 || copyCommands[0] == nil {
-		t.Fatalf("Ctrl+C commands = %#v, want clipboard copy command", copyCommands)
+	model.handleKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if model.input.value() != "" {
+		t.Fatalf("Ctrl+C should clear the input, got %q", model.input.value())
 	}
 	if cancelled || model.active.cancelled {
-		t.Fatal("Ctrl+C must copy instead of cancelling the active turn")
+		t.Fatal("Ctrl+C must clear the input instead of cancelling the active turn")
 	}
 
-	pasteCommands := model.handleKey(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
-	if len(pasteCommands) != 1 || pasteCommands[0] == nil {
-		t.Fatalf("Ctrl+V commands = %#v, want clipboard read command", pasteCommands)
+	model.clipboard = clipboardReader{goos: "plan9", readText: func() (string, error) { return "粘贴", nil }}
+	for _, key := range []tea.KeyPressMsg{{Code: 'v', Mod: tea.ModCtrl}, {Code: 'v', Mod: tea.ModAlt}} {
+		pasteCommands := model.handleKey(key)
+		if len(pasteCommands) != 1 || pasteCommands[0] == nil {
+			t.Fatalf("%s commands = %#v, want clipboard read command", key, pasteCommands)
+		}
+		if message, ok := pasteCommands[0]().(imageAttachMsg); !ok || message.text != "粘贴" {
+			t.Fatalf("%s read = %#v, want text fallback", key, message)
+		}
 	}
 
 	quitCommands := model.handleKey(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})

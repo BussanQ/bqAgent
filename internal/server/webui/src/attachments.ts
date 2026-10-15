@@ -35,6 +35,20 @@ export function validateImageAttachment(count: number, totalBytes: number, file:
   return "";
 }
 
+// Dropped PNG/JPEG/GIF images go to the model as images; any other file,
+// including formats the model path cannot accept, is uploaded as a file.
+export function splitDroppedFiles<T extends Pick<File, "type">>(files: ArrayLike<T>): { images: T[]; files: T[] } {
+  const split = { images: [] as T[], files: [] as T[] };
+  Array.from(files).forEach(function (file) {
+    (ALLOWED_IMAGE_TYPES.has(file.type) ? split.images : split.files).push(file);
+  });
+  return split;
+}
+
+export function dataTransferHasFiles(transfer: Pick<DataTransfer, "types"> | null): boolean {
+  return Boolean(transfer && Array.from(transfer.types || []).indexOf("Files") >= 0);
+}
+
 export function validateFileAttachment(count: number, totalBytes: number, size: number): string {
   if (count >= ATTACHMENT_LIMITS.maxFiles) return "每次最多添加 5 个文件";
   if (size > ATTACHMENT_LIMITS.maxFileBytes) return "单个文件不能超过 2 MiB";

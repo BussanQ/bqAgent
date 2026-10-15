@@ -23,6 +23,20 @@ type Backend interface {
 	SaveProvider(context.Context, string, ProviderInput) (RuntimeInfo, error)
 }
 
+// ImageBackend is implemented by backends that accept images with a turn.
+// Backends without it remain text-only; the TUI rejects image turns for them.
+type ImageBackend interface {
+	RunTurnWithImages(context.Context, string, string, []Image, TurnEvents) (TurnResult, error)
+}
+
+// Image is a validated attachment ready for a multimodal user message. Label
+// is the placeholder shown in the prompt and sent with the message text.
+type Image struct {
+	Label    string
+	MIMEType string
+	Data     []byte
+}
+
 type TurnEvents struct {
 	Message  turn.Sink
 	Session  func(string)

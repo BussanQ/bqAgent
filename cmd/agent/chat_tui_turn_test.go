@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
+	"strings"
 	"testing"
 
 	"bqagent/internal/agent"
@@ -60,4 +63,34 @@ func TestTUIBackendForwardsMCPStatus(t *testing.T) {
 	if statuses := backend.MCPStatus(); len(statuses) != 1 || statuses[0].State != "disabled" {
 		t.Fatalf("statuses = %#v", statuses)
 	}
+}
+
+type tuiImageClient struct {
+	sessionNoticeClient
+	messages []map[string]any
+}
+
+func (client *tuiImageClient) CreateChatCompletionStreamWithOptions(_ context.Context, _ string, messages []map[string]any, _ []tools.Definition, _ agent.ChatCompletionOptions, _ func(string)) (agent.AssistantMessage, error) {
+	client.messages = messages
+	return agent.AssistantMessage{Role: "assistant", Content: "看到了"}, nil
+}
+
+func TestTUIBackendSendsPastedImagesAsMultimodalContent(t *testing.T) {
+	client := &tuiImageClient{}
+	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: t.TempDir()}
+	backend := &tuiBackend{workspace: ws, service: appserver.NewService(appserver.ServiceOptions{
+		WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir(), Client: client, Model: "test", SystemPrompt: "test",
+	})}
+	var _ apptui.ImageBackend = backend
+	result, err := backend.RunTurnWithImages(context.Background(), "", "描述 [图片 #1]", []apptui.Image{{Label: "[图片 #1]", MIMEType: "image/png", Data: []byte("png-bytes")}}, apptui.TurnEvents{})
+	if err != nil || result.Reply != "看到了" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	want := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("png-bytes"))
+	for _, message := range client.messages {
+		if text := fmt.Sprint(message); message["role"] == "user" && strings.Contains(text, want) && strings.Contains(text, "描述 [图片 #1]") {
+			return
+		}
+	}
+	t.Fatalf("no multimodal user message in %v", client.messages)
 }

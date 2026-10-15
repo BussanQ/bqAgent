@@ -84,7 +84,7 @@ func (*usageEventBackend) RunTurn(_ context.Context, _, _ string, events TurnEve
 
 func TestLaunchTurnForwardsLiveUsage(t *testing.T) {
 	events := make(chan turnEvent, 2)
-	cmd := launchTurn(&usageEventBackend{}, context.Background(), 7, "", "hello", events)
+	cmd := launchTurn(&usageEventBackend{}, context.Background(), 7, "", "hello", nil, events)
 	first := cmd().(turnEvent)
 	if first.sequence != 7 || first.kind != "usage" || first.usage != (TokenUsage{InputTokens: 100, OutputTokens: 12, Calls: 1}) {
 		t.Fatalf("first event = %+v", first)

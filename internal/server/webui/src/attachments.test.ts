@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { showTemporaryError, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
+import { dataTransferHasFiles, showTemporaryError, splitDroppedFiles, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
 
 describe("附件限制", () => {
   afterEach(() => vi.useRealTimers());
@@ -9,6 +9,20 @@ describe("附件限制", () => {
     expect(validateImageAttachment(0, 0, { type: "image/webp", size: 1 })).toContain("PNG");
     expect(validateImageAttachment(0, 0, { type: "image/png", size: 3 * 1024 * 1024 + 1 })).toContain("3 MiB");
     expect(validateImageAttachment(1, 8 * 1024 * 1024, { type: "image/png", size: 1 })).toContain("8 MiB");
+  });
+
+  it("拖入的图片按图片发送，其余文件按文件上传", () => {
+    const dropped = splitDroppedFiles([
+      { type: "image/png", name: "a.png" },
+      { type: "image/webp", name: "b.webp" },
+      { type: "text/plain", name: "c.txt" },
+      { type: "image/jpeg", name: "d.jpg" },
+    ]);
+    expect(dropped.images.map((file) => file.name)).toEqual(["a.png", "d.jpg"]);
+    expect(dropped.files.map((file) => file.name)).toEqual(["b.webp", "c.txt"]);
+    expect(dataTransferHasFiles({ types: ["text/plain", "Files"] })).toBe(true);
+    expect(dataTransferHasFiles({ types: ["text/plain"] })).toBe(false);
+    expect(dataTransferHasFiles(null)).toBe(false);
   });
 
   it("限制文件数量、单个大小和合计大小", () => {

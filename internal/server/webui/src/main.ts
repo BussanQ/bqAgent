@@ -5,7 +5,7 @@ import "./styles.css";
 import { initConversationLayout } from "./conversation-layout";
 import { errorMessage, parseJSONEvent } from "./api";
 import { acpPermissionTitle, formatACPPermissionInput, isRejectPermissionOption } from "./acp-permission";
-import { ATTACHMENT_LIMITS, showTemporaryError, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
+import { ATTACHMENT_LIMITS, dataTransferHasFiles, showTemporaryError, splitDroppedFiles, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
 import { complexTaskNotice, formatFirstTokenLatency, formatGenerationSpeed, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
 import { formatConversationTime } from "./conversations";
@@ -1767,6 +1767,37 @@ import { createDoctorController } from "./doctor-controller";
     }
     addClipboardImages(files);
   });
+  const composer = input.closest<HTMLElement>(".composer");
+  if (composer) {
+    var dragDepth = 0;
+    var setDropActive = function (active: boolean) { composer.classList.toggle("drop-active", active); };
+    composer.addEventListener("dragenter", function (event) {
+      if (!dataTransferHasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      dragDepth++;
+      setDropActive(!busy);
+    });
+    composer.addEventListener("dragover", function (event) {
+      if (!dataTransferHasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? "none" : "copy";
+    });
+    composer.addEventListener("dragleave", function () {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (!dragDepth) setDropActive(false);
+    });
+    composer.addEventListener("drop", function (event) {
+      if (!dataTransferHasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      dragDepth = 0;
+      setDropActive(false);
+      if (busy || !event.dataTransfer) return;
+      var dropped = splitDroppedFiles(event.dataTransfer.files);
+      if (dropped.images.length) addClipboardImages(dropped.images);
+      if (dropped.files.length) addLocalFiles(dropped.files);
+      input.focus();
+    });
+  }
   input.addEventListener("keydown", function (e) {
     if (e.defaultPrevented) return;
     if (!mentionMenu.hidden) {

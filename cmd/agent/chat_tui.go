@@ -71,11 +71,23 @@ type tuiBackend struct {
 }
 
 func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message string, events apptui.TurnEvents) (apptui.TurnResult, error) {
+	return backend.RunTurnWithImages(ctx, sessionID, message, nil, events)
+}
+
+// RunTurnWithImages sends pasted terminal images through the same multimodal
+// turn path the WebUI uses.
+func (backend *tuiBackend) RunTurnWithImages(ctx context.Context, sessionID, message string, images []apptui.Image, events apptui.TurnEvents) (apptui.TurnResult, error) {
 	if err := ctx.Err(); err != nil {
 		return apptui.TurnResult{}, err
 	}
-	if reply, handled, err := backend.handleEffortCommand(message); handled {
-		return apptui.TurnResult{SessionID: sessionID, Reply: reply}, err
+	if len(images) == 0 {
+		if reply, handled, err := backend.handleEffortCommand(message); handled {
+			return apptui.TurnResult{SessionID: sessionID, Reply: reply}, err
+		}
+	}
+	var attachments []agent.ImageAttachment
+	for _, image := range images {
+		attachments = append(attachments, agent.ImageAttachment{MIMEType: image.MIMEType, Data: image.Data})
 	}
 	if events.Usage != nil {
 		ctx = agent.WithLiveTokenUsage(ctx, func(usage agent.LiveTokenUsage) {
@@ -89,6 +101,7 @@ func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message strin
 	response, err := backend.service.HandleTurnWithOptions(ctx, appserver.TurnRequest{
 		SessionID:       sessionID,
 		Message:         message,
+		Images:          attachments,
 		ReasoningEffort: backend.currentEffort(),
 	}, appserver.TurnOptions{
 		SessionSink:    events.Session,

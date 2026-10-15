@@ -55,7 +55,7 @@ func (*contextEventBackend) RunTurn(_ context.Context, _, _ string, events TurnE
 
 func TestLaunchTurnForwardsContextUsage(t *testing.T) {
 	events := make(chan turnEvent, 2)
-	message := launchTurn(&contextEventBackend{}, context.Background(), 7, "", "hello", events)().(turnEvent)
+	message := launchTurn(&contextEventBackend{}, context.Background(), 7, "", "hello", nil, events)().(turnEvent)
 	if message.sequence != 7 || message.kind != "context" || message.contextUsage.Tokens != 18000 || message.contextUsage.Limit != 200000 {
 		t.Fatalf("context event=%+v", message)
 	}

@@ -6,6 +6,6 @@ export function normalizeChatMode(value: unknown): ChatMode {
 
 export function chatModePlaceholder(mode: ChatMode): string {
   return mode === "ask"
-    ? "Ask 模式：只读问答，可粘贴图片或添加文件"
-    : "Run 模式：可使用完整工具能力，可粘贴图片或添加文件";
+    ? "Ask 模式：只读问答，可粘贴或拖入图片和文件"
+    : "Run 模式：可使用完整工具能力，可粘贴或拖入图片和文件";
 }

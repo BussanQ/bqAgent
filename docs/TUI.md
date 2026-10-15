@@ -46,7 +46,7 @@ OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 
 | `↑` / `↓` | 移动多行光标或召回当前工作区历史 |
 | `Esc` | 打断当前回复；空闲时关闭候选面板或收起工具详情 |
 | `Ctrl+C` | 首次清空聊天输入框并提示；2 秒内连续再按一次安全退出 |
-| `Ctrl+V` | 从系统剪贴板粘贴到输入框 |
+| `Ctrl+V` / `Alt+V` | 剪贴板有图片时插入 `[图片 #N]` 附件，否则粘贴文本；Windows Terminal 自身占用 `Ctrl+V`，请用 `Alt+V` |
 | `Ctrl+Q` | 安全退出；有活动轮次时先取消并等待结束 |
 | `Ctrl+L` | 清理当前视口与草稿，不改变 Session |
 | `Ctrl+O` | 展开或收起工具调用组；回合完成后打开工具列表，查看期间直接返回对话 |
@@ -54,6 +54,17 @@ OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 
 | 工具详情内方向键、滚轮、`PgUp` / `PgDn` | 滚动单个工具内容；`Home` / `End` 跳到首尾，`Esc` 返回列表 |
 
 达到 5 行或 200 字符的粘贴内容会折叠为原子 Chip；发送和历史召回时仍使用完整原文。自然完成后会自动发送排队内容，取消后则把它恢复到输入框。普通排队消息可按换行合并，Slash 命令不会与其他内容跨边界合并。
+
+### 图片输入
+
+TUI 与 WebUI 使用相同的图片限制：仅支持 PNG、JPEG、GIF，每条消息最多 4 张，单张不超过 3 MiB，合计不超过 8 MiB，单张不超过 2000 万像素。
+
+- 按 `Ctrl+V` / `Alt+V` 时先检查系统剪贴板：截图等图片数据或在文件管理器中复制的图片文件都会作为附件插入，标签形如 `[图片 #1]`；剪贴板中没有图片时按普通文本粘贴（长文本仍折叠为 Chip）。
+- 粘贴或拖入终端的图片文件路径（支持引号、反斜杠转义的空格、`file://` 与 `~/`，多个路径以空白分隔）会自动识别为附件；只要有一项不是存在的 PNG/JPEG/GIF 文件，就按原文本粘贴。
+- 超过 3 MiB 或 2000 万像素的 PNG/JPEG（如 Retina 截图）会在本地铺白底转为 JPEG 并按需对半缩小后再发送；GIF 不压缩，超限直接提示。WebP 等其他格式暂不支持。
+- 图片标签与粘贴 Chip 一样是原子的，退格可整体删除；标签编号在当前进程内递增不复用。发送时标签文字保留在消息中，图片按标签顺序随消息发送；输入历史只记录去掉图片标签后的文字。
+- 运行中发送的图片会随排队消息合并，合并后超限时保留在输入框并提示；取消后排队内容连同图片恢复到输入框。Slash 命令不能附带图片。
+- 剪贴板读取：macOS 使用系统自带的 `osascript`；Windows 使用 PowerShell；Linux 在 Wayland 下使用 `wl-paste`（wl-clipboard），X11 下使用 `xclip`，均未安装时 `Ctrl+V` 只粘贴文本。状态栏会显示添加结果或失败原因，下一次按键后消失。
 
 两次 `Ctrl+C` 退出也适用于 Provider 配置界面。首次按下不取消当前任务；确认退出后，有活动任务时先取消并等待结束，不再启动排队任务。按其他键、粘贴、鼠标点击或超过 2 秒都会取消此次退出确认。
 
@@ -98,7 +109,9 @@ The status bar shows full-precision `in / out` totals for the current user turn,
 
 Completed-turn TPS uses the final text response and keeps pauses in its generation duration. The TUI applies no fixed TPS ceiling. Inspired by pi-tps, the agent checks sample count, spacing, observable streaming duration, and pause-dominated bursts before publishing a rate; insufficient evidence displays `TPS —`. These client-side heuristics cannot recover hidden server-side timing.
 
-Press `Ctrl+C` twice within two seconds to exit safely, including in Provider setup. The first press still copies selected prompt text and shows a confirmation hint; the second cancels any active turn and waits for it to finish. Other keys, paste, mouse clicks, or timeout cancel the confirmation. `Ctrl+Q` remains a one-step safe exit shortcut.
+Press `Ctrl+C` twice within two seconds to exit safely, including in Provider setup. The first press clears the prompt and shows a confirmation hint; the second cancels any active turn and waits for it to finish. Other keys, paste, mouse clicks, or timeout cancel the confirmation. `Ctrl+Q` remains a one-step safe exit shortcut.
+
+`Ctrl+V` / `Alt+V` attach a clipboard image (screenshot data or a copied image file) as an atomic `[图片 #N]` label and otherwise paste text; pasted or dragged PNG/JPEG/GIF paths are attached too. Limits match the WebUI: 4 images, 3 MiB each, 8 MiB total, 20 MP; oversized PNG/JPEG images are re-encoded as JPEG and downscaled locally. Clipboard images use `osascript` on macOS, PowerShell on Windows, and `wl-paste` or `xclip` on Linux.
 
 Herdr support is automatic only when all four Herdr environment variables above are present and `HERDR_ENV=1`. Foreground TUI, line mode, and one-shot tasks report activity and session recovery metadata; Provider setup reports `blocked`. A single background sender coalesces pending states, ignores failures, and allows each status report up to 1 second for CLI startup and IPC; shutdown cancels pending work and waits for release with a separate 1-second timeout and at most 1.2 seconds of extra waiting, returning as soon as release finishes. Reporting never blocks model work. No token-by-token reporting or retry loop is used. Background jobs, internal workers, and HTTP/Bot services do not claim a pane. Recovery requires Herdr 0.9.2+ and `bqagent` on `PATH`; it opens the saved session in chat mode, preserving plan/stream flags and persisted model/mode settings. Clearing the session updates recovery to a new empty chat. Prompts, replies, and tool output are never reported.
 

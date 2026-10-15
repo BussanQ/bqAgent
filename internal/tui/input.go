@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -14,15 +15,21 @@ const (
 	pasteCharThreshold = 200
 )
 
+// pasteChip is an atomic placeholder in the prompt. Text chips expand to the
+// folded paste on send; image chips keep their label and attach Image.
 type pasteChip struct {
 	Label string
 	Text  string
+	Image *Image
 }
 
 type promptInput struct {
 	area  textarea.Model
 	chips []pasteChip
 	next  int
+	// nextImage numbers images for the whole session so a label in the
+	// transcript never refers to two different images.
+	nextImage int
 }
 
 func newPromptInput(noColor ...bool) promptInput {
@@ -175,9 +182,50 @@ func (input *promptInput) displayValue() string { return input.area.Value() }
 func (input *promptInput) value() string {
 	value := input.area.Value()
 	for _, chip := range input.chips {
-		value = strings.ReplaceAll(value, chip.Label, chip.Text)
+		if chip.Image == nil {
+			value = strings.ReplaceAll(value, chip.Label, chip.Text)
+		}
 	}
 	return value
+}
+
+// attachImage inserts an image placeholder at the cursor, enforcing the
+// per-message image limits before the image is accepted.
+func (input *promptInput) attachImage(image Image) error {
+	if err := validateImageSet(append(input.images(), image)); err != nil {
+		return err
+	}
+	input.nextImage++
+	image.Label = fmt.Sprintf("[图片 #%d]", input.nextImage)
+	input.chips = append(input.chips, pasteChip{Label: image.Label, Image: &image})
+	input.area.InsertString(image.Label)
+	return nil
+}
+
+// images returns the attached images in the order their labels appear.
+func (input *promptInput) images() []Image {
+	value := input.area.Value()
+	var images []Image
+	for _, chip := range input.chips {
+		if chip.Image != nil && strings.Contains(value, chip.Label) {
+			images = append(images, *chip.Image)
+		}
+	}
+	sort.SliceStable(images, func(i, j int) bool {
+		return strings.Index(value, images[i].Label) < strings.Index(value, images[j].Label)
+	})
+	return images
+}
+
+// restoreDraft puts an unsent message back, re-linking its image labels.
+func (input *promptInput) restoreDraft(value string, images []Image) {
+	input.setValue(value)
+	for _, image := range images {
+		if strings.Contains(value, image.Label) {
+			image := image
+			input.chips = append(input.chips, pasteChip{Label: image.Label, Image: &image})
+		}
+	}
 }
 
 func (input *promptInput) setValue(value string) {
