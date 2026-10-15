@@ -159,17 +159,35 @@ func (model Model) liveLines() []string {
 	return lines
 }
 
+// Keep tools beside the retained question at the top, while output and the
+// input footer stay at the bottom. Return the tool header row for mouse hits.
+func (model Model) liveLayout() (lines []string, toolRow int) {
+	body := model.liveLines()
+	padding := model.frameLimit() - len(body)
+	retained := model.transcript[max(0, len(model.transcript)-padding):]
+	toolHeight, _, _ := model.liveBudgets()
+	toolRow = -1
+	if !model.tools.committed && toolHeight > 0 {
+		toolRow = len(retained)
+		lines = make([]string, len(retained)+toolHeight, model.frameLimit())
+		copy(lines, retained)
+		copy(lines[len(retained):], body[:toolHeight])
+		lines = append(lines, make([]string, padding-len(retained))...)
+		lines = append(lines, body[toolHeight:]...)
+	} else {
+		lines = make([]string, padding, model.frameLimit())
+		copy(lines[padding-len(retained):], retained)
+		lines = append(lines, body...)
+	}
+	return
+}
+
 // A constant physical height lets the renderer scroll changed rows without
 // resizing and erasing its buffer on every token or tool collapse. Leave one
 // terminal row for native history insertion.
 func (model Model) liveView() tea.View {
 	width := model.contentWidth()
-	body := model.liveLines()
-	padding := model.frameLimit() - len(body)
-	lines := make([]string, padding, model.frameLimit())
-	retained := model.transcript[max(0, len(model.transcript)-padding):]
-	copy(lines, retained)
-	lines = append(lines, body...)
+	lines, _ := model.liveLayout()
 	inputY := len(lines) - len(model.footerLines()) + 1
 	view := tea.NewView(strings.Join(lines, "\n"))
 	view.Cursor = model.input.area.Cursor()

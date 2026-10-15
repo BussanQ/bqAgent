@@ -112,7 +112,7 @@ func TestToolGroupCollapsesAfterFiveAndMouseExpands(t *testing.T) {
 	if model.tools.expanded {
 		t.Fatal("Ctrl+T should no longer toggle tool details")
 	}
-	headerY := max(0, model.height-len(model.liveLines()))
+	headerY := toolHeaderScreenY(t, model)
 	updated, _ := model.Update(tea.MouseClickMsg{X: 1, Y: headerY, Button: tea.MouseLeft})
 	model = updated.(Model)
 	expanded := model.View().Content

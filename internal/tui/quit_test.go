@@ -23,16 +23,59 @@ func quitCommandPresent(commands []tea.Cmd) bool {
 func TestDoubleCtrlCExitsIdleTUI(t *testing.T) {
 	model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
 	key := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
-	model.input.setValue("keep draft")
-	model.handleKey(key)
-	if !model.quitConfirmationActive() || model.pendingQuit || model.input.value() != "keep draft" {
-		t.Fatal("first Ctrl+C should only arm confirmation and preserve draft")
+	model.input.setValue("clear draft")
+	if quitCommandPresent(model.handleKey(key)) {
+		t.Fatal("first Ctrl+C should not exit")
+	}
+	if !model.quitConfirmationActive() || model.pendingQuit || model.input.value() != "" {
+		t.Fatal("first Ctrl+C should arm confirmation and clear draft")
 	}
 	if status := model.renderStatus(100); !strings.Contains(status, quitConfirmHint) {
 		t.Fatalf("missing confirmation hint: %q", status)
 	}
 	if !quitCommandPresent(model.handleKey(key)) || model.quitConfirmationActive() {
 		t.Fatal("second Ctrl+C should exit and clear confirmation")
+	}
+}
+
+func TestFirstCtrlCClearsPromptState(t *testing.T) {
+	for _, name := range []string{"empty", "multiline", "folded_paste", "suggestions"} {
+		t.Run(name, func(t *testing.T) {
+			model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+			model.width, model.height = 100, 30
+			switch name {
+			case "multiline":
+				model.input.setValue("first line\nsecond line\nthird line")
+			case "folded_paste":
+				model.input.update(tea.PasteMsg{Content: strings.Repeat("pasted line\n", 6)})
+				if len(model.input.chips) == 0 {
+					t.Fatal("expected folded paste")
+				}
+			case "suggestions":
+				model.input.setValue("/")
+				model.refreshSuggestions()
+				if !model.panelOpen || len(model.suggestions) == 0 {
+					t.Fatal("expected command suggestions")
+				}
+			}
+			model.resizeInput()
+			if name == "multiline" && model.input.area.Height() <= 1 {
+				t.Fatal("expected expanded multiline input")
+			}
+			commands := model.handleKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+			if quitCommandPresent(commands) || !model.quitConfirmationActive() {
+				t.Fatal("first Ctrl+C should arm confirmation without exiting")
+			}
+			if model.input.value() != "" || model.input.displayValue() != "" || len(model.input.chips) != 0 {
+				t.Fatal("first Ctrl+C should clear text and folded paste")
+			}
+			if model.panelOpen || len(model.suggestions) != 0 || model.suggested != 0 {
+				t.Fatal("first Ctrl+C should close command suggestions")
+			}
+			if model.input.area.Height() != 1 {
+				t.Fatalf("cleared input height = %d, want 1", model.input.area.Height())
+			}
+		})
 	}
 }
 
@@ -43,12 +86,16 @@ func TestDoubleCtrlCSafelyCancelsActiveTurn(t *testing.T) {
 	model.active = &activeTurn{sequence: 1, cancel: func() { cancelled++ }}
 	model.phase = phaseStreaming
 	model.queued = &queuedPrompt{value: "must not run"}
+	model.input.setValue("clear draft while running")
 	// Quitting must also take precedence over an earlier /clear request.
 	model.pendingClear = true
 	key := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	model.handleKey(key)
 	if cancelled != 0 || model.pendingQuit {
 		t.Fatal("first Ctrl+C cancelled the running task")
+	}
+	if model.input.value() != "" {
+		t.Fatal("first Ctrl+C should clear draft while the task is running")
 	}
 	if !strings.Contains(model.renderStatus(100), quitConfirmHint) {
 		t.Fatal("active task status hid confirmation")

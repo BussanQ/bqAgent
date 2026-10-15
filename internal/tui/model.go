@@ -332,6 +332,11 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		return model.handleToolInspectorKey(name)
 	}
 	switch name {
+	case "ctrl+c":
+		model.input.reset()
+		model.closePanel()
+		model.resizeInput()
+		return nil
 	case "ctrl+o":
 		model.toggleToolGroup()
 		return nil
@@ -446,17 +451,11 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 	if !model.tools.canExpand() || event.Button != tea.MouseLeft || model.toolViewportHeight() == 0 {
 		return nil
 	}
-	viewLines := strings.Split(model.View().Content, "\n")
-	headerY := max(0, model.height-len(viewLines)) + max(0, model.frameLimit()-len(model.liveLines()))
-	if model.tools.committed {
-		toolHeight, _, auxiliaryHeight := model.liveBudgets()
-		panelRows := len(model.tools.viewport(model.styles, model.contentWidth(), toolHeight))
-		headerRow := len(viewLines) - len(model.footerLines()) - auxiliaryHeight - panelRows
-		if headerRow < 0 {
-			return nil
-		}
-		headerY = max(0, model.height-len(viewLines)) + headerRow
+	viewLines, headerRow := model.liveLayout()
+	if headerRow < 0 {
+		return nil
 	}
+	headerY := max(0, model.height-len(viewLines)) + headerRow
 	if model.tools.expanded && model.tools.detail == 0 && event.X >= 0 && event.X < model.contentWidth() {
 		row := event.Y - headerY - 1
 		bodyHeight := max(0, model.toolViewportHeight()-1)

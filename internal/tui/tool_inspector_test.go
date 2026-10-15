@@ -307,7 +307,7 @@ func TestRunningToolDrawerWheelReachesOutputTail(t *testing.T) {
 	if strings.Contains(list, "body") || strings.Contains(list, "output-tail") || len(model.tools.viewLines(model.styles, model.contentWidth())) != 7 {
 		t.Fatal("first Ctrl+O must show exactly one summary row per tool")
 	}
-	headerY := model.height - len(model.liveLines())
+	headerY := toolHeaderScreenY(t, model)
 	updated, _ = model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: headerY + 6})
 	model = updated.(Model)
 	if model.tools.detail != 6 {
@@ -328,7 +328,7 @@ func TestRunningToolDrawerWheelReachesOutputTail(t *testing.T) {
 	if model.View().Content != start || model.input.value() != "draft" || model.View().AltScreen {
 		t.Fatal("running drawer scrolling changed draft or failed to restore start")
 	}
-	headerY = model.height - len(model.liveLines())
+	headerY = toolHeaderScreenY(t, model)
 	updated, _ = model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: headerY})
 	model = updated.(Model)
 	if model.tools.detail != 0 || model.View().Content != list {
@@ -345,7 +345,7 @@ func TestRunningToolListClickAfterScrollAndCompletion(t *testing.T) {
 		updated, _ := model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 		model = updated.(Model)
 	}
-	headerY := model.height - len(model.liveLines())
+	headerY := toolHeaderScreenY(t, model)
 	lastRow := len(model.tools.viewport(model.styles, model.contentWidth(), model.toolViewportHeight())) - 1
 	updated, _ := model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: headerY + lastRow})
 	model = updated.(Model)

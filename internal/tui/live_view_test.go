@@ -23,6 +23,18 @@ func toolDrawerModel(t *testing.T, count int) Model {
 	return model
 }
 
+func toolHeaderScreenY(t *testing.T, model Model) int {
+	t.Helper()
+	rows := strings.Split(model.View().Content, "\n")
+	for row, text := range rows {
+		if strings.Contains(text, "工具活动") || strings.Contains(text, "工具详情") {
+			return max(0, model.height-len(rows)) + row
+		}
+	}
+	t.Fatal("tool header missing from frame")
+	return 0
+}
+
 func assertLiveFrameFits(t *testing.T, model Model) {
 	t.Helper()
 	view := model.View()
@@ -108,7 +120,7 @@ func TestToolDrawerCollapseRestoresCompactLayout(t *testing.T) {
 				case "escape":
 					collapse = tea.KeyPressMsg{Code: tea.KeyEscape}
 				case "mouse":
-					collapse = tea.MouseClickMsg{X: 1, Y: model.height - len(model.liveLines()), Button: tea.MouseLeft}
+					collapse = tea.MouseClickMsg{X: 1, Y: toolHeaderScreenY(t, model), Button: tea.MouseLeft}
 				}
 				updated, _ = model.Update(collapse)
 				model = updated.(Model)

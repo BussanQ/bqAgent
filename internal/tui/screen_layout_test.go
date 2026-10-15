@@ -91,6 +91,59 @@ func TestTranscriptResizeAndClearPreserveOnlyUnprintedRows(t *testing.T) {
 	}
 }
 
+func TestChatWithToolsKeepsActivityAtTop(t *testing.T) {
+	for _, count := range []int{1, 6} {
+		for _, expanded := range []bool{false, true} {
+			for _, state := range []string{"tools_only", "streaming", "completed"} {
+				t.Run(fmt.Sprintf("count_%d/expanded_%t/%s", count, expanded, state), func(t *testing.T) {
+					model := toolDrawerModel(t, count)
+					model.height = 60
+					model.resizeInput()
+					model.tools.expanded = expanded
+					model.enqueuePrint("recent-question")
+					switch state {
+					case "streaming":
+						model.stream = "short response"
+					case "completed":
+						model.reply = "short response"
+					}
+					updated, command := model.Update(nil)
+					model = updated.(Model)
+					if command != nil {
+						t.Fatal("short conversation should remain in the frame")
+					}
+					view := model.View()
+					rows := strings.Split(view.Content, "\n")
+					if rows[0] != "recent-question" || !strings.Contains(rows[1], "工具活动") {
+						t.Fatalf("tools should follow the question at the top:\n%s", view.Content)
+					}
+					footerStart := len(rows) - len(model.footerLines())
+					gapEnd := footerStart
+					if state != "tools_only" {
+						gapEnd--
+						if !strings.Contains(rows[gapEnd], "short response") {
+							t.Fatal("response should remain adjacent to the input footer")
+						}
+					}
+					toolEnd := 1 + len(model.tools.viewport(model.styles, model.contentWidth(), model.toolViewportHeight()))
+					if toolEnd >= gapEnd {
+						t.Fatal("tall terminal should have spare rows below tools")
+					}
+					for _, row := range rows[toolEnd:gapEnd] {
+						if strings.TrimSpace(row) != "" {
+							t.Fatalf("expected unused row below tools: %q", row)
+						}
+					}
+					if len(rows) != model.frameLimit() || view.Cursor == nil || view.Cursor.Y != footerStart+1+model.input.area.Cursor().Y {
+						t.Fatal("tool positioning changed frame height or input cursor")
+					}
+					assertLiveFrameFits(t, model)
+				})
+			}
+		}
+	}
+}
+
 func TestTranscriptPaddingKeepsToolSummaryClickable(t *testing.T) {
 	model := toolDrawerModel(t, 6)
 	model.enqueuePrint("recent-question")
@@ -109,6 +162,40 @@ func TestTranscriptPaddingKeepsToolSummaryClickable(t *testing.T) {
 		return
 	}
 	t.Fatal("tool summary missing from frame")
+}
+
+func TestChatWithoutToolsKeepsTranscriptAdjacentToLiveContent(t *testing.T) {
+	for _, state := range []string{"idle", "streaming", "completed"} {
+		t.Run(state, func(t *testing.T) {
+			model := toolDrawerModel(t, 0)
+			model.enqueuePrint("recent-question\nrecent-answer")
+			switch state {
+			case "streaming":
+				model.stream = "short response"
+			case "completed":
+				model.reply = "short response"
+			}
+			updated, command := model.Update(nil)
+			model = updated.(Model)
+			if command != nil {
+				t.Fatal("short transcript should remain in the frame")
+			}
+			rows := strings.Split(model.View().Content, "\n")
+			body := model.liveLines()
+			start := len(rows) - len(body) - 2
+			if start < 0 || rows[start] != "recent-question" || rows[start+1] != "recent-answer" {
+				t.Fatalf("retained transcript should immediately precede live content:\n%s", model.View().Content)
+			}
+			for _, row := range rows[:start] {
+				if strings.TrimSpace(row) != "" {
+					t.Fatalf("unused frame rows should be above the transcript: %q", row)
+				}
+			}
+			if len(rows) != model.frameLimit() {
+				t.Fatalf("frame height = %d, want %d", len(rows), model.frameLimit())
+			}
+		})
+	}
 }
 
 func TestChatKeepsRecentTranscriptOnScreen(t *testing.T) {
