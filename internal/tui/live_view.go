@@ -159,8 +159,8 @@ func (model Model) liveLines() []string {
 	return lines
 }
 
-// Keep tools beside the retained question at the top, while output and the
-// input footer stay at the bottom. Return the tool header row for mouse hits.
+// Keep startup content, active questions and tools at the top, while output
+// and the input footer stay at the bottom. Return the tool header row for mouse hits.
 func (model Model) liveLayout() (lines []string, toolRow int) {
 	body := model.liveLines()
 	padding := model.frameLimit() - len(body)
@@ -176,7 +176,11 @@ func (model Model) liveLayout() (lines []string, toolRow int) {
 		lines = append(lines, body[toolHeight:]...)
 	} else {
 		lines = make([]string, padding, model.frameLimit())
-		copy(lines[padding-len(retained):], retained)
+		if model.sequence == 0 || model.active != nil {
+			copy(lines, retained)
+		} else {
+			copy(lines[padding-len(retained):], retained)
+		}
 		lines = append(lines, body...)
 	}
 	return

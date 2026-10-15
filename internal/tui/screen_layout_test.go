@@ -91,6 +91,51 @@ func TestTranscriptResizeAndClearPreserveOnlyUnprintedRows(t *testing.T) {
 	}
 }
 
+func TestStartupContentStaysAtTopThroughFirstResponse(t *testing.T) {
+	model := toolDrawerModel(t, 0)
+	model.height = 60
+	model.resizeInput()
+	updated, _ := model.Update(startupMsg{})
+	model = updated.(Model)
+	startup := strings.Split(model.View().Content, "\n")[0]
+	if !strings.Contains(startup, "bqAgent") {
+		t.Fatal("startup banner should be at the top before the first question")
+	}
+	for _, stage := range []string{"input", "submit", "token", "tool"} {
+		t.Run(stage, func(t *testing.T) {
+			var message tea.Msg
+			switch stage {
+			case "input":
+				message = tea.PasteMsg{Content: "first question"}
+			case "submit":
+				message = tea.KeyPressMsg{Code: tea.KeyEnter}
+			case "token":
+				message = turnEvent{sequence: model.sequence, kind: "token", text: "short response"}
+			case "tool":
+				message = turnEvent{sequence: model.sequence, kind: "tool", tool: ToolEvent{Kind: "tool_start", ID: "first-tool", Name: "read_file"}}
+			}
+			updated, _ := model.Update(message)
+			model = updated.(Model)
+			view := model.View()
+			rows := strings.Split(view.Content, "\n")
+			if rows[0] != startup {
+				t.Fatal("startup content moved when the conversation advanced")
+			}
+			for i, row := range model.transcript {
+				if rows[i] != row {
+					t.Fatal("startup content and question should remain at the top")
+				}
+			}
+			if len(rows) != model.frameLimit() || view.Cursor == nil || view.Cursor.Y != len(rows)-len(model.footerLines())+1+model.input.area.Cursor().Y {
+				t.Fatal("startup layout changed frame height or bottom input position")
+			}
+		})
+	}
+	if model.active != nil {
+		model.active.cancel()
+	}
+}
+
 func TestChatWithToolsKeepsActivityAtTop(t *testing.T) {
 	for _, count := range []int{1, 6} {
 		for _, expanded := range []bool{false, true} {
@@ -168,6 +213,7 @@ func TestChatWithoutToolsKeepsTranscriptAdjacentToLiveContent(t *testing.T) {
 	for _, state := range []string{"idle", "streaming", "completed"} {
 		t.Run(state, func(t *testing.T) {
 			model := toolDrawerModel(t, 0)
+			model.sequence = 1
 			model.enqueuePrint("recent-question\nrecent-answer")
 			switch state {
 			case "streaming":
