@@ -189,32 +189,6 @@ func (model Model) liveLayout() (lines []string, toolRow int) {
 	return
 }
 
-func (model Model) drawStartupArt(space []string) {
-	art := []string{
-		"       .---.       ",
-		"       | o |       ",
-		"   .---'---'---.   ",
-		"   |  o     o  |   ",
-		"   |    ---    |   ",
-		"   '-----------'   ",
-		"     /|     |\\     ",
-		"    /_|_____|_\\    ",
-		"      bqAgent      ",
-	}
-	width := 0
-	for _, row := range art {
-		width = max(width, len(row))
-	}
-	if len(space) < len(art)+2 || model.contentWidth() < width+2 {
-		return
-	}
-	top := (len(space) - len(art)) / 2
-	left := strings.Repeat(" ", (model.contentWidth()-width)/2)
-	for i, row := range art {
-		space[top+i] = model.styles.dim.Render(left + strings.TrimRight(row, " "))
-	}
-}
-
 // A constant physical height lets the renderer scroll changed rows without
 // resizing and erasing its buffer on every token or tool collapse. Leave one
 // terminal row for native history insertion.
