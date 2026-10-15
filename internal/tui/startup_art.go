@@ -2,14 +2,14 @@ package tui
 
 import "strings"
 
-// Size the robot to three quarters of each available dimension, so its
-// bounding box occupies more than half the welcome area's space.
+// Use three eighths of each available dimension, retaining enough room for
+// the face and chest details in smaller terminals.
 func startupRobot(width, height int) []string {
 	if width < 34 || height < 18 {
 		return nil
 	}
-	width = min(width-2, max(32, (width*3+3)/4))
-	height = min(height-2, max(16, (height*3+3)/4))
+	width = min(width-2, max(32, (width*3+7)/8))
+	height = min(height-2, max(16, (height*3+7)/8))
 	center := func(text string, size int) string {
 		left := (size - len(text)) / 2
 		return strings.Repeat(" ", left) + text + strings.Repeat(" ", size-len(text)-left)
