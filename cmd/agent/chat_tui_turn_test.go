@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -81,8 +83,8 @@ func TestTUIBackendSendsPastedImagesAsMultimodalContent(t *testing.T) {
 	backend := &tuiBackend{workspace: ws, service: appserver.NewService(appserver.ServiceOptions{
 		WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir(), Client: client, Model: "test", SystemPrompt: "test",
 	})}
-	var _ apptui.ImageBackend = backend
-	result, err := backend.RunTurnWithImages(context.Background(), "", "描述 [图片 #1]", []apptui.Image{{Label: "[图片 #1]", MIMEType: "image/png", Data: []byte("png-bytes")}}, apptui.TurnEvents{})
+	var _ apptui.AttachmentBackend = backend
+	result, err := backend.RunTurnWithAttachments(context.Background(), "", "描述 [图片 #1]", apptui.TurnAttachments{Images: []apptui.Image{{Label: "[图片 #1]", MIMEType: "image/png", Data: []byte("png-bytes")}}}, apptui.TurnEvents{})
 	if err != nil || result.Reply != "看到了" {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
@@ -93,4 +95,27 @@ func TestTUIBackendSendsPastedImagesAsMultimodalContent(t *testing.T) {
 		}
 	}
 	t.Fatalf("no multimodal user message in %v", client.messages)
+}
+
+func TestTUIBackendInlinesMentionedWorkspaceFiles(t *testing.T) {
+	client := &tuiImageClient{}
+	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: t.TempDir()}
+	if err := os.MkdirAll(filepath.Join(ws.Root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws.Root, "docs", "plan.md"), []byte("mention-body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backend := &tuiBackend{workspace: ws, service: appserver.NewService(appserver.ServiceOptions{
+		WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir(), Client: client, Model: "test", SystemPrompt: "test",
+	})}
+	if _, err := backend.RunTurnWithAttachments(context.Background(), "", "看看 @docs/plan.md", apptui.TurnAttachments{Files: []string{"docs/plan.md"}}, apptui.TurnEvents{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range client.messages {
+		if text := fmt.Sprint(message); message["role"] == "user" && strings.Contains(text, `path="docs/plan.md"`) && strings.Contains(text, "mention-body") {
+			return
+		}
+	}
+	t.Fatalf("mentioned file was not inlined: %v", client.messages)
 }

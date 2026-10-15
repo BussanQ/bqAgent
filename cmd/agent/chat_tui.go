@@ -71,23 +71,27 @@ type tuiBackend struct {
 }
 
 func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message string, events apptui.TurnEvents) (apptui.TurnResult, error) {
-	return backend.RunTurnWithImages(ctx, sessionID, message, nil, events)
+	return backend.RunTurnWithAttachments(ctx, sessionID, message, apptui.TurnAttachments{}, events)
 }
 
-// RunTurnWithImages sends pasted terminal images through the same multimodal
-// turn path the WebUI uses.
-func (backend *tuiBackend) RunTurnWithImages(ctx context.Context, sessionID, message string, images []apptui.Image, events apptui.TurnEvents) (apptui.TurnResult, error) {
+// RunTurnWithAttachments sends pasted terminal images and @-mentioned
+// workspace files through the same attachment path the WebUI uses.
+func (backend *tuiBackend) RunTurnWithAttachments(ctx context.Context, sessionID, message string, attachments apptui.TurnAttachments, events apptui.TurnEvents) (apptui.TurnResult, error) {
 	if err := ctx.Err(); err != nil {
 		return apptui.TurnResult{}, err
 	}
-	if len(images) == 0 {
+	if len(attachments.Images) == 0 && len(attachments.Files) == 0 {
 		if reply, handled, err := backend.handleEffortCommand(message); handled {
 			return apptui.TurnResult{SessionID: sessionID, Reply: reply}, err
 		}
 	}
-	var attachments []agent.ImageAttachment
-	for _, image := range images {
-		attachments = append(attachments, agent.ImageAttachment{MIMEType: image.MIMEType, Data: image.Data})
+	var images []agent.ImageAttachment
+	for _, image := range attachments.Images {
+		images = append(images, agent.ImageAttachment{MIMEType: image.MIMEType, Data: image.Data})
+	}
+	var files []appserver.FileAttachment
+	for _, file := range attachments.Files {
+		files = append(files, appserver.FileAttachment{Path: file})
 	}
 	if events.Usage != nil {
 		ctx = agent.WithLiveTokenUsage(ctx, func(usage agent.LiveTokenUsage) {
@@ -101,7 +105,8 @@ func (backend *tuiBackend) RunTurnWithImages(ctx context.Context, sessionID, mes
 	response, err := backend.service.HandleTurnWithOptions(ctx, appserver.TurnRequest{
 		SessionID:       sessionID,
 		Message:         message,
-		Images:          attachments,
+		Images:          images,
+		Files:           files,
 		ReasoningEffort: backend.currentEffort(),
 	}, appserver.TurnOptions{
 		SessionSink:    events.Session,

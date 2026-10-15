@@ -63,7 +63,7 @@ func (model Model) footerLines() []string {
 func (model Model) auxiliaryLines() []string {
 	width := model.contentWidth()
 	var lines []string
-	if model.panelOpen && len(model.suggestions) > 0 {
+	if model.panelOpen && (len(model.suggestions) > 0 || model.mention != nil) {
 		lines = strings.Split(model.renderSuggestions(width), "\n")
 	}
 	if model.queued != nil {

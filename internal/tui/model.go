@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -47,6 +48,8 @@ type suggestion struct {
 	value       string
 	description string
 	confirm     bool
+	// file marks an @ mention candidate; value is its workspace path.
+	file bool
 }
 
 const maxSuggestions = 8
@@ -94,6 +97,9 @@ type Model struct {
 	suggestions      []suggestion
 	suggested        int
 	panelOpen        bool
+	mention          *mentionQuery
+	mentionDismissed int
+	fileIndex        workspaceFileIndex
 	tools            toolGroup
 	toolMouse        bool
 	toolInspector    bool
@@ -151,17 +157,18 @@ func NewModel(backend Backend, config Config) Model {
 		config.Context = context.Background()
 	}
 	model := Model{
-		backend:      backend,
-		config:       config,
-		styles:       newTheme(config.NoColor),
-		input:        newPromptInput(config.NoColor),
-		width:        82,
-		phase:        phaseIdle,
-		sessionID:    strings.TrimSpace(config.SessionID),
-		initialTask:  strings.TrimSpace(config.InitialTask),
-		historyStore: newHistoryStore(config.AgentDir, config.Workspace),
-		liveCache:    &streamViewCache{},
-		clipboard:    systemClipboardReader(),
+		backend:          backend,
+		config:           config,
+		styles:           newTheme(config.NoColor),
+		input:            newPromptInput(config.NoColor),
+		width:            82,
+		phase:            phaseIdle,
+		sessionID:        strings.TrimSpace(config.SessionID),
+		initialTask:      strings.TrimSpace(config.InitialTask),
+		historyStore:     newHistoryStore(config.AgentDir, config.Workspace),
+		liveCache:        &streamViewCache{},
+		clipboard:        systemClipboardReader(),
+		mentionDismissed: -1,
 	}
 	model.spinner = spinner.New(spinner.WithSpinner(spinner.Dot))
 	if !config.NoColor {
@@ -243,6 +250,13 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, model.handleProviderSaved(message)...)
 	case imageAttachMsg:
 		commands = append(commands, model.handleImageAttach(message)...)
+	case fileIndexMsg:
+		model.fileIndex.files = message.files
+		model.fileIndex.loadedAt = time.Now()
+		model.fileIndex.loading = false
+		if model.mention != nil {
+			model.refreshSuggestions()
+		}
 	case controlResultMsg:
 		if message.err != nil {
 			model.enqueuePrint(model.styles.error.Render("停止命令失败：" + message.err.Error()))
@@ -308,6 +322,11 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.inspectorPending = false
 		model.toolInspector = true
 	}
+	if model.fileIndex.wanted && !model.fileIndex.loading && model.config.Workspace != "" {
+		model.fileIndex.loading = true
+		commands = append(commands, indexWorkspaceFiles(model.config.Workspace))
+	}
+	model.fileIndex.wanted = false
 	return model, tea.Batch(commands...)
 }
 
@@ -372,6 +391,11 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		model.resizeInput()
 		return []tea.Cmd{disableMouse, tea.ClearScreen}
 	case "esc":
+		if model.mention != nil && model.panelOpen {
+			model.mentionDismissed = model.mention.start
+			model.closePanel()
+			return nil
+		}
 		if model.active != nil {
 			model.cancelActiveTurn()
 			return nil
@@ -410,6 +434,13 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 			return nil
 		}
 	case "enter":
+		if model.mention != nil && model.panelOpen {
+			if len(model.suggestions) > 0 {
+				model.insertMention()
+				return nil
+			}
+			model.closePanel()
+		}
 		if model.panelOpen && len(model.suggestions) > 0 && strings.TrimSpace(model.input.displayValue()) != model.suggestions[model.suggested].value {
 			selected := model.suggestions[model.suggested]
 			model.input.setValue(selected.value)
@@ -536,7 +567,7 @@ func (model *Model) submit(value string, images ...Image) tea.Cmd {
 	if value == "" {
 		return nil
 	}
-	if _, ok := model.backend.(ImageBackend); len(images) > 0 && !ok {
+	if _, ok := model.backend.(AttachmentBackend); len(images) > 0 && !ok {
 		model.input.restoreDraft(value, images)
 		model.resizeInput()
 		model.inputNotice = "当前后端不支持图片输入"
@@ -575,6 +606,10 @@ func (model *Model) submit(value string, images ...Image) tea.Cmd {
 		}
 		return tea.Batch(toolCommand, tea.Quit)
 	}
+	attachments := TurnAttachments{Images: images}
+	if _, ok := model.backend.(AttachmentBackend); ok && !strings.HasPrefix(value, "/") {
+		attachments.Files = mentionedFiles(model.config.Workspace, value)
+	}
 	model.recordHistory(stripImageLabels(value, images))
 	model.enqueueUserTurn(value)
 	model.sequence++
@@ -591,7 +626,7 @@ func (model *Model) submit(value string, images ...Image) tea.Cmd {
 	turnContext, cancel := context.WithCancel(model.config.Context)
 	events := make(chan turnEvent, 256)
 	model.active = &activeTurn{sequence: model.sequence, cancel: cancel, events: events}
-	return tea.Batch(toolCommand, model.spinner.Tick, launchTurn(model.backend, turnContext, model.sequence, model.sessionID, value, images, events))
+	return tea.Batch(toolCommand, model.spinner.Tick, launchTurn(model.backend, turnContext, model.sequence, model.sessionID, value, attachments, events))
 }
 
 func (model *Model) queue(value string, images []Image) []tea.Cmd {
@@ -757,7 +792,7 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	return nil
 }
 
-func launchTurn(backend Backend, ctx context.Context, sequence uint64, sessionID, value string, images []Image, events chan turnEvent) tea.Cmd {
+func launchTurn(backend Backend, ctx context.Context, sequence uint64, sessionID, value string, attachments TurnAttachments, events chan turnEvent) tea.Cmd {
 	return func() tea.Msg {
 		send := func(event turnEvent) {
 			event.sequence = sequence
@@ -778,8 +813,8 @@ func launchTurn(backend Backend, ctx context.Context, sequence uint64, sessionID
 		go func() {
 			var result TurnResult
 			var err error
-			if imageBackend, ok := backend.(ImageBackend); ok && len(images) > 0 {
-				result, err = imageBackend.RunTurnWithImages(ctx, sessionID, value, images, sink)
+			if attachmentBackend, ok := backend.(AttachmentBackend); ok && !attachments.empty() {
+				result, err = attachmentBackend.RunTurnWithAttachments(ctx, sessionID, value, attachments, sink)
 			} else {
 				result, err = backend.RunTurn(ctx, sessionID, value, sink)
 			}
@@ -1023,6 +1058,9 @@ func (model *Model) recallHistory(direction int) bool {
 }
 
 func (model *Model) refreshSuggestions() {
+	if model.refreshMentionSuggestions() {
+		return
+	}
 	rawValue := model.input.displayValue()
 	value := strings.TrimSpace(rawValue)
 	if !strings.HasPrefix(value, "/") || strings.Contains(value, "\n") {
@@ -1080,6 +1118,10 @@ func (model *Model) refreshSuggestions() {
 }
 
 func (model *Model) completeSuggestion(reverse bool) {
+	if model.mention != nil && model.panelOpen && len(model.suggestions) > 0 {
+		model.insertMention()
+		return
+	}
 	if !model.panelOpen || len(model.suggestions) == 0 {
 		if strings.TrimSpace(model.input.value()) == "" {
 			model.input.setValue("/")
@@ -1100,12 +1142,71 @@ func (model *Model) closePanel() {
 	model.panelOpen = false
 	model.suggestions = nil
 	model.suggested = 0
+	model.mention = nil
+}
+
+// refreshMentionSuggestions opens the workspace file picker while the cursor
+// is inside an @token. It reports whether the token owns the panel.
+func (model *Model) refreshMentionSuggestions() bool {
+	mention, ok := activeMention([]rune(model.input.displayValue()), model.input.cursorOffset())
+	if !ok || model.config.Workspace == "" {
+		model.mentionDismissed = -1
+		model.mention = nil
+		return false
+	}
+	if mention.start == model.mentionDismissed {
+		model.closePanel()
+		return true
+	}
+	if model.mention == nil || model.mention.start != mention.start {
+		model.suggested = 0
+		if time.Since(model.fileIndex.loadedAt) > fileIndexTTL {
+			model.fileIndex.wanted = true
+		}
+	}
+	if model.mention != nil && model.mention.query != mention.query {
+		model.suggested = 0
+	}
+	model.mention = &mention
+	files := searchFiles(model.fileIndex.files, mention.query, 200)
+	model.suggestions = make([]suggestion, 0, len(files))
+	for _, file := range files {
+		directory := path.Dir(file)
+		if directory == "." {
+			directory = "./"
+		} else {
+			directory += "/"
+		}
+		model.suggestions = append(model.suggestions, suggestion{value: file, label: path.Base(file), description: directory, file: true})
+	}
+	model.panelOpen = true
+	if model.suggested >= len(model.suggestions) {
+		model.suggested = 0
+	}
+	return true
+}
+
+// insertMention replaces the @token with the selected workspace path.
+func (model *Model) insertMention() {
+	mention := *model.mention
+	selected := model.suggestions[model.suggested]
+	value := []rune(model.input.displayValue())
+	inserted := []rune(mentionText(selected.value))
+	updated := append(append(append([]rune(nil), value[:mention.start]...), inserted...), value[min(mention.end, len(value)):]...)
+	model.input.area.SetValue(string(updated))
+	model.input.setCursorOffset(mention.start + len(inserted))
+	model.input.removeOrphanChips()
+	model.closePanel()
+	model.resizeInput()
 }
 
 func (model Model) renderSuggestions(width int) string {
 	// Keep the inline frame height stable while the completion panel is open.
 	// Bubble Tea's Windows inline renderer otherwise resizes the frame for every
 	// narrower match and can leave each previous panel in terminal scrollback.
+	if model.mention != nil {
+		return model.renderFileSuggestions(width)
+	}
 	lines := make([]string, 0, maxSuggestions+1)
 	title := "命令与参数"
 	if len(model.suggestions) > 0 && model.suggestions[0].confirm {
@@ -1136,6 +1237,45 @@ func (model Model) renderSuggestions(width int) string {
 		line := pointer + label
 		if item.description != "" && width > 40 {
 			line += model.styles.dim.Render("  " + item.description)
+		}
+		lines = append(lines, line)
+	}
+	for len(lines) < maxSuggestions+1 {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (model Model) renderFileSuggestions(width int) string {
+	lines := make([]string, 0, maxSuggestions+1)
+	title := "工作区文件 · ↑/↓ 选择 · Enter/Tab 插入 · Esc 关闭"
+	if len(model.suggestions) > maxSuggestions {
+		title += fmt.Sprintf(" · %d/%d", model.suggested+1, len(model.suggestions))
+	}
+	lines = append(lines, model.styles.accent.Render(title))
+	switch {
+	case len(model.suggestions) == 0 && (model.fileIndex.loading || model.fileIndex.loadedAt.IsZero()):
+		lines = append(lines, model.styles.dim.Render("  正在索引工作区文件…"))
+	case len(model.suggestions) == 0:
+		lines = append(lines, model.styles.dim.Render("  没有匹配的文件"))
+	}
+	start := max(0, model.suggested-maxSuggestions+1)
+	end := min(len(model.suggestions), start+maxSuggestions)
+	nameWidth := 0
+	for _, item := range model.suggestions[start:end] {
+		nameWidth = max(nameWidth, ansi.StringWidth(item.label))
+	}
+	nameWidth = min(nameWidth, max(12, width/3))
+	for index := start; index < end; index++ {
+		item := model.suggestions[index]
+		pointer := "  "
+		if index == model.suggested {
+			pointer = "› "
+		}
+		name := ansi.Truncate(item.label, nameWidth, "…")
+		line := pointer + name + strings.Repeat(" ", nameWidth-ansi.StringWidth(name)+2) + model.styles.dim.Render(item.description)
+		if index == model.suggested {
+			line = pointer + model.styles.accent.Render(name) + strings.Repeat(" ", nameWidth-ansi.StringWidth(name)+2) + model.styles.dim.Render(item.description)
 		}
 		lines = append(lines, line)
 	}
@@ -1324,6 +1464,7 @@ func (model Model) renderHistory(history History) []string {
 func (model Model) helpText() string {
 	return `快捷键
   Enter 发送    Alt+Enter 换行    Tab/Shift+Tab 补全
+  @ 搜索并引用工作区文件，发送时附带文件内容
   ↑/↓ 历史      Ctrl+C 清空输入框
   Ctrl+V / Alt+V 粘贴；剪贴板有图片或粘贴图片路径时作为 [图片 #N] 附件发送
   连按两次 Ctrl+C（2 秒内）或 Ctrl+Q 安全退出

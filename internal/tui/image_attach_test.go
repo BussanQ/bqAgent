@@ -23,12 +23,13 @@ type imageFakeBackend struct {
 	mu     sync.Mutex
 	sent   string
 	images []Image
+	files  []string
 	called chan struct{}
 }
 
-func (backend *imageFakeBackend) RunTurnWithImages(_ context.Context, _ string, message string, images []Image, _ TurnEvents) (TurnResult, error) {
+func (backend *imageFakeBackend) RunTurnWithAttachments(_ context.Context, _ string, message string, attachments TurnAttachments, _ TurnEvents) (TurnResult, error) {
 	backend.mu.Lock()
-	backend.sent, backend.images = message, images
+	backend.sent, backend.images, backend.files = message, attachments.Images, attachments.Files
 	backend.mu.Unlock()
 	if backend.called != nil {
 		close(backend.called)

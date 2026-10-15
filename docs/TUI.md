@@ -42,7 +42,8 @@ OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 
 | --- | --- |
 | `Enter` | 发送；运行中进入单一排队槽 |
 | `Alt+Enter` | 插入换行 |
-| `Tab` / `Shift+Tab` | 打开、补全或切换命令候选 |
+| `Tab` / `Shift+Tab` | 打开、补全或切换命令候选；文件候选中 `Tab` 插入选中文件 |
+| `@` | 打开工作区文件选择器，继续输入即可模糊搜索 |
 | `↑` / `↓` | 移动多行光标或召回当前工作区历史 |
 | `Esc` | 打断当前回复；空闲时关闭候选面板或收起工具详情 |
 | `Ctrl+C` | 首次清空聊天输入框并提示；2 秒内连续再按一次安全退出 |
@@ -54,6 +55,13 @@ OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 
 | 工具详情内方向键、滚轮、`PgUp` / `PgDn` | 滚动单个工具内容；`Home` / `End` 跳到首尾，`Esc` 返回列表 |
 
 达到 5 行或 200 字符的粘贴内容会折叠为原子 Chip；发送和历史召回时仍使用完整原文。自然完成后会自动发送排队内容，取消后则把它恢复到输入框。普通排队消息可按换行合并，Slash 命令不会与其他内容跨边界合并。
+
+### @ 引用工作区文件
+
+在词首输入 `@` 会打开工作区文件选择器，继续输入即可搜索：文件名完全匹配、文件名前缀、文件名包含、路径前缀、路径包含、按字符顺序的模糊匹配依次排序，同级再按目录层级和路径长度排序；每行显示文件名与所在目录。`↑` / `↓` 选择，`Enter` 或 `Tab` 把当前光标处的 `@词` 替换为 `@相对路径 `（含空白的路径写为 `@"路径"`），`Esc` 关闭本次选择器且不影响正在运行的任务；没有匹配时 `Enter` 正常发送。`a@b.com` 这类词中的 `@` 不会触发。
+
+- 文件索引在首次输入 `@` 时于后台生成：Git 仓库使用 `git ls-files --cached --others --exclude-standard`（遵循 `.gitignore`），否则遍历目录并跳过 `.git`、`node_modules`、`.venv` 等依赖与缓存目录；最多索引 5 万个文件，索引超过 10 秒后在下一次 `@` 时刷新。
+- 发送时，消息中指向工作区内普通文件的 `@路径` 会作为附件随消息发送，与 WebUI 的 workspace 路径附件相同：文本内容内联（超过 64 KiB 截断并提示用 `read_file` 读取），二进制文件只提供路径。每条最多 5 个文件，单个不超过 2 MiB、合计不超过 6 MiB；超出限制、不存在、目录或指向工作区外的引用保留为普通文本，不会导致发送失败。末尾标点（如 `@go.mod,`）会被忽略。Slash 命令不附带文件。
 
 ### 图片输入
 
@@ -111,7 +119,7 @@ Completed-turn TPS uses the final text response and keeps pauses in its generati
 
 Press `Ctrl+C` twice within two seconds to exit safely, including in Provider setup. The first press clears the prompt and shows a confirmation hint; the second cancels any active turn and waits for it to finish. Other keys, paste, mouse clicks, or timeout cancel the confirmation. `Ctrl+Q` remains a one-step safe exit shortcut.
 
-`Ctrl+V` / `Alt+V` attach a clipboard image (screenshot data or a copied image file) as an atomic `[图片 #N]` label and otherwise paste text; pasted or dragged PNG/JPEG/GIF paths are attached too. Limits match the WebUI: 4 images, 3 MiB each, 8 MiB total, 20 MP; oversized PNG/JPEG images are re-encoded as JPEG and downscaled locally. Clipboard images use `osascript` on macOS, PowerShell on Windows, and `wl-paste` or `xclip` on Linux.
+Typing `@` at the start of a word opens a fuzzy workspace file picker (git-aware index, refreshed after 10 seconds); Enter or Tab inserts `@path`, and on send up to five mentioned regular workspace files (2 MiB each, 6 MiB total) are attached with inlined text content, exactly like WebUI workspace-path attachments. `Ctrl+V` / `Alt+V` attach a clipboard image (screenshot data or a copied image file) as an atomic `[图片 #N]` label and otherwise paste text; pasted or dragged PNG/JPEG/GIF paths are attached too. Limits match the WebUI: 4 images, 3 MiB each, 8 MiB total, 20 MP; oversized PNG/JPEG images are re-encoded as JPEG and downscaled locally. Clipboard images use `osascript` on macOS, PowerShell on Windows, and `wl-paste` or `xclip` on Linux.
 
 Herdr support is automatic only when all four Herdr environment variables above are present and `HERDR_ENV=1`. Foreground TUI, line mode, and one-shot tasks report activity and session recovery metadata; Provider setup reports `blocked`. A single background sender coalesces pending states, ignores failures, and allows each status report up to 1 second for CLI startup and IPC; shutdown cancels pending work and waits for release with a separate 1-second timeout and at most 1.2 seconds of extra waiting, returning as soon as release finishes. Reporting never blocks model work. No token-by-token reporting or retry loop is used. Background jobs, internal workers, and HTTP/Bot services do not claim a pane. Recovery requires Herdr 0.9.2+ and `bqagent` on `PATH`; it opens the saved session in chat mode, preserving plan/stream flags and persisted model/mode settings. Clearing the session updates recovery to a new empty chat. Prompts, replies, and tool output are never reported.
 

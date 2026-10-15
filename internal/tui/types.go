@@ -23,10 +23,22 @@ type Backend interface {
 	SaveProvider(context.Context, string, ProviderInput) (RuntimeInfo, error)
 }
 
-// ImageBackend is implemented by backends that accept images with a turn.
-// Backends without it remain text-only; the TUI rejects image turns for them.
-type ImageBackend interface {
-	RunTurnWithImages(context.Context, string, string, []Image, TurnEvents) (TurnResult, error)
+// AttachmentBackend is implemented by backends that accept images and
+// workspace files with a turn. Text-only backends reject image turns and
+// receive @file mentions as plain text.
+type AttachmentBackend interface {
+	RunTurnWithAttachments(context.Context, string, string, TurnAttachments, TurnEvents) (TurnResult, error)
+}
+
+// TurnAttachments are sent alongside the message text. Files are workspace
+// relative, slash-separated paths whose contents the backend inlines.
+type TurnAttachments struct {
+	Images []Image
+	Files  []string
+}
+
+func (attachments TurnAttachments) empty() bool {
+	return len(attachments.Images) == 0 && len(attachments.Files) == 0
 }
 
 // Image is a validated attachment ready for a multimodal user message. Label
