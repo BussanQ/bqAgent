@@ -309,7 +309,7 @@ func TestTurnPresentationUsesSeparatorsWithoutRepeatedBrand(t *testing.T) {
 	model.flushStream()
 	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "done", result: TurnResult{Reply: "非流式回答"}})
 	printed := strings.Join(model.printQueue, "\n")
-	separator := strings.Repeat("─", model.contentWidth())
+	separator := model.renderTurnSeparator()
 	if !strings.Contains(printed, separator+"\n▸ 第一轮") || !strings.Contains(printed, "回答内容") || !strings.Contains(model.View().Content, "非流式回答") {
 		t.Fatalf("turn output = %q", printed)
 	}

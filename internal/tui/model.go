@@ -766,11 +766,15 @@ func (model *Model) enqueueUserTurn(value string) {
 }
 
 func (model Model) renderUserMessage(value string) string {
-	return model.styles.user.Render("▸") + " " + strings.ReplaceAll(value, "\n", "\n  ")
+	return model.styles.user.Render("▸") + " " + strings.ReplaceAll(value, "\n", "\n  ") + "\n"
 }
 
 func (model Model) renderTurnSeparator() string {
-	return model.styles.dim.Render(strings.Repeat("─", max(10, model.contentWidth())))
+	width := model.contentWidth()
+	heading := ansi.Truncate("══ 新一轮对话 ", width, "")
+	line := heading + strings.Repeat("═", max(0, width-ansi.StringWidth(heading)))
+	// Keep spacing attached to the heading so enqueuePrint preserves it.
+	return "\n\n" + model.styles.accent.Render(line) + "\n"
 }
 
 func (model *Model) enqueuePrint(lines ...string) {
