@@ -183,3 +183,41 @@ func TestEnsureDefaultsUpgradesOnlyUneditedRetiredDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildPromptSectionsSharesUserPrefixAcrossWorkspaces(t *testing.T) {
+	stubPromptEnvironment(t, "linux", "/bin/bash")
+	globalAgent := filepath.Join(t.TempDir(), ".agent")
+	first, second := t.TempDir(), t.TempDir()
+	writeTestFiles(t, map[string]string{
+		filepath.Join(globalAgent, "AGENT.md"):                     "Global agent rule.",
+		filepath.Join(globalAgent, "rules", "style.md"):            "Global style rule.",
+		filepath.Join(first, "AGENTS.md"):                          "First project rule.",
+		filepath.Join(second, "AGENTS.md"):                         "Second project rule.",
+		filepath.Join(second, ".agent", "skills", "x", "SKILL.md"): "---\ndescription: Local skill.\n---\n",
+	})
+	build := func(root string) string {
+		t.Helper()
+		sections, err := (&Workspace{Root: root, GlobalAgentDir: globalAgent}).BuildPromptSections("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sections.Stable
+	}
+	firstStable, secondStable := build(first), build(second)
+
+	order := []string{"# Core Instructions", "# Memory Policy", "# Global Context", "Global style rule.", "# Repository Instructions"}
+	for _, stable := range []string{firstStable, secondStable} {
+		previous := -1
+		for _, marker := range order {
+			index := strings.Index(stable, marker)
+			if index <= previous {
+				t.Fatalf("%q out of order (index %d after %d): %s", marker, index, previous, stable)
+			}
+			previous = index
+		}
+	}
+	shared := strings.Index(firstStable, "# Repository Instructions")
+	if firstStable[:shared] != secondStable[:shared] {
+		t.Fatalf("user-level prefix differs across workspaces:\n%q\n%q", firstStable[:shared], secondStable[:shared])
+	}
+}

@@ -57,7 +57,9 @@ func (w *Workspace) BuildSystemPrompt(base string) (string, error) {
 
 // BuildPromptSections builds deterministic prompt sections. Static workspace
 // instructions are kept before all mutable memory so memory writes cannot
-// invalidate the reusable instruction prefix.
+// invalidate the reusable instruction prefix. Stable parts are ordered from
+// the most to the least widely shared (built-in, user, workspace) so prefix
+// caches can reuse the leading bytes across workspaces.
 func (w *Workspace) BuildPromptSections(base string) (PromptSections, error) {
 	primary := w.primaryConfigLayer()
 	root, err := primary.openRoot()
@@ -66,7 +68,7 @@ func (w *Workspace) BuildPromptSections(base string) (PromptSections, error) {
 	}
 	defer root.Close()
 
-	stableParts := []string{coreInstructions, normalizePromptPart(base)}
+	stableParts := []string{coreInstructions, sessionMemoryPolicy, normalizePromptPart(base)}
 	memoryParts := make([]string, 0, 2)
 
 	workspaceDocs, err := primary.loadWorkspaceDocuments(root)
@@ -79,6 +81,12 @@ func (w *Workspace) BuildPromptSections(base string) (PromptSections, error) {
 		}
 		stableParts = append(stableParts, workspaceDocs)
 	}
+	rules, err := primary.loadRules(root)
+	if err != nil {
+		return PromptSections{}, err
+	}
+	stableParts = append(stableParts, rules)
+
 	repositoryDocs, err := w.loadRepositoryInstructions()
 	if err != nil {
 		return PromptSections{}, err
@@ -110,15 +118,6 @@ func (w *Workspace) BuildPromptSections(base string) (PromptSections, error) {
 			memoryParts = append(memoryParts, "# Workspace Memory\n"+localMemory)
 		}
 	}
-
-	rules, err := primary.loadRules(root)
-	if err != nil {
-		return PromptSections{}, err
-	}
-	if rules != "" {
-		stableParts = append(stableParts, rules)
-	}
-	stableParts = append(stableParts, sessionMemoryPolicy)
 
 	skills, err := w.LoadSkills()
 	if err != nil {
