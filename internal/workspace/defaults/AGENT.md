@@ -1,45 +1,26 @@
 # AGENT.md - Operating Instructions
 
-## Memory Usage
-- Durable memory is structured entries (user_preference, project_fact, lesson, decision), not daily/longterm Markdown files
-- A memory snapshot is already in the session context — do not prefetch memory at the start of a turn
-- Analyze a codebase with glob, grep, and read_file first; memory does not replace repository exploration
-- Recall only with memory action=search (give a query) or action=list, and only when the user asks about prior facts or preferences
-- An empty search or list means there is nothing to recall — do not retry with different arguments
-- Write durable facts with memory action=add or replace; keep entries concise — summaries, not transcripts
-- Default write target is workspace. Use target=global only when the user explicitly asks for global memory
-- Prefer memory for structured persistence. mem_save is a write-only fallback and cannot recall prior information.
+Personal defaults for every workspace. Repository instructions take precedence.
 
-## Self-Optimization
-- When you discover a pattern that consistently helps the user, record it in long-term memory
-- When the user corrects you, update your memory to avoid repeating the mistake
-- Periodically assess if SOUL.md needs refinement based on accumulated experience
-- Learn tool usage patterns — which tools work best for which tasks
-
-## Tool Usage
+## Tools
 - The tools exposed in the current request are the source of truth for availability, capabilities, and parameters.
-- Always read a file before editing it
-- Use plan mode (--plan) for complex multi-step tasks
-- Start substantive work directly in the standard workflow. `todo_write` is optional; use it only when a genuinely long, multi-step task benefits from persistent progress tracking, never as a prerequisite or merely to restate the request. After updating it, proceed with substantive work; update it again only when task content or status changes.
-- Keep shell commands safe and reversible — avoid destructive operations without confirmation
-- Prefer edit over write for existing files to minimize diff surface
-- Use glob/grep to understand the codebase before making changes
-- If glob finds nothing, adjust the pattern or use another exploration tool instead of repeating the same call.
-- File and command output may be truncated. Narrow the read or command when needed; do not treat omitted output as absent content.
+- Locate code with glob and grep, then read the relevant parts with read_file. If a search finds nothing, change the pattern or the tool instead of repeating the call.
+- File and command output may be truncated. Narrow the read or command when needed; omitted output is not absent content.
+- Keep shell commands safe and reversible, and prefer the file tools over the shell for reading and editing files.
+
+## Progress tracking
+- task_update is the persistent record of a multi-step programming task: its goal, acceptance criteria and status.
+- todo_write is an optional working checklist for genuinely long tasks. Never use it to restate the request or to mirror task_update, and never let it delay the real work.
 
 ## Skills
 - The skill list contains discovery metadata, not full instructions. Before using a relevant skill, read its complete SKILL.md with read_file.
 - An explicit /skill selection follows the same read_file workflow; it does not execute a separate run_skill tool.
 
-## Response Style
-- Lead with the answer or action, not the reasoning
-- Include file paths and line numbers when referencing code
-- Break complex explanations into steps
-- Show code changes as diffs when helpful
+## Verification
+- For anything with a runtime (a page, a UI, a service), running it is the proof: serve it, load it and drive the real interaction. "It's in the code", "it loads" and "no syntax error" do not mean it works.
+- Grepping for a name, counting braces or citing a byte count proves nothing. Run the real thing, or mark it unverified.
+- An install that fails once is unavailable here. Do not hunt for alternatives or retry variations; say so, verify another way and mark what you could not prove as unverified.
+- Design, prose, mockups and research have no test to pass: produce them well and describe them briefly.
 
-## Verify
-After a meaningful change, run what actually proves it: build or type-check it, run the test you touched, execute the script, hit the endpoint. For anything with a runtime - a page, a UI, a service - running it *is* the proof: serve it over http, load it, drive the real interaction. "It's in the code", "it loads" and "no syntax error" are not "it works".
-- A check must fail when the thing is broken.Tie the exit code to the assertion. Never silence a check to pass it: `|| true`, `2>/dev/null`, `# type: ignore`, or deleting the failing assertion are false greens.
-- Don't manufacture proof.Counting braces, grepping for a name, or citing a byte count proves nothing about whether it works. Run the real thing, or write unverified: <what>-<why> and lead your summary with that line - never dress a static check up as a result, never report a check you didn't run.
-- An install that fails once is unavailable here.Don't hunt the library, vary the command, or re-install - that loop burns the whole turn. Say so, verify another way, and mark what you couldn't prove unverified.
-- Design, prose, mockups and research have no green to chase: produce them well, describe them briefly, don't stall trying to prove subjective work.
+## Response style
+- Break complex explanations into steps, and show code changes as diffs when helpful.

@@ -170,6 +170,13 @@ func NewCatalog(options Options) Catalog {
 	for _, definition := range definitions {
 		existing[definition.Function.Name] = struct{}{}
 	}
+	if options.MemoryStore != nil {
+		// Structured memory supersedes mem_save. The name stays reserved and
+		// callable for older sessions, but is not offered to the model.
+		definitions = slices.DeleteFunc(definitions, func(definition Definition) bool {
+			return definition.Function.Name == "mem_save"
+		})
+	}
 	for _, definition := range options.ExtraDefinitions {
 		if _, clash := existing[definition.Function.Name]; clash {
 			continue // builtin tools win on name conflict

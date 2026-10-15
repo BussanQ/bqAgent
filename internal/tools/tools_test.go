@@ -147,6 +147,30 @@ func TestNewCatalogExposesMemorySearchWithoutMemGet(t *testing.T) {
 	}
 }
 
+func TestNewCatalogHidesMemSaveWhenStructuredMemoryIsAvailable(t *testing.T) {
+	hasDefinition := func(catalog Catalog, name string) bool {
+		for _, definition := range catalog.Definitions() {
+			if definition.Function.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	structured := NewCatalog(Options{
+		MemoryStore:      appmemory.NewStore(t.TempDir()),
+		ExtraDefinitions: []Definition{{Type: "function", Function: FunctionDefinition{Name: "mem_save"}}},
+	})
+	if hasDefinition(structured, "mem_save") || !hasDefinition(structured, "memory") {
+		t.Fatal("structured memory should replace the mem_save definition")
+	}
+	if _, ok := structured.Registry()["mem_save"]; !ok {
+		t.Fatal("mem_save must stay callable for older sessions")
+	}
+	if legacy := NewCatalog(Options{}); !hasDefinition(legacy, "mem_save") || hasDefinition(legacy, "memory") {
+		t.Fatal("without structured memory mem_save remains the memory tool")
+	}
+}
+
 func TestCatalogInjectsToolOutputLimits(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte("abcdef"), 0o644); err != nil {

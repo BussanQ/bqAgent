@@ -39,7 +39,7 @@ func TestDefaultAgentGuidanceLoadsWithoutToolsDocument(t *testing.T) {
 			for _, guidance := range []string{
 				"The tools exposed in the current request are the source of truth",
 				"Before using a relevant skill, read its complete SKILL.md with read_file.",
-				"mem_save is a write-only fallback",
+				"task_update is the persistent record",
 			} {
 				if !strings.Contains(string(content), guidance) || !strings.Contains(prompt, guidance) {
 					t.Fatalf("AGENT.md guidance missing from initialized file or prompt: %q", guidance)

@@ -30,9 +30,11 @@ type Skill struct {
 
 const memoryTailLines = 50
 
-const sessionMemoryPolicy = `# Session Memory Policy
-
-Memory included after the stable instructions is a snapshot taken when the conversation starts. Do not expect later memory writes or LastUsedAt updates to rewrite that snapshot. Do not prefetch memory at the start of a turn. To refresh recall, call memory with action=search or action=list only when the user asks about prior facts or preferences; an empty result means there is nothing further to load. Default write target is workspace. Use target=global only when the user explicitly asks for global memory.`
+const sessionMemoryPolicy = `# Memory Policy
+- Durable memory is structured entries (user_preference, project_fact, lesson, decision). The memory sections in the session context are a snapshot taken when the conversation started; later writes do not update them.
+- Do not prefetch memory at the start of a turn, and never use it instead of exploring the repository. Call memory with action=search (with a query) or action=list only when the user asks about prior facts or preferences; an empty result means there is nothing to recall, so do not retry with other arguments.
+- Save durable facts, preferences and user corrections with memory action=add or replace. Keep entries to short summaries, never transcripts or secrets.
+- The default write target is workspace. Use target=global only when the user explicitly asks for global memory.`
 
 var nowFunc = time.Now
 
@@ -64,7 +66,7 @@ func (w *Workspace) BuildPromptSections(base string) (PromptSections, error) {
 	}
 	defer root.Close()
 
-	stableParts := []string{normalizePromptPart(base)}
+	stableParts := []string{coreInstructions, normalizePromptPart(base)}
 	memoryParts := make([]string, 0, 2)
 
 	workspaceDocs, err := primary.loadWorkspaceDocuments(root)
@@ -77,7 +79,11 @@ func (w *Workspace) BuildPromptSections(base string) (PromptSections, error) {
 		}
 		stableParts = append(stableParts, workspaceDocs)
 	}
-	stableParts = append(stableParts, w.workspaceSection())
+	repositoryDocs, err := w.loadRepositoryInstructions()
+	if err != nil {
+		return PromptSections{}, err
+	}
+	stableParts = append(stableParts, repositoryDocs, w.environmentSection(), w.workspaceSection())
 
 	if w.hasDistinctLocalConfig() {
 		local := &Workspace{Root: w.Root}
@@ -129,6 +135,9 @@ func (w *Workspace) BuildPromptSections(base string) (PromptSections, error) {
 	if memory != "" {
 		memoryParts = append([]string{"# Memory\n" + memory}, memoryParts...)
 	}
+	// The date changes daily, so it lives in the per-session snapshot instead
+	// of the cacheable stable prefix.
+	memoryParts = append([]string{"# Session\nSession started: " + nowFunc().Format("2006-01-02 (Monday)")}, memoryParts...)
 
 	stable := joinPromptParts(stableParts...)
 	return PromptSections{
@@ -203,25 +212,24 @@ func (w *Workspace) AppendMemory(task, result string) error {
 	return err
 }
 
+// workspaceSection lists only the locations the model may need to act on.
+// Legacy locations are mentioned only when they exist in this workspace.
 func (w *Workspace) workspaceSection() string {
 	lines := []string{
 		"# Workspace",
 		"Root: " + w.Root,
 		"Global agent directory: " + w.AgentDir(),
-		"Primary context: ~/.agent/{AGENT.md, SOUL.md, USER.md}",
-		"Optional workspace context: .agent/{AGENT.md, SOUL.md, USER.md} (merged after global context)",
-		"Legacy compatible context directory: workspace/{AGENT.md, SOUL.md, USER.md}",
-		"Global structured memory: ~/.agent/memory/entries.jsonl (memory target=global)",
-		"Workspace structured memory: .agent/memory/entries.jsonl",
-		"Legacy global long-term memory: ~/.agent/memory/MEMORY.md",
-		"Legacy global daily memory: ~/.agent/memory/YYYY-MM-DD.md (loads today and yesterday)",
-		"Legacy compatible memory directory: workspace/memory/{MEMORY.md, YYYY-MM-DD.md}",
-		"Legacy memory file: agent_memory.md",
-		"Global rules directory: ~/.agent/rules/*.md",
-		"Global skills directory: ~/.agent/skills/*/SKILL.md",
-		"Workspace skills directory: .agent/skills/*/SKILL.md (merged with global skills; same-named workspace skills override global skills)",
-		"Sessions directory: .agent/sessions/",
-		"MCP config: ~/.agent/mcp.json merged with optional workspace .agent/mcp.json",
+		"Context files: ~/.agent/{AGENT.md, SOUL.md, USER.md}, plus optional workspace .agent/ copies loaded after them",
+		"Structured memory: ~/.agent/memory/entries.jsonl (target=global), .agent/memory/entries.jsonl (workspace)",
+		"Rules: ~/.agent/rules/*.md",
+		"Skills: ~/.agent/skills/*/SKILL.md and .agent/skills/*/SKILL.md (workspace wins on name clash)",
+		"MCP config: ~/.agent/mcp.json merged with optional .agent/mcp.json",
+	}
+	if w.hasLegacyContext() {
+		lines = append(lines, "Legacy context directory: workspace/{AGENT.md, SOUL.md, USER.md, memory/}")
+	}
+	if fileExists(w.LegacyMemoryPath()) {
+		lines = append(lines, "Legacy memory file: agent_memory.md")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -245,7 +253,7 @@ func (w *Workspace) loadWorkspaceDocuments(root *os.Root) (string, error) {
 		if len(content) == 0 {
 			continue
 		}
-		text := strings.TrimSpace(string(content))
+		text := cleanContextDocument(string(content))
 		if text == "" {
 			continue
 		}

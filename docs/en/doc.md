@@ -402,7 +402,17 @@ project/
 
 ### Files and directories
 
-Tool usage guidance lives in `AGENT.md`; tool parameters come from the definitions sent with each request. Legacy `TOOLS.md` files are no longer generated or loaded. Move any custom guidance into `AGENT.md` in the same directory before deleting the old file. Initialization does not overwrite an existing `AGENT.md`.
+Tool usage guidance lives in `AGENT.md`; tool parameters come from the definitions sent with each request. Legacy `TOOLS.md` files are no longer generated or loaded. Move any custom guidance into `AGENT.md` in the same directory before deleting the old file. Initialization never overwrites a customized `AGENT.md` or `SOUL.md`; files that are byte-identical to a previously shipped default (never edited) are upgraded to the current default automatically.
+
+The system prompt is assembled in this order. Everything listed here is stable across a session and can be cached by the provider:
+
+1. Built-in core instructions: priorities (user request > repository rules > global defaults), effort matching, change scope and git safety, verification and final-answer rules, prompt-injection guidance
+2. Global `~/.agent/` `AGENT.md`, `SOUL.md`, `USER.md` (HTML comments are stripped; templates with only headings are skipped)
+3. `AGENTS.md` at the workspace root (falling back to `CLAUDE.md`), truncated at 32 KiB; its project rules override the global defaults
+4. Environment: OS/architecture, the shell used by `execute_bash`, and whether the workspace is a git repository
+5. Workspace path index (legacy `workspace/` and `agent_memory.md` are listed only when present), workspace `.agent/` context, rules, memory policy, and the skills index
+
+The session start date and the memory snapshot live in the per-session context, so they do not change the cacheable prefix. With structured memory enabled the model sees only the `memory` tool; `mem_save` is no longer advertised but remains callable for older sessions.
 
 - `.agent/AGENT.md`, `SOUL.md`, `USER.md`
   - OpenClaw-style context files

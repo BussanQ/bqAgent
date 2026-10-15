@@ -11,10 +11,12 @@ import (
 	"bqagent/internal/turn"
 )
 
-const taskProgressInstructions = `For a multi-step programming task, use task_update to persist the original goal, acceptance criteria and remaining implementation/verification work before editing. Update it when real progress changes, then immediately continue substantive work. Ordinary questions and small one-step edits do not need a task.
-Match effort to the request. For a simple factual question, answer briefly and directly from available evidence; inspect only what is necessary to resolve uncertainty. Once the answer is supported, stop: do not perform an exhaustive inventory, append an unsolicited code review, or invent follow-up work. Multiple inspection calls do not turn a question into a programming task. Reserve deeper investigation and extended reasoning for complex analysis or multi-step work, with verification proportional to the user's request and repository constraints.
-An active task remains the objective when the user says continue or asks for status. Answer status briefly and keep working unless the user explicitly asks to stop or wait. A new unrelated question may be answered without continuing the old task: call task_scope with relation=side_question and a reason; this detaches only this turn and preserves the saved task unchanged. Never use side_question to abandon unfinished work requested in the current turn. Replace the goal only when the user explicitly changes or cancels the objective; use replace_goal with a reason.
-Before a final answer, check every criterion against tool evidence and record the actual targeted verification results. Do not claim completion with remaining work or failed/unavailable verification. If genuinely blocked or awaiting a user decision, persist that status and the concrete reason. Preserve existing criteria; never remove requirements merely to finish. Do not invent checks, broaden test scope, or run tests prohibited by repository instructions.`
+// taskProgressInstructions holds only task-tracking rules. The general rules on
+// effort, verification and final answers live in the cacheable workspace core
+// instructions, so this per-turn developer message stays short.
+const taskProgressInstructions = `Task tracking: for a multi-step programming task, call task_update before editing to persist the original goal, acceptance criteria and remaining implementation/verification work. Update it when real progress changes, then keep working. Questions and small one-step edits need no task.
+An active task stays the objective when the user says continue or asks for status: answer status briefly and keep working unless told to stop or wait. For a new unrelated question, call task_scope with relation=side_question and a reason; it detaches only this turn and leaves the saved task unchanged. Never use side_question to drop work requested in the current turn. Replace the goal only when the user changes or cancels it, using replace_goal with a reason.
+Mark a task completed only when every criterion has tool evidence, nothing remains and the targeted verification passed; otherwise record blocked or awaiting_input with the concrete reason. Never remove criteria just to finish.`
 
 func (a *Agent) installTaskTool() {
 	if a.taskStore == nil {
