@@ -112,12 +112,11 @@ func TestToolGroupCollapsesAfterFiveAndMouseExpands(t *testing.T) {
 	if model.tools.expanded {
 		t.Fatal("Ctrl+T should no longer toggle tool details")
 	}
-	viewLines := strings.Count(collapsed, "\n") + 1
-	headerY := max(0, model.height-viewLines)
+	headerY := max(0, model.height-len(model.liveLines()))
 	updated, _ := model.Update(tea.MouseClickMsg{X: 1, Y: headerY, Button: tea.MouseLeft})
 	model = updated.(Model)
 	expanded := model.View().Content
-	if !model.tools.expanded || !strings.Contains(expanded, "file-1.go") || !strings.Contains(expanded, "收起详情") {
+	if !model.tools.expanded || !strings.Contains(expanded, "file-1.go") || !strings.Contains(expanded, "点击工具查看详情") {
 		t.Fatalf("expanded tool group = %q", expanded)
 	}
 	model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Streamed: true}})

@@ -108,10 +108,34 @@ func (model Model) toolViewportHeight() int {
 	return height
 }
 
-// The inline renderer cannot erase rows that have escaped into native
-// scrollback. Bound every live frame in physical rows, retaining the uncommitted
-// reply suffix so the conclusion remains visible after completion.
-func (model Model) liveView() tea.View {
+// Keep recent committed rows in the frame. Only rows displaced by live content
+// enter native scrollback, so filling the terminal does not hide short turns.
+func (model *Model) flushTranscript() string {
+	width := model.contentWidth()
+	for _, text := range model.printQueue {
+		model.transcript = append(model.transcript, strings.Split(ansi.Hardwrap(text, width, false), "\n")...)
+	}
+	model.printQueue = nil
+	if len(model.transcript) == 0 || model.toolInspector {
+		return ""
+	}
+	// Rewrap retained rows when the terminal narrows; already printed rows are
+	// owned by the terminal and must never be emitted again.
+	rows := strings.Split(ansi.Hardwrap(strings.Join(model.transcript, "\n"), width, false), "\n")
+	capacity := max(0, model.frameLimit()-len(model.liveLines()))
+	cut := max(0, len(rows)-capacity)
+	model.transcript = append([]string(nil), rows[cut:]...)
+	if cut == 0 {
+		return ""
+	}
+	text := strings.Join(rows[:cut], "\n")
+	if text == "" {
+		return " "
+	}
+	return text
+}
+
+func (model Model) liveLines() []string {
 	width := model.contentWidth()
 	toolHeight, streamHeight, auxiliaryHeight := model.liveBudgets()
 	tools := model.tools.viewport(model.styles, width, toolHeight)
@@ -127,15 +151,26 @@ func (model Model) liveView() tea.View {
 	}
 	auxiliary := model.auxiliaryLines()
 	lines = append(lines, auxiliary[:auxiliaryHeight]...)
-	inputY := len(lines) + 1
-	footer := model.footerLines()
-	lines = append(lines, footer...)
+	lines = append(lines, model.footerLines()...)
 	limit := model.frameLimit()
 	if len(lines) > limit {
-		inputY -= len(lines) - limit
 		lines = lines[len(lines)-limit:]
 	}
-	// Use the current content height so collapsed tools occupy only the summary row.
+	return lines
+}
+
+// A constant physical height lets the renderer scroll changed rows without
+// resizing and erasing its buffer on every token or tool collapse. Leave one
+// terminal row for native history insertion.
+func (model Model) liveView() tea.View {
+	width := model.contentWidth()
+	body := model.liveLines()
+	padding := model.frameLimit() - len(body)
+	lines := make([]string, padding, model.frameLimit())
+	retained := model.transcript[max(0, len(model.transcript)-padding):]
+	copy(lines, retained)
+	lines = append(lines, body...)
+	inputY := len(lines) - len(model.footerLines()) + 1
 	view := tea.NewView(strings.Join(lines, "\n"))
 	view.Cursor = model.input.area.Cursor()
 	if view.Cursor != nil {

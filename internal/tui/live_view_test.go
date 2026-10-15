@@ -56,8 +56,8 @@ func TestToolDrawerToggleRestoresSingleRowAndSingleHistory(t *testing.T) {
 		if i == 0 {
 			expandedRows = rows
 		}
-		if i%2 == 0 && (rows != expandedRows || rows <= strings.Count(collapsed, "\n")+1) {
-			t.Fatalf("expanded drawer has unexpected height: %d", rows)
+		if i%2 == 0 && (rows != expandedRows || rows != strings.Count(collapsed, "\n")+1 || !strings.Contains(content, "file-001.go")) {
+			t.Fatalf("expanded drawer changed frame height or hid tool rows: %d", rows)
 		}
 		if i%2 == 1 && content != collapsed {
 			t.Fatalf("collapse did not restore compact frame: %q", content)
@@ -98,7 +98,7 @@ func TestToolDrawerCollapseRestoresCompactLayout(t *testing.T) {
 				model := toolDrawerModel(t, 80)
 				model.stream = stream
 				before := model.View()
-				if got, want := strings.Count(before.Content, "\n")+1, 1+len(model.streamLines(model.contentWidth()))+len(model.footerLines()); got != want {
+				if got, want := len(model.liveLines()), 1+len(model.streamLines(model.contentWidth()))+len(model.footerLines()); got != want {
 					t.Fatalf("collapsed tool area must occupy one row: got %d rows, want %d", got, want)
 				}
 				updated, _ := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
@@ -108,8 +108,7 @@ func TestToolDrawerCollapseRestoresCompactLayout(t *testing.T) {
 				case "escape":
 					collapse = tea.KeyPressMsg{Code: tea.KeyEscape}
 				case "mouse":
-					rows := strings.Count(model.View().Content, "\n") + 1
-					collapse = tea.MouseClickMsg{X: 1, Y: model.height - rows, Button: tea.MouseLeft}
+					collapse = tea.MouseClickMsg{X: 1, Y: model.height - len(model.liveLines()), Button: tea.MouseLeft}
 				}
 				updated, _ = model.Update(collapse)
 				model = updated.(Model)
@@ -134,7 +133,7 @@ func TestToolDrawerAutoCollapseRestoresSingleRow(t *testing.T) {
 		updated, _ := model.Update(turnEvent{sequence: 1, kind: "tool", tool: ToolEvent{Kind: "tool_start", ID: fmt.Sprint(i), Name: "read_file"}})
 		model = updated.(Model)
 	}
-	lines := strings.Split(model.View().Content, "\n")
+	lines := model.liveLines()
 	if len(lines) != 1+len(model.footerLines()) || !strings.Contains(lines[0], "工具活动") {
 		t.Fatalf("automatic collapse left blank rows: %q", model.View().Content)
 	}

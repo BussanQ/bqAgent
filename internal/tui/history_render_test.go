@@ -145,6 +145,9 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 				screen := historyScreen{y: 100, top: 100, height: base.height, rows: make(map[int]map[int]string)}
 				draw := func() {
 					view := model.View()
+					if view.AltScreen {
+						return // The inspector uses a separate screen, preserving the main buffer.
+					}
 					content := uv.NewStyledString(view.Content)
 					if content.Height() != probe.buffer.Height() {
 						probe.renderer.Erase()
@@ -176,7 +179,13 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 					v := reflect.ValueOf(message)
 					commands := reflect.TypeOf([]tea.Cmd{})
 					if v.IsValid() && v.Type().ConvertibleTo(commands) {
-						for _, child := range v.Convert(commands).Interface().([]tea.Cmd) {
+						children := v.Convert(commands).Interface().([]tea.Cmd)
+						if len(children) == 3 {
+							if _, history := children[1]().(historyPrintedMsg); history {
+								children = children[:2] // The final command resumes backend I/O.
+							}
+						}
+						for _, child := range children {
 							dispatch(child)
 						}
 						return
@@ -219,8 +228,8 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 				update := func(message tea.Msg) {
 					var cmd tea.Cmd
 					model, cmd = model.Update(message)
-					if event, ok := message.(turnEvent); ok && event.kind == "token" {
-						// Token handling schedules a blocking backend read; rendering alone is under test.
+					if event, ok := message.(turnEvent); ok && event.kind == "token" && model.(inlineModel).model.(Model).historyPrints == 0 {
+						// Without transcript overflow, this command only waits for backend I/O.
 						draw()
 						return
 					}
@@ -258,7 +267,7 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 					}
 					update(turnEvent{sequence: uint64(i), kind: "done", result: TurnResult{Reply: answer}})
 					if strings.HasPrefix(test.name, "long") && (!strings.Contains(screen.text(), fmt.Sprintf("answer-%d", i)) || strings.Count(screen.text(), "last paragraph") != i || strings.Count(screen.text(), "long paragraph") != 60*i) {
-						t.Fatalf("long reply not fully visible immediately after completion: %s", strings.TrimSpace(screen.text()))
+						t.Fatalf("long reply incomplete after turn %d: answer=%t last=%d paragraphs=%d", i, strings.Contains(screen.text(), fmt.Sprintf("answer-%d", i)), strings.Count(screen.text(), "last paragraph"), strings.Count(screen.text(), "long paragraph"))
 					}
 					if test.tools > 0 {
 						text := screen.text()
@@ -342,7 +351,7 @@ func TestLongReplyHistoryFinishesBeforeNextQuestion(t *testing.T) {
 	updated, next = model.Update(historyPrintedMsg{})
 	model = updated.(Model)
 	collect(next)
-	text := strings.Join(printed, "\n")
+	text := strings.Join(printed, "\n") + "\n" + model.View().Content
 	if strings.Count(text, "answer paragraph") != 60 || strings.Count(text, "next question") != 1 || strings.Index(text, "answer end") > strings.Index(text, "next question") {
 		t.Fatal("history lost, duplicated or reordered the answer and next question")
 	}

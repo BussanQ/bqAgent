@@ -129,8 +129,8 @@ func TestInlineToolDrawerRepaintsWithoutAccumulatingRows(t *testing.T) {
 				if model.View().Content != actual.View().Content || len(actual.tools.items) != 80 || len(actual.printQueue) != 0 {
 					t.Fatal("repaint lost the latest view or changed tool history")
 				}
-				if i%2 == 1 && strings.Count(model.View().Content, "\n")+1 != 1+len(actual.footerLines()) {
-					t.Fatal("collapsed drawer retained blank rows")
+				if strings.Count(model.View().Content, "\n")+1 != actual.frameLimit() {
+					t.Fatal("tool toggle changed the fixed frame height")
 				}
 			}
 		})
@@ -141,24 +141,18 @@ func TestInlineRepaintKeepsLatestState(t *testing.T) {
 	base := toolDrawerModel(t, 80)
 	base.tools.expanded = true
 	var model tea.Model = newInlineModel(base)
-	expanded := model.View().Content
+	cursor := model.View().Cursor.Position
 	model, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if command == nil || model.View().Content != expanded || model.View().Cursor.Y != 0 {
-		t.Fatal("shrink must retain the old frame at its origin until repaint")
+	if command != nil || model.(inlineModel).pending || model.View().Cursor.Position != cursor {
+		t.Fatal("collapse must update in place without clearing or moving the input")
 	}
-	// Input and another toggle can arrive before the queued repaint message.
-	// They must update the model without publishing a shorter frame too soon.
 	model, _ = model.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	model, _ = model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
-	if model.View().Content != expanded || model.View().Cursor.Y != 0 {
-		t.Fatal("intervening event moved the pending frame cursor")
-	}
-	model, _ = model.Update(inlineRepaintMsg{})
 	actual := model.(inlineModel).model.(Model)
 	if actual.input.value() != "x" || !actual.tools.expanded || model.View().Content != actual.View().Content {
-		t.Fatal("repaint restored stale state over intervening input")
+		t.Fatal("tool toggle lost intervening input or rendered stale state")
 	}
 	if model.View().Cursor == nil || model.View().Cursor.Position != actual.View().Cursor.Position {
-		t.Fatal("repaint failed to restore the input cursor")
+		t.Fatal("tool toggle failed to preserve the input cursor")
 	}
 }

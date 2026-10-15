@@ -312,13 +312,10 @@ func TestFinalReplySurvivesInlineCompletionRepaint(t *testing.T) {
 	var model tea.Model = newInlineModel(base)
 	probe := newInlineRendererProbe(base.width)
 	probe.draw(t, model.View())
-	model, _ = model.Update(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: "最终结论：10 次 ls 均已成功。", Streamed: true}})
-	probe.draw(t, model.View())
-	probe.renderer.MoveTo(0, 0)
-	probe.renderer.Erase()
-	model, _ = model.Update(tea.ClearScreen())
-	probe.draw(t, model.View())
-	model, _ = model.Update(inlineRepaintMsg{})
+	model, command := model.Update(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: "最终结论：10 次 ls 均已成功。", Streamed: true}})
+	if command != nil || model.(inlineModel).pending {
+		t.Fatal("short completion must repaint in place without clearing the screen")
+	}
 	probe.draw(t, model.View())
 	if !strings.Contains(ansi.Strip(probe.lastOutput), "最终结论：10 次 ls 均已成功。") {
 		t.Fatalf("renderer did not paint the final answer: %q", probe.lastOutput)

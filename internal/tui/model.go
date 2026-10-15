@@ -103,6 +103,7 @@ type Model struct {
 	initialTask   string
 	initialSent   bool
 	printQueue    []string
+	transcript    []string
 	historyPrints int
 	historyQueue  []historyPrint
 	statusNotice  string
@@ -273,11 +274,10 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.normalizeToolInspection()
 	}
 	model.flushOverflowReply()
-	if len(model.printQueue) > 0 {
+	if text := model.flushTranscript(); text != "" {
 		model.historyQueue = append(model.historyQueue, historyPrint{
-			text: strings.Join(model.printQueue, "\n"), after: tea.Batch(commands...),
+			text: text, after: tea.Batch(commands...),
 		})
-		model.printQueue = nil
 		commands = nil
 	}
 	if model.historyPrints == 0 && len(model.historyQueue) > 0 {
@@ -339,6 +339,7 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		return model.requestQuit()
 	case "ctrl+l":
 		disableMouse := model.discardToolGroup()
+		model.transcript = nil
 		model.reply = ""
 		model.replyRendered = false
 		model.input.reset()
@@ -446,7 +447,7 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 		return nil
 	}
 	viewLines := strings.Split(model.View().Content, "\n")
-	headerY := max(0, model.height-len(viewLines))
+	headerY := max(0, model.height-len(viewLines)) + max(0, model.frameLimit()-len(model.liveLines()))
 	if model.tools.committed {
 		toolHeight, _, auxiliaryHeight := model.liveBudgets()
 		panelRows := len(model.tools.viewport(model.styles, model.contentWidth(), toolHeight))
@@ -454,7 +455,7 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 		if headerRow < 0 {
 			return nil
 		}
-		headerY += headerRow
+		headerY = max(0, model.height-len(viewLines)) + headerRow
 	}
 	if model.tools.expanded && model.tools.detail == 0 && event.X >= 0 && event.X < model.contentWidth() {
 		row := event.Y - headerY - 1
@@ -895,6 +896,7 @@ func (model *Model) clearSession() {
 	model.input.reset()
 	model.closePanel()
 	model.printQueue = nil
+	model.transcript = nil
 	model.statusNotice = "已清理显示；下一条消息将创建新会话"
 }
 
