@@ -140,13 +140,37 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 				base := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: !test.streamed})
 				base.width, base.height = 72, 24
 				base.resizeInput()
-				var model tea.Model = newInlineModel(base)
+				sink := &terminalWrites{}
+				output := newFrameOutput(sink)
+				wrapper := newInlineModel(base)
+				wrapper.output = output
+				var model tea.Model = wrapper
 				probe := newInlineRendererProbe(base.width)
 				screen := historyScreen{y: 100, top: 100, height: base.height, rows: make(map[int]map[int]string)}
+				write := func(text string) {
+					if _, err := output.Write([]byte(text)); err != nil {
+						t.Fatal(err)
+					}
+					for _, emitted := range sink.writes {
+						screen.write(emitted)
+					}
+					sink.writes = nil
+				}
+				lastTitle := ""
 				draw := func() {
 					view := model.View()
+					if view.WindowTitle != lastTitle {
+						probe.renderer.WriteString(ansi.SetWindowTitle(view.WindowTitle))
+						lastTitle = view.WindowTitle
+					}
 					if view.AltScreen {
-						return // The inspector uses a separate screen, preserving the main buffer.
+						// Only forward the frame fence; inspector contents belong to a separate screen.
+						if err := probe.renderer.Flush(); err != nil {
+							t.Fatal(err)
+						}
+						write(probe.output.String())
+						probe.output.Reset()
+						return
 					}
 					content := uv.NewStyledString(view.Content)
 					if content.Height() != probe.buffer.Height() {
@@ -163,7 +187,7 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 					if err := probe.renderer.Flush(); err != nil {
 						t.Fatal(err)
 					}
-					screen.write(probe.output.String())
+					write(probe.output.String())
 					probe.output.Reset()
 				}
 				draw()
@@ -212,7 +236,7 @@ func TestInlineHistoryKeepsQuestionsAcrossTurns(t *testing.T) {
 						for _, line := range lines {
 							output.WriteString(line + ansi.EraseLineRight + "\r\n")
 						}
-						screen.write(output.String())
+						write(output.String())
 						probe.renderer.SetPosition(0, 0)
 					} else if reflect.TypeOf(message) == reflect.TypeOf(tea.ClearScreen()) {
 						probe.renderer.MoveTo(0, 0)

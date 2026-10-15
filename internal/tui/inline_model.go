@@ -10,9 +10,12 @@ import (
 // current renderer resizes its buffer before clearing it, which otherwise
 // clamps the old cursor row and leaves the top of the old frame in scrollback.
 type inlineModel struct {
-	model   tea.Model
-	view    tea.View
-	pending bool
+	model         tea.Model
+	view          tea.View
+	pending       bool
+	output        *frameOutput
+	title         string
+	awaitingFrame bool
 }
 
 type inlineRepaintMsg struct{}
@@ -23,9 +26,34 @@ func newInlineModel(model tea.Model) inlineModel {
 
 func (model inlineModel) Init() tea.Cmd { return model.model.Init() }
 
-func (model inlineModel) View() tea.View { return model.view }
+func (model inlineModel) View() tea.View {
+	view := model.view
+	if model.title != "" {
+		view.WindowTitle = model.title
+	}
+	return view
+}
 
 func (model inlineModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if model.output != nil {
+		before, _ := model.model.(Model)
+		next, command := model.update(message)
+		model = next.(inlineModel)
+		after, _ := model.model.(Model)
+		if after.historyPrints > 0 && before.historyPrints == 0 {
+			model.output.begin()
+			model.awaitingFrame = true
+		}
+		if model.awaitingFrame && after.historyPrints == 0 && !model.pending {
+			model.title = model.output.arm()
+			model.awaitingFrame = false
+		}
+		return model, command
+	}
+	return model.update(message)
+}
+
+func (model inlineModel) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := message.(inlineRepaintMsg); ok {
 		model.pending = false
 		model.view = model.model.View()

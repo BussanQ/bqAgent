@@ -25,12 +25,19 @@ func Run(backend Backend, config Config) error {
 		config.Context = context.Background()
 	}
 	config.NoColor = config.NoColor || strings.TrimSpace(os.Getenv("NO_COLOR")) != ""
+	output := newFrameOutput(config.Output)
+	model := newInlineModel(NewModel(backend, config))
+	model.output = output
 	program := tea.NewProgram(
-		newInlineModel(NewModel(backend, config)),
+		model,
 		tea.WithContext(config.Context),
 		tea.WithInput(config.Input),
-		tea.WithOutput(config.Output),
+		tea.WithOutput(output.writer()),
 	)
 	_, err := program.Run()
-	return err
+	flushErr := output.finish()
+	if err != nil {
+		return err
+	}
+	return flushErr
 }
