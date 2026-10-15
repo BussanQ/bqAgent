@@ -208,6 +208,51 @@ func TestStartupContentStaysAtTopThroughFirstResponse(t *testing.T) {
 	}
 }
 
+func TestShortReplyCompletionKeepsTranscriptAtTop(t *testing.T) {
+	for _, reply := range []string{"", "short response"} {
+		t.Run(fmt.Sprintf("explicit_reply_%t", reply != ""), func(t *testing.T) {
+			model := toolDrawerModel(t, 0)
+			model.height = 60
+			model.resizeInput()
+			updated, _ := model.Update(startupMsg{})
+			model = updated.(Model)
+			model.input.setValue("first question")
+			updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			model = updated.(Model)
+			defer model.active.cancel()
+			updated, _ = model.Update(turnEvent{sequence: model.sequence, kind: "token", text: "short response"})
+			model = updated.(Model)
+			transcript := append([]string(nil), model.transcript...)
+			before := model.View()
+			updated, _ = model.Update(turnEvent{sequence: model.sequence, kind: "done", result: TurnResult{Reply: reply}})
+			model = updated.(Model)
+			if model.active != nil || model.reply == "" {
+				t.Fatal("expected a completed short reply")
+			}
+			for _, message := range []tea.Msg{nil, tea.KeyPressMsg{Code: 'x', Text: "x"}, tea.WindowSizeMsg{Width: 100, Height: 70}} {
+				updated, _ = model.Update(message)
+				model = updated.(Model)
+				view := model.View()
+				rows := strings.Split(view.Content, "\n")
+				for i, row := range transcript {
+					if rows[i] != row {
+						t.Fatalf("completion moved retained row %d: got %q, want %q", i, rows[i], row)
+					}
+				}
+				if !strings.Contains(view.Content, "short response") || len(rows) != model.frameLimit() {
+					t.Fatal("completion lost reply or changed frame height")
+				}
+				if view.Cursor == nil || view.Cursor.Y != len(rows)-len(model.footerLines())+1+model.input.area.Cursor().Y {
+					t.Fatal("input should stay anchored at the bottom")
+				}
+				if message == nil && (before.Cursor == nil || before.Cursor.Y != view.Cursor.Y) {
+					t.Fatal("completion moved the input cursor")
+				}
+			}
+		})
+	}
+}
+
 func TestChatWithToolsKeepsActivityAtTop(t *testing.T) {
 	for _, count := range []int{1, 6} {
 		for _, expanded := range []bool{false, true} {
@@ -281,7 +326,7 @@ func TestTranscriptPaddingKeepsToolSummaryClickable(t *testing.T) {
 	t.Fatal("tool summary missing from frame")
 }
 
-func TestChatWithoutToolsKeepsTranscriptAdjacentToLiveContent(t *testing.T) {
+func TestChatWithoutToolsKeepsTranscriptAtTop(t *testing.T) {
 	for _, state := range []string{"idle", "streaming", "completed"} {
 		t.Run(state, func(t *testing.T) {
 			model := toolDrawerModel(t, 0)
@@ -300,13 +345,12 @@ func TestChatWithoutToolsKeepsTranscriptAdjacentToLiveContent(t *testing.T) {
 			}
 			rows := strings.Split(model.View().Content, "\n")
 			body := model.liveLines()
-			start := len(rows) - len(body) - 2
-			if start < 0 || rows[start] != "recent-question" || rows[start+1] != "recent-answer" {
-				t.Fatalf("retained transcript should immediately precede live content:\n%s", model.View().Content)
+			if rows[0] != "recent-question" || rows[1] != "recent-answer" {
+				t.Fatalf("retained transcript should stay at the top:\n%s", model.View().Content)
 			}
-			for _, row := range rows[:start] {
+			for _, row := range rows[2 : len(rows)-len(body)] {
 				if strings.TrimSpace(row) != "" {
-					t.Fatalf("unused frame rows should be above the transcript: %q", row)
+					t.Fatalf("unused frame rows should be below the transcript: %q", row)
 				}
 			}
 			if len(rows) != model.frameLimit() {
