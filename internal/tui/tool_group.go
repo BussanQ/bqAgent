@@ -19,6 +19,7 @@ type toolGroup struct {
 	items     []toolDisplay
 	committed bool // History owns the record; the live drawer is only a detail inspector.
 	expanded  bool
+	offset    int
 	cache     *toolViewCache
 }
 
@@ -98,7 +99,13 @@ func (group toolGroup) viewport(styles theme, width, height int) []string {
 		return nil
 	}
 	lines := group.viewLines(styles, width)
-	return lines[:min(len(lines), height)]
+	if !group.expanded || len(lines) <= 1 || height == 1 {
+		return lines[:min(len(lines), height)]
+	}
+	bodyHeight := height - 1
+	offset := min(max(0, group.offset), max(0, len(lines)-1-bodyHeight))
+	visible := []string{lines[0]}
+	return append(visible, lines[1+offset:min(len(lines), 1+offset+bodyHeight)]...)
 }
 
 func (group toolGroup) find(event ToolEvent) int {

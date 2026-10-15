@@ -108,24 +108,6 @@ func (model Model) toolViewportHeight() int {
 	return height
 }
 
-// Completed replies may already live partly in native scrollback. Inspect on
-// the alternate screen so opening details never splits or relocates that reply.
-func (model Model) toolInspectorView() tea.View {
-	width := model.contentWidth()
-	lines := []string{model.styles.accent.Render(ansi.Truncate("本轮工具详情 · Ctrl+O / Esc 返回", width, "…"))}
-	if model.quitConfirmationActive() {
-		lines = append(lines, model.styles.dim.Render(ansi.Truncate(quitConfirmHint, width, "…")))
-	}
-	group := model.tools
-	group.expanded = true
-	lines = append(lines, group.viewport(model.styles, width, max(0, model.frameLimit()-len(lines)))...)
-	view := tea.NewView(strings.Join(lines, "\n"))
-	view.AltScreen = true
-	view.ReportFocus = true
-	view.MouseMode = tea.MouseModeCellMotion
-	return view
-}
-
 // The inline renderer cannot erase rows that have escaped into native
 // scrollback. Bound every live frame in physical rows, retaining the uncommitted
 // reply suffix so the conclusion remains visible after completion.

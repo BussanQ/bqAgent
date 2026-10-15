@@ -19,7 +19,7 @@ bqAgent  Harness
 openai/gpt-5 · Run · 20260827   Enter 发送 · Alt+Enter 换行 · / 命令
 ```
 
-流式文本会先显示在底部活动区域，块结束后再用 Glamour 渲染 Markdown 并写入 scrollback。状态栏动态显示 Provider、模型、当前模式、当前阶段、耗时，以及 `in / out` token 数；完成后保留计数并显示首 token 延迟及 TPS。工具调用按 Tool ID 合并开始/完成事件，显示序号、关键参数、状态和耗时；前 5 次逐项展示，从第 6 次开始自动合并为成功/失败/运行中汇总，点击汇总行或按 `Ctrl+O` 可展开/收起详情。失败预览限制为 2 KiB/8 行，`todo_write` 会显示任务进度。 工具详情限制在当前终端可显示的行数内，不显示分页行号，也不接管 `PgUp` / `PgDn`。收起后恢复紧凑布局，展开/收起不会重复写入历史。短回答的工具组在下一轮或退出时提交；长回答首次写入历史前，先提交工具记录，确保始终按“提问 → 工具 → 回答”的顺序展示，每组只提交一次。流式生成时活动区显示最新部分；最终回答在正文第一行前加 `●` 符号，不额外显示“结论”文字或占用一行，与前文进度和工具记录区分；该标识在长回答分段和历史输出中只出现一次。回答整体使用统一的两列前缀区域，后续正文、自动换行和段落与首行文字对齐，保留列表层级与代码内部缩进。回答不再分页，能完整放下的短回答直接显示，长回答结束后将超出屏幕的前部写入终端历史，并在当前屏幕保留结论末尾，使用终端原生滚动即可查看全文，无需等待下一轮。窗口缩小时也只将放不下的前部移入历史，结论末尾继续显示；后续刷新、工具展开/收起或下一轮不会重复输出回答。回合完成后，`Ctrl+O` 在独立的备用屏幕中查看本轮工具详情，按 `Ctrl+O`、`Esc` 或点击顶部标题返回。无论回答长短，查看详情都不改变结论与工具记录的顺序，不挪动或重复写入原对话；查看期间输入框草稿保持不变。工具详情与流式文本复用渲染缓存，空闲时停止 spinner 动画。
+流式文本会先显示在底部活动区域，块结束后再用 Glamour 渲染 Markdown 并写入 scrollback。状态栏动态显示 Provider、模型、当前模式、当前阶段、耗时，以及 `in / out` token 数；完成后保留计数并显示首 token 延迟及 TPS。工具调用按 Tool ID 合并开始/完成事件，显示序号、关键参数、状态和耗时；前 5 次逐项展示，从第 6 次开始自动合并为成功/失败/运行中汇总，点击汇总行或按 `Ctrl+O` 可展开/收起详情。失败预览最多显示 3 个物理行，`todo_write` 会显示任务进度。运行中的内联工具区限制在当前终端可显示的行数内，展开后可用鼠标滚轮查看后续内容，汇总标题始终保留；不接管输入框的方向键或 `PgUp` / `PgDn`。收起后恢复紧凑布局，展开/收起不会重复写入历史。短回答的工具组在下一轮或退出时提交；长回答首次写入历史前，先提交工具记录，确保始终按“提问 → 工具 → 回答”的顺序展示，每组只提交一次。流式生成时活动区显示最新部分；最终回答在正文第一行前加 `●` 符号，不额外显示“结论”文字或占用一行，与前文进度和工具记录区分；该标识在长回答分段和历史输出中只出现一次。回答整体使用统一的两列前缀区域，后续正文、自动换行和段落与首行文字对齐，保留列表层级与代码内部缩进。回答不再分页，能完整放下的短回答直接显示，长回答结束后将超出屏幕的前部写入终端历史，并在当前屏幕保留结论末尾，使用终端原生滚动即可查看全文，无需等待下一轮。窗口缩小时也只将放不下的前部移入历史，结论末尾继续显示；后续刷新、工具展开/收起或下一轮不会重复输出回答。回合完成后，`Ctrl+O` 在独立的备用屏幕中打开本轮工具列表，每个工具显示一行摘要，即使工具没有输出也可查看参数。若历史仍在打印，会等待打印完成再打开；等待期间继续输入、粘贴或按 `Esc` 会取消待打开操作，输入框保持可用。使用 `↑` / `↓` 选择后按 `Enter`，或直接点击工具行，打开该工具的独立详情。列表随选择滚动，单项详情展示已收到的全部参数和输出，支持方向键、鼠标滚轮、`PgUp` / `PgDn` 滚动及 `Home` / `End` 跳到首尾；工具事件本身已截断的输出会明确提示，无法恢复上游未提供的内容。在详情页按 `Esc` 或点击顶部标题返回列表，再次返回则恢复对话；`Ctrl+O` 始终直接返回对话。无论回答长短，查看详情都不改变结论与工具记录的顺序，不挪动或重复写入原对话；查看期间输入框草稿保持不变。工具详情与流式文本复用渲染缓存，空闲时停止 spinner 动画。
 
 `in / out` 参考 [pi-tps](https://github.com/monotykamary/pi-tps) 按当前用户轮次累计，包括工具调用前后的模型请求。`in` 是各次请求的完整输入之和（包含缓存读取、写入，不等于当前上下文占用）；`out` 使用供应商返回的输出总量，包含其 usage 计入的推理 token。数字保留整数精度，例如 `in 12,345 · out 678`，下一轮发送时重新计数。
 
@@ -40,7 +40,9 @@ OpenAI Chat、OpenAI Responses、Anthropic 三条接口都在收到流式 usage 
 | `Ctrl+V` | 从系统剪贴板粘贴到输入框 |
 | `Ctrl+Q` | 安全退出；有活动轮次时先取消并等待结束 |
 | `Ctrl+L` | 清理当前视口与草稿，不改变 Session |
-| `Ctrl+O` | 展开或收起超过 5 次的工具调用组；回合完成后，在独立屏幕查看详情并返回原对话 |
+| `Ctrl+O` | 展开或收起工具调用组；回合完成后打开工具列表，查看期间直接返回对话 |
+| 工具列表内 `↑` / `↓`、`Enter` | 选择工具并打开详情，也可直接点击工具行 |
+| 工具详情内方向键、滚轮、`PgUp` / `PgDn` | 滚动单个工具内容；`Home` / `End` 跳到首尾，`Esc` 返回列表 |
 
 达到 5 行或 200 字符的粘贴内容会折叠为原子 Chip；发送和历史召回时仍使用完整原文。自然完成后会自动发送排队内容，取消后则把它恢复到输入框。普通排队消息可按换行合并，Slash 命令不会与其他内容跨边界合并。
 
@@ -81,7 +83,7 @@ stdin/stdout 不是 TTY，或 `TERM=dumb` 时，会自动使用原有逐行模�
 
 ## Inline terminal TUI (English summary)
 
-On a real TTY, no-argument startup and `--chat` use an inline, always-streaming Bubble Tea UI on the main screen. Completed-turn tool inspection temporarily uses the alternate screen and restores the conversation on close. Mouse tracking is enabled only for a clickable collapsed tool group and disabled when the group is committed or cleared. `/provider` opens a sequential Provider setup wizard with encrypted API-key storage and either automatic model discovery or comma-separated custom models; the first custom model becomes the default. Redirected input/output and `TERM=dumb` fall back to the legacy line mode. See the tables above for shortcuts, commands, queue behavior, persisted workspace history, resume limits, `NO_COLOR`, and the CodeHamr design acknowledgment.
+On a real TTY, no-argument startup and `--chat` use an inline, always-streaming Bubble Tea UI on the main screen. Completed-turn tool inspection temporarily uses the alternate screen: select a tool with the arrow keys and Enter, or click its row, to inspect its received arguments and output. Tool details support wheel/arrow scrolling, Page Up/Down, and Home/End. Esc returns to the list, and Ctrl+O restores the conversation. Upstream truncation remains explicitly marked. Mouse tracking is enabled only for a clickable collapsed tool group and disabled when the group is committed or cleared. `/provider` opens a sequential Provider setup wizard with encrypted API-key storage and either automatic model discovery or comma-separated custom models; the first custom model becomes the default. Redirected input/output and `TERM=dumb` fall back to the legacy line mode. See the tables above for shortcuts, commands, queue behavior, persisted workspace history, resume limits, `NO_COLOR`, and the CodeHamr design acknowledgment.
 
 The status bar shows full-precision `in / out` totals for the current user turn, including tool-call rounds. Input includes cached tokens; output includes reasoning counted by the provider. All three native API adapters publish usage immediately when received. Until then, estimates update with streamed text, reasoning, and tool arguments and remain marked `~`. Missing usage stays estimated; explicit zero is authoritative. Counts persist after completion and reset on the next turn. No extra token-count API requests are made.
 

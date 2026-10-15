@@ -240,7 +240,7 @@ func TestLongReplyToolHistoryPrecedesAnswerAndRemainsInspectable(t *testing.T) {
 					} else if i == 1 {
 						lines := strings.Split(model.View().Content, "\n")
 						y := 0
-						for !strings.Contains(lines[y], "本轮工具详情") {
+						for !strings.Contains(lines[y], "本轮工具列表") {
 							y++
 						}
 						updated, command = model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: y})
@@ -248,7 +248,7 @@ func TestLongReplyToolHistoryPrecedesAnswerAndRemainsInspectable(t *testing.T) {
 						updated, command = model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 					}
 					model = updated.(Model)
-					if command != nil || model.toolInspector || model.View().AltScreen || model.tools.expanded || model.toolMouse || strings.Contains(model.View().Content, "本轮工具详情") {
+					if command != nil || model.toolInspector || model.View().AltScreen || model.tools.expanded || model.toolMouse || strings.Contains(model.View().Content, "本轮工具列表") {
 						t.Fatal("closing the inspector retained tool rows or printed history")
 					}
 					assertLiveFrameFits(t, model)
