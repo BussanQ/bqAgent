@@ -165,7 +165,14 @@ func (model Model) toolDetailLines() []string {
 	if cache != nil && cache.lines != nil && cache.group == model.tools.cache && cache.selected == state.selected && cache.width == width {
 		return cache.lines
 	}
-	item := model.tools.items[state.selected]
+	rendered := model.tools.items[state.selected].detailLines(width)
+	if cache != nil {
+		cache.group, cache.selected, cache.width, cache.lines = model.tools.cache, state.selected, width, rendered
+	}
+	return rendered
+}
+
+func (item toolDisplay) detailLines(width int) []string {
 	event := item.start
 	status := "运行中"
 	if item.hasResult {
@@ -210,11 +217,7 @@ func (model Model) toolDetailLines() []string {
 		}
 	}
 	lines = append(lines, output)
-	rendered := strings.Split(ansi.Hardwrap(plainToolOutput(strings.Join(lines, "\n")), width, true), "\n")
-	if cache != nil {
-		cache.group, cache.selected, cache.width, cache.lines = model.tools.cache, state.selected, width, rendered
-	}
-	return rendered
+	return strings.Split(ansi.Hardwrap(plainToolOutput(strings.Join(lines, "\n")), width, true), "\n")
 }
 
 // Completed replies may already live partly in native scrollback. Inspect on

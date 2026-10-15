@@ -19,6 +19,7 @@ type toolGroup struct {
 	items     []toolDisplay
 	committed bool // History owns the record; the live drawer is only a detail inspector.
 	expanded  bool
+	detail    int // One-based tool index; zero shows the summary list.
 	offset    int
 	cache     *toolViewCache
 }
@@ -42,6 +43,7 @@ func (group toolGroup) canExpand() bool {
 type toolViewCache struct {
 	width    int
 	expanded bool
+	detail   int
 	lines    []string
 }
 
@@ -79,7 +81,7 @@ func (group toolGroup) viewLines(styles theme, width int) []string {
 		return nil
 	}
 	cache := group.cache
-	if cache != nil && cache.lines != nil && cache.width == width && cache.expanded == group.expanded {
+	if cache != nil && cache.lines != nil && cache.width == width && cache.expanded == group.expanded && cache.detail == group.detail {
 		return cache.lines
 	}
 	rendered := strings.Split(group.render(styles, true, width), "\n")
@@ -89,7 +91,7 @@ func (group toolGroup) viewLines(styles theme, width int) []string {
 		lines = append(lines, strings.Split(ansi.Hardwrap(strings.Join(rendered[1:], "\n"), width, false), "\n")...)
 	}
 	if cache != nil {
-		cache.width, cache.expanded, cache.lines = width, group.expanded, lines
+		cache.width, cache.expanded, cache.detail, cache.lines = width, group.expanded, group.detail, lines
 	}
 	return lines
 }
@@ -146,7 +148,7 @@ func (group toolGroup) render(styles theme, interactive bool, width int) string 
 		hint := "详情已合并"
 		if group.expanded {
 			marker = "▼"
-			hint = "收起详情"
+			hint = "点击工具查看详情 · Ctrl+O 收起"
 		} else if interactive {
 			hint = "点击或 Ctrl+O 展开"
 		}
@@ -155,16 +157,24 @@ func (group toolGroup) render(styles theme, interactive bool, width int) string 
 		header = "◆ " + header
 		if interactive && group.canExpand() {
 			if group.expanded {
-				header += " · 点击或 Ctrl+O 收起详情"
+				header += " · 点击工具查看详情 · Ctrl+O 收起"
 			} else {
 				header += " · 点击或 Ctrl+O 展开详情"
 			}
 		}
 	}
+	if interactive && group.expanded && group.detail > 0 && group.detail <= len(group.items) {
+		lines := []string{styles.accent.Render("工具详情 · 点击标题返回列表 · 滚轮滚动 · Ctrl+O 收起")}
+		return strings.Join(append(lines, group.items[group.detail-1].detailLines(width)...), "\n")
+	}
 	lines := []string{styles.accent.Render(header)}
 	if !collapsible || group.expanded {
 		for _, item := range group.items {
-			lines = append(lines, indentToolItem(item.render(styles, max(1, width-2), interactive && group.expanded)))
+			if interactive && group.expanded {
+				lines = append(lines, indentToolItem(item.inspectorSummary(styles, max(1, width-2))))
+			} else {
+				lines = append(lines, indentToolItem(item.render(styles, max(1, width-2), false)))
+			}
 		}
 	}
 	return strings.Join(lines, "\n")

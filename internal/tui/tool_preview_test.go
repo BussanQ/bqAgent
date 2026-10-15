@@ -113,8 +113,11 @@ func TestSingleToolPreviewToggleRetainsOriginalOutput(t *testing.T) {
 			t.Fatal("toggling a preview must not print duplicate history")
 		}
 		expanded := i%2 == 0
-		if model.tools.expanded != expanded || strings.Contains(model.View().Content, "完整错误尾部") != expanded {
-			t.Fatalf("single tool preview toggle did not change the visible output: %q", model.View().Content)
+		if model.tools.expanded != expanded || strings.Contains(model.View().Content, "完整错误尾部") {
+			t.Fatalf("first toggle must show only the tool list: %q", model.View().Content)
+		}
+		if expanded && strings.Contains(model.View().Content, "错误首行") {
+			t.Fatal("expanded list must not include tool output")
 		}
 		if !expanded && model.View().Content != compact {
 			t.Fatal("collapse did not restore the original compact preview")

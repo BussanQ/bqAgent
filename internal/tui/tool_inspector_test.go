@@ -277,6 +277,25 @@ func TestPendingToolInspectorDoesNotCaptureInvisibleInput(t *testing.T) {
 	}
 }
 
+func TestFirstToolExpansionOnlyShowsSummaryRows(t *testing.T) {
+	for _, running := range []bool{false, true} {
+		model := toolDrawerModel(t, 6)
+		if running {
+			model.active = &activeTurn{sequence: 1, cancel: func() {}}
+		}
+		model.tools.add(ToolEvent{Kind: "tool_result", ID: "call-1", Name: "read_file", Status: "failed", Preview: strings.Repeat("failure-output\n", 100)})
+		model.tools.add(ToolEvent{Kind: "tool_start", ID: "call-2", Seq: 2, Name: "todo_write", Arguments: map[string]any{"todos": `[{"content":"task","status":"pending"}]`}})
+		model.tools.add(ToolEvent{Kind: "tool_result", ID: "call-2", Name: "todo_write", Status: "succeeded", Preview: "todo-output"})
+		updated, _ := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+		model = updated.(Model)
+		lines := model.tools.viewLines(model.styles, model.contentWidth())
+		if len(lines) != 7 || strings.Contains(strings.Join(lines, "\n"), "failure-output") || strings.Contains(strings.Join(lines, "\n"), "todo-output") {
+			t.Fatalf("running=%t: first expansion contains tool bodies: %q", running, lines)
+		}
+		assertLiveFrameFits(t, model)
+	}
+}
+
 func TestRunningToolDrawerWheelReachesOutputTail(t *testing.T) {
 	model := toolDrawerModel(t, 6)
 	model.active = &activeTurn{sequence: 1, cancel: func() {}}
@@ -284,12 +303,22 @@ func TestRunningToolDrawerWheelReachesOutputTail(t *testing.T) {
 	model.input.setValue("draft")
 	updated, _ := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 	model = updated.(Model)
+	list := model.View().Content
+	if strings.Contains(list, "body") || strings.Contains(list, "output-tail") || len(model.tools.viewLines(model.styles, model.contentWidth())) != 7 {
+		t.Fatal("first Ctrl+O must show exactly one summary row per tool")
+	}
+	headerY := model.height - len(strings.Split(list, "\n"))
+	updated, _ = model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: headerY + 6})
+	model = updated.(Model)
+	if model.tools.detail != 6 {
+		t.Fatal("click did not open the selected tool")
+	}
 	start := model.View().Content
 	for i := 0; i < 30; i++ {
 		updated, _ = model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 		model = updated.(Model)
 	}
-	if !strings.Contains(model.View().Content, "output-tail") || !strings.Contains(model.View().Content, "工具活动") {
+	if !strings.Contains(model.View().Content, "output-tail") || !strings.Contains(model.View().Content, "工具详情") {
 		t.Fatal("running tool drawer cannot scroll to output tail or lost its header")
 	}
 	for i := 0; i < 30; i++ {
@@ -298,6 +327,43 @@ func TestRunningToolDrawerWheelReachesOutputTail(t *testing.T) {
 	}
 	if model.View().Content != start || model.input.value() != "draft" || model.View().AltScreen {
 		t.Fatal("running drawer scrolling changed draft or failed to restore start")
+	}
+	headerY = model.height - len(strings.Split(model.View().Content, "\n"))
+	updated, _ = model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: headerY})
+	model = updated.(Model)
+	if model.tools.detail != 0 || model.View().Content != list {
+		t.Fatal("detail header did not restore the one-row list")
+	}
+}
+
+func TestRunningToolListClickAfterScrollAndCompletion(t *testing.T) {
+	model := toolDrawerModel(t, 80)
+	model.sequence = 1
+	model.active = &activeTurn{sequence: 1, cancel: func() {}}
+	model.toggleToolGroup()
+	for i := 0; i < 30; i++ {
+		updated, _ := model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		model = updated.(Model)
+	}
+	rows := strings.Split(model.View().Content, "\n")
+	headerY := model.height - len(rows)
+	lastRow := len(model.tools.viewport(model.styles, model.contentWidth(), model.toolViewportHeight())) - 1
+	updated, _ := model.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: headerY + lastRow})
+	model = updated.(Model)
+	if model.tools.detail != 80 || !strings.Contains(model.View().Content, "#80 read_file") {
+		t.Fatal("scrolled list click opened the wrong tool")
+	}
+	model.handleTurnEvent(turnEvent{sequence: 1, kind: "tool", tool: ToolEvent{Kind: "tool_result", ID: "call-80", Name: "read_file", Status: "succeeded", Preview: "updated-result"}})
+	if !strings.Contains(model.View().Content, "updated-result") {
+		t.Fatal("selected tool detail did not refresh after its result")
+	}
+	model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: "answer"}})
+	if !strings.Contains(model.View().Content, "answer") || strings.Contains(model.View().Content, "updated-result") {
+		t.Fatal("completion did not restore the conversation")
+	}
+	model.toggleToolGroup()
+	if !model.View().AltScreen || model.inspection.detail || strings.Contains(model.View().Content, "updated-result") {
+		t.Fatal("reopening completed tools must start with the summary list")
 	}
 }
 

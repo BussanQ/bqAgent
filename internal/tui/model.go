@@ -456,7 +456,23 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 		}
 		headerY += headerRow
 	}
+	if model.tools.expanded && model.tools.detail == 0 && event.X >= 0 && event.X < model.contentWidth() {
+		row := event.Y - headerY - 1
+		bodyHeight := max(0, model.toolViewportHeight()-1)
+		offset := min(model.tools.offset, max(0, len(model.tools.items)-bodyHeight))
+		index := offset + row
+		if row >= 0 && row < bodyHeight && index < len(model.tools.items) {
+			model.tools.detail = index + 1
+			model.tools.offset = 0
+			return nil
+		}
+	}
 	if event.Y != headerY && !(model.height == 0 && event.Y == 0) {
+		return nil
+	}
+	if model.tools.expanded && model.tools.detail > 0 {
+		model.tools.detail = 0
+		model.tools.offset = 0
 		return nil
 	}
 	model.toggleToolGroup()
@@ -476,6 +492,7 @@ func (model *Model) toggleToolGroup() {
 	}
 	if model.tools.canExpand() {
 		model.tools.expanded = !model.tools.expanded
+		model.tools.detail = 0
 		model.tools.offset = 0
 		if model.tools.committed {
 			model.toolMouse = model.tools.expanded
