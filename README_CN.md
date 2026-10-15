@@ -19,7 +19,7 @@ bqagent 是一个为真实本地工作流而生的 Agent Runtime：既保留小�
 |  | 核心特性 | 让它与众不同的地方 |
 | :---: | --- | --- |
 | 🧭 | **多 Agent 调度** | 原生编排 Claude、Codex、Cursor 与 OpenCode：既能通过 @ 精确路由，也能由 bqagent 协调成员并汇总结论；还可在隔离 Git worktree 中并行执行子任务，以日志和补丁安全交付结果。 |
-| 🛠️ | **强大的 Agent Harness** | 将规划、工具调用、渐进式 Skill、规则、MCP、网页搜索、取消控制、重试降级与 RunTrace 串成统一执行循环，让模型从“能回答”进化到“能把事情做完”。 |
+| 🛠️ | **强大的 Agent Harness** | 将工具调用、渐进式 Skill、规则、MCP、网页搜索、取消控制、重试降级与 RunTrace 串成统一执行循环，让模型从“能回答”进化到“能把事情做完”。 |
 | 🖥️ | **TUI + WebUI 双轨体验** | 终端侧提供始终流式的内联 TUI、原生 scrollback、命令面板与任务队列；浏览器侧提供 SSE 流式对话、Markdown、附件、工作区文件树、模型切换和一键停止。 |
 | 🦞 | **龙虾级灵魂与记忆** | 继承 OpenClaw 风格的 `AGENT.md`、`SOUL.md`、`USER.md`、Rules 与 Skills；结构化 Memory 支持版本、来源、置信度、替代关系、敏感确认和中文检索。 |
 | 📦 | **单一二进制，极简部署** | Go 后端与完整 WebUI 通过 `go:embed` 打进同一个可执行文件；运行时不需要 Node.js、Vite、CDN 或外置静态资源，复制一个 `bqagent` 即可启动。 |

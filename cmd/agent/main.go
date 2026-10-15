@@ -28,7 +28,6 @@ type cliOptions struct {
 	doctor        bool
 	doctorActive  bool
 	doctorJSON    bool
-	plan          bool
 	background    bool
 	chat          bool
 	server        bool
@@ -140,7 +139,7 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 	}
 
 	task := strings.Join(taskArgs, " ")
-	if strings.TrimSpace(task) == "" && !options.plan && !options.background && !options.chat && !options.server && !options.serverRun && effectiveSessionID(options) == "" {
+	if strings.TrimSpace(task) == "" && !options.background && !options.chat && !options.server && !options.serverRun && effectiveSessionID(options) == "" {
 		task = "Hello"
 	}
 
@@ -207,7 +206,6 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.BoolVar(&options.doctor, "doctor", false, "inspect local readiness without starting a conversation")
 	fs.BoolVar(&options.doctorActive, "doctor-active", false, "perform bounded storage, ACP and MCP probes (requires --doctor)")
 	fs.BoolVar(&options.doctorJSON, "doctor-json", false, "print diagnostic JSON (requires --doctor)")
-	fs.BoolVar(&options.plan, "plan", false, "break the task into steps before execution")
 	fs.BoolVar(&options.background, "background", false, "run the task in the background")
 	fs.BoolVar(&daemon, "d", false, "run the HTTP server in the background")
 	fs.BoolVar(&options.chat, "chat", false, "interactive multi-turn conversation mode")
@@ -233,7 +231,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if (options.doctorActive || options.doctorJSON) && !options.doctor {
 		return cliOptions{}, nil, fmt.Errorf("--doctor-active and --doctor-json require --doctor")
 	}
-	if options.doctor && (daemon || options.plan || options.background || options.chat || options.server || options.stream || options.ilinkLogin || options.ilinkStatus || options.sessionRun || options.serverRun || options.resumeID != "" || options.sessionID != "" || options.subagentRun != "" || options.subagentLease != "" || len(fs.Args()) > 0) {
+	if options.doctor && (daemon || options.background || options.chat || options.server || options.stream || options.ilinkLogin || options.ilinkStatus || options.sessionRun || options.serverRun || options.resumeID != "" || options.sessionID != "" || options.subagentRun != "" || options.subagentLease != "" || len(fs.Args()) > 0) {
 		return cliOptions{}, nil, fmt.Errorf("--doctor cannot be combined with task execution flags")
 	}
 	if daemon {
@@ -267,7 +265,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if options.ilinkLogin && options.ilinkStatus {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-login cannot be combined with --ilink-status")
 	}
-	if (options.ilinkLogin || options.ilinkStatus) && (options.plan || options.background || options.chat || options.server || options.stream || options.sessionRun || options.serverRun || effectiveSessionID(options) != "") {
+	if (options.ilinkLogin || options.ilinkStatus) && (options.background || options.chat || options.server || options.stream || options.sessionRun || options.serverRun || effectiveSessionID(options) != "") {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-login and --ilink-status cannot be combined with execution or server flags")
 	}
 	if options.ilinkLogin && len(fs.Args()) > 0 {
@@ -279,7 +277,7 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if options.subagentLease != "" && options.subagentRun == "" {
 		return cliOptions{}, nil, fmt.Errorf("--subagent-lease requires --subagent-run")
 	}
-	if options.subagentRun != "" && (options.plan || options.background || options.chat || options.server || options.stream || options.sessionRun || options.serverRun || effectiveSessionID(options) != "" || len(fs.Args()) > 0) {
+	if options.subagentRun != "" && (options.background || options.chat || options.server || options.stream || options.sessionRun || options.serverRun || effectiveSessionID(options) != "" || len(fs.Args()) > 0) {
 		return cliOptions{}, nil, fmt.Errorf("--subagent-run cannot be combined with other execution flags or a task")
 	}
 	if options.ilinkStatus && len(fs.Args()) > 0 {
@@ -320,7 +318,7 @@ func runInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace.Works
 		err          error
 	)
 	if sessionID == "" {
-		savedSession, err = store.Create(session.CreateOptions{Task: task, Planned: options.plan, Background: true})
+		savedSession, err = store.Create(session.CreateOptions{Task: task, Background: true})
 	} else {
 		savedSession, err = store.Open(sessionID)
 	}
@@ -339,9 +337,6 @@ func runInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace.Works
 	}
 
 	childArgs := []string{"--session-run", "--session-id", savedSession.ID()}
-	if options.plan {
-		childArgs = append(childArgs, "--plan")
-	}
 	childArgs = append(childArgs, taskArgs...)
 
 	if err := deps.startBackground(executable, childArgs, ws.Root, savedSession.OutputPath()); err != nil {
@@ -362,10 +357,6 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	herdrReporter.Report("working", effectiveSessionID(options))
 	if effectiveSessionID(options) != "" && strings.TrimSpace(task) == "" {
 		fmt.Fprintln(stderr, "resume requires a follow-up task")
-		return 1
-	}
-	if options.plan && strings.TrimSpace(task) == "" {
-		fmt.Fprintln(stderr, "plan mode requires a task")
 		return 1
 	}
 
@@ -389,7 +380,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	{
 		var createOptions *session.CreateOptions
 		if sessionID == "" {
-			createOptions = &session.CreateOptions{Task: task, Planned: options.plan, Background: options.sessionRun}
+			createOptions = &session.CreateOptions{Task: task, Background: options.sessionRun}
 		}
 		sessionOptions := session.Options{TranscriptMode: llmConfig.SessionTranscriptMode, OutputMaxBytes: llmConfig.SessionOutputMaxBytes, AgentDir: ws.AgentDir()}
 		conversation, err = appruntime.PrepareConversationWithPrompt(session.NewStore(ws.Root, sessionOptions), sessionID, createOptions, stablePrompt, func() (string, error) {
@@ -432,7 +423,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		Getenv:          getenv,
 		MCPConfigPaths:  ws.MCPConfigPaths(),
 		LogWriter:       stderr,
-	}.Build(true)
+	}.Build()
 	var runRecorder *apptrace.Recorder
 	if runtime.RunTraceEnabled {
 		var traceErr error
@@ -445,24 +436,16 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		_ = conversation.Session.SetLastRunID(runRecorder.RunID())
 		ctx = apptrace.WithRunID(ctx, runRecorder.RunID())
 	}
-	app := agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{EnableNativeWebSearch: true, Prompt: conversation.Prompt, APIType: runtime.APIType, LogWriter: outputWriter, ProgressWriter: stdout, ToolDefinitions: runtime.Catalog.Definitions(), Functions: runtime.Catalog.Registry(), Planner: runtime.Planner, Recorder: conversation.Recorder(), WorkspaceRoot: runtime.WorkspaceRoot, Context: runtime.Context, Trace: runRecorder})
+	app := agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{EnableNativeWebSearch: true, Prompt: conversation.Prompt, APIType: runtime.APIType, LogWriter: outputWriter, ProgressWriter: stdout, ToolDefinitions: runtime.Catalog.Definitions(), Functions: runtime.Catalog.Registry(), Recorder: conversation.Recorder(), WorkspaceRoot: runtime.WorkspaceRoot, Context: runtime.Context, Trace: runRecorder})
 
-	if strings.TrimSpace(task) != "" && !options.plan {
+	if strings.TrimSpace(task) != "" {
 		if err := conversation.AddUserMessage(task); err != nil {
 			fmt.Fprintln(errorWriter, err)
 			return 1
 		}
 	}
 
-	var (
-		result          string
-		updatedMessages []map[string]any
-	)
-	if options.plan {
-		result, updatedMessages, err = app.RunPlannedConversationTurn(ctx, conversation.Messages, task, runtime.MaxIterations)
-	} else {
-		result, updatedMessages, err = app.RunConversationTurn(ctx, conversation.Messages, runtime.MaxIterations)
-	}
+	result, updatedMessages, err := app.RunConversationTurn(ctx, conversation.Messages, runtime.MaxIterations)
 	if len(updatedMessages) > 0 {
 		conversation.Messages = agent.BoundWorkingMessages(updatedMessages, runtime.Context)
 		if saveErr := conversation.SaveWorkingContext(); saveErr != nil {
@@ -512,7 +495,7 @@ func runChatLegacy(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 	herdrReporter := newHerdrReporter(getenv, options)
 	defer herdrReporter.Close()
 	herdrReporter.Report("idle", sessionID)
-	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, nil)
+	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, nil)
 	defer func() { cancel(); _ = externalBroker.Close() }()
 
 	executeTurn := func(input string) error {

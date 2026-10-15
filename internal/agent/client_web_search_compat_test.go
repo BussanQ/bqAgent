@@ -117,7 +117,7 @@ func TestNativeWebSearchResponsesUnsupportedParameterCompatibility(t *testing.T)
 			if live.Calls != 1 || live.InputTokens != 20 || live.OutputTokens != 10 || collector.metricsFor("").CacheMetrics.Calls != 1 {
 				t.Fatalf("rejected requests inflated successful search usage: %+v", live)
 			}
-			if !searchDefinitionPresent(app.toolDefinitionsForRun(false)) {
+			if !searchDefinitionPresent(app.toolDefinitionsForRun()) {
 				t.Fatal("optional parameter rejection disabled the search tool")
 			}
 			if _, err := client.NativeWebSearch(callerCtx, "codex/gpt-6-astra", "another query"); err != nil || calls != len(rejected)+2 {

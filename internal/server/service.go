@@ -46,7 +46,6 @@ type ServiceOptions struct {
 	SystemPrompt              string
 	SystemPromptBuilder       func() (string, error)
 	PromptSectionsBuilder     func() (workspace.PromptSections, error)
-	Planner                   *agent.Planner
 	ToolDefinitions           []tools.Definition
 	Functions                 map[string]tools.Function
 	DefaultMaxTurns           int
@@ -76,8 +75,6 @@ type Service struct {
 	systemPrompt              string
 	systemPromptBuilder       func() (string, error)
 	promptSectionsBuilder     func() (workspace.PromptSections, error)
-	planner                   *agent.Planner
-	plannerEnabled            bool
 	providerID                string
 	toolDefinitions           []tools.Definition
 	functions                 map[string]tools.Function
@@ -267,8 +264,6 @@ func NewService(options ServiceOptions) *Service {
 		systemPrompt:              options.SystemPrompt,
 		systemPromptBuilder:       options.SystemPromptBuilder,
 		promptSectionsBuilder:     options.PromptSectionsBuilder,
-		planner:                   options.Planner,
-		plannerEnabled:            options.Planner != nil,
 		toolDefinitions:           append(append([]tools.Definition{}, options.ToolDefinitions...), subagentToolDefinitions(options.Subagents != nil)...),
 		functions:                 cloneFunctions(options.Functions),
 		maxTurns:                  maxTurns,
@@ -303,9 +298,6 @@ func (service *Service) ConfigureLLM(providerID string, apiType agent.APIType, a
 	service.model = agent.EffectiveModel(model)
 	service.models = parseConfiguredModels(models)
 	service.modelDisplayNames = maps.Clone(names)
-	if service.plannerEnabled {
-		service.planner = agent.NewPlanner(service.client, service.model)
-	}
 }
 
 func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (TurnResponse, error) {
@@ -514,7 +506,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if conversationType == ConversationTypeGroup && len(groupConfig.Participants) == 0 {
 		groupConfig = newGroupConfig(service.GroupParticipants())
 	}
-	createOptions := &session.CreateOptions{Task: effectiveText, Planned: service.planner != nil, Chat: true, ConversationType: persistedConversationType(conversationType)}
+	createOptions := &session.CreateOptions{Task: effectiveText, Chat: true, ConversationType: persistedConversationType(conversationType)}
 	stablePrompt, initialSessionContext, err := service.currentPromptSnapshot(effectiveModel)
 	if err != nil {
 		return TurnResponse{}, err
@@ -910,10 +902,6 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			functions[groupConsultTool] = groupCoordinator.function()
 		}
 	}
-	var planner *agent.Planner
-	if mode == ChatModeRun && service.planner != nil {
-		planner = agent.NewPlanner(service.client, effectiveModel)
-	}
 	var taskStore taskstate.Store
 	if mode == ChatModeRun {
 		taskStore = conversation.Session
@@ -927,7 +915,6 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		LogWriter:       logWriter,
 		ToolDefinitions: toolDefinitions,
 		Functions:       functions,
-		Planner:         planner,
 		Recorder:        conversation.Recorder(),
 		Stream:          options.Stream,
 		WorkspaceRoot:   service.workspaceRoot,

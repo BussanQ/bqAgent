@@ -58,7 +58,7 @@ func TestNativeWebSearchMagpieMessagesDelegatesWithoutSearchKeys(t *testing.T) {
 				// provider search, which can use another provider for that model.
 				client.searchUnsupported.Store(model, time.Now().Add(time.Hour))
 				app := NewWithOptions(client, model, Options{})
-				if !searchDefinitionPresent(app.toolDefinitionsForRun(false)) {
+				if !searchDefinitionPresent(app.toolDefinitionsForRun()) {
 					t.Fatal("Magpie search missing without search API keys")
 				}
 				var live LiveTokenUsage

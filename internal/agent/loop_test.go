@@ -677,7 +677,7 @@ func TestLoopGuardChangedEmptySearchGetsAnotherAttempt(t *testing.T) {
 
 func TestHasSpecialToolCallsTreatsTodoAsStateMutation(t *testing.T) {
 	app := &Agent{}
-	if !app.hasSpecialToolCalls([]ToolCall{{Function: FunctionCall{Name: "todo_write"}}}, false) {
+	if !app.hasSpecialToolCalls([]ToolCall{{Function: FunctionCall{Name: "todo_write"}}}) {
 		t.Fatal("todo_write should run sequentially because it mutates shared todo state")
 	}
 }
@@ -688,7 +688,7 @@ func TestToolDefinitionsForRunPlacesOptionalTodoLast(t *testing.T) {
 		{Type: "function", Function: tools.FunctionDefinition{Name: "read_file"}},
 		{Type: "function", Function: tools.FunctionDefinition{Name: "grep"}},
 	}}
-	definitions := app.toolDefinitionsForRun(false)
+	definitions := app.toolDefinitionsForRun()
 	if len(definitions) != 3 {
 		t.Fatalf("definitions = %d, want 3", len(definitions))
 	}
@@ -776,7 +776,7 @@ func TestRunReturnsUnknownToolErrorToLoop(t *testing.T) {
 	if !strings.Contains(logs.String(), "[Tool] name=missing_tool") || !strings.Contains(logs.String(), "status=error") {
 		t.Fatalf("logs did not include tool timing: %q", logs.String())
 	}
-	if !strings.Contains(logs.String(), "[Turn] iterations=2 allow_plan=false") {
+	if !strings.Contains(logs.String(), "[Turn] iterations=2") {
 		t.Fatalf("logs did not include turn timing: %q", logs.String())
 	}
 }
@@ -860,7 +860,7 @@ func TestRunReturnsMalformedArgumentsAsToolError(t *testing.T) {
 	if strings.Contains(logs.String(), "[Tool] name=read_file") {
 		t.Fatalf("logs = %q, did not want tool timing for invalid JSON", logs.String())
 	}
-	if !strings.Contains(logs.String(), "[Turn] iterations=2 allow_plan=false") {
+	if !strings.Contains(logs.String(), "[Turn] iterations=2") {
 		t.Fatalf("logs did not include turn timing: %q", logs.String())
 	}
 }
@@ -877,7 +877,7 @@ func TestRunReturnsAssistantContentWithoutToolCalls(t *testing.T) {
 	if result != "done" {
 		t.Fatalf("Run returned %q, want %q", result, "done")
 	}
-	if !strings.Contains(logs.String(), "[Turn] iterations=1 allow_plan=false") {
+	if !strings.Contains(logs.String(), "[Turn] iterations=1") {
 		t.Fatalf("logs did not include turn timing: %q", logs.String())
 	}
 }
@@ -979,7 +979,7 @@ func TestRunReturnsMaxIterationsReached(t *testing.T) {
 	if !strings.Contains(result, "Agent stopped") || !strings.Contains(result, "1 iterations") {
 		t.Fatalf("Run returned %q, want max iterations message with count", result)
 	}
-	if !strings.Contains(logs.String(), "[Turn] iterations=1 allow_plan=false") {
+	if !strings.Contains(logs.String(), "[Turn] iterations=1") {
 		t.Fatalf("logs did not include turn timing: %q", logs.String())
 	}
 }
@@ -1124,7 +1124,7 @@ func TestRunConversationTurnReturnsUpdatedMessages(t *testing.T) {
 	if len(messages) != 2 {
 		t.Fatalf("original messages mutated: len = %d, want 2", len(messages))
 	}
-	if !strings.Contains(logs.String(), "[Turn] iterations=1 allow_plan=false") {
+	if !strings.Contains(logs.String(), "[Turn] iterations=1") {
 		t.Fatalf("logs did not include turn timing: %q", logs.String())
 	}
 }
@@ -1761,7 +1761,7 @@ func TestRunReturnsToolExecutionErrorToLoop(t *testing.T) {
 	if !strings.Contains(logs.String(), "[Tool] name=read_file") || !strings.Contains(logs.String(), "status=error") {
 		t.Fatalf("logs did not include tool timing: %q", logs.String())
 	}
-	if !strings.Contains(logs.String(), "[Turn] iterations=2 allow_plan=false") {
+	if !strings.Contains(logs.String(), "[Turn] iterations=2") {
 		t.Fatalf("logs did not include turn timing: %q", logs.String())
 	}
 }
@@ -1777,147 +1777,6 @@ func (r *failingRecorder) RecordMessage(_ map[string]any) error {
 		return errors.New("disk write failed")
 	}
 	return nil
-}
-
-func TestPlanToolMissingTaskReturnsToolMessage(t *testing.T) {
-	// Response 1: model calls plan tool with empty args (no "task" key)
-	// Response 2: model recovers after seeing the tool error
-	client := &stubClient{
-		responses: []AssistantMessage{
-			{
-				ToolCalls: []ToolCall{{
-					ID:       "plan-1",
-					Function: FunctionCall{Name: "plan", Arguments: `{}`},
-				}},
-			},
-			{Content: "recovered"},
-		},
-	}
-
-	catalog := tools.NewCatalog(tools.Options{IncludePlan: true})
-	app := NewWithOptions(client, "", Options{
-		Planner:         NewPlanner(client, ""),
-		ToolDefinitions: catalog.Definitions(),
-		Functions:       catalog.Registry(),
-	})
-
-	result, err := app.RunConversation(context.Background(), []map[string]any{
-		{"role": "system", "content": "sys"},
-		{"role": "user", "content": "do something"},
-	}, 5)
-	if err != nil {
-		t.Fatalf("RunConversation returned error: %v", err)
-	}
-	if result != "recovered" {
-		t.Fatalf("result = %q, want %q", result, "recovered")
-	}
-	// Client should see 2 requests: initial + retry after tool error
-	if len(client.messages) != 2 {
-		t.Fatalf("client saw %d requests, want 2", len(client.messages))
-	}
-	toolMessages := extractToolMessages(client.messages[1])
-	if len(toolMessages) != 1 {
-		t.Fatalf("tool messages = %d, want 1", len(toolMessages))
-	}
-	content, _ := toolMessages[0]["content"].(string)
-	if !strings.Contains(content, "Error:") || !strings.Contains(content, "task") {
-		t.Fatalf("tool content = %q, want error about missing task", content)
-	}
-}
-
-func TestPlanToolPlannerFailureReturnsToolMessage(t *testing.T) {
-	// Response 1: model calls plan tool
-	// Response 2: planner.Generate call returns invalid JSON → parse error
-	// Response 3: model recovers
-	client := &stubClient{
-		responses: []AssistantMessage{
-			{
-				ToolCalls: []ToolCall{{
-					ID:       "plan-1",
-					Function: FunctionCall{Name: "plan", Arguments: `{"task":"do stuff"}`},
-				}},
-			},
-			{Content: "not valid json"},
-			{Content: "recovered"},
-		},
-	}
-
-	catalog := tools.NewCatalog(tools.Options{IncludePlan: true})
-	app := NewWithOptions(client, "", Options{
-		Planner:         NewPlanner(client, ""),
-		ToolDefinitions: catalog.Definitions(),
-		Functions:       catalog.Registry(),
-	})
-
-	result, err := app.RunConversation(context.Background(), []map[string]any{
-		{"role": "system", "content": "sys"},
-		{"role": "user", "content": "start"},
-	}, 5)
-	if err != nil {
-		t.Fatalf("RunConversation returned error: %v", err)
-	}
-	if result != "recovered" {
-		t.Fatalf("result = %q, want %q", result, "recovered")
-	}
-	// Request 1: initial, Request 2: planner Generate, Request 3: retry after error
-	if len(client.messages) != 3 {
-		t.Fatalf("client saw %d requests, want 3", len(client.messages))
-	}
-	toolMessages := extractToolMessages(client.messages[2])
-	if len(toolMessages) != 1 {
-		t.Fatalf("tool messages = %d, want 1", len(toolMessages))
-	}
-	content, _ := toolMessages[0]["content"].(string)
-	if !strings.Contains(content, "Error:") || !strings.Contains(content, "plan generation failed") {
-		t.Fatalf("tool content = %q, want plan generation error", content)
-	}
-}
-
-func TestPlanToolNoStepsReturnsToolMessage(t *testing.T) {
-	// Response 1: model calls plan tool
-	// Response 2: planner returns empty steps
-	// Response 3: model recovers
-	client := &stubClient{
-		responses: []AssistantMessage{
-			{
-				ToolCalls: []ToolCall{{
-					ID:       "plan-1",
-					Function: FunctionCall{Name: "plan", Arguments: `{"task":"do stuff"}`},
-				}},
-			},
-			{Content: `{"steps":[]}`},
-			{Content: "recovered"},
-		},
-	}
-
-	catalog := tools.NewCatalog(tools.Options{IncludePlan: true})
-	app := NewWithOptions(client, "", Options{
-		Planner:         NewPlanner(client, ""),
-		ToolDefinitions: catalog.Definitions(),
-		Functions:       catalog.Registry(),
-	})
-
-	result, err := app.RunConversation(context.Background(), []map[string]any{
-		{"role": "system", "content": "sys"},
-		{"role": "user", "content": "start"},
-	}, 5)
-	if err != nil {
-		t.Fatalf("RunConversation returned error: %v", err)
-	}
-	if result != "recovered" {
-		t.Fatalf("result = %q, want %q", result, "recovered")
-	}
-	if len(client.messages) != 3 {
-		t.Fatalf("client saw %d requests, want 3", len(client.messages))
-	}
-	toolMessages := extractToolMessages(client.messages[2])
-	if len(toolMessages) != 1 {
-		t.Fatalf("tool messages = %d, want 1", len(toolMessages))
-	}
-	content, _ := toolMessages[0]["content"].(string)
-	if !strings.Contains(content, "Error:") || !strings.Contains(content, "no steps") {
-		t.Fatalf("tool content = %q, want no steps error", content)
-	}
 }
 
 func TestMaxIterationsMessageIncludesCount(t *testing.T) {

@@ -61,9 +61,6 @@ func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string
 	if state := turnRun(ctx); state == nil || state.outcome.Status == turn.Completed {
 		setTurnStop(ctx, turn.BudgetLimited, reason)
 	}
-	if guard, ok := ctx.Value(continuationContextKey{}).(*continuationGuard); ok {
-		guard.stopped = true
-	}
 	a.writeStageProgress(fmt.Sprintf("Preparing stage summary after %d iterations", iterations))
 	request, compacted := a.buildRequestMessages(ctx, messages, nil, ChatCompletionOptions{})
 	if compacted != nil {

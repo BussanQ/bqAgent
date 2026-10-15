@@ -115,14 +115,11 @@ func requireStringArgument(toolName string, args map[string]any, key string) (st
 	return text, nil
 }
 
-func (a *Agent) toolDefinitionsForRun(allowPlan bool) []tools.Definition {
+func (a *Agent) toolDefinitionsForRun() []tools.Definition {
 	filtered := make([]tools.Definition, 0, len(a.toolDefinitions))
 	var optionalTodo *tools.Definition
 	for _, definition := range a.toolDefinitions {
 		if definition.Function.Name == "web_search" && a.webSearchAvailable != nil && !a.webSearchAvailable() {
-			continue
-		}
-		if definition.Function.Name == "plan" && (!allowPlan || a.planner == nil) {
 			continue
 		}
 		if definition.Function.Name == "todo_write" {
@@ -146,17 +143,13 @@ func (a *Agent) appendToolError(messages []map[string]any, toolCallID, format st
 
 // hasSpecialToolCalls reports whether the batch contains a tool that must run
 // sequentially because it recurses or mutates state later calls may depend on.
-func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall, allowPlan bool) bool {
+func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall) bool {
 	for _, toolCall := range toolCalls {
 		switch toolCall.Function.Name {
 		case "write_file", "edit_file", "todo_write", "task_update", "task_scope":
 			return true
 		case "consult_group_agent":
 			return true
-		case "plan":
-			if allowPlan && a.planner != nil {
-				return true
-			}
 		}
 	}
 	return false

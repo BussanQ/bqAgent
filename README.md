@@ -19,7 +19,7 @@ See the [project documentation](./docs/en/doc.md) for complete usage instruction
 |  | Core capability | What makes it different |
 | :---: | --- | --- |
 | 🧭 | **Multi-agent orchestration** | Natively orchestrate Claude, Codex, Cursor, and OpenCode: route work precisely with @ mentions, let bqagent coordinate and synthesize, or run subagents in isolated Git worktrees that return logs and reviewable patches. |
-| 🛠️ | **A powerful Agent Harness** | Planning, tool use, progressively disclosed Skills, rules, MCP, web search, cancellation, retries, graceful fallback, and RunTrace all live in one execution loop—turning a model that can answer into an agent that can finish the job. |
+| 🛠️ | **A powerful Agent Harness** | Tool use, progressively disclosed Skills, rules, MCP, web search, cancellation, retries, graceful fallback, and RunTrace all live in one execution loop—turning a model that can answer into an agent that can finish the job. |
 | 🖥️ | **TUI + WebUI, side by side** | The terminal offers an always-streaming inline TUI with native scrollback, a command palette, and task queue. The browser adds SSE streaming, Markdown, attachments, a workspace tree, model switching, and one-click stop. |
 | 🦞 | **OpenClaw-grade soul and memory** | OpenClaw-style `AGENT.md`, `SOUL.md`, `USER.md`, Rules, and Skills shape the agent. Structured Memory adds revisions, provenance, confidence, supersession, sensitive-data confirmation, and Chinese search. |
 | 📦 | **One binary, minimal deployment** | The Go backend and complete WebUI are bundled with `go:embed`. Runtime needs no Node.js, Vite, CDN, or external static files—copy one `bqagent` binary and start. |

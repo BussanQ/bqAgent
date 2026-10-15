@@ -31,7 +31,7 @@ func TestNativeWebSearchMagpieResponsesUsesConfiguredProtocol(t *testing.T) {
 				return http.StatusOK, reply
 			})
 			app := NewWithOptions(client, "workbuddy/deepseek", Options{})
-			if !searchDefinitionPresent(app.toolDefinitionsForRun(false)) {
+			if !searchDefinitionPresent(app.toolDefinitionsForRun()) {
 				t.Fatal("Magpie Responses search missing without search API keys")
 			}
 			var live LiveTokenUsage
@@ -83,7 +83,7 @@ func TestNativeWebSearchMagpieResponsesFailureNeverUsesMessages(t *testing.T) {
 				t.Fatalf("calls=%d fallback=%d supported=%v", calls, fallbackCalls, client.SupportsNativeWebSearch("model"))
 			}
 			withoutFallback := NewWithOptions(client, "model", Options{})
-			if searchDefinitionPresent(withoutFallback.toolDefinitionsForRun(false)) == tc.unsupported {
+			if searchDefinitionPresent(withoutFallback.toolDefinitionsForRun()) == tc.unsupported {
 				t.Fatal("search availability did not honor the Responses capability cache")
 			}
 		})

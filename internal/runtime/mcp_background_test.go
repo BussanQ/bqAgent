@@ -33,7 +33,7 @@ func TestFactoryBuildBackgroundDoesNotWaitForMCP(t *testing.T) {
 		})},
 	}
 	result := make(chan Runtime, 1)
-	go func() { result <- factory.BuildBackground(ctx, false) }()
+	go func() { result <- factory.BuildBackground(ctx) }()
 	var runtime Runtime
 	select {
 	case runtime = <-result:

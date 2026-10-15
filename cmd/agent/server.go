@@ -33,9 +33,6 @@ func runServerInBackground(stdout, stderr io.Writer, deps runDeps, ws *workspace
 	}
 
 	childArgs := []string{"--server-run", "--listen", options.listen}
-	if options.plan {
-		childArgs = append(childArgs, "--plan")
-	}
 	if err := deps.startBackground(executable, childArgs, ws.Root, outputPath); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -50,7 +47,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 	defer cancel()
 	configureServerChannelLimits(stderr, getenv)
 
-	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, stdout)
+	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, stdout)
 	workspaceRegistry, err := appserver.NewWorkspaceRegistry(appserver.WorkspaceRegistryOptions{
 		DefaultRoot:    ws.Root,
 		DefaultService: service,
@@ -69,7 +66,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, getenv func(string
 				return nil, nil, promptErr
 			}
 			// Discovery belongs to the server, not the short-lived workspace-open request.
-			selectedService, broker := newConversationService(ctx, getenv, selected, prompt, options.plan, stdout)
+			selectedService, broker := newConversationService(ctx, getenv, selected, prompt, stdout)
 			return selectedService, broker, nil
 		},
 	})

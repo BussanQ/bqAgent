@@ -66,7 +66,7 @@ func runLive(manifest evalharness.Manifest, suite string, repeats int, llmConfig
 			if err != nil {
 				fatal(err)
 			}
-			runtime := appruntime.Factory{Config: llmConfig, WorkspaceRoot: temp, MemoryDir: filepath.Join(temp, ".agent", "memory"), Getenv: os.Getenv}.Build(false)
+			runtime := appruntime.Factory{Config: llmConfig, WorkspaceRoot: temp, MemoryDir: filepath.Join(temp, ".agent", "memory"), Getenv: os.Getenv}.Build()
 			app := agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{APIType: runtime.APIType, ToolDefinitions: runtime.Catalog.Definitions(), Functions: runtime.Catalog.Registry(), WorkspaceRoot: temp, Context: runtime.Context})
 			start := time.Now()
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

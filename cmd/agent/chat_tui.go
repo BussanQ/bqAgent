@@ -25,7 +25,7 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 	defer cancel()
 	herdrReporter := newHerdrReporter(getenv, options)
 	defer herdrReporter.Close()
-	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, options.plan, nil)
+	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, nil)
 	defer func() { cancel(); _ = externalBroker.Close() }()
 	backend := &tuiBackend{service: service, workspace: ws}
 	noColor := getenv != nil && strings.TrimSpace(getenv("NO_COLOR")) != ""

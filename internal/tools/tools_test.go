@@ -100,18 +100,15 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 }
 
 func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
-	catalog := NewCatalog(Options{IncludePlan: true, SearchAPIKey: "test-search-key"})
+	catalog := NewCatalog(Options{SearchAPIKey: "test-search-key"})
 	definitions := catalog.Definitions()
-	if len(definitions) != 12 {
-		t.Fatalf("definitions length = %d, want 12", len(definitions))
-	}
-	if definitions[len(definitions)-1].Function.Name != "plan" {
-		t.Fatalf("last definition name = %q, want %q", definitions[len(definitions)-1].Function.Name, "plan")
+	if len(definitions) != 11 {
+		t.Fatalf("definitions length = %d, want 11", len(definitions))
 	}
 	foundInstallSkill := false
 	for _, definition := range definitions {
-		if definition.Function.Name == "run_skill" {
-			t.Fatal("definitions should not include run_skill")
+		if definition.Function.Name == "run_skill" || definition.Function.Name == "plan" {
+			t.Fatalf("definitions should not include %s", definition.Function.Name)
 		}
 		if definition.Function.Name == "install_skill" {
 			foundInstallSkill = true

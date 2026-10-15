@@ -70,13 +70,12 @@ bqAgent 支持：
 
 1. 单次 CLI
 2. `--chat` 交互模式
-3. `--plan` 计划执行
-4. `--background` 后台进程
-5. `--resume` 持久会话恢复
-6. `--server` HTTP 服务
-7. WebUI SSE
-8. QQ、微信 iLink、ServerChan
-9. 内部持久化 Subagent Worker
+3. `--background` 后台进程
+4. `--resume` 持久会话恢复
+5. `--server` HTTP 服务
+6. WebUI SSE
+7. QQ、微信 iLink、ServerChan
+8. 内部持久化 Subagent Worker
 
 #### 结论
 
@@ -227,7 +226,7 @@ Pi 核心实现位于 `packages/agent/src/agent-loop.ts` 和 `agent.ts`。
 - 流式和非流式调用
 - 工具调用循环
 - 普通工具并行执行
-- 写文件、编辑、计划、Skill 顺序执行
+- 写文件、编辑、Skill 顺序执行
 - 工具结果按原始顺序回填
 - 未知工具和参数错误转成 Tool Result
 - Context cancellation
@@ -237,7 +236,7 @@ Pi 核心实现位于 `packages/agent/src/agent-loop.ts` 和 `agent.ts`。
 - Stage Budget
 - Stage Checkpoint
 - “继续”恢复长任务
-- Plan 和 Skill 子循环
+- Skill 子循环
 - Tool Progress
 
 ### 4.3 对比
@@ -314,7 +313,6 @@ Pi 默认依旧以当前 OS 用户权限运行。
 - install_skill
 - memory
 - mem_save / mem_get
-- plan
 - Skill metadata index + `read_file` on-demand loading
 - agent tools
 - MCP tools

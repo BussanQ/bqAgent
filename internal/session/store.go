@@ -36,7 +36,6 @@ type Meta struct {
 	ID                  string        `json:"id"`
 	WorkspaceRoot       string        `json:"workspace_root"`
 	Task                string        `json:"task,omitempty"`
-	Planned             bool          `json:"planned,omitempty"`
 	Background          bool          `json:"background,omitempty"`
 	Chat                bool          `json:"chat,omitempty"`
 	Status              Status        `json:"status"`
@@ -135,7 +134,6 @@ func NewStore(workspaceRoot string, configured ...Options) *Store {
 
 type CreateOptions struct {
 	Task             string
-	Planned          bool
 	Background       bool
 	Chat             bool
 	ConversationType string
@@ -160,7 +158,6 @@ func (s *Store) Create(options CreateOptions) (*Session, error) {
 			ID:               id,
 			WorkspaceRoot:    s.workspaceRoot,
 			Task:             options.Task,
-			Planned:          options.Planned,
 			Background:       options.Background,
 			Chat:             options.Chat,
 			ConversationType: strings.TrimSpace(options.ConversationType),

@@ -67,7 +67,6 @@ type Options struct {
 	AgentDir           string
 	BashOutputMaxBytes int64
 	ReadFileMaxBytes   int64
-	IncludePlan        bool
 	SearchProvider     string
 	SearchAPIKey       string
 	SearchBaseURL      string
@@ -163,9 +162,6 @@ func NewCatalog(options Options) Catalog {
 	if options.MemoryStore != nil {
 		definitions = append(definitions, StructuredMemoryDefinition())
 	}
-	if options.IncludePlan {
-		definitions = append(definitions, PlanDefinition())
-	}
 	existing := make(map[string]struct{}, len(definitions))
 	for _, definition := range definitions {
 		existing[definition.Function.Name] = struct{}{}
@@ -200,23 +196,6 @@ func (catalog Catalog) Registry() map[string]Function {
 		cloned[name] = function
 	}
 	return cloned
-}
-
-func PlanDefinition() Definition {
-	return Definition{
-		Type: "function",
-		Function: FunctionDefinition{
-			Name:        "plan",
-			Description: "Break down complex task into steps and execute sequentially",
-			Parameters: JSONSchema{
-				Type: "object",
-				Properties: map[string]JSONSchemaProperty{
-					"task": {Type: "string"},
-				},
-				Required: []string{"task"},
-			},
-		},
-	}
 }
 
 // WebSearchDefinition is also used when the agent enables provider-native search

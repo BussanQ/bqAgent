@@ -176,7 +176,7 @@ func TestConfigFromEnvNativeWebSearch(t *testing.T) {
 			if config.NativeWebSearch != mode {
 				t.Fatalf("NativeWebSearch = %q", config.NativeWebSearch)
 			}
-			runtime := (Factory{Config: config, WorkspaceRoot: t.TempDir(), AgentDir: t.TempDir()}).Build(false)
+			runtime := (Factory{Config: config, WorkspaceRoot: t.TempDir(), AgentDir: t.TempDir()}).Build()
 			if got := runtime.Client.(*agent.Client).SupportsNativeWebSearch("codex/gpt-6-astra"); got != (mode != "off") {
 				t.Fatalf("Magpie native search in mode %q = %v", mode, got)
 			}
@@ -191,7 +191,7 @@ func TestRuntimeMagpieSearchProviderIdentity(t *testing.T) {
 	for _, provider := range []string{"magpie", "other"} {
 		t.Run(provider, func(t *testing.T) {
 			config := Config{ProviderID: provider, APIType: agent.APITypeOpenAI, BaseURL: "http://localhost:3425/v1", Model: "workbuddy/deepseek-v4.1-flash"}
-			runtime := (Factory{Config: config, WorkspaceRoot: t.TempDir(), AgentDir: t.TempDir()}).Build(false)
+			runtime := (Factory{Config: config, WorkspaceRoot: t.TempDir(), AgentDir: t.TempDir()}).Build()
 			if runtime.ClientOptions.ProviderID != provider {
 				t.Fatal("runtime lost provider identity")
 			}

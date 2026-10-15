@@ -71,7 +71,7 @@ func (a *Agent) RunTurn(ctx context.Context, messages []map[string]any, maxItera
 	}
 	ctx = context.WithValue(ctx, runStateKey{}, state)
 	metricsCtx, collector := withTurnGenerationCollector(ctx)
-	reply, history, err := a.runConversation(metricsCtx, duplicateMessages(messages), maxIterations, a.planner != nil)
+	reply, history, err := a.runConversation(metricsCtx, duplicateMessages(messages), maxIterations)
 	if err != nil {
 		status := turn.Failed
 		if errors.Is(err, context.Canceled) {

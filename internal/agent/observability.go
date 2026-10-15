@@ -289,7 +289,7 @@ func logToolTiming(logWriter io.Writer, toolName string, duration time.Duration,
 	fmt.Fprintf(logWriter, "[Tool] name=%s duration=%s status=%s%s\n", toolName, formatDuration(duration), status, extra)
 }
 
-func logTurnTiming(logWriter io.Writer, actualIterations int, allowPlan bool, duration time.Duration, err error) {
+func logTurnTiming(logWriter io.Writer, actualIterations int, duration time.Duration, err error) {
 	if logWriter == nil {
 		return
 	}
@@ -301,7 +301,7 @@ func logTurnTiming(logWriter io.Writer, actualIterations int, allowPlan bool, du
 		extra = fmt.Sprintf(" error=%q", sanitizeLogValue(err.Error()))
 	}
 
-	fmt.Fprintf(logWriter, "[Turn] iterations=%d allow_plan=%t duration=%s status=%s%s\n", actualIterations, allowPlan, formatDuration(duration), status, extra)
+	fmt.Fprintf(logWriter, "[Turn] iterations=%d duration=%s status=%s%s\n", actualIterations, formatDuration(duration), status, extra)
 }
 
 func formatDuration(duration time.Duration) string {

@@ -25,17 +25,11 @@ func TestWebSearchAvailabilityFollowsConfiguredKey(t *testing.T) {
 			t.Setenv("SEARCH_BASE_URL", test.searchURL)
 			t.Setenv("FIRECRAWL_BASE_URL", test.firecrawlURL)
 			assertSearchAvailability(t, Definitions(), Registry(), test.wantDefault)
-			options := Options{SearchAPIKey: test.optionKey, IncludePlan: true}
+			options := Options{SearchAPIKey: test.optionKey}
 			catalog := NewCatalog(options)
 			assertSearchAvailability(t, catalog.Definitions(), catalog.Registry(), test.wantCatalog)
 			assertSearchAvailability(t, catalog.Definitions(), RegistryWithOptions(options), test.wantCatalog)
-			foundPlan := false
-			for _, definition := range catalog.Definitions() {
-				foundPlan = foundPlan || definition.Function.Name == "plan"
-			}
-			if !foundPlan {
-				t.Fatal("search filtering removed the optional plan definition")
-			}
+
 		})
 	}
 }

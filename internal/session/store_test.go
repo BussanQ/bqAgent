@@ -13,7 +13,7 @@ import (
 
 func TestSessionStorePersistsMessagesAndStatus(t *testing.T) {
 	store := NewStore(t.TempDir())
-	savedSession, err := store.Create(CreateOptions{Task: "inspect repo", Planned: true, Background: true})
+	savedSession, err := store.Create(CreateOptions{Task: "inspect repo", Background: true})
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
@@ -445,5 +445,38 @@ func TestSessionTrimOutputLogKeepsLatestBytes(t *testing.T) {
 	}
 	if len(content) > 24 || !strings.Contains(string(content), "latest-line") || strings.Contains(string(content), "old-line-1") {
 		t.Fatalf("trimmed output = %q", content)
+	}
+}
+
+func TestSessionStoreOpenIgnoresLegacyPlannedMetadata(t *testing.T) {
+	store := NewStore(t.TempDir())
+	created, err := store.Create(CreateOptions{Task: "legacy task"})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	metaPath := filepath.Join(created.Dir(), "meta.json")
+	content, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(content, &raw); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	raw["planned"] = true
+	content, err = json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	if err := os.WriteFile(metaPath, content, 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	reopened, err := store.Open(created.ID())
+	if err != nil {
+		t.Fatalf("Open returned error for legacy planned metadata: %v", err)
+	}
+	if reopened.Meta().Task != "legacy task" {
+		t.Fatalf("task = %q, want legacy task", reopened.Meta().Task)
 	}
 }

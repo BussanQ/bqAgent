@@ -20,7 +20,7 @@ func TestFactoryBuildDoesNotInitializeUnusedWorkspaceMemory(t *testing.T) {
 		AgentDir:      agentDir,
 		MemoryDir:     filepath.Join(root, ".agent", "memory"),
 		Getenv:        func(string) string { return "" },
-	}.Build(false)
+	}.Build()
 
 	if runtime.Memory == nil {
 		t.Fatal("runtime memory store is nil")
@@ -46,7 +46,7 @@ func TestFactoryBuildRoutesMemoryTargetGlobal(t *testing.T) {
 		MemoryDir:       workspaceMemory,
 		GlobalMemoryDir: globalMemory,
 		Getenv:          func(string) string { return "" },
-	}.Build(false)
+	}.Build()
 
 	memory := runtime.Catalog.Registry()["memory"]
 	if memory == nil {
@@ -119,7 +119,7 @@ func TestContextThresholdOverridesReachRuntime(t *testing.T) {
 		"CONTEXT_SUMMARY_TRIGGER_TOKENS":     "160000",
 	}
 	config := ConfigFromEnv(func(key string) string { return values[key] })
-	runtime := (Factory{Config: config, WorkspaceRoot: t.TempDir(), AgentDir: t.TempDir(), Getenv: func(string) string { return "" }}).Build(false)
+	runtime := (Factory{Config: config, WorkspaceRoot: t.TempDir(), AgentDir: t.TempDir(), Getenv: func(string) string { return "" }}).Build()
 	if runtime.Context.MaxInputTokens != 164000 || runtime.Context.CompressionTriggerTokens != 160000 || runtime.Context.TargetInputTokens != 12000 || runtime.Context.SummaryTriggerTokens != 160000 {
 		t.Fatalf("runtime lost context overrides: %+v", runtime.Context)
 	}

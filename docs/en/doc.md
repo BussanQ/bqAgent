@@ -2,7 +2,7 @@
 
 [中文文档](../doc.md#中文文档)
 
-This is a small Go agent for local workflows. It preserves a minimal execution loop while adding workspace context, Markdown-defined skills, lightweight memory, planning, persistent sessions, request-time context management, checkpoint-based compact resume, and a minimal background mode.
+This is a small Go agent for local workflows. It preserves a minimal execution loop while adding workspace context, Markdown-defined skills, lightweight memory, persistent sessions, request-time context management, checkpoint-based compact resume, and a minimal background mode.
 
 ## What it can do
 
@@ -19,7 +19,6 @@ Additional capabilities draw on ideas from `agent-claudecode.py` and OpenClaw:
 - Workspace-rooted system prompt assembly
 - A primary `.agent/` layout built around `AGENT.md`, `SOUL.md`, and `USER.md`
 - Continued support for `.agent/rules/*.md` and `.agent/skills/*/SKILL.md`
-- Plan-first execution with `--plan`
 - An always-streaming inline terminal TUI by default, also available explicitly with `--chat`
 - [Automatic Herdr support](#herdr): asynchronous activity reports, session recovery, and bounded release without blocking model work
 - [Magpie Agent plugin](#magpie): select models in Magpie, connect through its gateway, and restore the original configuration on disconnect
@@ -310,9 +309,6 @@ go run ./cmd/agent
 # start a chat with an initial task
 go run ./cmd/agent --chat "read README.md and summarize it"
 
-# plan first, then execute the steps
-go run ./cmd/agent --plan "inspect the current project structure and summarize it"
-
 # start a background session
 go run ./cmd/agent --background "read README.md and summarize it"
 
@@ -468,10 +464,6 @@ Default built-in tools:
 - `read_file`
 - `write_file`
 
-When planner support is enabled, the agent can also use:
-
-- `plan`
-
 Behavior notes:
 
 - unknown tools are returned to the model as `Error: Unknown tool '...'`
@@ -599,9 +591,6 @@ go run ./cmd/agent --chat
 
 # Use workspace rules and skills
 go run ./cmd/agent "follow the workspace rules and summarize the available skills"
-
-# Run a planned task
-go run ./cmd/agent --plan "analyze the current Go project and explain the main packages"
 
 # Run in background
 go run ./cmd/agent --background "scan the codebase and summarize the key files"

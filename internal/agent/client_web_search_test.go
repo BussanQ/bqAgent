@@ -140,7 +140,7 @@ func TestNativeWebSearchMagpieAutoWithoutSearchKeys(t *testing.T) {
 			client.baseURL = "http://127.0.0.1:3425/v1"
 			client.apiKey = ""
 			app := NewWithOptions(client, "codex/gpt-6-astra", Options{})
-			if !searchDefinitionPresent(app.toolDefinitionsForRun(false)) {
+			if !searchDefinitionPresent(app.toolDefinitionsForRun()) {
 				t.Fatal("auto must expose search through Magpie without search API keys")
 			}
 			result, err := app.functions["web_search"](context.Background(), map[string]any{"query": "latest news"})
@@ -345,7 +345,7 @@ func TestNativeWebSearchAgentFallbackAndAvailability(t *testing.T) {
 				}}}
 			}
 			app := NewWithOptions(client, "model", options)
-			if !searchDefinitionPresent(app.toolDefinitionsForRun(false)) {
+			if !searchDefinitionPresent(app.toolDefinitionsForRun()) {
 				t.Fatal("native search missing without search API key")
 			}
 			result, err := app.functions["web_search"](context.Background(), map[string]any{"search": "query"})
@@ -355,17 +355,17 @@ func TestNativeWebSearchAgentFallbackAndAvailability(t *testing.T) {
 			if !withFallback && err == nil {
 				t.Fatal("unsupported search must fail")
 			}
-			if got := searchDefinitionPresent(app.toolDefinitionsForRun(false)); got != withFallback {
+			if got := searchDefinitionPresent(app.toolDefinitionsForRun()); got != withFallback {
 				t.Fatalf("capability after rejection = %v", got)
 			}
 			_, _ = app.functions["web_search"](context.Background(), map[string]any{"query": "query"})
 			if calls != 1 || (withFallback && fallbackCalls != 2) {
 				t.Fatalf("native calls=%d fallback calls=%d", calls, fallbackCalls)
 			}
-			if searchDefinitionPresent(NewWithOptions(client, "model", Options{}).toolDefinitionsForRun(false)) {
+			if searchDefinitionPresent(NewWithOptions(client, "model", Options{}).toolDefinitionsForRun()) {
 				t.Fatal("cached unsupported model re-enabled in a new turn")
 			}
-			if !searchDefinitionPresent(NewWithOptions(client, "other-model", Options{}).toolDefinitionsForRun(false)) {
+			if !searchDefinitionPresent(NewWithOptions(client, "other-model", Options{}).toolDefinitionsForRun()) {
 				t.Fatal("model switch failed to recompute capability")
 			}
 		})
@@ -397,7 +397,7 @@ func TestNativeWebSearchCancellationAndInvalidQueryDoNotFallback(t *testing.T) {
 	if fallbackCalls != 0 {
 		t.Fatalf("fallback called after cancellation or invalid query: %d", fallbackCalls)
 	}
-	if searchDefinitionPresent(NewWithOptions(client, "model", Options{ToolDefinitions: []tools.Definition{}, Functions: map[string]tools.Function{}}).toolDefinitionsForRun(false)) {
+	if searchDefinitionPresent(NewWithOptions(client, "model", Options{ToolDefinitions: []tools.Definition{}, Functions: map[string]tools.Function{}}).toolDefinitionsForRun()) {
 		t.Fatal("explicit restricted toolset unexpectedly gained search")
 	}
 }
@@ -479,7 +479,7 @@ func TestNativeWebSearchBackendPriorityAndTransientFallback(t *testing.T) {
 			if tc.wantFallback {
 				wantFallback = 2
 			}
-			if calls != 2 || fallbackCalls != wantFallback || !searchDefinitionPresent(app.toolDefinitionsForRun(false)) {
+			if calls != 2 || fallbackCalls != wantFallback || !searchDefinitionPresent(app.toolDefinitionsForRun()) {
 				t.Fatalf("calls=%d fallback=%d; transient failure must retain search", calls, fallbackCalls)
 			}
 		})

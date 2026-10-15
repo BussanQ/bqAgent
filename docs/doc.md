@@ -6,7 +6,7 @@
 
 # 中文文档
 
-这是一个面向本地工作流的小型 Go 智能体。现在它在保留极简执行循环的同时，增加了工作区上下文、Markdown 技能定义、轻量记忆、规划、持久会话、请求级上下文管理、基于 checkpoint 的压缩恢复，以及最小后台模式。
+这是一个面向本地工作流的小型 Go 智能体。现在它在保留极简执行循环的同时，增加了工作区上下文、Markdown 技能定义、轻量记忆、持久会话、请求级上下文管理、基于 checkpoint 的压缩恢复，以及最小后台模式。
 
 ## 它现在能做什么
 
@@ -23,7 +23,6 @@ bqagent 的核心仍然很简单：
 - 基于 workspace 的 system prompt 装配
 - 以 `.agent/AGENT.md`、`SOUL.md`、`USER.md` 作为主布局
 - 继续支持 `.agent/rules/*.md` 和 `.agent/skills/*/SKILL.md`
-- 使用 `--plan` 先拆步骤再执行
 - 默认启动始终流式的内联终端 TUI（也可显式使用 `--chat`）
 - [Herdr 自动集成](#herdr)：异步状态上报、会话恢复及退出释放，失败不阻塞主功能
 - [Magpie Agent 插件](#magpie)：在 Magpie 中选择模型，通过统一网关接入，关闭接入后恢复原有配置
@@ -316,9 +315,6 @@ go run ./cmd/agent
 # 带初始任务的交互对话
 go run ./cmd/agent --chat "读取 README.md 并总结"
 
-# 先规划再执行
-go run ./cmd/agent --plan "梳理当前项目结构并总结"
-
 # 启动后台会话
 go run ./cmd/agent --background "读取 README.md 并总结"
 
@@ -473,10 +469,6 @@ system prompt 按以下顺序装配，前面的部分不随会话变化，可被
 - `read_file`
 - `write_file`
 
-启用 planner 后，模型还可以调用：
-
-- `plan`
-
 当前行为说明：
 
 - 未知工具会作为 `Error: Unknown tool '...'` 返回给模型
@@ -622,9 +614,6 @@ go run ./cmd/agent --chat
 
 # 使用 workspace 规则和技能
 go run ./cmd/agent "遵循当前 workspace 规则并总结可用技能"
-
-# 先规划再执行
-go run ./cmd/agent --plan "分析当前 Go 项目并说明主要包的职责"
 
 # 后台运行
 go run ./cmd/agent --background "扫描代码库并总结关键文件"

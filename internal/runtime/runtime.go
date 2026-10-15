@@ -79,7 +79,6 @@ type Runtime struct {
 	MCP             *mcp.Discovery
 	Client          agent.ChatCompletionClient
 	ClientOptions   agent.ClientOptions
-	Planner         *agent.Planner
 	Catalog         tools.Catalog
 	APIType         agent.APIType
 	Model           string
@@ -231,27 +230,22 @@ func envDurationAllowZero(raw string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
-func (factory Factory) Build(includePlan bool) Runtime {
-	return factory.build(includePlan, nil)
+func (factory Factory) Build() Runtime {
+	return factory.build(nil)
 }
 
 // BuildBackground leaves remote MCP discovery off the interactive startup path.
 // The caller must cancel ctx when the UI/server workspace closes.
-func (factory Factory) BuildBackground(ctx context.Context, includePlan bool) Runtime {
-	return factory.build(includePlan, ctx)
+func (factory Factory) BuildBackground(ctx context.Context) Runtime {
+	return factory.build(ctx)
 }
 
-func (factory Factory) build(includePlan bool, background context.Context) Runtime {
+func (factory Factory) build(background context.Context) Runtime {
 	apiType := agent.NormalizeAPIType(string(factory.Config.APIType))
 	model := agent.EffectiveModel(factory.Config.Model)
 	clientOptions := agent.ClientOptions{StreamIdleTimeout: factory.Config.StreamIdleTimeout, ProviderID: factory.Config.ProviderID, NativeWebSearch: factory.Config.NativeWebSearch}
 	client := agent.NewClientWithOptions(factory.Config.APIKey, factory.Config.BaseURL, apiType, nil, clientOptions)
 	factory.logf("[Runtime] api_type=%s model=%s\n", apiType, model)
-
-	var planner *agent.Planner
-	if includePlan {
-		planner = agent.NewPlanner(client, model)
-	}
 
 	var mcpDefinitions []tools.Definition
 	var mcpFunctions map[string]tools.Function
@@ -272,7 +266,6 @@ func (factory Factory) build(includePlan bool, background context.Context) Runti
 		AgentDir:           factory.AgentDir,
 		BashOutputMaxBytes: factory.Config.BashOutputMaxBytes,
 		ReadFileMaxBytes:   factory.Config.ReadFileMaxBytes,
-		IncludePlan:        includePlan,
 		SearchProvider:     factory.Config.SearchProvider,
 		SearchAPIKey:       factory.Config.SearchAPIKey,
 		SearchBaseURL:      factory.Config.SearchBaseURL,
@@ -287,7 +280,6 @@ func (factory Factory) build(includePlan bool, background context.Context) Runti
 		MCP:             discovery,
 		Client:          client,
 		ClientOptions:   clientOptions,
-		Planner:         planner,
 		Catalog:         catalog,
 		APIType:         apiType,
 		Model:           model,
@@ -391,7 +383,6 @@ func (runtime Runtime) NewAgentWithProgress(logWriter io.Writer, progressWriter 
 		ProgressWriter:  progressWriter,
 		ToolDefinitions: runtime.Catalog.Definitions(),
 		Functions:       runtime.Catalog.Registry(),
-		Planner:         runtime.Planner,
 		Recorder:        recorder,
 		Stream:          stream,
 		WorkspaceRoot:   runtime.WorkspaceRoot,

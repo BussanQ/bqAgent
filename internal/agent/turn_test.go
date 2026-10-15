@@ -199,12 +199,3 @@ func TestTaskScopeCannotDetachAfterProgressUpdate(t *testing.T) {
 		t.Fatal("detached an already updated task")
 	}
 }
-
-func TestPlannedTaskStopsAtStageBoundary(t *testing.T) {
-	client := &stubClient{responses: []AssistantMessage{{Content: `{"steps":["first","second"]}`}, {Content: "working", Phase: "commentary"}, {Content: "checkpoint"}}}
-	app := NewWithOptions(client, "test", Options{Planner: NewPlanner(client, "test"), Stage: StageConfig{MaxIterations: 1}})
-	reply, _, err := app.RunPlannedConversationTurn(context.Background(), nil, "work", 10)
-	if err != nil || reply != "checkpoint" || len(client.messages) != 3 {
-		t.Fatalf("reply=%q calls=%d err=%v", reply, len(client.messages), err)
-	}
-}

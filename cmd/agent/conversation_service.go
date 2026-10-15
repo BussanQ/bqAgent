@@ -18,7 +18,7 @@ import (
 	"bqagent/internal/workspace"
 )
 
-func newConversationService(ctx context.Context, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, includePlan bool, statusWriter io.Writer) (*appserver.Service, *extagent.Broker) {
+func newConversationService(ctx context.Context, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, statusWriter io.Writer) (*appserver.Service, *extagent.Broker) {
 	var externalBroker *extagent.Broker
 	diagnostics := workspaceDoctor(ws, getenv, func() ([]extagent.DetectionStatus, bool) { return externalBroker.DetectionSnapshot() })
 	runtimeConfig := runtimeConfigFromSources(getenv, ws.AgentDir())
@@ -32,7 +32,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		MCPConfigPaths:  ws.MCPConfigPaths(),
 		MCPReport:       diagnostics.RecordMCP,
 		LogWriter:       statusWriter,
-	}.BuildBackground(ctx, includePlan)
+	}.BuildBackground(ctx)
 
 	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
 	if statusWriter != nil {
@@ -75,7 +75,6 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		PromptSectionsBuilder: func() (workspace.PromptSections, error) {
 			return ws.BuildPromptSections("")
 		},
-		Planner:                   runtime.Planner,
 		ToolDefinitions:           runtime.Catalog.Definitions(),
 		Functions:                 runtime.Catalog.Registry(),
 		ExternalBroker:            externalBroker,

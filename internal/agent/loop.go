@@ -124,7 +124,6 @@ type Options struct {
 	LogWriter       io.Writer
 	ToolDefinitions []tools.Definition
 	Functions       map[string]tools.Function
-	Planner         *Planner
 	Recorder        MessageRecorder
 	Stream          bool
 	WorkspaceRoot   string
@@ -154,7 +153,6 @@ type Agent struct {
 	prompt          PromptSnapshot
 	toolDefinitions []tools.Definition
 	functions       map[string]tools.Function
-	planner         *Planner
 	recorder        MessageRecorder
 	checkpointSaver ContextCheckpointRecorder
 	stream          bool
@@ -227,7 +225,6 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		prompt:          prompt,
 		toolDefinitions: definitions,
 		functions:       functions,
-		planner:         clonePlannerWithClient(options.Planner, client),
 		recorder:        options.Recorder,
 		checkpointSaver: checkpointSaver,
 		stream:          options.Stream,
@@ -280,7 +277,7 @@ func (a *Agent) RunConversationTurnWithMetrics(ctx context.Context, messages []m
 	return result.Reply, result.Messages, result.Generation, err
 }
 
-func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, maxIterations int, allowPlan bool) (result string, updatedMessages []map[string]any, err error) {
+func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, maxIterations int) (result string, updatedMessages []map[string]any, err error) {
 	ctx, continuations := continuationContext(ctx)
 	if a.taskStore != nil {
 		a.task, err = a.taskStore.LoadTaskState()
@@ -306,7 +303,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 	truncatedToolRecoveries := 0
 	emptyFinalRecoveries := 0
 	defer func() {
-		logTurnTiming(a.logWriter, actualIterations, allowPlan, time.Since(startedAt), err)
+		logTurnTiming(a.logWriter, actualIterations, time.Since(startedAt), err)
 	}()
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
@@ -323,7 +320,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if a.stageConfig.ImmediateProgress {
 			a.writeStageProgress(selectModelProgressMessage(modelProgressMessages))
 		}
-		definitions := a.toolDefinitionsForRun(allowPlan)
+		definitions := a.toolDefinitionsForRun()
 		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort, ServiceTier: a.serviceTier}
 		completionOptions.PromptCache = buildPromptCacheOptions(a.apiType, a.model, a.prompt, definitions, completionOptions)
 		requestMessages, compacted := a.buildRequestMessages(explorationCtx, messages, definitions, completionOptions)
@@ -499,7 +496,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		// a turn containing them runs sequentially. A turn of only independent tools
 		// runs concurrently and appends results in the original order.
 		guardAction := loopGuardAction{}
-		if recoveredBashCalls || a.hasSpecialToolCalls(message.ToolCalls, allowPlan) {
+		if recoveredBashCalls || a.hasSpecialToolCalls(message.ToolCalls) {
 			recoveredSuccesses := map[string]bool{}
 			for _, toolCall := range message.ToolCalls {
 				parsedArguments, err := parseArguments(toolCall.Function.Arguments)
@@ -517,7 +514,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 				a.logf("[Tool] %s(%v)\n", toolCall.Function.Name, parsedArguments)
 
-				arguments, ok := parsedArguments.(map[string]any)
+				_, ok := parsedArguments.(map[string]any)
 				if !ok {
 					result := fmt.Sprintf("Error: Tool arguments for %q must decode to a JSON object", toolCall.Function.Name)
 					guardAction = guardAction.merge(loopGuard.observeTool(toolCall, result))
@@ -528,26 +525,6 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 						return "", updatedMessages, recordErr
 					}
 					messages = updatedMessages
-					continue
-				}
-
-				if toolCall.Function.Name == "plan" && allowPlan && a.planner != nil {
-					planStartedAt := time.Now()
-					a.emitToolEvent(ToolEvent{Kind: "tool_start", ID: toolCall.ID, Name: toolCall.Function.Name, Status: "running", Arguments: boundedToolEventArguments(arguments)})
-					result, updatedPlanMessages, planErr := a.executePlanTool(ctx, updatedMessages, toolCall, arguments, maxIterations)
-					preview := result
-					if preview == "" && len(updatedPlanMessages) > 0 {
-						preview, _ = updatedPlanMessages[len(updatedPlanMessages)-1]["content"].(string)
-					}
-					a.emitToolResult(toolCall, preview, time.Since(planStartedAt), planErr != nil || strings.HasPrefix(strings.TrimSpace(preview), "Error:"))
-					updatedMessages = updatedPlanMessages
-					messages = updatedMessages
-					if planErr != nil {
-						return "", updatedMessages, planErr
-					}
-					if result != "" {
-						return result, updatedMessages, nil
-					}
 					continue
 				}
 
@@ -615,7 +592,6 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		a.writeStageProgress(fmt.Sprintf("Completed analysis iteration %d", actualIterations))
 	}
 
-	continuations.stopped = true
 	if a.stageConfig.MaxIterations > 0 || a.stageConfig.Timeout > 0 || a.stageConfig.LoopProtection {
 		return a.finishStageCheckpoint(ctx, updatedMessages, fmt.Sprintf("maximum turn iterations reached (%d)", maxIterations), actualIterations)
 	}
@@ -647,16 +623,6 @@ func cloneFunctionMap(functions map[string]tools.Function) map[string]tools.Func
 		cloned[name] = function
 	}
 	return cloned
-}
-
-func clonePlannerWithClient(planner *Planner, client ChatCompletionClient) *Planner {
-	if planner == nil {
-		return nil
-	}
-	return &Planner{
-		client: client,
-		model:  planner.model,
-	}
 }
 
 func duplicateMessages(messages []map[string]any) []map[string]any {

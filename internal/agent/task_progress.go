@@ -77,7 +77,6 @@ func (a *Agent) installTaskTool() {
 }
 
 type continuationContextKey struct{}
-type planStepContextKey struct{}
 
 func continuationContext(ctx context.Context) (context.Context, *continuationGuard) {
 	if guard, ok := ctx.Value(continuationContextKey{}).(*continuationGuard); ok {
@@ -92,9 +91,6 @@ func (a *Agent) taskContext(ctx context.Context) string {
 		return ""
 	}
 	text := taskProgressInstructions
-	if step, _ := ctx.Value(planStepContextKey{}).(bool); step {
-		text += "\nThis is an intermediate step of the existing plan. Preserve the overall task goal and pending later steps. Report this step's result when done; do not mark the whole task completed. Overall acceptance is checked in the last step."
-	}
 	if a.task != nil {
 		data, _ := json.Marshal(a.task)
 		if isSideQuestion(ctx) {
@@ -110,7 +106,6 @@ const recoveryEscalationThreshold = 2
 type continuationGuard struct {
 	stagnant   int
 	progressed bool
-	stopped    bool
 }
 
 func (guard *continuationGuard) observe(call ToolCall, result string) {
@@ -145,25 +140,12 @@ func (a *Agent) continuationReason(ctx context.Context, message AssistantMessage
 	if message.Phase == "commentary" || message.Phase == "partial_answer" {
 		return "The previous assistant message was an intermediate progress update, not a final answer. Continue the authorized task now with substantive tools, or give a final answer if actually done or genuinely blocked."
 	}
-	if step, _ := ctx.Value(planStepContextKey{}).(bool); step {
-		return ""
-	}
 	if a.task != nil && a.task.Status == "active" && !isSideQuestion(ctx) {
 		return "The saved programming task is still active. Check its original goal, remaining work and acceptance criteria. Continue unfinished implementation or targeted verification now. Use task_update to record completion with evidence, or a concrete blocker/required user input. Do not stop at a promise to continue."
 	}
 	// Tool count alone is not evidence of unfinished programming work. A
 	// complete ordinary answer must not be replaced by an unsolicited review.
 	return ""
-}
-
-func (a *Agent) planShouldStop(ctx context.Context) bool {
-	if state := turnRun(ctx); state != nil && state.outcome.Status != "" && state.outcome.Status != turn.Completed {
-		return true
-	}
-	if guard, ok := ctx.Value(continuationContextKey{}).(*continuationGuard); ok && guard.stopped {
-		return true
-	}
-	return !isSideQuestion(ctx) && a.task != nil && (a.task.Status == "blocked" || a.task.Status == "awaiting_input" || a.task.Status == "cancelled")
 }
 
 func (a *Agent) appendContinuation(messages []map[string]any, reason string) ([]map[string]any, error) {

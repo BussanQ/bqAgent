@@ -9,9 +9,6 @@ func newHerdrReporter(getenv func(string) string, options cliOptions) *herdr.Rep
 		return nil
 	}
 	resume := []string{"bqagent", "--chat"}
-	if options.plan {
-		resume = append(resume, "--plan")
-	}
 	if options.stream {
 		resume = append(resume, "--stream")
 	}

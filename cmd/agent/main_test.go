@@ -65,7 +65,7 @@ func TestRunUsesExplicitHelloTask(t *testing.T) {
 	if !strings.Contains(stdout.String(), "[Agent] done") {
 		t.Fatalf("stdout = %q, want agent log", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "[Turn] iterations=1 allow_plan=true") {
+	if !strings.Contains(stdout.String(), "[Turn] iterations=1 duration=") {
 		t.Fatalf("stdout = %q, want turn timing log", stdout.String())
 	}
 	if !strings.HasSuffix(stdout.String(), "done\n") {
@@ -243,7 +243,7 @@ func TestRunWritesErrorsToStderr(t *testing.T) {
 	if !strings.Contains(stdout.String(), "[Model] request=chat") {
 		t.Fatalf("stdout = %q, want model timing log", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "[Turn] iterations=1 allow_plan=true") {
+	if !strings.Contains(stdout.String(), "[Turn] iterations=1 duration=") {
 		t.Fatalf("stdout = %q, want turn timing log", stdout.String())
 	}
 	if stderr.Len() == 0 {

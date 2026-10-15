@@ -186,32 +186,6 @@ func TestRunContinuationHonorsIterationAndCancellationBudgets(t *testing.T) {
 	}
 }
 
-func TestPlannedTaskChecksOverallCompletionAtLastStep(t *testing.T) {
-	active := activeTestTask()
-	store := &memoryTaskStore{state: &active}
-	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "test output ok"}}, Verification: []taskstate.Verification{{Command: "test", Status: "passed", Details: "ok"}}}
-	client := &stubClient{responses: []AssistantMessage{
-		{Content: `{"steps":["implement","verify"]}`},
-		{Content: "implementation done"},
-		{ToolCalls: []ToolCall{{ID: "verify", Function: FunctionCall{Name: "execute_bash", Arguments: `{}`}}}},
-		taskUpdateMessage(complete), {Content: "verified"},
-	}}
-	app := NewWithOptions(client, "test", Options{TaskStore: store, Planner: NewPlanner(client, "test"), Functions: map[string]tools.Function{"execute_bash": func(context.Context, map[string]any) (string, error) { return "ok", nil }}})
-	reply, _, err := app.RunPlannedConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": active.Goal}}, active.Goal, 10)
-	if err != nil || reply != "implementation done\nverified" || store.state.Status != "completed" || len(client.messages) != 5 {
-		t.Fatalf("reply=%q status=%s calls=%d err=%v", reply, store.state.Status, len(client.messages), err)
-	}
-}
-
-func TestPlannedTaskStopsAtIterationBudget(t *testing.T) {
-	client := &stubClient{responses: []AssistantMessage{{Content: `{"steps":["implement","verify"]}`}, {Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}, {Content: "working", Phase: "commentary"}}}
-	app := NewWithOptions(client, "test", Options{Planner: NewPlanner(client, "test")})
-	reply, _, err := app.RunPlannedConversationTurn(context.Background(), nil, "task", 3)
-	if err != nil || !strings.Contains(reply, "maximum of 3 iterations") || len(client.messages) != 4 {
-		t.Fatalf("reply=%q calls=%d err=%v", reply, len(client.messages), err)
-	}
-}
-
 func TestTaskSnapshotSurvivesContextCompaction(t *testing.T) {
 	active := activeTestTask()
 	app := NewWithOptions(&stubClient{}, "test", Options{TaskStore: &memoryTaskStore{state: &active}, Context: ContextConfig{Enabled: true, TargetInputTokens: 1200, MaxInputTokens: 2000}})
