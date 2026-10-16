@@ -12,6 +12,7 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/session"
+	"bqagent/internal/taskstate"
 )
 
 type conversationListItem struct {
@@ -54,6 +55,7 @@ type ConversationHistory struct {
 	Mode             ChatMode
 	ConversationType ConversationType
 	Group            *GroupInfo
+	Task             *taskstate.State
 	Messages         []ConversationHistoryMessage
 	Omitted          int
 }
@@ -137,7 +139,7 @@ func (handler *handler) handleConversationHistory(writer http.ResponseWriter, re
 			Kind:    message.Kind,
 		})
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"id": history.ID, "title": history.Title, "mode": history.Mode, "conversation_type": history.ConversationType, "group": history.Group, "messages": webMessages})
+	writeJSON(writer, http.StatusOK, map[string]any{"id": history.ID, "title": history.Title, "mode": history.Mode, "conversation_type": history.ConversationType, "group": history.Group, "task": history.Task, "messages": webMessages})
 }
 
 func splitHistoryAttachments(content string) (string, []conversationFile) {
@@ -314,7 +316,11 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 			filtered = append(filtered, ConversationHistoryMessage{Role: role, Sender: groupHistorySender(conversationType, role), Content: content})
 		}
 	}
-	result := ConversationHistory{ID: saved.ID(), Title: saved.Meta().Task, Mode: storedChatMode(saved.Meta().CurrentMode), ConversationType: conversationType, Messages: filtered}
+	task, err := saved.LoadTaskState()
+	if err != nil {
+		return ConversationHistory{}, conversationHistoryLoadError{err: fmt.Errorf("load conversation task: %w", err)}
+	}
+	result := ConversationHistory{ID: saved.ID(), Title: saved.Meta().Task, Mode: storedChatMode(saved.Meta().CurrentMode), ConversationType: conversationType, Task: task, Messages: filtered}
 	if conversationType == ConversationTypeGroup {
 		if config, configErr := saved.LoadGroupConfig(); configErr == nil {
 			info := groupInfo(config, service)

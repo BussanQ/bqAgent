@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"bqagent/internal/taskstate"
 	"bqagent/internal/tools"
+	"bqagent/internal/turn"
 )
 
 type memoryTaskStore struct {
@@ -152,7 +154,7 @@ func TestContinuationProgressClassification(t *testing.T) {
 		{"execute_bash", "", true}, {"edit_file", "  \n", true},
 		{"read_file", "source", true}, {"execute_bash", "Error: command failed", false},
 		{"grep", "No matches found.", false}, {"glob", "No files matched.", false},
-		{"task_update", "saved", false}, {"todo_write", "updated", false},
+		{"task_update", "saved", false}, {"task_scope", "updated", false},
 	} {
 		t.Run(tt.name+tt.result, func(t *testing.T) {
 			guard := &continuationGuard{}
@@ -337,8 +339,307 @@ func TestTaskStateErrorsAndCancellationStopWork(t *testing.T) {
 		t.Fatal("goal silently replaced")
 	}
 	store.err = errors.New("disk full")
-	raw, _ = json.Marshal(active)
+	changed := active
+	changed.Remaining = []string{"verify"}
+	raw, _ = json.Marshal(changed)
 	if _, err := app.functions["task_update"](context.Background(), map[string]any{"state": string(raw)}); err == nil {
 		t.Fatal("save failure ignored")
+	}
+}
+
+func taskEvents(events []turn.Event) []turn.Event {
+	var result []turn.Event
+	for _, event := range events {
+		if event.Kind == "task.updated" {
+			result = append(result, event)
+		}
+	}
+	return result
+}
+
+func TestTaskUpdatedEventsOnLoadSaveAndUnchanged(t *testing.T) {
+	active := activeTestTask()
+	changed := active
+	changed.Remaining = []string{"verify"}
+	changed.Status, changed.Reason = "blocked", "needs input"
+	sameWithTime := active
+	sameWithTime.UpdatedAt = time.Now()
+	store := &memoryTaskStore{state: &active}
+	var events []turn.Event
+	client := &stubClient{responses: []AssistantMessage{taskUpdateMessage(sameWithTime), taskUpdateMessage(changed), {Content: "done"}}}
+	app := NewWithOptions(client, "test", Options{TurnID: "run-1", TaskStore: store, MessageSink: func(e turn.Event) { events = append(events, e) }})
+	if _, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "go on"}}, 20); err != nil {
+		t.Fatal(err)
+	}
+	got := taskEvents(events)
+	if len(got) != 2 {
+		t.Fatalf("task events = %+v, want initial snapshot and one saved change (unchanged update emits none)", got)
+	}
+	for _, event := range got {
+		if event.ItemID != "run-1/task" {
+			t.Fatalf("event = %+v", event)
+		}
+	}
+	if got[0].Phase != "active" || got[1].Phase != "blocked" {
+		t.Fatalf("phases = %q, %q, want task statuses", got[0].Phase, got[1].Phase)
+	}
+	var initial, saved taskstate.State
+	if json.Unmarshal([]byte(got[0].Text), &initial) != nil || len(initial.Remaining) != 2 {
+		t.Fatalf("initial snapshot = %q", got[0].Text)
+	}
+	if json.Unmarshal([]byte(got[1].Text), &saved) != nil || len(saved.Remaining) != 1 {
+		t.Fatalf("saved snapshot = %q", got[1].Text)
+	}
+}
+
+func TestTaskUpdatedEventNullForMissingTaskAndNoneOnFailedSave(t *testing.T) {
+	store := &memoryTaskStore{}
+	var events []turn.Event
+	next := activeTestTask()
+	client := &stubClient{responses: []AssistantMessage{taskUpdateMessage(next), {Content: "done"}}}
+	app := NewWithOptions(client, "test", Options{TaskStore: store, MessageSink: func(e turn.Event) { events = append(events, e) }})
+	store.err = nil
+	failing := &failingSaveStore{memoryTaskStore: store}
+	app.taskStore = failing
+	if _, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "plan"}}, 20); err != nil {
+		t.Fatal(err)
+	}
+	got := taskEvents(events)
+	if len(got) != 1 || got[0].Text != "null" || got[0].Phase != "" {
+		t.Fatalf("task events = %+v, want only the null snapshot", got)
+	}
+}
+
+type failingSaveStore struct{ *memoryTaskStore }
+
+func (s *failingSaveStore) SaveTaskState(taskstate.State) error { return fmt.Errorf("disk full") }
+
+func TestUnchangedTaskUpdateSkipsSaveButCountsAsReassessment(t *testing.T) {
+	blocked := activeTestTask()
+	blocked.Status, blocked.Reason = "blocked", "needs input"
+	store := &countingTaskStore{memoryTaskStore: &memoryTaskStore{state: &blocked}}
+	same := blocked
+	same.UpdatedAt = time.Now()
+	client := &stubClient{responses: []AssistantMessage{taskUpdateMessage(same), {Content: "still blocked"}}}
+	app := NewWithOptions(client, "test", Options{TaskStore: store})
+	result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "any news?"}}, 20)
+	if err != nil || store.saves != 0 || len(client.messages) != 2 || result.Outcome.Reason == "task_reassessment_required" {
+		t.Fatalf("saves=%d calls=%d outcome=%+v err=%v", store.saves, len(client.messages), result.Outcome, err)
+	}
+}
+
+type countingTaskStore struct {
+	*memoryTaskStore
+	saves int
+}
+
+func (s *countingTaskStore) SaveTaskState(state taskstate.State) error {
+	s.saves++
+	return s.memoryTaskStore.SaveTaskState(state)
+}
+
+func TestUnchangedCompletedTaskUpdateStillRequiresRealEvidence(t *testing.T) {
+	done := completedWith(taskstate.Verification{Command: "go test ./x", Status: "passed", Details: "ok"})
+	store := &countingTaskStore{memoryTaskStore: &memoryTaskStore{state: &done}}
+	app := NewWithOptions(&stubClient{}, "test", Options{TaskStore: store})
+	app.task = &done
+	run := &runState{id: "r"}
+	_, err := app.functions["task_update"](context.WithValue(context.Background(), runStateKey{}, run), map[string]any{"state": mustJSON(done)})
+	if err == nil || store.saves != 0 {
+		t.Fatalf("err=%v saves=%d, want evidence rejection without save", err, store.saves)
+	}
+}
+
+func mustJSON(value any) string {
+	data, _ := json.Marshal(value)
+	return string(data)
+}
+
+func TestStaleCompletionReopenEmitsTaskEventOnlyWhenSaved(t *testing.T) {
+	done := completedWith()
+	reopenable := func(store taskstate.Store) (*Agent, *runState, *[]turn.Event) {
+		events := &[]turn.Event{}
+		app := NewWithOptions(&stubClient{}, "test", Options{TaskStore: store})
+		app.task = &done
+		run := &runState{id: "run-9", sink: func(e turn.Event) { *events = append(*events, e) }, completionSaved: true}
+		entry := run.ledger.begin("e1", "edit_file", nil)
+		run.ledger.finish(entry, true)
+		return app, run, events
+	}
+	app, run, events := reopenable(&memoryTaskStore{state: &done})
+	if !app.reopenStaleCompletion(run) {
+		t.Fatal("stale completion not reopened")
+	}
+	got := taskEvents(*events)
+	if len(got) != 1 || got[0].ItemID != "run-9/task" || got[0].Phase != "active" || !strings.Contains(got[0].Text, "re-run verification") {
+		t.Fatalf("reopen events = %+v", got)
+	}
+	done = completedWith()
+	app, run, events = reopenable(&failingSaveStore{memoryTaskStore: &memoryTaskStore{state: &done}})
+	if !app.reopenStaleCompletion(run) {
+		t.Fatal("stale completion not reported")
+	}
+	if got := taskEvents(*events); len(got) != 0 || app.task.Status != "completed" {
+		t.Fatalf("failed reopen save emitted %+v, task=%+v", got, app.task)
+	}
+}
+
+func TestTaskSnapshotSurvivesContextCompactionWithDetails(t *testing.T) {
+	task := taskstate.State{Goal: "ship the zebra feature", Status: "active",
+		Criteria:  []taskstate.Criterion{{Description: "zebra criterion alpha"}},
+		Remaining: []string{"remaining step omega", "remaining step sigma"}}
+	history := []map[string]any{{"role": "user", "content": "implement"}, {"role": "assistant", "content": strings.Repeat("older work ", 2000)}, {"role": "user", "content": "continue"}}
+	for name, config := range map[string]ContextConfig{
+		"summarization": {Enabled: true, MaxInputTokens: 1800, TargetInputTokens: 1000, KeepLastTurns: 1, SummarizationEnabled: true, SummaryTriggerTokens: 30},
+		"hard prune":    {Enabled: true, MaxInputTokens: 1800, TargetInputTokens: 1000, KeepLastTurns: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &stubClient{optionResponses: []AssistantMessage{{Role: "assistant", Content: "short"}}}
+			app := NewWithOptions(client, "test", Options{TaskStore: &memoryTaskStore{state: &task}, Context: config})
+			app.task = &task
+			request, compacted := app.buildRequestMessages(context.Background(), history, nil, ChatCompletionOptions{})
+			if compacted == nil {
+				t.Fatal("expected compaction")
+			}
+			if name == "summarization" && len(client.optionMessages) == 0 {
+				t.Fatal("summarization path not exercised")
+			}
+			snapshots := 0
+			for _, message := range request {
+				if strings.HasPrefix(contentText(message["content"]), taskProgressInstructions) {
+					snapshots++
+				}
+			}
+			if snapshots != 1 {
+				t.Fatalf("snapshots in request = %d, want exactly 1", snapshots)
+			}
+			if tokens := estimateMessagesTokens(request); tokens > config.MaxInputTokens {
+				t.Fatalf("request tokens = %d, above limit %d", tokens, config.MaxInputTokens)
+			}
+			last := contentText(request[len(request)-1]["content"])
+			if !strings.HasPrefix(last, taskProgressInstructions) {
+				t.Fatalf("task snapshot is not the last request message: %q", last)
+			}
+			for _, want := range []string{"ship the zebra feature", "zebra criterion alpha", "remaining step omega", "remaining step sigma"} {
+				if !strings.Contains(last, want) {
+					t.Fatalf("snapshot lost %q: %q", want, last)
+				}
+			}
+			for _, message := range compacted {
+				if strings.HasPrefix(contentText(message["content"]), taskProgressInstructions) {
+					t.Fatal("snapshot persisted in compacted history")
+				}
+			}
+		})
+	}
+}
+
+func TestTaskSnapshotExceedingRequestBudgetReturnsError(t *testing.T) {
+	task := activeTestTask()
+	client := &stubClient{}
+	app := NewWithOptions(client, "test", Options{TaskStore: &memoryTaskStore{state: &task}, Context: ContextConfig{Enabled: true, MaxInputTokens: 200, TargetInputTokens: 100, KeepLastTurns: 1}})
+	app.task = &task
+	history := []map[string]any{{"role": "user", "content": "continue"}}
+	request, _, err := app.buildRequestMessagesChecked(context.Background(), history, nil, ChatCompletionOptions{})
+	if err == nil || !strings.Contains(err.Error(), "context budget too small") || request != nil {
+		t.Fatalf("request=%v err=%v, want explicit budget error", request, err)
+	}
+	if _, runErr := app.RunTurn(context.Background(), history, 5); runErr == nil || !strings.Contains(runErr.Error(), "context budget too small") || len(client.messages) != 0 {
+		t.Fatalf("RunTurn err=%v requests=%d, want error before any model request", runErr, len(client.messages))
+	}
+}
+
+// buildRequestMessages drops the budget error; tests that do not exercise the
+// limit use it, production code must call buildRequestMessagesChecked.
+func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (request, compacted []map[string]any) {
+	request, compacted, _ = a.buildRequestMessagesChecked(ctx, messages, definitions, options)
+	return request, compacted
+}
+
+type funcCountingClient struct {
+	*stubClient
+	count func(messages []map[string]any) InputTokenCount
+	seen  [][]map[string]any
+}
+
+func (c *funcCountingClient) CountInputTokens(_ context.Context, _ string, messages []map[string]any, _ []tools.Definition, _ ChatCompletionOptions) (InputTokenCount, error) {
+	c.seen = append(c.seen, cloneMessages(messages))
+	return c.count(messages), nil
+}
+
+func countSnapshots(messages []map[string]any) int {
+	n := 0
+	for _, m := range messages {
+		if strings.HasPrefix(contentText(m["content"]), taskProgressInstructions) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestTaskSnapshotAddedOnceWhenContextDisabled(t *testing.T) {
+	task := activeTestTask()
+	app := NewWithOptions(&stubClient{}, "test", Options{TaskStore: &memoryTaskStore{state: &task}, Context: ContextConfig{Enabled: false}})
+	app.task = &task
+	request, compacted, err := app.buildRequestMessagesChecked(context.Background(), []map[string]any{{"role": "user", "content": "go"}}, nil, ChatCompletionOptions{})
+	if err != nil || compacted != nil || countSnapshots(request) != 1 {
+		t.Fatalf("snapshots=%d compacted=%v err=%v", countSnapshots(request), compacted, err)
+	}
+}
+
+func TestTaskSnapshotBudgetUsesProviderExactCount(t *testing.T) {
+	task := activeTestTask()
+	history := []map[string]any{{"role": "user", "content": "continue"}}
+	build := func(max, target, reported int) (*funcCountingClient, []map[string]any, error) {
+		client := &funcCountingClient{stubClient: &stubClient{}, count: func([]map[string]any) InputTokenCount { return InputTokenCount{Tokens: reported, Exact: true} }}
+		app := NewWithOptions(client, "test", Options{TaskStore: &memoryTaskStore{state: &task}, Context: ContextConfig{Enabled: true, MaxInputTokens: max, TargetInputTokens: target, KeepLastTurns: 1, ExactCountTriggerPercent: 1}})
+		app.task = &task
+		request, _, err := app.buildRequestMessagesChecked(context.Background(), history, nil, ChatCompletionOptions{})
+		return client, request, err
+	}
+	// The local estimate (well above 300 tokens with the snapshot) would reject
+	// this, but the provider's exact count is within the limit and is authoritative.
+	client, request, err := build(300, 280, 250)
+	if err != nil || countSnapshots(request) != 1 {
+		t.Fatalf("provider-accepted request rejected: err=%v snapshots=%d", err, countSnapshots(request))
+	}
+	if len(client.seen) == 0 {
+		t.Fatal("exact counter not consulted")
+	}
+	for _, seen := range client.seen[1:] {
+		if countSnapshots(seen) != 1 {
+			t.Fatalf("counter saw %d snapshots, want exactly 1 (no double count)", countSnapshots(seen))
+		}
+	}
+	// A small local estimate must not hide a provider count above the limit.
+	if _, _, err = build(1800, 1000, 5000); err == nil || !strings.Contains(err.Error(), "provider") || !strings.Contains(err.Error(), "context budget too small") {
+		t.Fatalf("err = %v, want provider-measured budget error", err)
+	}
+}
+
+func TestCheckpointInstructionIsProtectedBudgetOverhead(t *testing.T) {
+	task := activeTestTask()
+	checkpoint := map[string]any{"role": "developer", "content": "CHECKPOINT " + strings.Repeat("stop now ", 100)}
+	history := []map[string]any{{"role": "user", "content": "implement"}, {"role": "assistant", "content": strings.Repeat("older work ", 2000)}, {"role": "user", "content": "continue"}}
+	newApp := func(max, target int) *Agent {
+		app := NewWithOptions(&stubClient{optionResponses: []AssistantMessage{{Role: "assistant", Content: "short"}}}, "test", Options{TaskStore: &memoryTaskStore{state: &task}, Context: ContextConfig{Enabled: true, MaxInputTokens: max, TargetInputTokens: target, KeepLastTurns: 1, SummarizationEnabled: true, SummaryTriggerTokens: 30}})
+		app.task = &task
+		return app
+	}
+	request, compacted, err := newApp(1800, 1000).buildRequestMessagesWithTail(context.Background(), history, nil, ChatCompletionOptions{}, []map[string]any{checkpoint})
+	if err != nil || countSnapshots(request) != 1 || request[len(request)-1]["content"] != checkpoint["content"] {
+		t.Fatalf("snapshots=%d err=%v", countSnapshots(request), err)
+	}
+	if tokens := estimateMessagesTokens(request); tokens > 1800 {
+		t.Fatalf("request tokens = %d, above limit", tokens)
+	}
+	for _, message := range compacted {
+		if message["content"] == checkpoint["content"] || strings.HasPrefix(contentText(message["content"]), taskProgressInstructions) {
+			t.Fatal("protected message persisted in compacted history")
+		}
+	}
+	// Task alone fits, but task plus checkpoint does not: explicit error.
+	if _, _, err = newApp(560, 500).buildRequestMessagesWithTail(context.Background(), history, nil, ChatCompletionOptions{}, []map[string]any{checkpoint}); err == nil || !strings.Contains(err.Error(), "context budget too small") {
+		t.Fatalf("err = %v, want budget error", err)
 	}
 }

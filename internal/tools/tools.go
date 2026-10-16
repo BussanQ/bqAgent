@@ -73,9 +73,6 @@ type Options struct {
 	MemoryDir          string
 	MemoryStore        *appmemory.Store
 	GlobalMemoryStore  *appmemory.Store
-	// Todos backs the todo_write tool. When nil a fresh store is created so the
-	// tool still works (its list is just not shared with the caller).
-	Todos *TodoStore
 	// ExtraDefinitions / ExtraFunctions let an outside package (e.g. MCP) inject
 	// additional tools into the catalog without tools importing it. Builtin
 	// tools win on name conflict.
@@ -109,10 +106,6 @@ func RegistryWithOptions(options Options) map[string]Function {
 	searchProvider := firstConfigured(options.SearchProvider, searchProviderFromEnv())
 	searchAPIKey := firstConfigured(options.SearchAPIKey, searchAPIKeyFromEnv())
 	searchBaseURL := firstConfigured(options.SearchBaseURL, searchBaseURLFromEnv())
-	todoStore := options.Todos
-	if todoStore == nil {
-		todoStore = NewTodoStore()
-	}
 	skillRoot := options.WorkspaceRoot
 	if strings.TrimSpace(options.AgentDir) != "" {
 		skillRoot = filepath.Dir(options.AgentDir)
@@ -124,7 +117,6 @@ func RegistryWithOptions(options Options) map[string]Function {
 		"edit_file":     EditFileInRoot(options.WorkspaceRoot),
 		"grep":          GrepInRoot(options.WorkspaceRoot),
 		"glob":          GlobInRoot(options.WorkspaceRoot),
-		"todo_write":    TodoWriteWithStore(todoStore),
 		"web_search":    WebSearchWithProviderConfig(searchProvider, searchAPIKey, searchBaseURL),
 		"web_fetch":     WebFetch,
 		"install_skill": InstallSkillToRoots(skillRoot, options.WorkspaceRoot),
@@ -309,20 +301,6 @@ func builtinDefinitions() []Definition {
 						"path":    {Type: "string", Description: "Optional base directory (defaults to the workspace root)"},
 					},
 					Required: []string{"pattern"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: FunctionDefinition{
-				Name:        "todo_write",
-				Description: "Optional checklist for genuinely long, multi-step work. It is not part of the standard workflow: for ordinary tasks, do not call todo_write and start substantive work directly. Use it only when you independently decide persistent progress tracking is useful; never call it merely to restate the request, announce a plan, or before routine code analysis. Pass todos as a JSON array string of {content, status, activeForm}, status in pending|in_progress|completed, with at most one item in_progress. After using it, immediately continue with another substantive tool and do not call it again until task content or status changes.",
-				Parameters: JSONSchema{
-					Type: "object",
-					Properties: map[string]JSONSchemaProperty{
-						"todos": {Type: "string", Description: "JSON array of {content, status, activeForm}"},
-					},
-					Required: []string{"todos"},
 				},
 			},
 		},

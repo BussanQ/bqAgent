@@ -67,7 +67,7 @@ func (model Model) auxiliaryLines() []string {
 	width := model.contentWidth()
 	var lines []string
 	if model.panelOpen && (len(model.suggestions) > 0 || model.mention != nil) {
-		lines = strings.Split(model.renderSuggestions(width), "\n")
+		lines = append(lines, strings.Split(model.renderSuggestions(width), "\n")...)
 	}
 	if model.active != nil {
 		for i, input := range model.active.pending {
@@ -85,6 +85,9 @@ func (model Model) auxiliaryLines() []string {
 	if model.queued != nil {
 		preview := previewText(model.queued.value)
 		lines = append(lines, model.styles.dim.Render("已排队 · "+preview))
+	}
+	for _, line := range model.task.lines() {
+		lines = append(lines, model.styles.dim.Render(line))
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], width, "…")

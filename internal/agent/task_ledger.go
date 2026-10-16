@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"regexp"
 	"strings"
 	"sync"
@@ -34,10 +33,9 @@ type execEntry struct {
 // execLedger records executions with a logical clock. All methods are safe for
 // concurrent use by parallel tool goroutines.
 type execLedger struct {
-	mu        sync.Mutex
-	clock     uint64
-	entries   []*execEntry
-	todoItems int
+	mu      sync.Mutex
+	clock   uint64
+	entries []*execEntry
 }
 
 var mutatingFileTools = map[string]bool{"write_file": true, "edit_file": true}
@@ -88,30 +86,14 @@ func (l *execLedger) finish(entry *execEntry, success bool) {
 }
 
 // barrier invalidates all earlier evidence without counting as a mutation.
-// It also resets the todo high-water mark and returns the new clock, which
+// It returns the new clock, which
 // callers keep as the baseline for "work since the latest user input".
 func (l *execLedger) barrier() uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.clock++
-	l.todoItems = 0
 	l.entries = append(l.entries, &execEntry{start: l.clock, end: l.clock, mutating: true, barrier: true})
 	return l.clock
-}
-
-func (l *execLedger) noteTodo(args map[string]any) {
-	var items []json.RawMessage
-	switch raw := args["todos"].(type) {
-	case string:
-		_ = json.Unmarshal([]byte(raw), &items)
-	case []any:
-		items = make([]json.RawMessage, len(raw))
-	}
-	l.mu.Lock()
-	if len(items) > l.todoItems {
-		l.todoItems = len(items)
-	}
-	l.mu.Unlock()
 }
 
 // verified reports whether a passed verification is backed by a real,
@@ -177,9 +159,9 @@ func (l *execLedger) mutatedSince(clock uint64) bool {
 	return false
 }
 
-// workSummary counts successful file edits, successful verifier commands and
-// the largest todo list seen this turn.
-func (l *execLedger) workSummary(since uint64) (edits, verifiers, todos int) {
+// workSummary counts successful file edits and successful verifier commands
+// since the given clock.
+func (l *execLedger) workSummary(since uint64) (edits, verifiers int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, e := range l.entries {
@@ -193,7 +175,7 @@ func (l *execLedger) workSummary(since uint64) (edits, verifiers, todos int) {
 			verifiers++
 		}
 	}
-	return edits, verifiers, l.todoItems
+	return edits, verifiers
 }
 
 type bashKind int

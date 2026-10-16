@@ -74,6 +74,7 @@ const quitConfirmHint = "再次按 Ctrl+C 退出（2 秒内）"
 
 type Model struct {
 	messages turn.Messages
+	task     taskProgress
 	backend  Backend
 	config   Config
 	styles   theme
@@ -198,6 +199,7 @@ func NewModel(backend Backend, config Config) Model {
 	model.startup = model.startupLines()
 	if model.sessionID != "" {
 		if history, err := backend.History(model.sessionID, ResumeHistoryBudget); err == nil {
+			model.task.state = history.Task
 			model.startup = append(model.startup, model.renderHistory(history)...)
 		} else {
 			model.startup = append(model.startup, model.styles.error.Render("无法恢复会话："+err.Error()))
@@ -654,6 +656,7 @@ func (model *Model) submit(value string, images ...Image) tea.Cmd {
 	model.sequence++
 	model.phase = phaseThinking
 	model.messages = turn.Messages{}
+	model.task.turnID, model.task.seq = "", 0
 	model.reportActivity("working")
 	model.progress = "正在思考"
 	model.startedAt = time.Now()
@@ -776,6 +779,10 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	}
 	if event.kind != "done" {
 		commands := []tea.Cmd{waitTurnEvent(model.active.events)}
+		if event.kind == "message" && event.message.Kind == "task.updated" {
+			model.task.apply(event.message)
+			return commands
+		}
 		if event.kind == "message" && event.message.Kind == "input.applied" {
 			// Applied input is a user message, not part of the assistant projection.
 			model.applyInput(event.message)
@@ -1091,6 +1098,7 @@ func (model *Model) discardToolGroup() tea.Cmd {
 }
 
 func (model *Model) clearSession() {
+	model.task = taskProgress{}
 	model.toolInspector = false
 	model.inspectorPending = false
 	model.inspection = toolInspection{}

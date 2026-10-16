@@ -117,22 +117,11 @@ func requireStringArgument(toolName string, args map[string]any, key string) (st
 
 func (a *Agent) toolDefinitionsForRun() []tools.Definition {
 	filtered := make([]tools.Definition, 0, len(a.toolDefinitions))
-	var optionalTodo *tools.Definition
 	for _, definition := range a.toolDefinitions {
 		if definition.Function.Name == "web_search" && a.webSearchAvailable != nil && !a.webSearchAvailable() {
 			continue
 		}
-		if definition.Function.Name == "todo_write" {
-			copy := definition
-			optionalTodo = &copy
-			continue
-		}
 		filtered = append(filtered, definition)
-	}
-	// todo_write remains available, but placing the optional planning aid last
-	// keeps standard execution and exploration tools prominent for the model.
-	if optionalTodo != nil {
-		filtered = append(filtered, *optionalTodo)
 	}
 	return filtered
 }
@@ -157,7 +146,7 @@ func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall) bool {
 			}
 		}
 		switch toolCall.Function.Name {
-		case "write_file", "edit_file", "todo_write", "task_update", "task_scope":
+		case "write_file", "edit_file", "task_update", "task_scope":
 			return true
 		case "consult_group_agent":
 			return true
@@ -294,9 +283,6 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 		if run != nil {
 			succeeded := toolErr == nil && !strings.HasPrefix(strings.TrimSpace(toolResult), "Error:")
 			run.ledger.finish(entry, succeeded)
-			if succeeded && toolCall.Function.Name == "todo_write" {
-				run.ledger.noteTodo(arguments)
-			}
 		}
 	}
 	duration := time.Since(toolStartedAt)
@@ -307,9 +293,6 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 	}
 	a.writeStageProgress(fmt.Sprintf("Tool %s %s", toolCall.Function.Name, status))
 	a.emitToolResult(toolCall, toolResult, duration, toolErr != nil)
-	if toolCall.Function.Name == "todo_write" && toolErr == nil {
-		a.writeProgress(toolResult)
-	}
 	if a.trace != nil {
 		a.trace.ToolCall(toolCall.Function.Name, arguments, toolResult, duration, toolErr)
 		if toolErr == nil && (toolCall.Function.Name == "write_file" || toolCall.Function.Name == "edit_file") {

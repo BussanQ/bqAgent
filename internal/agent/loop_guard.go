@@ -7,35 +7,37 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+)
 
-	"bqagent/internal/tools"
+const (
+	taskUpdateRecoveryThreshold   = 3
+	taskUpdateCheckpointThreshold = 5
+	taskUpdateStallRecoveryPrompt = "Repeated task_update calls are not task progress. Continue this same turn now with a substantive tool such as read_file, glob, grep, edit_file or execute_bash that does the actual work or verification. Call task_update again only when a real stage, acceptance result, blocker or scope change must be recorded."
 )
 
 type loopGuard struct {
-	config              StageConfig
-	callCounts          map[string]int
-	failureCounts       map[string]int
-	argumentFailures    map[string]int
-	pathFailures        map[string]int
-	lastTodoProgress    string
-	hasLastTodoProgress bool
-	todoNoProgressCount int
-	lastEmptySearch     string
-	emptySearchCount    int
-	progress            *progressTracker
-	seenEdits           map[string]bool
+	config           StageConfig
+	callCounts       map[string]int
+	failureCounts    map[string]int
+	argumentFailures map[string]int
+	pathFailures     map[string]int
+	taskUpdateStall  int
+	lastEmptySearch  string
+	emptySearchCount int
+	progress         *progressTracker
+	seenEdits        map[string]bool
 }
 
 type loopGuardAction struct {
 	recoveryPrompt   string
 	checkpointReason string
-	todoCheckpoint   bool
+	stallCheckpoint  bool
 }
 
 func (action loopGuardAction) merge(next loopGuardAction) loopGuardAction {
-	if action.checkpointReason == "" || (action.todoCheckpoint && next.checkpointReason != "" && !next.todoCheckpoint) {
+	if action.checkpointReason == "" || (action.stallCheckpoint && next.checkpointReason != "" && !next.stallCheckpoint) {
 		action.checkpointReason = next.checkpointReason
-		action.todoCheckpoint = next.todoCheckpoint
+		action.stallCheckpoint = next.stallCheckpoint
 	}
 	if action.recoveryPrompt == "" {
 		action.recoveryPrompt = next.recoveryPrompt
@@ -85,17 +87,16 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 		guard.failureCounts = map[string]int{}
 		guard.pathFailures = map[string]int{}
 	}
-	if progress, ok := todoProgressSignature(call); ok {
-		if guard.hasLastTodoProgress && guard.lastTodoProgress == progress {
-			guard.todoNoProgressCount++
-			if guard.todoNoProgressCount == 1 {
-				return loopGuardAction{recoveryPrompt: todoNoProgressRecoveryPrompt}
-			}
-			return loopGuardAction{checkpointReason: "loop protection: repeated todo_write without task progress after recovery", todoCheckpoint: true}
+	if call.Function.Name == "task_update" {
+		// task_update is bookkeeping: rewriting the plan (even with different
+		// states) without substantive work in between is not progress.
+		guard.taskUpdateStall++
+		if guard.taskUpdateStall == taskUpdateRecoveryThreshold {
+			return loopGuardAction{recoveryPrompt: taskUpdateStallRecoveryPrompt}
 		}
-		guard.lastTodoProgress = progress
-		guard.hasLastTodoProgress = true
-		guard.todoNoProgressCount = 0
+		if guard.taskUpdateStall >= taskUpdateCheckpointThreshold {
+			return loopGuardAction{checkpointReason: "loop protection: repeated task_update without substantive work after recovery", stallCheckpoint: true}
+		}
 	} else if emptySearch := emptySearchSignature(call, result); emptySearch != "" {
 		if guard.lastEmptySearch == emptySearch {
 			guard.emptySearchCount++
@@ -110,9 +111,7 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 			guard.emptySearchCount = 1
 		}
 	} else if fresh {
-		guard.lastTodoProgress = ""
-		guard.hasLastTodoProgress = false
-		guard.todoNoProgressCount = 0
+		guard.taskUpdateStall = 0
 		guard.lastEmptySearch = ""
 		guard.emptySearchCount = 0
 	}
@@ -142,7 +141,7 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 // progressTracker dedups "progress" by fingerprint. A successful call counts
 // as new progress only the first time its (tool, arguments, sha256(result))
 // is seen since the last reset, so re-reading an unchanged file cannot reset
-// stall counters forever. Bookkeeping tools (todo_write, task_scope,
+// stall counters forever. Bookkeeping tools (task_scope,
 // task_update) never count. Limit: it is a conservative dedup, not proof of a
 // real workspace change.
 type progressTracker struct {
@@ -161,7 +160,7 @@ func (t *progressTracker) reset() { t.seen = map[string]bool{} }
 func (t *progressTracker) observe(call ToolCall, result string) bool {
 	t.edited = false
 	switch call.Function.Name {
-	case "todo_write", "task_scope", "task_update":
+	case "task_scope", "task_update":
 		return false
 	}
 	if !toolResultMadeProgress(call, result) {
@@ -203,51 +202,6 @@ func canonicalArguments(raw string) string {
 		return trimmed
 	}
 	return string(encoded)
-}
-
-func todoProgressSignature(call ToolCall) (string, bool) {
-	if call.Function.Name != "todo_write" {
-		return "", false
-	}
-	fallback := strings.TrimSpace(call.Function.Arguments)
-	parsed, err := parseArguments(call.Function.Arguments)
-	if err != nil {
-		return fallback, true
-	}
-	arguments, ok := parsed.(map[string]any)
-	if !ok {
-		return fallback, true
-	}
-	raw, ok := arguments["todos"]
-	if !ok {
-		return fallback, true
-	}
-	var encoded []byte
-	if text, isString := raw.(string); isString {
-		encoded = []byte(strings.TrimSpace(text))
-	} else {
-		encoded, err = json.Marshal(raw)
-		if err != nil {
-			return fallback, true
-		}
-	}
-	var items []tools.TodoItem
-	if err := json.Unmarshal(encoded, &items); err != nil {
-		return fallback, true
-	}
-	type todoProgress struct {
-		Content string `json:"content"`
-		Status  string `json:"status"`
-	}
-	progress := make([]todoProgress, 0, len(items))
-	for _, item := range items {
-		progress = append(progress, todoProgress{Content: strings.TrimSpace(item.Content), Status: item.Status})
-	}
-	encoded, err = json.Marshal(progress)
-	if err != nil {
-		return fallback, true
-	}
-	return string(encoded), true
 }
 
 func toolResultMadeProgress(call ToolCall, result string) bool {

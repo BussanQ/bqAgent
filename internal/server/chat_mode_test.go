@@ -151,10 +151,13 @@ func TestRunModeRemainsDefaultWithFullTools(t *testing.T) {
 	for _, definition := range client.definitions[0] {
 		gotNames[definition.Function.Name] = true
 	}
-	for _, name := range []string{"execute_bash", "write_file", "edit_file", "task_update", "todo_write"} {
+	for _, name := range []string{"execute_bash", "write_file", "edit_file", "task_update"} {
 		if !gotNames[name] {
 			t.Errorf("full run tool %q was not exposed", name)
 		}
+	}
+	if gotNames["todo_write"] {
+		t.Fatal("removed todo_write tool was exposed in run mode")
 	}
 	if gotNames["plan"] {
 		t.Fatal("removed plan tool was exposed in run mode")

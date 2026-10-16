@@ -14,8 +14,8 @@ import (
 func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 	t.Setenv("SEARCH_API_KEY", "test-search-key")
 	definitions := Definitions()
-	if len(definitions) != 11 {
-		t.Fatalf("definitions length = %d, want 11", len(definitions))
+	if len(definitions) != 10 {
+		t.Fatalf("definitions length = %d, want 10", len(definitions))
 	}
 
 	tests := []struct {
@@ -30,11 +30,19 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		{index: 3, name: "edit_file", description: "Replace an exact string in a workspace file using a workspace-relative path. old_string must match exactly once unless replace_all is true.", required: []string{"path", "old_string", "new_string"}},
 		{index: 4, name: "grep", description: "Search workspace file contents by Go regular expression. Use a workspace-relative path when provided. Returns path:line:text and skips .git and binary files.", required: []string{"pattern"}},
 		{index: 5, name: "glob", description: "Find workspace files by a relative glob pattern (supports ** and brace alternatives, e.g. **/*.{go,md}). Returns workspace-relative paths; reuse those paths in file tools. If no files match, change the pattern or use another exploration tool instead of repeating the same call.", required: []string{"pattern"}},
-		{index: 6, name: "todo_write", description: "Optional checklist for genuinely long, multi-step work. It is not part of the standard workflow: for ordinary tasks, do not call todo_write and start substantive work directly. Use it only when you independently decide persistent progress tracking is useful; never call it merely to restate the request, announce a plan, or before routine code analysis. Pass todos as a JSON array string of {content, status, activeForm}, status in pending|in_progress|completed, with at most one item in_progress. After using it, immediately continue with another substantive tool and do not call it again until task content or status changes.", required: []string{"todos"}},
-		{index: 7, name: "web_search", description: "Search the web for up-to-date information using available search backends. Returns source URLs; cite the relevant sources in your answer.", required: []string{"query"}},
-		{index: 8, name: "web_fetch", description: "Fetch content from a web URL", required: []string{"url"}},
-		{index: 9, name: "install_skill", description: "Install a skill from a URL. Defaults to the global .agent/skills directory; set target=workspace for the current workspace.", required: []string{"url"}},
-		{index: 10, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
+		{index: 6, name: "web_search", description: "Search the web for up-to-date information using available search backends. Returns source URLs; cite the relevant sources in your answer.", required: []string{"query"}},
+		{index: 7, name: "web_fetch", description: "Fetch content from a web URL", required: []string{"url"}},
+		{index: 8, name: "install_skill", description: "Install a skill from a URL. Defaults to the global .agent/skills directory; set target=workspace for the current workspace.", required: []string{"url"}},
+		{index: 9, name: "mem_save", description: "Save knowledge to memory. Use target=\"longterm\" for durable facts, preferences, and patterns. Use target=\"daily\" for session notes and task context.", required: []string{"target", "content"}},
+	}
+
+	for _, definition := range definitions {
+		if definition.Function.Name == "todo_write" {
+			t.Fatal("todo_write definition must not be exposed")
+		}
+	}
+	if _, ok := RegistryWithOptions(Options{})["todo_write"]; ok {
+		t.Fatal("todo_write function must not be registered")
 	}
 
 	for _, testCase := range tests {
@@ -102,8 +110,8 @@ func TestWriteFileReturnsCurrentSuccessString(t *testing.T) {
 func TestNewCatalogIncludesLocalToolsForServerLikeUsage(t *testing.T) {
 	catalog := NewCatalog(Options{SearchAPIKey: "test-search-key"})
 	definitions := catalog.Definitions()
-	if len(definitions) != 11 {
-		t.Fatalf("definitions length = %d, want 11", len(definitions))
+	if len(definitions) != 10 {
+		t.Fatalf("definitions length = %d, want 10", len(definitions))
 	}
 	foundInstallSkill := false
 	for _, definition := range definitions {

@@ -22,6 +22,7 @@ var defaultFiles embed.FS
 var retiredDefaults = map[string][]string{
 	agentDocFileName: {
 		"3e761621c9c84fa2864e335a56b3e20d0513f9755e6488891a18f6128d68dfb2",
+		"4032b4a0ec5a2f60944a18483fb2879c34fd0afd40cc18621c54e6dcc513cd14",
 		"4b4a8d81c7e1da0f3bf54ce02e5cf4b3699c38f6dcf45ece7839c5bc615ee4ab",
 		"5bf8a285962de2c7a1d6ce580aeba9f6ab2da76745608ef1849ca7e396c14688",
 		"8fc362e4c7322de5684663331bd80acea72a6b87b43f1fc8b95cf7a6562d2410",

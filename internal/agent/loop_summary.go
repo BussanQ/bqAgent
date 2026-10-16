@@ -62,17 +62,20 @@ func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string
 		setTurnStop(ctx, turn.BudgetLimited, reason)
 	}
 	a.writeStageProgress(fmt.Sprintf("Preparing stage summary after %d iterations", iterations))
-	request, compacted := a.buildRequestMessages(ctx, messages, nil, ChatCompletionOptions{})
+	stopInstruction := map[string]any{
+		"role":    "developer",
+		"content": fmt.Sprintf("The current interactive analysis stage must stop now because %s. Based only on the work and tool results above, provide a concise checkpoint with exactly these sections: 已发现, 未完成, 建议下一步. State that the user can reply ‘继续’ to resume from this session. Do not call tools.", reason),
+	}
+	request, compacted, budgetErr := a.buildRequestMessagesWithTail(ctx, messages, nil, ChatCompletionOptions{}, []map[string]any{stopInstruction})
+	if budgetErr != nil {
+		return "", messages, budgetErr
+	}
 	if compacted != nil {
 		messages = compacted
 	}
 	if err := ctx.Err(); err != nil {
 		return "", messages, err
 	}
-	request = append(request, map[string]any{
-		"role":    "developer",
-		"content": fmt.Sprintf("The current interactive analysis stage must stop now because %s. Based only on the work and tool results above, provide a concise checkpoint with exactly these sections: 已发现, 未完成, 建议下一步. State that the user can reply ‘继续’ to resume from this session. Do not call tools.", reason),
-	})
 	message, summaryErr := a.client.CreateChatCompletion(ctx, a.model, request, nil)
 	if err := ctx.Err(); err != nil {
 		return "", messages, err

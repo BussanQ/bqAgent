@@ -166,7 +166,7 @@ func (backend *tuiBackend) History(sessionID string, budget int) (apptui.History
 	if err != nil {
 		return apptui.History{}, err
 	}
-	result := apptui.History{ID: history.ID, Title: history.Title, Omitted: history.Omitted, Messages: make([]apptui.HistoryMessage, 0, len(history.Messages))}
+	result := apptui.History{ID: history.ID, Title: history.Title, Task: history.Task, Omitted: history.Omitted, Messages: make([]apptui.HistoryMessage, 0, len(history.Messages))}
 	for _, message := range history.Messages {
 		tools := make([]apptui.ToolEvent, 0, len(message.Tools))
 		for _, tool := range message.Tools {

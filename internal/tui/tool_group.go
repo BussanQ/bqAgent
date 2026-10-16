@@ -213,12 +213,10 @@ func (item toolDisplay) render(styles theme, width int, expanded bool) string {
 		result.Arguments = item.start.Arguments
 	}
 	rendered := toolSummary(result, styles, width, expanded)
-	if result.Name != "todo_write" {
-		if arguments := summarizeArguments(item.start.Arguments, 180); arguments != "" {
-			parts := strings.SplitN(rendered, "\n", 2)
-			parts[0] += " · " + arguments
-			rendered = strings.Join(parts, "\n")
-		}
+	if arguments := summarizeArguments(item.start.Arguments, 180); arguments != "" {
+		parts := strings.SplitN(rendered, "\n", 2)
+		parts[0] += " · " + arguments
+		rendered = strings.Join(parts, "\n")
 	}
 	// Long arguments must not turn the one-row tool heading into a screenful.
 	parts := strings.SplitN(rendered, "\n", 2)

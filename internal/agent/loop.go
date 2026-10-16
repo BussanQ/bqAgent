@@ -36,7 +36,6 @@ const (
 	truncatedToolBatchError             = "Error: Tool batch was not executed because the model output reached its token limit. No side effects occurred. Resend the complete tool-call batch with complete JSON arguments."
 	truncatedToolRecoveryStoppedMessage = "Tool-call recovery stopped after repeated output-token truncation. Increase the model output-token limit or request a smaller tool-call batch; no tools from the truncated batches were executed."
 	emptyFinalRecoveryPrompt            = "The previous assistant response contained no usable final content. Continue the task from the existing conversation and completed tool results. If additional work or verification is needed, call the required tools now. Otherwise provide a concise final answer stating what was completed and any verification limitations. Do not return an empty response."
-	todoNoProgressRecoveryPrompt        = "The todo list did not change. Planning and rewriting todos are not task progress. Continue this same turn now with a substantive tool such as read_file, glob, grep, execute_bash, or the tool directly required by the task. If a previous search returned no matches, change its arguments or use a different exploration tool instead of repeating it. Do not call todo_write again until task content or status actually changes."
 	emptySearchRecoveryPrompt           = "The same search returned no results again. Repeating it cannot advance the task. Continue this same turn with different search arguments or another exploration tool such as read_file or execute_bash."
 )
 
@@ -288,6 +287,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if err != nil {
 			return "", messages, err
 		}
+		turnRun(ctx).emitTask(a.task)
 	}
 	messages = ensurePromptSnapshotMessages(messages, a.prompt)
 	startedAt := time.Now()
@@ -334,7 +334,10 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		definitions := a.toolDefinitionsForRun()
 		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort, ServiceTier: a.serviceTier}
 		completionOptions.PromptCache = buildPromptCacheOptions(a.apiType, a.model, a.prompt, definitions, completionOptions)
-		requestMessages, compacted := a.buildRequestMessages(explorationCtx, messages, definitions, completionOptions)
+		requestMessages, compacted, budgetErr := a.buildRequestMessagesChecked(explorationCtx, messages, definitions, completionOptions)
+		if budgetErr != nil {
+			return "", updatedMessages, budgetErr
+		}
 		if compacted != nil {
 			messages = compacted
 			updatedMessages = compacted
@@ -589,7 +592,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
 				}
-				if action.checkpointReason != "" && !action.todoCheckpoint {
+				if action.checkpointReason != "" && !action.stallCheckpoint {
 					setTurnStop(ctx, turn.Blocked, action.checkpointReason)
 					return a.finishStageCheckpoint(ctx, updatedMessages, action.checkpointReason, actualIterations)
 				}
@@ -626,11 +629,11 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				guardAction = guardAction.merge(action)
 			}
 		}
-		if guardAction.checkpointReason != "" && (!guardAction.todoCheckpoint || loopGuard.todoNoProgressCount > 1) {
+		if guardAction.checkpointReason != "" && (!guardAction.stallCheckpoint || loopGuard.taskUpdateStall >= taskUpdateCheckpointThreshold) {
 			setTurnStop(ctx, turn.Blocked, guardAction.checkpointReason)
 			return a.finishStageCheckpoint(ctx, updatedMessages, guardAction.checkpointReason, actualIterations)
 		}
-		if guardAction.recoveryPrompt != "" && loopGuard.todoNoProgressCount > 0 {
+		if guardAction.recoveryPrompt != "" && loopGuard.taskUpdateStall >= taskUpdateRecoveryThreshold {
 			a.writeStageProgress("Recovering from a no-progress tool loop")
 		}
 		a.writeStageProgress(fmt.Sprintf("Completed analysis iteration %d", actualIterations))

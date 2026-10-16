@@ -405,7 +405,6 @@ func TestComplexTurnWithoutTaskRecordIsCheckedAtCloseout(t *testing.T) {
 		return map[string]tools.Function{
 			"execute_bash": func(context.Context, map[string]any) (string, error) { return "ok", nil },
 			"edit_file":    func(context.Context, map[string]any) (string, error) { return "edited", nil },
-			"todo_write":   func(context.Context, map[string]any) (string, error) { return "Todo list updated.", nil },
 		}
 	}
 	complete := completedWith(taskstate.Verification{Command: "go test ./x", Status: "passed", Details: "ok"})
@@ -430,20 +429,9 @@ func TestComplexTurnWithoutTaskRecordIsCheckedAtCloseout(t *testing.T) {
 			t.Fatalf("calls=%d outcome=%+v err=%v", len(client.messages), result.Outcome, err)
 		}
 	})
-	t.Run("three todos force a record", func(t *testing.T) {
-		store := &memoryTaskStore{}
-		todos := `{"todos":"[{\"content\":\"a\",\"status\":\"pending\"},{\"content\":\"b\",\"status\":\"pending\"},{\"content\":\"c\",\"status\":\"pending\"}]"}`
-		client := &stubClient{responses: []AssistantMessage{{ToolCalls: []ToolCall{{ID: "t", Function: FunctionCall{Name: "todo_write", Arguments: todos}}}}, {Content: "done"}, {Content: "done"}, {Content: "done"}}}
-		app := NewWithOptions(client, "test", Options{TaskStore: store, Functions: functions()})
-		result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "plan it"}}, 20)
-		if err != nil || len(client.messages) != 4 || result.Outcome.Status != turn.Blocked || result.Outcome.Reason != "task_record_missing" {
-			t.Fatalf("calls=%d outcome=%+v err=%v", len(client.messages), result.Outcome, err)
-		}
-	})
 	for name, responses := range map[string][]AssistantMessage{
 		"single edit":              {{ToolCalls: []ToolCall{editCall("e1")}}, {Content: "done"}},
 		"verification only":        {bash("b1", "go test ./x"), bash("b2", "go test ./y"), {Content: "done"}},
-		"two todos only":           {{ToolCalls: []ToolCall{{ID: "t", Function: FunctionCall{Name: "todo_write", Arguments: `{"todos":[{"content":"a","status":"pending"},{"content":"b","status":"pending"}]}`}}}}, {Content: "done"}},
 		"ordinary question + read": {bash("b1", "ls"), {Content: "done"}},
 	} {
 		t.Run(name+" is not forced", func(t *testing.T) {

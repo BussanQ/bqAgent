@@ -6,6 +6,7 @@ import (
 
 	"bqagent/internal/chatcommand"
 	"bqagent/internal/modelcatalog"
+	"bqagent/internal/taskstate"
 	"bqagent/internal/turn"
 )
 
@@ -153,6 +154,7 @@ type ProviderInput struct {
 type History struct {
 	ID       string
 	Title    string
+	Task     *taskstate.State
 	Messages []HistoryMessage
 	Omitted  int
 }

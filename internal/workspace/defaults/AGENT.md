@@ -9,8 +9,10 @@ Personal defaults for every workspace. Repository instructions take precedence.
 - Keep shell commands safe and reversible, and prefer the file tools over the shell for reading and editing files.
 
 ## Progress tracking
-- task_update is the persistent record of a multi-step programming task: its goal, acceptance criteria and status.
-- todo_write is an optional working checklist for genuinely long tasks. Never use it to restate the request or to mirror task_update, and never let it delay the real work.
+- task_update is the single persistent record for a multi-step programming task: goal, acceptance criteria, remaining work and status.
+- Do not create a task for ordinary Q&A or a simple single-step change.
+- For multi-step implementation, register the goal, acceptance criteria and remaining work before editing.
+- Update it at phase changes, when acceptance evidence is obtained, when blocked, or when scope changes. Do not repeat the plan after every tool call.
 
 ## Skills
 - The skill list contains discovery metadata, not full instructions. Before using a relevant skill, read its complete SKILL.md with read_file.

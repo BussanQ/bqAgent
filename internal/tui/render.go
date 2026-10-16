@@ -101,11 +101,6 @@ func toolSummary(event ToolEvent, styles theme, width int, expanded bool) string
 	if event.Kind == "tool_start" {
 		line := fmt.Sprintf("%s %s %s", styles.accent.Render(fmt.Sprintf("⚙ #%d", sequence)), event.Name, summarizeArguments(event.Arguments, 180))
 		line = ansi.Truncate(line, width, "…")
-		if event.Name == "todo_write" {
-			if block := todoProgress(event.Arguments); block != "" {
-				line += "\n" + block
-			}
-		}
 		return line
 	}
 	status := strings.ToLower(strings.TrimSpace(event.Status))
@@ -136,11 +131,6 @@ func toolSummary(event ToolEvent, styles theme, width int, expanded bool) string
 		// Only the failure marker is red: a recoverable tool error is not a
 		// failed turn, and command-provided ANSI must not repaint the transcript.
 		line += "\n" + styles.dim.Render(indentPreview(preview))
-	}
-	if event.Name == "todo_write" && !failed {
-		if block := todoProgress(event.Arguments); block != "" {
-			line += "\n" + block
-		}
 	}
 	return line
 }
@@ -215,31 +205,4 @@ func utf8Prefix(value string, limit int) string {
 
 func indentPreview(value string) string {
 	return "  " + strings.ReplaceAll(value, "\n", "\n  ")
-}
-
-func todoProgress(arguments map[string]any) string {
-	raw, _ := arguments["todos"].(string)
-	if strings.TrimSpace(raw) == "" {
-		return ""
-	}
-	var todos []struct {
-		Content string `json:"content"`
-		Status  string `json:"status"`
-	}
-	if json.Unmarshal([]byte(raw), &todos) != nil || len(todos) == 0 {
-		return ""
-	}
-	lines := make([]string, 0, len(todos)+1)
-	done := 0
-	for _, todo := range todos {
-		mark := "○"
-		if todo.Status == "completed" {
-			mark = "●"
-			done++
-		} else if todo.Status == "in_progress" {
-			mark = "◐"
-		}
-		lines = append(lines, fmt.Sprintf("  %s %s", mark, todo.Content))
-	}
-	return fmt.Sprintf("任务进度 %d/%d\n%s", done, len(todos), strings.Join(lines, "\n"))
 }

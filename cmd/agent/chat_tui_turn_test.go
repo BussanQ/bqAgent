@@ -12,11 +12,32 @@ import (
 	"bqagent/internal/agent"
 	"bqagent/internal/mcp"
 	appserver "bqagent/internal/server"
+	"bqagent/internal/session"
+	"bqagent/internal/taskstate"
 	"bqagent/internal/tools"
 	apptui "bqagent/internal/tui"
 	"bqagent/internal/turn"
 	"bqagent/internal/workspace"
 )
+
+func TestTUIBackendRestoresPersistedTaskInHistory(t *testing.T) {
+	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: t.TempDir()}
+	service := appserver.NewService(appserver.ServiceOptions{WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir()})
+	store := session.NewStore(ws.Root, session.Options{AgentDir: ws.AgentDir()})
+	saved, err := store.Create(session.CreateOptions{Task: "实现功能", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := taskstate.State{Goal: "实现功能", Status: "active", Criteria: []taskstate.Criterion{{Description: "目标保留"}}, Remaining: []string{"验证"}}
+	if err := saved.SaveTaskState(task); err != nil {
+		t.Fatal(err)
+	}
+	backend := &tuiBackend{workspace: ws, service: service}
+	history, err := backend.History(saved.ID(), apptui.ResumeHistoryBudget)
+	if err != nil || history.Task == nil || history.Task.Goal != task.Goal || history.Task.Remaining[0] != "验证" {
+		t.Fatalf("history=%+v err=%v", history, err)
+	}
+}
 
 func TestTUIBackendForwardsSharedTurnContract(t *testing.T) {
 	client := &tuiEffortClient{}

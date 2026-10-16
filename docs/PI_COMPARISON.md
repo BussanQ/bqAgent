@@ -307,7 +307,6 @@ Pi 默认依旧以当前 OS 用户权限运行。
 - edit_file
 - grep
 - glob
-- todo_write
 - web_search
 - web_fetch
 - install_skill

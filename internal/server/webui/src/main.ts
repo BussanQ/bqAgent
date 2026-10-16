@@ -17,6 +17,7 @@ import { waitForModelSelection } from "./model-selection";
 import { initParticleField, redrawParticleField, refreshParticleCapability, refreshParticlePalette } from "./particles";
 import { SSEBuffer, MessageSnapshots } from "./stream";
 import { initialTheme } from "./theme";
+import { isTaskUpdatedEvent, renderTaskPanel, TaskProgress } from "./task-progress";
 import { inputKindForKey, isInputAppliedEvent, TURN_INPUT_STATE_LABELS, TurnInputSession, type TurnInputKind } from "./turn-input";
 import { shouldGroupToolCalls } from "./tool-groups";
 import type { SentFile, SentImage } from "./attachments";
@@ -86,6 +87,13 @@ import { createDoctorController } from "./doctor-controller";
   const statusEl = byId<HTMLDivElement>("status");
   var conversationLoadID = 0;
   var conversationScopeEpoch = 0;
+  const taskPanel = byId<HTMLElement>("task-panel");
+  function taskScope(): string { return String(conversationScopeEpoch); }
+  const taskProgress = new TaskProgress(taskScope());
+  function clearTaskProgress(): void {
+    taskProgress.reset(taskScope());
+    renderTaskPanel(taskPanel, null);
+  }
   var conversations: ConversationSummary[] = [];
   var conversationContextTarget: ConversationSummary | null = null;
   var sessionId = "";
@@ -122,7 +130,7 @@ import { createDoctorController } from "./doctor-controller";
     setChatMode: (...args) => setChatMode(...args),
   });
   const workspaceController = createWorkspaceController(api, {
-    onSwitch() { slashCommands.close(); api.abort(); providerController.cancel(); conversationLoadID++; conversationScopeEpoch++; },
+    onSwitch() { slashCommands.close(); api.abort(); providerController.cancel(); conversationLoadID++; conversationScopeEpoch++; clearTaskProgress(); },
     get thread() { return thread; },
     get input() { return input; },
     get sendBtn() { return sendBtn; },
@@ -440,6 +448,7 @@ import { createDoctorController } from "./doctor-controller";
         setConversationType("default", null);
         clearPendingAttachments();
         thread.innerHTML = emptyMarkup();
+        clearTaskProgress();
         providerController.loadRuntimeModel();
       }
       renderConversationList();
@@ -472,6 +481,7 @@ import { createDoctorController } from "./doctor-controller";
   async function openConversation(id: string): Promise<void> {
     if (busy || !id) return;
     conversationScopeEpoch++;
+    clearTaskProgress();
     var loadID = ++conversationLoadID;
     statusEl.textContent = "正在读取历史";
     try {
@@ -483,6 +493,8 @@ import { createDoctorController } from "./doctor-controller";
       setConversationType(payload.conversation_type, payload.group || null);
       setChatMode(payload.mode);
       thread.innerHTML = "";
+      taskProgress.restore(payload.task, taskScope());
+      renderTaskPanel(taskPanel, taskProgress.state);
       normalizeHistoryMessages(payload.messages || []).forEach(function (message) {
         var bubble = addMessage(message.role, message.sender, message.kind);
         if (message.role === "assistant") {
@@ -1440,6 +1452,8 @@ import { createDoctorController } from "./doctor-controller";
     }
     if (bubble) ensureCoordinatorBubble();
     var snapshots = new MessageSnapshots(currentTurnId);
+    var streamTaskScope = taskScope();
+    var streamTurnId = currentTurnId;
     var streamed = "";
     var progress = "";
     function closeCoordinatorSegment(): void {
@@ -1503,7 +1517,9 @@ import { createDoctorController } from "./doctor-controller";
           var evt = events[eventIndex];
           if (evt.event === "message_snapshot") {
             var snapshot = parseJSONEvent<MessageSnapshot>(evt.data);
-            if (isInputAppliedEvent(snapshot)) {
+            if (isTaskUpdatedEvent(snapshot)) {
+              if (taskProgress.apply(snapshot, streamTaskScope, streamTurnId)) renderTaskPanel(taskPanel, taskProgress.state);
+            } else if (isInputAppliedEvent(snapshot)) {
               closeCoordinatorSegment();
               inputSession.onApplied(snapshot);
             } else if (snapshots.apply(snapshot) && snapshots.latest) {
@@ -1684,6 +1700,7 @@ import { createDoctorController } from "./doctor-controller";
     setAttachmentMenu(false);
     setReasoningEffortMenu(false);
     thread.innerHTML = emptyMarkup();
+    clearTaskProgress();
     renderConversationList();
     statusEl.textContent = "在线";
     statusEl.classList.remove("error", "busy");

@@ -15,7 +15,8 @@ func TestMessagesIgnoreReplayStaleUpdatesAndOtherTurns(t *testing.T) {
 	other.TurnID = "other"
 	other.Seq = 4
 	input := Event{TurnID: "t", ItemID: "input", Seq: 5, Kind: "input.applied", Text: "user correction"}
-	for _, e := range []Event{first, final, late, other, input} {
+	task := Event{TurnID: "t", ItemID: "t/task", Seq: 6, Kind: "task.updated", Text: `{"status":"active"}`}
+	for _, e := range []Event{first, final, late, other, input, task} {
 		if messages.Apply(e) {
 			t.Fatalf("accepted stale event %+v", e)
 		}

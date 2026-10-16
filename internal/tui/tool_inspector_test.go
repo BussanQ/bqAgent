@@ -284,12 +284,12 @@ func TestFirstToolExpansionOnlyShowsSummaryRows(t *testing.T) {
 			model.active = &activeTurn{sequence: 1, cancel: func() {}}
 		}
 		model.tools.add(ToolEvent{Kind: "tool_result", ID: "call-1", Name: "read_file", Status: "failed", Preview: strings.Repeat("failure-output\n", 100)})
-		model.tools.add(ToolEvent{Kind: "tool_start", ID: "call-2", Seq: 2, Name: "todo_write", Arguments: map[string]any{"todos": `[{"content":"task","status":"pending"}]`}})
-		model.tools.add(ToolEvent{Kind: "tool_result", ID: "call-2", Name: "todo_write", Status: "succeeded", Preview: "todo-output"})
+		model.tools.add(ToolEvent{Kind: "tool_start", ID: "call-2", Seq: 2, Name: "task_update", Arguments: map[string]any{"state": `{"goal":"task","status":"active","criteria":[{"description":"verified","done":false}],"remaining":["verify"]}`}})
+		model.tools.add(ToolEvent{Kind: "tool_result", ID: "call-2", Name: "task_update", Status: "succeeded", Preview: "task-output"})
 		updated, _ := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 		model = updated.(Model)
 		lines := model.tools.viewLines(model.styles, model.contentWidth())
-		if len(lines) != 7 || strings.Contains(strings.Join(lines, "\n"), "failure-output") || strings.Contains(strings.Join(lines, "\n"), "todo-output") {
+		if len(lines) != 7 || strings.Contains(strings.Join(lines, "\n"), "failure-output") || strings.Contains(strings.Join(lines, "\n"), "task-output") {
 			t.Fatalf("running=%t: first expansion contains tool bodies: %q", running, lines)
 		}
 		assertLiveFrameFits(t, model)

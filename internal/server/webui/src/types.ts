@@ -77,8 +77,32 @@ export interface ConversationHistoryFile {
   path: string;
 }
 
+export interface TaskCriterion {
+  description: string;
+  done: boolean;
+  evidence?: string;
+}
+
+export interface TaskVerification {
+  command: string;
+  tool_call_id?: string;
+  status: string;
+  details: string;
+}
+
+export interface TaskState {
+  goal: string;
+  status: string;
+  criteria: TaskCriterion[];
+  remaining: string[];
+  verification: TaskVerification[];
+  reason?: string;
+  updated_at?: string;
+}
+
 export interface ConversationHistory {
   id?: string;
+  task?: TaskState | null;
   mode?: ChatMode;
   conversation_type?: ConversationType;
   group?: GroupInfo;
@@ -176,7 +200,7 @@ export interface MessageSnapshot {
   turn_id: string;
   item_id: string;
   seq: number;
-  kind: "message.updated" | "message.completed" | "input.applied";
+  kind: "message.updated" | "message.completed" | "input.applied" | "task.updated";
   phase: string;
   text: string;
 }

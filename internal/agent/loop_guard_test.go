@@ -68,7 +68,7 @@ func TestProgressTrackerDedupAndBookkeeping(t *testing.T) {
 	if !tr.observe(read, "x") || tr.observe(read, "x") || !tr.observe(read, "y") {
 		t.Fatal("dedup by result fingerprint failed")
 	}
-	if tr.observe(guardCall("task_update", `{}`), "ok") || tr.observe(guardCall("todo_write", `{}`), "ok") || tr.observe(read, "Error: x") {
+	if tr.observe(guardCall("task_update", `{}`), "ok") || tr.observe(guardCall("task_scope", `{}`), "ok") || tr.observe(read, "Error: x") {
 		t.Fatal("bookkeeping/errors must not count")
 	}
 }

@@ -74,27 +74,61 @@ func normalizeContextConfig(config ContextConfig) ContextConfig {
 	return config
 }
 
-func (a *Agent) buildRequestMessages(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (request []map[string]any, compacted []map[string]any) {
-	sanitized := repairToolHistory(duplicateMessages(messages))
+type protectedMessageKey struct{}
+
+// protectedMessages returns the messages (task snapshot, checkpoint
+// instruction) whose tokens are reserved as fixed request overhead while the
+// rest of the conversation is budgeted. They are never persisted in history.
+func protectedMessages(ctx context.Context) []map[string]any {
+	messages, _ := ctx.Value(protectedMessageKey{}).([]map[string]any)
+	return messages
+}
+
+// buildRequestMessagesChecked builds the budgeted request. The complete current
+// task snapshot is a protected, never-clipped final message: its tokens are
+// reserved as fixed overhead (counted by every measurement) and only the other
+// conversation is pruned or summarized. If fixed prompt, tools and snapshot
+// alone exceed the provider input limit, it returns an error instead of
+// sending an oversized request or silently dropping acceptance criteria.
+func (a *Agent) buildRequestMessagesChecked(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (request []map[string]any, compacted []map[string]any, err error) {
+	return a.buildRequestMessagesWithTail(ctx, messages, definitions, options, nil)
+}
+
+// buildRequestMessagesWithTail additionally reserves budget for tail messages
+// (e.g. the checkpoint instruction) and appends them after the task snapshot.
+func (a *Agent) buildRequestMessagesWithTail(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, tail []map[string]any) (request []map[string]any, compacted []map[string]any, err error) {
+	var protected []map[string]any
 	if text := a.taskContext(ctx); text != "" {
-		sanitized = append(sanitized, map[string]any{"role": "developer", "content": text})
-		// The current task is stored separately. Never accumulate stale snapshots
-		// in the conversation when the context manager compacts this request.
-		defer func() {
-			if compacted == nil {
-				return
-			}
-			filtered := make([]map[string]any, 0, len(compacted))
-			for _, message := range compacted {
-				content, _ := message["content"].(string)
-				if message["role"] == "developer" && strings.HasPrefix(content, taskProgressInstructions) {
-					continue
-				}
-				filtered = append(filtered, message)
-			}
-			compacted = filtered
-		}()
+		protected = append(protected, map[string]any{"role": "developer", "content": text})
 	}
+	protected = append(protected, tail...)
+	if len(protected) == 0 {
+		request, compacted = a.buildBudgetedRequestMessages(ctx, messages, definitions, options)
+		return request, compacted, nil
+	}
+	if !a.contextConfig.Enabled {
+		request, compacted = a.buildBudgetedRequestMessages(ctx, messages, definitions, options)
+		return append(append([]map[string]any{}, request...), protected...), compacted, nil
+	}
+	limit := a.contextConfig.MaxInputTokens - a.contextConfig.ResponseReserveTokens
+	protectedCtx := context.WithValue(ctx, protectedMessageKey{}, protected)
+	sanitized := repairToolHistory(duplicateMessages(messages))
+	fixed := sanitized[:leadingPromptMessageCount(sanitized)]
+	// The limit check uses the same measurement authority as compaction (the
+	// provider's count once the estimate nears the trigger, else the local
+	// estimate), so it adds no extra network count for small requests.
+	if m := a.measureRequestTokens(protectedCtx, fixed, definitions, options, false); m.tokens > limit {
+		return nil, nil, fmt.Errorf("context budget too small: fixed prompt, tools and protected messages need about %d tokens (%s), above the %d-token request limit; raise the context limit or shorten the task record", m.tokens, m.source, limit)
+	}
+	request, compacted = a.buildBudgetedRequestMessages(protectedCtx, messages, definitions, options)
+	if m := a.measureRequestTokens(protectedCtx, request, definitions, options, false); m.tokens > limit {
+		return nil, nil, fmt.Errorf("context budget too small: request still needs about %d tokens (%s) after compaction, above the %d-token request limit; protected messages and latest input cannot be reduced further", m.tokens, m.source, limit)
+	}
+	return append(append([]map[string]any{}, request...), protected...), compacted, nil
+}
+
+func (a *Agent) buildBudgetedRequestMessages(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (request []map[string]any, compacted []map[string]any) {
+	sanitized := repairToolHistory(duplicateMessages(messages))
 	if !a.contextConfig.Enabled {
 		return sanitized, nil
 	}
@@ -154,6 +188,11 @@ func messageBudgetForRequest(messages []map[string]any, requestTokens int, targe
 }
 
 func (a *Agent) measureRequestTokens(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, forceExact bool) requestTokenMeasurement {
+	// A protected message (the task snapshot) is part of the request: count it
+	// before any usage-based calibration so it is never counted twice.
+	if protected := protectedMessages(ctx); len(protected) > 0 {
+		messages = append(append([]map[string]any{}, messages...), protected...)
+	}
 	estimated, source := a.estimateRequestTokens(messages, definitions, options)
 	measurement := requestTokenMeasurement{tokens: estimated, source: source}
 	trigger := a.contextConfig.CompressionTriggerTokens * a.contextConfig.ExactCountTriggerPercent / 100

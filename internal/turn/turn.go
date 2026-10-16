@@ -59,7 +59,7 @@ type Event struct {
 	TurnID string `json:"turn_id"`
 	ItemID string `json:"item_id,omitempty"`
 	Seq    uint64 `json:"seq"`
-	Kind   string `json:"kind"` // message.updated, message.completed
+	Kind   string `json:"kind"` // message.updated, message.completed, input.applied, task.updated
 	Phase  string `json:"phase"`
 	Text   string `json:"text"`
 }
