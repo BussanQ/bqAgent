@@ -50,14 +50,14 @@ func TestServiceRestoresTaskAndContinuesUntilVerified(t *testing.T) {
 	if err != nil || !strings.Contains(response.Reply, "maximum of 4 iterations") {
 		t.Fatalf("first=%+v err=%v", response, err)
 	}
-	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "switch test succeeded"}}, Verification: []taskstate.Verification{{Command: "test_switch", Status: "passed", Details: "ok"}}}
+	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "switch test succeeded"}}, Verification: []taskstate.Verification{{Command: "go test ./switch", Status: "passed", Details: "ok"}}}
 	client = &taskScriptClient{responses: []agent.AssistantMessage{
 		{Role: "assistant", Content: "not tested yet"},
-		{Role: "assistant", ToolCalls: []agent.ToolCall{{ID: "verify", Function: agent.FunctionCall{Name: "test_switch", Arguments: `{}`}}}},
+		{Role: "assistant", ToolCalls: []agent.ToolCall{{ID: "verify", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test ./switch"}`}}}},
 		serverTaskUpdate(complete), {Role: "assistant", Content: "verified", Phase: "final_answer"},
 	}}
 	checks := 0
-	service = NewService(ServiceOptions{WorkspaceRoot: root, Client: client, Model: "test", SystemPrompt: "test", Functions: map[string]tools.Function{"test_switch": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil }}})
+	service = NewService(ServiceOptions{WorkspaceRoot: root, Client: client, Model: "test", SystemPrompt: "test", Functions: map[string]tools.Function{"execute_bash": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil }}})
 	result, err := service.HandleTurn(context.Background(), TurnRequest{SessionID: response.SessionID, Message: "改完了吗"})
 	if err != nil || result.Reply != "verified" || checks != 1 {
 		t.Fatalf("resume=%+v checks=%d err=%v", result, checks, err)
@@ -107,15 +107,15 @@ func TestServiceCompletesLongTaskWithoutFollowupTurn(t *testing.T) {
 			agent.AssistantMessage{Content: "still working", Phase: "commentary"},
 			agent.AssistantMessage{ToolCalls: []agent.ToolCall{{ID: fmt.Sprintf("edit-%d", i), Function: agent.FunctionCall{Name: "edit_switch", Arguments: fmt.Sprintf(`{"step":%d}`, i)}}}})
 	}
-	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "switch verification passed"}}, Verification: []taskstate.Verification{{Command: "test_switch", Status: "passed", Details: "ok"}}}
+	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "switch verification passed"}}, Verification: []taskstate.Verification{{Command: "go test ./switch", Status: "passed", Details: "ok"}}}
 	responses = append(responses,
-		agent.AssistantMessage{ToolCalls: []agent.ToolCall{{ID: "verify", Function: agent.FunctionCall{Name: "test_switch", Arguments: `{}`}}}},
+		agent.AssistantMessage{ToolCalls: []agent.ToolCall{{ID: "verify", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test ./switch"}`}}}},
 		serverTaskUpdate(complete), agent.AssistantMessage{Content: "verified", Phase: "final_answer"})
 	client := &taskScriptClient{responses: responses}
 	edits, checks := 0, 0
 	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test", Functions: map[string]tools.Function{
-		"edit_switch": func(context.Context, map[string]any) (string, error) { edits++; return "", nil },
-		"test_switch": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
+		"edit_switch":  func(context.Context, map[string]any) (string, error) { edits++; return "", nil },
+		"execute_bash": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
 	}})
 	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: active.Goal})
 	if err != nil || response.Reply != "verified" || edits != 6 || checks != 1 || len(client.responses) != 0 {

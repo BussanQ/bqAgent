@@ -39,6 +39,11 @@ func (a *Agent) installTaskScopeTool() {
 		if s.scopeLocked {
 			return "", fmt.Errorf("task scope is fixed after task progress changes")
 		}
+		// Detaching after this turn already changed the workspace would let work
+		// done for the saved task escape its acceptance and verification rules.
+		if relation == turn.SideQuestion && s.hasMutationSinceInput() {
+			return "", fmt.Errorf("cannot switch to side_question after this turn modified the workspace; keep relation=continue and update the saved task")
+		}
 		s.outcome.TaskRelation = relation
 		s.outcome.TaskRelationReason = strings.TrimSpace(reason)
 		return "Turn association updated. The saved task is unchanged.", nil

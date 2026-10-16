@@ -17,9 +17,10 @@ import { waitForModelSelection } from "./model-selection";
 import { initParticleField, redrawParticleField, refreshParticleCapability, refreshParticlePalette } from "./particles";
 import { SSEBuffer, MessageSnapshots } from "./stream";
 import { initialTheme } from "./theme";
+import { inputKindForKey, isInputAppliedEvent, TURN_INPUT_STATE_LABELS, TurnInputSession, type TurnInputKind } from "./turn-input";
 import { shouldGroupToolCalls } from "./tool-groups";
 import type { SentFile, SentImage } from "./attachments";
-import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, ConversationType, GenerationMetrics, GroupEventPayload, GroupInfo, MessageSnapshot, PendingFile, PendingImage, ReasoningEffort, ToolEventPayload, WebUIDoneEvent } from "./types";
+import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, ConversationType, GenerationMetrics, GroupEventPayload, GroupInfo, MessageSnapshot, PendingFile, PendingInputPayload, PendingImage, ReasoningEffort, ToolEventPayload, WebUIDoneEvent } from "./types";
 import { createSlashCommands } from "./slash-commands";
 import { APIClient, isCancellation } from "./api-client";
 import { createAuthController } from "./auth-controller";
@@ -76,9 +77,15 @@ import { createDoctorController } from "./doctor-controller";
   const reasoningEffortRange = byId<HTMLInputElement>("reasoning-effort-range");
   const reasoningEffortLabels = byId<HTMLDivElement>("reasoning-effort-labels");
   const sendBtn = byId<HTMLButtonElement>("send");
+  const turnInputQueue = byId<HTMLDivElement>("turn-input-queue");
+  const turnInputActions = byId<HTMLElement>("turn-input-actions");
+  const steerBtn = byId<HTMLButtonElement>("steer-btn");
+  const followUpBtn = byId<HTMLButtonElement>("followup-btn");
+  const composerHints = byId<HTMLElement>("composer-hints");
   const themeToggle = byId<HTMLButtonElement>("theme-toggle");
   const statusEl = byId<HTMLDivElement>("status");
   var conversationLoadID = 0;
+  var conversationScopeEpoch = 0;
   var conversations: ConversationSummary[] = [];
   var conversationContextTarget: ConversationSummary | null = null;
   var sessionId = "";
@@ -91,6 +98,7 @@ import { createDoctorController } from "./doctor-controller";
   var currentTurnId = "";
   var currentController: AbortController | null = null;
   var stopRequested = false;
+  var turnInputs: TurnInputSession | null = null;
   var preparingSend = false;
   var pendingImages: PendingImage[] = [];
   var pendingImageReads: Promise<void>[] = [];
@@ -114,7 +122,7 @@ import { createDoctorController } from "./doctor-controller";
     setChatMode: (...args) => setChatMode(...args),
   });
   const workspaceController = createWorkspaceController(api, {
-    onSwitch() { slashCommands.close(); api.abort(); providerController.cancel(); conversationLoadID++; },
+    onSwitch() { slashCommands.close(); api.abort(); providerController.cancel(); conversationLoadID++; conversationScopeEpoch++; },
     get thread() { return thread; },
     get input() { return input; },
     get sendBtn() { return sendBtn; },
@@ -463,6 +471,7 @@ import { createDoctorController } from "./doctor-controller";
 
   async function openConversation(id: string): Promise<void> {
     if (busy || !id) return;
+    conversationScopeEpoch++;
     var loadID = ++conversationLoadID;
     statusEl.textContent = "正在读取历史";
     try {
@@ -1127,7 +1136,10 @@ import { createDoctorController } from "./doctor-controller";
     sendBtn.classList.toggle("stop", on);
     sendBtn.title = on ? "停止生成" : "发送";
     sendBtn.setAttribute("aria-label", on ? "停止生成" : "发送");
-    input.disabled = on || !workspaceController.workspaceReady;
+    input.disabled = !workspaceController.workspaceReady;
+    input.placeholder = on ? "任务进行中：Enter 纠偏，Ctrl/Cmd + Enter 排队为后续任务" : "给 bqagent 发送消息，可粘贴或拖入图片和文件";
+    turnInputActions.hidden = !on;
+    composerHints.textContent = on ? "Enter 纠偏 · Ctrl/Cmd + Enter 排队后续 · 附件暂不支持中途发送" : "Enter 发送 · Shift + Enter 换行 · / 命令 · 支持 Markdown 与附件";
     addAttachmentBtn.disabled = on;
     uploadFileBtn.disabled = on;
     modeRunBtn.disabled = on;
@@ -1302,6 +1314,56 @@ import { createDoctorController } from "./doctor-controller";
     return "turn-" + Date.now().toString(36) + "-" + random;
   }
 
+  function turnInputKindLabel(kind: string): string {
+    return kind === "follow_up" ? "后续任务" : "纠偏";
+  }
+
+  function createTurnInputSession(turnId: string): TurnInputSession {
+    return new TurnInputSession(turnId, workspaceController.currentWorkspace ? workspaceController.currentWorkspace.id : "", {
+      request: function (url, init) { return api.request(url, init); },
+      scope: function () { return (workspaceController.currentWorkspace ? workspaceController.currentWorkspace.id : "") + ":" + conversationScopeEpoch; },
+      takeDraft: function () {
+        var text = input.value;
+        if (text.trim() && (pendingImages.length || pendingFiles.length)) {
+          setAttachmentError("附件暂不支持中途发送，已保留到下次发送；本次仅发送文字");
+        }
+        if (text.trim()) { input.value = ""; autoGrow(); }
+        return text;
+      },
+      getDraft: function () { return input.value; },
+      setDraft: function (text) { input.value = text; autoGrow(); },
+      renderQueue: function (items) {
+        turnInputQueue.textContent = "";
+        items.forEach(function (item) {
+          var row = document.createElement("div");
+          row.className = "turn-input-queued";
+          var label = document.createElement("span");
+          label.textContent = TURN_INPUT_STATE_LABELS[item.state] + " · " + turnInputKindLabel(item.kind);
+          var text = document.createElement("span");
+          text.textContent = item.text;
+          row.appendChild(label);
+          row.appendChild(text);
+          turnInputQueue.appendChild(row);
+        });
+        turnInputQueue.hidden = items.length === 0;
+      },
+      renderApplied: function (kind, text) {
+        var bubble = addMessage("user");
+        renderUserMessage(bubble, text, [], []);
+        var chip = document.createElement("span");
+        chip.className = "turn-input-chip";
+        chip.textContent = TURN_INPUT_STATE_LABELS.applied + " · " + turnInputKindLabel(kind);
+        bubble.appendChild(chip);
+      },
+      notify: setAttachmentError
+    });
+  }
+
+  function submitTurnInput(kind: TurnInputKind): void {
+    if (!busy || !currentTurnId || !turnInputs || stopRequested) return;
+    void turnInputs.submit(kind);
+  }
+
   async function stopCurrentTurn(): Promise<void> {
     if (!busy || !currentTurnId || stopRequested) return;
     stopRequested = true;
@@ -1351,6 +1413,9 @@ import { createDoctorController } from "./doctor-controller";
     }
 
     currentTurnId = createTurnId();
+    var inputSession = createTurnInputSession(currentTurnId);
+    turnInputs = inputSession;
+    var pendingFromServer: PendingInputPayload[] = [];
     currentController = new AbortController();
     stopRequested = false;
 
@@ -1438,7 +1503,10 @@ import { createDoctorController } from "./doctor-controller";
           var evt = events[eventIndex];
           if (evt.event === "message_snapshot") {
             var snapshot = parseJSONEvent<MessageSnapshot>(evt.data);
-            if (snapshots.apply(snapshot) && snapshots.latest) {
+            if (isInputAppliedEvent(snapshot)) {
+              closeCoordinatorSegment();
+              inputSession.onApplied(snapshot);
+            } else if (snapshots.apply(snapshot) && snapshots.latest) {
               streamed = snapshots.latest.text;
               var snapshotBubble = ensureCoordinatorBubble();
               caret.remove();
@@ -1475,6 +1543,7 @@ import { createDoctorController } from "./doctor-controller";
           } else if (evt.event === "done") {
             finished = true;
             var done = parseJSONEvent<WebUIDoneEvent>(evt.data);
+            pendingFromServer = done.pending_inputs || [];
             if (done.session_id) {
               workspaceController.setCurrentWorkspaceSession(done.session_id);
             }
@@ -1511,6 +1580,7 @@ import { createDoctorController } from "./doctor-controller";
             }
           } else if (evt.event === "stopped") {
             finished = true;
+            pendingFromServer = parseJSONEvent<{ pending_inputs?: PendingInputPayload[] }>(evt.data).pending_inputs || [];
             expireACPPermissionCards(pendingPermissions);
             var stoppedBubble = ensureCoordinatorBubble();
             clearStreamingState(stoppedBubble);
@@ -1526,7 +1596,8 @@ import { createDoctorController } from "./doctor-controller";
             expireACPPermissionCards(pendingPermissions);
             var errorBubble = ensureCoordinatorBubble();
             clearStreamingState(errorBubble);
-            var errPayload = parseJSONEvent<{ error?: string }>(evt.data);
+            var errPayload = parseJSONEvent<{ error?: string; pending_inputs?: PendingInputPayload[] }>(evt.data);
+            pendingFromServer = errPayload.pending_inputs || [];
             errorBubble.classList.add("error");
             errorBubble.textContent = "出错：" + (errPayload.error || "未知错误");
             statusEl.textContent = "请求失败";
@@ -1591,6 +1662,7 @@ import { createDoctorController } from "./doctor-controller";
       }
     } finally {
       clearStreamingState(bubble);
+      inputSession.finish(pendingFromServer);
       setBusy(false);
       currentTurnId = "";
       currentController = null;
@@ -1602,6 +1674,7 @@ import { createDoctorController } from "./doctor-controller";
 
   function newChat(type: ConversationType = "default"): void {
     if (busy) return;
+    conversationScopeEpoch++;
     slashCommands.close();
     setNewConversationMenu(false);
     workspaceController.setCurrentWorkspaceSession("");
@@ -1629,6 +1702,8 @@ import { createDoctorController } from "./doctor-controller";
   sendBtn.addEventListener("click", function () {
     if (busy) stopCurrentTurn(); else send();
   });
+  steerBtn.addEventListener("click", function () { submitTurnInput("steering"); });
+  followUpBtn.addEventListener("click", function () { submitTurnInput("follow_up"); });
   conversationNew.addEventListener("click", function () { setNewConversationMenu(Boolean(conversationNewMenu.hidden)); });
   conversationNewMenu.addEventListener("click", function (event) {
     var option = eventElement(event.target)?.closest<HTMLButtonElement>("[data-conversation-type]");
@@ -1822,6 +1897,14 @@ import { createDoctorController } from "./doctor-controller";
         closeMentionMenu();
         return;
       }
+    }
+    if (busy) {
+      var turnInputKind = inputKindForKey(e);
+      if (turnInputKind) {
+        e.preventDefault();
+        submitTurnInput(turnInputKind);
+      }
+      return;
     }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();

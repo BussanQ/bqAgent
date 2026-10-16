@@ -16,7 +16,7 @@ import (
 // instructions, so this per-turn developer message stays short.
 const taskProgressInstructions = `Task tracking: for a multi-step programming task, call task_update before editing to persist the original goal, acceptance criteria and remaining implementation/verification work. Update it when real progress changes, then keep working. Questions and small one-step edits need no task.
 An active task stays the objective when the user says continue or asks for status: answer status briefly and keep working unless told to stop or wait. For a new unrelated question, call task_scope with relation=side_question and a reason; it detaches only this turn and leaves the saved task unchanged. Never use side_question to drop work requested in the current turn. Replace the goal only when the user changes or cancels it, using replace_goal with a reason.
-Mark a task completed only when every criterion has tool evidence, nothing remains and the targeted verification passed; otherwise record blocked or awaiting_input with the concrete reason. Never remove criteria just to finish.`
+Mark a task completed only when every criterion has tool evidence, nothing remains and the targeted verification passed; otherwise record blocked or awaiting_input with the concrete reason. Never remove criteria just to finish. Each passed verification must be a command this turn's execute_bash actually ran successfully after the last edit (optionally add its tool_call_id); a later edit makes it stale and it must be rerun. When the saved task is blocked or awaiting_input and the user continues it, re-assess it with task_update: set active when the blocker is gone, or keep it blocked with the concrete reason it still applies.`
 
 func (a *Agent) installTaskTool() {
 	if a.taskStore == nil {
@@ -24,10 +24,11 @@ func (a *Agent) installTaskTool() {
 	}
 	a.installTaskScopeTool()
 	a.toolDefinitions = append(a.toolDefinitions, tools.Definition{Type: "function", Function: tools.FunctionDefinition{
-		Name: "task_update", Description: "Persist progress for a multi-step programming task. state is JSON containing goal, status (active/completed/blocked/awaiting_input/cancelled), criteria [{description,done,evidence}], remaining [string], verification [{command,status (passed/failed/unavailable),details}], reason. Completion requires all criteria backed by evidence, no remaining work, and passed verification. Preserve the original goal and criteria unless the user changes scope.",
+		Name: "task_update", Description: "Persist progress for a multi-step programming task. state is JSON containing goal, status (active/completed/blocked/awaiting_input/cancelled), criteria [{description,done,evidence}], remaining [string], verification [{command,tool_call_id (optional),status (passed/failed/unavailable),details}], reason. Completion requires all criteria backed by evidence, no remaining work, and passed verification whose command was actually run successfully by execute_bash in this turn after the last change. Preserve the original goal and criteria unless the user changes scope.",
 		Parameters: tools.JSONSchema{Type: "object", Properties: map[string]tools.JSONSchemaProperty{
 			"state":        {Type: "string", Description: "Complete task state as a JSON object."},
-			"replace_goal": {Type: "boolean", Description: "Only true for a new user-authorized objective or changed acceptance criteria; include reason in state."},
+			"replace_goal": {Type: "boolean", Description: "Only true for a new user-authorized objective or changed acceptance criteria; include reason in state and user_quote."},
+			"user_quote":   {Type: "string", Description: "With replace_goal: a verbatim excerpt (at least 6 characters, or the whole short message) of the user's message in this turn that requests the change."},
 		}, Required: []string{"state"}},
 	}})
 	a.functions["task_update"] = func(ctx context.Context, args map[string]any) (string, error) {
@@ -48,7 +49,9 @@ func (a *Agent) installTaskTool() {
 		if err = next.Validate(); err != nil {
 			return "", err
 		}
+		run := turnRun(ctx)
 		replace, _ := args["replace_goal"].(bool)
+		replaced := false
 		if a.task != nil {
 			changed := a.task.Goal != next.Goal
 			for _, old := range a.task.Criteria {
@@ -61,16 +64,39 @@ func (a *Agent) installTaskTool() {
 				}
 				changed = changed || !found
 			}
-			if changed && (!replace || strings.TrimSpace(next.Reason) == "") {
-				return "", fmt.Errorf("preserve the original goal and criteria; replacing them requires replace_goal and the user's scope-change reason")
+			if changed {
+				if !replace || strings.TrimSpace(next.Reason) == "" {
+					return "", fmt.Errorf("preserve the original goal and criteria; replacing them requires replace_goal and the user's scope-change reason")
+				}
+				quote, _ := args["user_quote"].(string)
+				if run == nil || !run.quotedByUser(quote) {
+					return "", fmt.Errorf("replacing the goal requires user_quote: a verbatim excerpt (at least %d characters, or the whole short message) of the user's request in this turn", minQuoteRunes)
+				}
+				if next.Status == "completed" {
+					return "", fmt.Errorf("a replaced goal cannot be completed in the same update; record it active, do the work, then verify")
+				}
+				// Evidence for the old goal says nothing about the new one.
+				next.Verification = nil
+				replaced = true
 			}
+		}
+		if err = verifyCompletionEvidence(run, next); err != nil {
+			return "", err
 		}
 		if err = a.taskStore.SaveTaskState(next); err != nil {
 			return "", err
 		}
 		a.task = &next
-		if state := turnRun(ctx); state != nil {
-			state.scopeLocked = true
+		if run != nil {
+			run.scopeLocked = true
+			run.mu.Lock()
+			run.taskUpdated = true
+			run.completionSaved = next.Status == "completed"
+			run.completedClock = run.ledger.now()
+			run.mu.Unlock()
+			if replaced {
+				run.ledger.barrier()
+			}
 		}
 		return "Task state saved. Continue substantive work while active; finish only after acceptance and verification, or explain the recorded blocker.", nil
 	}
@@ -106,13 +132,18 @@ const recoveryEscalationThreshold = 2
 type continuationGuard struct {
 	stagnant   int
 	progressed bool
+	tracker    *progressTracker
 }
 
+// observe counts only new substantive progress: bookkeeping tools and exact
+// repeats of an earlier (tool, arguments, result) do not reset the stall count.
 func (guard *continuationGuard) observe(call ToolCall, result string) {
-	if call.Function.Name == "task_scope" || call.Function.Name == "task_update" || call.Function.Name == "todo_write" || !toolResultMadeProgress(call, result) {
-		return
+	if guard.tracker == nil {
+		guard.tracker = newProgressTracker()
 	}
-	guard.progressed = true
+	if guard.tracker.observe(call, result) {
+		guard.progressed = true
+	}
 }
 
 // Recovery changes the next action rather than treating temporary lack of tool
@@ -143,6 +174,9 @@ func (a *Agent) continuationReason(ctx context.Context, message AssistantMessage
 	if a.task != nil && a.task.Status == "active" && !isSideQuestion(ctx) {
 		return "The saved programming task is still active. Check its original goal, remaining work and acceptance criteria. Continue unfinished implementation or targeted verification now. Use task_update to record completion with evidence, or a concrete blocker/required user input. Do not stop at a promise to continue."
 	}
+	if reason := a.taskRecordReason(ctx); reason != "" {
+		return reason
+	}
 	// Tool count alone is not evidence of unfinished programming work. A
 	// complete ordinary answer must not be replaced by an unsolicited review.
 	return ""
@@ -154,4 +188,100 @@ func (a *Agent) appendContinuation(messages []map[string]any, reason string) ([]
 		return messages, err
 	}
 	return append(messages, message), nil
+}
+
+const maxTaskRecordPrompts = 2
+
+// taskRecordReason enforces two task-record rules at the moment the model tries
+// to end the turn without tool calls:
+//  1. a blocked/awaiting_input task the user is continuing must be re-assessed
+//     by task_update in this turn, not merely acknowledged;
+//  2. substantial work (at least two successful edits, or a todo list of three or
+//     more items) with no saved task must be recorded.
+//
+// Each rule prompts at most maxTaskRecordPrompts times. After that the turn may
+// end, but never silently: the outcome carries an explicit reason.
+func (a *Agent) taskRecordReason(ctx context.Context) string {
+	run := turnRun(ctx)
+	if a.taskStore == nil || run == nil || isSideQuestion(ctx) {
+		return ""
+	}
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	if a.task != nil && a.task.Status == "completed" && run.completionSaved && run.ledger.mutatedSince(run.completedClock) {
+		if run.staleCompletionPrompts >= maxTaskRecordPrompts {
+			run.outcome.Set(turn.Blocked, "completion_stale_after_changes")
+			return ""
+		}
+		run.staleCompletionPrompts++
+		return "The task was recorded completed, but files or commands changed afterwards, so that record and its verification are stale. Re-run the targeted verification with execute_bash now, then call task_update again with the passed command; or record the task active with the remaining work."
+	}
+	edits, verifiers, todos := run.ledger.workSummary(run.inputClock)
+	substantial := edits >= 2 || todos >= 3
+	terminal := a.task != nil && (a.task.Status == "completed" || a.task.Status == "cancelled")
+	if a.task != nil && !terminal {
+		if (a.task.Status != "blocked" && a.task.Status != "awaiting_input") || run.taskUpdated {
+			return ""
+		}
+		if run.reassessPrompts >= maxTaskRecordPrompts {
+			run.outcome.Set(turn.Blocked, "task_reassessment_required")
+			return ""
+		}
+		run.reassessPrompts++
+		return "The saved task is " + a.task.Status + " (" + a.task.Reason + ") and the user is continuing this conversation, so acknowledging is not enough. Re-assess it now: check whether the blocker still applies (use tools if needed), then call task_update — status active with the remaining work if it is resolved or the user supplied the input, or keep " + a.task.Status + " with the concrete reason it still applies this turn. Then continue or explain. If this message is an unrelated question, call task_scope with relation=side_question instead."
+	}
+	if !substantial || (a.task != nil && (!terminal || run.taskUpdated)) {
+		return ""
+	}
+	if run.closeoutPrompts >= maxTaskRecordPrompts {
+		run.outcome.Set(turn.Blocked, "task_record_missing")
+		return ""
+	}
+	run.closeoutPrompts++
+	return fmt.Sprintf("Before ending, review: this turn made %d successful edits, %d passing checks and a todo list of up to %d items but no current task record covers it. Call task_update now to record the goal (if a different task was saved earlier, use replace_goal with user_quote), acceptance criteria with evidence, remaining work and verification (passed verification must be commands you actually ran with execute_bash after the last edit), then give the final answer.", edits, verifiers, todos)
+}
+
+// verifyCompletionEvidence rejects a completed task whose passed verification
+// is not backed by a real, still-valid execution recorded by the agent itself.
+func verifyCompletionEvidence(run *runState, next taskstate.State) error {
+	if next.Status != "completed" {
+		return nil
+	}
+	if run == nil {
+		return fmt.Errorf("completion requires verification executed in this turn; no turn execution record is available")
+	}
+	for _, check := range next.Verification {
+		if check.Status == "passed" && !run.ledger.verified(check.ToolCallID, check.Command) {
+			return fmt.Errorf("verification %q is not backed by a successful execute_bash call in this turn that ran exactly this command (matching tool_call_id when given) after the last edit or side-effecting command; run it now with execute_bash and record that command", check.Command)
+		}
+	}
+	return nil
+}
+
+// reopenStaleCompletion keeps a completion record honest: if the workspace was
+// changed after task_update saved "completed" and it was not re-verified, the
+// saved task goes back to active so the next turn finishes the verification.
+func (a *Agent) reopenStaleCompletion(run *runState) bool {
+	if a.taskStore == nil || a.task == nil || a.task.Status != "completed" || run == nil {
+		return false
+	}
+	run.mu.Lock()
+	stale := run.completionSaved && run.ledger.mutatedSince(run.completedClock)
+	run.mu.Unlock()
+	if !stale {
+		return false
+	}
+	reopened := *a.task
+	reopened.Status = "active"
+	reopened.Remaining = append(append([]string(nil), reopened.Remaining...), "re-run verification: files or commands changed after the completion record")
+	reopened.Reason = "changed after completion was recorded; verification is stale"
+	if err := a.taskStore.SaveTaskState(reopened); err != nil {
+		a.logf("[Task] could not reopen stale completion: %v\n", err)
+		return true
+	}
+	a.task = &reopened
+	run.mu.Lock()
+	run.completionSaved = false
+	run.mu.Unlock()
+	return true
 }

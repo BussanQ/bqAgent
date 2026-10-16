@@ -279,6 +279,10 @@ func (a *Agent) RunConversationTurnWithMetrics(ctx context.Context, messages []m
 
 func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, maxIterations int) (result string, updatedMessages []map[string]any, err error) {
 	ctx, continuations := continuationContext(ctx)
+	inputs := turn.Inputs(ctx)
+	if inputs != nil {
+		defer inputs.Close()
+	}
 	if a.taskStore != nil {
 		a.task, err = a.taskStore.LoadTaskState()
 		if err != nil {
@@ -315,6 +319,13 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		if reason := a.stageBoundaryReason(iteration, explorationCtx); reason != "" {
 			return a.finishStageCheckpoint(ctx, updatedMessages, reason, actualIterations)
+		}
+		if inputs != nil {
+			messages, err = a.appendTurnInputs(ctx, messages, inputs.TakeSteering())
+			updatedMessages = messages
+			if err != nil {
+				return "", updatedMessages, err
+			}
 		}
 		actualIterations = iteration + 1
 		if a.stageConfig.ImmediateProgress {
@@ -460,6 +471,18 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		truncatedToolRecoveries = 0
 		if len(message.ToolCalls) == 0 {
+			canContinue := iteration+1 < maxIterations && a.stageBoundaryReason(iteration+1, explorationCtx) == ""
+			if inputs != nil && canContinue {
+				if pending := inputs.TakeSteering(); len(pending) > 0 {
+					state.emit(itemID, "message.completed", "commentary", contentText(message.Content))
+					updatedMessages, err = a.appendTurnInputs(ctx, updatedMessages, pending)
+					messages = updatedMessages
+					if err != nil {
+						return "", updatedMessages, err
+					}
+					continue
+				}
+			}
 			if reason := a.continuationReason(ctx, message); reason != "" {
 				state.emit(itemID, "message.completed", "commentary", contentText(message.Content))
 				reason = continuations.recoveryPrompt(reason)
@@ -473,6 +496,17 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 			finalContent := message.FinalContent()
 			if message.Content != nil && strings.TrimSpace(finalContent) != "" {
+				if inputs != nil && canContinue && (state == nil || state.outcome.Status == turn.Completed) {
+					if pending := inputs.Finish(); len(pending) > 0 {
+						state.emit(itemID, "message.completed", "commentary", finalContent)
+						updatedMessages, err = a.appendTurnInputs(ctx, updatedMessages, pending)
+						messages = updatedMessages
+						if err != nil {
+							return "", updatedMessages, err
+						}
+						continue
+					}
+				}
 				if state != nil {
 					state.finalItem = itemID
 				}

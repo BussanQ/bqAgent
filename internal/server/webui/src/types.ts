@@ -176,12 +176,19 @@ export interface MessageSnapshot {
   turn_id: string;
   item_id: string;
   seq: number;
-  kind: "message.updated" | "message.completed";
+  kind: "message.updated" | "message.completed" | "input.applied";
   phase: string;
   text: string;
 }
 
+export interface PendingInputPayload {
+  id: string;
+  kind: string;
+  text: string;
+}
+
 export interface WebUIDoneEvent {
+  pending_inputs?: PendingInputPayload[];
   turn_id?: string;
   outcome?: TurnOutcome;
   workspace_id?: string;

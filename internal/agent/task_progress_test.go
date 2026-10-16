@@ -62,16 +62,16 @@ func TestRunProductiveContinuationsCompleteInOneTurn(t *testing.T) {
 				// empty-reply budget before the next pair of empty responses.
 				responses = append(responses, AssistantMessage{ToolCalls: []ToolCall{{ID: fmt.Sprintf("read-%d", i), Function: FunctionCall{Name: "read_file", Arguments: fmt.Sprintf(`{"step":%d}`, i)}}}})
 			}
-			complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted verification passed"}}, Verification: []taskstate.Verification{{Command: "verify", Status: "passed", Details: "ok"}}}
-			responses = append(responses, AssistantMessage{ToolCalls: []ToolCall{{ID: "verify", Function: FunctionCall{Name: "verify", Arguments: `{}`}}}}, taskUpdateMessage(complete), AssistantMessage{Content: "done", Phase: "final_answer"})
+			complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted verification passed"}}, Verification: []taskstate.Verification{{Command: "go test ./switch", Status: "passed", Details: "ok"}}}
+			responses = append(responses, AssistantMessage{ToolCalls: []ToolCall{{ID: "verify", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test ./switch"}`}}}}, taskUpdateMessage(complete), AssistantMessage{Content: "done", Phase: "final_answer"})
 			expectedCalls := len(responses)
 			client := &stubClient{responses: responses}
 			var output bytes.Buffer
 			edits, checks := 0, 0
 			app := NewWithOptions(client, "test", Options{TaskStore: store, Stream: stream, TokenSink: &output, Functions: map[string]tools.Function{
-				"edit_file": func(context.Context, map[string]any) (string, error) { edits++; return "", nil },
-				"read_file": func(context.Context, map[string]any) (string, error) { return "source", nil },
-				"verify":    func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
+				"edit_file":    func(context.Context, map[string]any) (string, error) { edits++; return "", nil },
+				"read_file":    func(context.Context, map[string]any) (string, error) { return "source", nil },
+				"execute_bash": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
 			}})
 			reply, err := app.Run(context.Background(), "implement fast", 50)
 			if err != nil || reply != "done" || edits != 6 || checks != 1 || len(client.messages) != expectedCalls || store.state.Status != "completed" || strings.Contains(output.String(), "尚未确认完成") {
@@ -100,19 +100,19 @@ func TestRunRepairsFailedVerificationAfterEmptyReplies(t *testing.T) {
 		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
 			active := activeTestTask()
 			store := &memoryTaskStore{state: &active}
-			complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted test passed after repair"}}, Verification: []taskstate.Verification{{Command: "test_switch", Status: "passed", Details: "ok"}}}
+			complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted test passed after repair"}}, Verification: []taskstate.Verification{{Command: "go test -run TestSwitch", Status: "passed", Details: "ok"}}}
 			client := &stubClient{responses: []AssistantMessage{
 				{Content: ""}, {Content: ""},
-				{ToolCalls: []ToolCall{{ID: "failed-test", Function: FunctionCall{Name: "test_switch", Arguments: `{}`}}}},
+				{ToolCalls: []ToolCall{{ID: "failed-test", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}},
 				{Content: ""}, {Content: ""}, {Content: "will fix", Phase: "commentary"}, {Content: ""},
 				{ToolCalls: []ToolCall{{ID: "fix", Function: FunctionCall{Name: "edit_file", Arguments: `{}`}}}},
-				{ToolCalls: []ToolCall{{ID: "passed-test", Function: FunctionCall{Name: "test_switch", Arguments: `{}`}}}},
+				{ToolCalls: []ToolCall{{ID: "passed-test", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}},
 				taskUpdateMessage(complete), {Content: "verified", Phase: "final_answer"},
 			}}
 			var output bytes.Buffer
 			fixed, checks := false, 0
 			app := NewWithOptions(client, "test", Options{TaskStore: store, Stream: stream, TokenSink: &output, Functions: map[string]tools.Function{
-				"test_switch": func(context.Context, map[string]any) (string, error) {
+				"execute_bash": func(context.Context, map[string]any) (string, error) {
 					checks++
 					if !fixed {
 						return "disabled: service_tier should be omitted", errors.New("test failed")
@@ -254,7 +254,7 @@ func TestRunTaskCompletionRequiresAcceptanceAndVerification(t *testing.T) {
 	invalid := active
 	invalid.Status = "completed"
 	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted test passed"}}, Verification: []taskstate.Verification{{Command: "go test -run TestSwitch", Status: "passed", Details: "ok"}}}
-	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "will test"}, taskUpdateMessage(invalid), {Role: "assistant", ToolCalls: []ToolCall{{ID: "test", Function: FunctionCall{Name: "execute_bash", Arguments: `{}`}}}}, taskUpdateMessage(complete), {Role: "assistant", Content: "done"}}}
+	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "will test"}, taskUpdateMessage(invalid), {Role: "assistant", ToolCalls: []ToolCall{{ID: "test", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}}, taskUpdateMessage(complete), {Role: "assistant", Content: "done"}}}
 	app := NewWithOptions(client, "test", Options{TaskStore: store, Functions: map[string]tools.Function{"execute_bash": func(context.Context, map[string]any) (string, error) { return "ok", nil }}})
 	reply, err := app.Run(context.Background(), "改完了吗", 10)
 	if err != nil || reply != "done" || store.state.Status != "completed" {
@@ -293,6 +293,13 @@ func TestRunContinuationLimitsAndOrdinaryAnswers(t *testing.T) {
 			if status == "active" {
 				if !strings.Contains(reply, "maximum of 3 iterations") || len(client.messages) != 3 || store.state.Status != "active" {
 					t.Fatalf("reply=%q calls=%d", reply, len(client.messages))
+				}
+			} else if status == "blocked" || status == "awaiting_input" {
+				// A continued blocked task must be re-assessed by task_update; a bare
+				// acknowledgement is prompted twice, then ends with an explicit
+				// blocked outcome rather than silently passing.
+				if reply != "answer" || len(client.messages) != 3 || store.state.Status != status {
+					t.Fatalf("blocked task not re-assessed: %q calls=%d", reply, len(client.messages))
 				}
 			} else if reply != "answer" || len(client.messages) != 1 {
 				t.Fatalf("ordinary/blocked answer retried: %q calls=%d", reply, len(client.messages))

@@ -36,6 +36,21 @@ type activeTurn struct {
 	cancel    context.CancelFunc
 	events    <-chan turnEvent
 	cancelled bool
+	// inputs is nil when the backend cannot consume mid-turn input.
+	inputs *turn.InputQueue
+	// pending mirrors accepted but not yet applied inputs, in acceptance order.
+	pending []pendingInput
+}
+
+type pendingInput struct {
+	id   string
+	kind turn.InputKind
+	text string
+}
+
+func supportsTurnInput(backend Backend) bool {
+	capable, ok := backend.(TurnInputBackend)
+	return ok && capable.SupportsTurnInput()
 }
 
 type queuedPrompt struct {
@@ -75,6 +90,7 @@ type Model struct {
 	replyRendered    bool
 	active           *activeTurn
 	sequence         uint64
+	inputSequence    uint64
 	queued           *queuedPrompt
 	pendingQuit      bool
 	pendingClear     bool
@@ -349,6 +365,11 @@ func (model Model) View() tea.View {
 
 func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	name := key.String()
+	// String prefers associated text; use the physical combination for queue keys.
+	switch stroke := key.Keystroke(); stroke {
+	case "alt+q", "ctrl+s":
+		name = stroke
+	}
 	if name == "ctrl+c" {
 		if model.quitConfirmationActive() {
 			return model.requestQuit()
@@ -433,7 +454,15 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		if model.input.area.Line()+1 == model.input.area.LineCount() && model.recallHistory(1) {
 			return nil
 		}
-	case "enter":
+	case "enter", "alt+q", "ctrl+s":
+		kind := turn.Steering
+		if name != "enter" {
+			if model.active == nil {
+				model.inputNotice = "当前没有运行中的任务，按 Enter 发送"
+				return nil
+			}
+			kind = turn.FollowUp
+		}
 		if model.mention != nil && model.panelOpen {
 			if len(model.suggestions) > 0 {
 				model.insertMention()
@@ -468,7 +497,17 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		model.closePanel()
 		model.resizeInput()
 		if model.active != nil {
-			return model.queue(value, images)
+			before := model.statusNotice
+			if model.steer(value, images, kind) {
+				return nil
+			}
+			// steer explains why it declined; queue must not overwrite that.
+			notice := model.statusNotice
+			commands := model.queue(value, images)
+			if notice != before {
+				model.statusNotice = notice
+			}
+			return commands
 		}
 		return []tea.Cmd{model.submit(value, images...)}
 	}
@@ -625,8 +664,68 @@ func (model *Model) submit(value string, images ...Image) tea.Cmd {
 	model.statusNotice = ""
 	turnContext, cancel := context.WithCancel(model.config.Context)
 	events := make(chan turnEvent, 256)
-	model.active = &activeTurn{sequence: model.sequence, cancel: cancel, events: events}
+	active := &activeTurn{sequence: model.sequence, cancel: cancel, events: events}
+	if supportsTurnInput(model.backend) && !strings.HasPrefix(value, "/") {
+		active.inputs = &turn.InputQueue{}
+		turnContext = turn.WithInputQueue(turnContext, active.inputs)
+	}
+	model.active = active
 	return tea.Batch(toolCommand, model.spinner.Tick, launchTurn(model.backend, turnContext, model.sequence, model.sessionID, value, attachments, events))
+}
+
+// steer hands plain text to the running turn. It reports false when the input
+// must use the legacy next-turn queue (slash commands, attachments, backends
+// without mid-turn input, or a turn that is already finishing).
+func (model *Model) steer(value string, images []Image, kind turn.InputKind) bool {
+	active := model.active
+	if active == nil || active.inputs == nil || strings.HasPrefix(strings.TrimSpace(value), "/") {
+		return false
+	}
+	if len(images) > 0 {
+		model.statusNotice = "图片暂不支持运行中插入，已排到下一轮"
+		return false
+	}
+	if _, ok := model.backend.(AttachmentBackend); ok && len(mentionedFiles(model.config.Workspace, value)) > 0 {
+		model.statusNotice = "@文件暂不支持运行中插入，已排到下一轮"
+		return false
+	}
+	model.inputSequence++
+	id := fmt.Sprintf("input-%d-%d", active.sequence, model.inputSequence)
+	if err := active.inputs.Add(turn.Input{ID: id, Kind: kind, Text: value}); err != nil {
+		model.statusNotice = "本轮即将结束，已排到下一轮"
+		return false
+	}
+	active.pending = append(active.pending, pendingInput{id: id, kind: kind, text: value})
+	if kind == turn.FollowUp {
+		model.statusNotice = "已加入跟进队列"
+	} else {
+		model.statusNotice = "已发送引导，将在下次模型调用前生效"
+	}
+	return true
+}
+
+// presentInput prints a consumed input in conversation order: earlier tools
+// and streamed text first, then the user's message under a new turn marker.
+// Later tools start a fresh group below it.
+func (model *Model) presentInput(input pendingInput) {
+	model.commitToolGroup()
+	model.flushStream()
+	model.recordHistory(input.text)
+	model.enqueueUserTurn(input.text)
+}
+
+// applyInput shows an input the agent has consumed and removes it from the
+// pending list. Output order follows the model's view of the conversation.
+func (model *Model) applyInput(event turn.Event) {
+	active := model.active
+	for i, input := range active.pending {
+		if input.id != event.ItemID {
+			continue
+		}
+		active.pending = append(active.pending[:i], active.pending[i+1:]...)
+		model.presentInput(input)
+		return
+	}
 }
 
 func (model *Model) queue(value string, images []Image) []tea.Cmd {
@@ -677,6 +776,11 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	}
 	if event.kind != "done" {
 		commands := []tea.Cmd{waitTurnEvent(model.active.events)}
+		if event.kind == "message" && event.message.Kind == "input.applied" {
+			// Applied input is a user message, not part of the assistant projection.
+			model.applyInput(event.message)
+			return commands
+		}
 		if model.active.cancelled {
 			return commands
 		}
@@ -726,6 +830,22 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 		return commands
 	}
 	cancelled := model.active.cancelled || errors.Is(event.err, context.Canceled)
+	var recovered []string
+	if model.active.inputs != nil {
+		unconsumed := map[string]bool{}
+		for _, input := range model.active.inputs.Close() {
+			recovered = append(recovered, input.Text)
+			unconsumed[input.ID] = true
+		}
+		// The agent consumed everything else, but a cancelled turn may have
+		// dropped the input.applied event; show those so nothing disappears.
+		for _, input := range model.active.pending {
+			if !unconsumed[input.id] {
+				model.presentInput(input)
+			}
+		}
+		model.active.pending = nil
+	}
 	model.active = nil
 	// Release native scrollback even when a short turn leaves tools unarchived.
 	model.toolMouse = false
@@ -776,15 +896,23 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 		return []tea.Cmd{model.commitTurn(), tea.Quit}
 	}
 	model.flushOverflowReply()
-	if model.queued != nil {
-		queued := *model.queued
+	if model.queued != nil || len(recovered) > 0 {
+		var queued queuedPrompt
+		if model.queued != nil {
+			queued = *model.queued
+		}
 		model.queued = nil
-		if cancelled {
+		if cancelled || len(recovered) > 0 {
+			// Unconsumed mid-turn input comes first, one message per line.
+			parts := append([]string(nil), recovered...)
+			if queued.value != "" {
+				parts = append(parts, queued.value)
+			}
 			if draft := strings.TrimSpace(model.input.value()); draft != "" {
-				queued.value += "\n" + draft
+				parts = append(parts, draft)
 				queued.images = append(queued.images, model.input.images()...)
 			}
-			model.input.restoreDraft(queued.value, queued.images)
+			model.input.restoreDraft(strings.Join(parts, "\n"), queued.images)
 			model.resizeInput()
 			model.statusNotice = "已将排队内容恢复到输入框"
 			return nil
@@ -1340,6 +1468,9 @@ func (model Model) renderStatus(width int) string {
 	}
 	if right == "" {
 		right = "Enter 发送 · Alt+Enter 换行 · / 命令"
+		if model.active != nil && model.active.inputs != nil {
+			right = "Enter 引导 · Alt+Q/Ctrl+S 跟进 · Alt+Enter 换行"
+		}
 	}
 	if usage := model.contextUsage; usage != nil && usage.Limit > 0 && !model.quitConfirmationActive() {
 		// Keep the context indicator visible even on narrow terminals. Unlike
@@ -1466,6 +1597,9 @@ func (model Model) renderHistory(history History) []string {
 func (model Model) helpText() string {
 	return `快捷键
   Enter 发送    Alt+Enter 换行    Tab/Shift+Tab 补全
+  生成中 Enter 引导当前任务（下次模型调用前生效），Alt+Q / Ctrl+S 排为跟进（当前工作自然结束后处理）
+  若终端把 Option+Q 输入为字符，请用 Ctrl+S；空闲时按 Enter 发送
+  生成中的 Slash 命令、图片和 @文件 仍排到下一轮
   @ 搜索并引用工作区文件，发送时附带文件内容
   ↑/↓ 历史      Ctrl+C 清空输入框
   Ctrl+V / Alt+V 粘贴；剪贴板有图片或粘贴图片路径时作为 [图片 #N] 附件发送

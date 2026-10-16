@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -20,6 +22,8 @@ type loopGuard struct {
 	todoNoProgressCount int
 	lastEmptySearch     string
 	emptySearchCount    int
+	progress            *progressTracker
+	seenEdits           map[string]bool
 }
 
 type loopGuardAction struct {
@@ -40,7 +44,7 @@ func (action loopGuardAction) merge(next loopGuardAction) loopGuardAction {
 }
 
 func newLoopGuard(config StageConfig) *loopGuard {
-	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, argumentFailures: map[string]int{}, pathFailures: map[string]int{}}
+	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, argumentFailures: map[string]int{}, pathFailures: map[string]int{}, progress: newProgressTracker(), seenEdits: map[string]bool{}}
 }
 
 // Repeated successful operations within a recovered batch are intentional parts
@@ -72,6 +76,15 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 			return loopGuardAction{checkpointReason: fmt.Sprintf("loop protection: repeated invalid arguments for tool %s", call.Function.Name)}
 		}
 	}
+	fresh := guard.progress.observe(call, result)
+	if guard.progress.edited {
+		// A real edit lets previously counted calls (e.g. the same test) run
+		// again. This also clears unrelated failure counts; acceptable since
+		// edits must themselves be novel to trigger it.
+		guard.callCounts = map[string]int{}
+		guard.failureCounts = map[string]int{}
+		guard.pathFailures = map[string]int{}
+	}
 	if progress, ok := todoProgressSignature(call); ok {
 		if guard.hasLastTodoProgress && guard.lastTodoProgress == progress {
 			guard.todoNoProgressCount++
@@ -96,7 +109,7 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 			guard.lastEmptySearch = emptySearch
 			guard.emptySearchCount = 1
 		}
-	} else if toolResultMadeProgress(call, result) {
+	} else if fresh {
 		guard.lastTodoProgress = ""
 		guard.hasLastTodoProgress = false
 		guard.todoNoProgressCount = 0
@@ -106,7 +119,7 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 	if !guard.config.LoopProtection {
 		return loopGuardAction{}
 	}
-	signature := call.Function.Name + "\x00" + strings.TrimSpace(call.Function.Arguments)
+	signature := call.Function.Name + "\x00" + canonicalArguments(call.Function.Arguments)
 	guard.callCounts[signature]++
 	if failed {
 		guard.failureCounts[signature]++
@@ -124,6 +137,72 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 		return loopGuardAction{checkpointReason: fmt.Sprintf("loop protection: repeated tool call %s", call.Function.Name)}
 	}
 	return loopGuardAction{}
+}
+
+// progressTracker dedups "progress" by fingerprint. A successful call counts
+// as new progress only the first time its (tool, arguments, sha256(result))
+// is seen since the last reset, so re-reading an unchanged file cannot reset
+// stall counters forever. Bookkeeping tools (todo_write, task_scope,
+// task_update) never count. Limit: it is a conservative dedup, not proof of a
+// real workspace change.
+type progressTracker struct {
+	seen   map[string]bool
+	edits  map[string]bool
+	edited bool // last observe saw a novel successful edit/write
+}
+
+func newProgressTracker() *progressTracker {
+	return &progressTracker{seen: map[string]bool{}, edits: map[string]bool{}}
+}
+
+func (t *progressTracker) reset() { t.seen = map[string]bool{} }
+
+// observe reports whether the call is new substantive progress.
+func (t *progressTracker) observe(call ToolCall, result string) bool {
+	t.edited = false
+	switch call.Function.Name {
+	case "todo_write", "task_scope", "task_update":
+		return false
+	}
+	if !toolResultMadeProgress(call, result) {
+		return false
+	}
+	// edit_file fails when old_string is missing or equals new_string, so a
+	// success is a real change. write_file output cannot distinguish a no-op,
+	// so only canonical (path, content) never seen before counts. Repeating an
+	// identical edit/write (A/B/A/B flip-flop) never resets anything.
+	if name := call.Function.Name; name == "edit_file" || name == "write_file" {
+		key := name + "\x00" + canonicalArguments(call.Function.Arguments)
+		if t.edits[key] {
+			return false
+		}
+		t.edits[key] = true
+		t.seen = map[string]bool{}
+		t.edited = true
+		return true
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(result)))
+	key := call.Function.Name + "\x00" + canonicalArguments(call.Function.Arguments) + "\x00" + hex.EncodeToString(sum[:])
+	if t.seen[key] {
+		return false
+	}
+	t.seen[key] = true
+	return true
+}
+
+// canonicalArguments parses JSON arguments and re-marshals them (sorted keys,
+// no insignificant whitespace) so formatting cannot dodge duplicate detection.
+func canonicalArguments(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	parsed, err := parseArguments(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	encoded, err := json.Marshal(parsed)
+	if err != nil {
+		return trimmed
+	}
+	return string(encoded)
 }
 
 func todoProgressSignature(call ToolCall) (string, bool) {

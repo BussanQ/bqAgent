@@ -44,6 +44,7 @@ export class MessageSnapshots {
   constructor(private turnId = "") {}
 
   apply(event: MessageSnapshot): boolean {
+    if (event.kind !== "message.updated" && event.kind !== "message.completed") return false;
     if (!event.turn_id || !event.item_id || (this.turnId && this.turnId !== event.turn_id)) return false;
     const old = this.items.get(event.item_id);
     if (old && (event.seq <= old.seq || old.kind === "message.completed")) return false;

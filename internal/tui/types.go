@@ -178,3 +178,10 @@ type Config struct {
 	SessionID    string
 	NoColor      bool
 }
+
+// TurnInputBackend is implemented by backends that consume turn.InputQueue
+// from the turn context. Backends without it never see steering or follow-up
+// input; the TUI keeps the next-turn queue for them so nothing is swallowed.
+type TurnInputBackend interface {
+	SupportsTurnInput() bool
+}

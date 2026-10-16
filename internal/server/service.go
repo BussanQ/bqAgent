@@ -169,6 +169,9 @@ type TurnResponse struct {
 	ConversationType ConversationType   `json:"conversation_type"`
 	Generation       *GenerationMetrics `json:"generation,omitempty"`
 	Streamed         bool               `json:"-"`
+	// PendingInputs are accepted mid-turn inputs the agent never consumed, so
+	// callers can restore them as drafts.
+	PendingInputs []turn.Input `json:"pending_inputs,omitempty"`
 }
 
 func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *GenerationMetrics {
@@ -210,6 +213,9 @@ func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *Generation
 }
 
 type TurnOptions struct {
+	// Inputs lets the caller (e.g. the TUI) own the turn input queue. When nil,
+	// a queue from the context is reused, otherwise a new one is created.
+	Inputs      *turn.InputQueue
 	MessageSink turn.Sink
 	// SessionSink observes the canonical session before model work starts.
 	// Callers must keep it nonblocking.
@@ -311,6 +317,26 @@ func (service *Service) StopTurn(turnID string) bool {
 		return false
 	}
 	return service.activeTurns.Stop(turnID)
+}
+
+// AddTurnInput queues steering or follow-up text for an active turn. It does
+// not wait for the session lock held by the running turn.
+func (service *Service) AddTurnInput(turnID string, kind turn.InputKind, text string) (turn.Input, error) {
+	if service == nil || service.activeTurns == nil {
+		return turn.Input{}, ErrTurnNotFound
+	}
+	if kind != turn.Steering && kind != turn.FollowUp {
+		return turn.Input{}, fmt.Errorf("invalid input kind")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return turn.Input{}, fmt.Errorf("input text is required")
+	}
+	input := turn.Input{ID: turn.NewID(), Kind: kind, Text: text}
+	if err := service.activeTurns.AddInput(turnID, input); err != nil {
+		return turn.Input{}, err
+	}
+	return input, nil
 }
 
 func (service *Service) RespondACPPermission(requestID, optionID string) error {
@@ -426,14 +452,23 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if _, isModeCommand := chatModeCommand(message); isModeCommand && (len(request.Images) > 0 || len(request.Files) > 0) {
 		return TurnResponse{}, fmt.Errorf("模式切换命令不能携带图片或文件附件")
 	}
+	var inputs *turn.InputQueue
 	{
-		turnCtx, cancel := context.WithCancel(ctx)
-		unregister, registered := service.activeTurns.Register(turnID, cancel)
+		inputs = options.Inputs
+		if inputs == nil {
+			inputs = turn.Inputs(ctx)
+		}
+		if inputs == nil {
+			inputs = &turn.InputQueue{}
+		}
+		turnCtx, cancel := context.WithCancel(turn.WithInputQueue(ctx, inputs))
+		unregister, registered := service.activeTurns.RegisterWithInputs(turnID, cancel, inputs)
 		if !registered {
 			cancel()
 			return TurnResponse{}, fmt.Errorf("turn %q is already active", turnID)
 		}
 		defer func() {
+			response.PendingInputs = inputs.Close()
 			unregister()
 			cancel()
 		}()
@@ -713,6 +748,11 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return TurnResponse{}, attachmentErr
 	}
 	modelMessage += formatAttachmentContext(resolvedFiles)
+	// Slash commands (other than skill invocations) are handled without the
+	// core agent loop, so nothing would ever consume queued input.
+	if skillInvocation == nil && strings.HasPrefix(message, "/") {
+		inputs.Close()
+	}
 	if skillInvocation != nil && runRecorder != nil {
 		_ = runRecorder.Event("skill_invocation", map[string]any{
 			"skill": skillInvocation.Skill.ID,
@@ -793,6 +833,10 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			return TurnResponse{}, mentionErr
 		}
 		coordinatorRequested := len(mentions) == 0 || hasGroupMention(mentions, groupScheduler)
+		if !coordinatorRequested {
+			// Direct participant replies never run the core agent loop.
+			inputs.Close()
+		}
 		groupCoordinator = newGroupTurnCoordinator(service, conversation.Session.ID(), groupConfig, mentions, conversation.Messages, options.GroupEventSink, options.ACPPermissionSink)
 		for index, participant := range mentions {
 			if participant == groupScheduler {
@@ -833,6 +877,11 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			writeTurnError(turnErrorWriter, routeErr)
 			markConversationFailed(conversation, routeErr)
 			return TurnResponse{}, routeErr
+		}
+		if routedAgent != "" {
+			// External agents do not consume the core input queue; reject input
+			// now (409 closed) instead of accepting it and never applying it.
+			inputs.Close()
 		}
 		if routedAgent == extagent.AgentDefault {
 			if err := service.externalBroker.Clear(conversation.Session.ID()); err != nil {

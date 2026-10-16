@@ -241,6 +241,7 @@
       <div class="composer-content">
         <div class="attachment-tray" id="attachment-tray" aria-label="待发送附件" hidden></div>
         <div class="attachment-error" id="attachment-error" role="status" aria-live="polite"></div>
+        <div class="turn-input-queue" id="turn-input-queue" aria-label="已排队的输入" aria-live="polite" hidden></div>
         <div class="input-shell">
           <textarea id="input" rows="1" placeholder="给 bqagent 发送消息，可粘贴或拖入图片和文件" autofocus></textarea>
           <div class="slash-command-menu" id="slash-command-menu" role="listbox" aria-label="命令与 Skill" hidden></div>
@@ -275,7 +276,11 @@
         <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-settings"></use></svg>
         <span>设置</span>
       </button>
-      <span class="composer-hints">Enter 发送 · Shift + Enter 换行 · / 命令 · 支持 Markdown 与附件</span>
+      <span class="turn-input-actions" id="turn-input-actions" hidden>
+        <button class="turn-input-btn" id="steer-btn" type="button" title="发送给正在运行的任务，用于纠偏 (Enter)">纠偏</button>
+        <button class="turn-input-btn" id="followup-btn" type="button" title="作为后续任务排队，当前任务结束后处理 (Ctrl/Cmd + Enter)">排队后续</button>
+      </span>
+      <span class="composer-hints" id="composer-hints">Enter 发送 · Shift + Enter 换行 · / 命令 · 支持 Markdown 与附件</span>
     </div>
   </footer>
     </div>

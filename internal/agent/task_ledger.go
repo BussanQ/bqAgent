@@ -1,0 +1,396 @@
+package agent
+
+import (
+	"encoding/json"
+	"regexp"
+	"strings"
+	"sync"
+	"unicode/utf8"
+)
+
+// execEntry is one real tool execution in the current turn. Only the agent's
+// own runRegularToolCall creates entries, so a model-written verification
+// string can never fabricate one.
+type execEntry struct {
+	callID  string
+	tool    string
+	command string
+	start   uint64
+	end     uint64 // 0 while the call is still running
+	success bool
+	// mutating entries may have changed the workspace: they invalidate every
+	// verification that was not entirely started after they finished.
+	mutating bool
+	// verifier marks a successful test/build/lint style execute_bash command.
+	verifier bool
+	// reliable means the command's exit status reflects every step (no ||, ;,
+	// background job or un-pipefailed pipeline) and it is not merely a read.
+	reliable bool
+	// barrier entries are synthetic (new user input, goal change). They
+	// invalidate older evidence but are not workspace mutations.
+	barrier bool
+}
+
+// execLedger records executions with a logical clock. All methods are safe for
+// concurrent use by parallel tool goroutines.
+type execLedger struct {
+	mu        sync.Mutex
+	clock     uint64
+	entries   []*execEntry
+	todoItems int
+}
+
+var mutatingFileTools = map[string]bool{"write_file": true, "edit_file": true}
+
+// begin registers a tool call about to run and returns nil for tools that
+// neither verify nor mutate (reads, searches, bookkeeping).
+func (l *execLedger) begin(callID, tool string, args map[string]any) *execEntry {
+	if l == nil {
+		return nil
+	}
+	entry := &execEntry{callID: callID, tool: tool}
+	switch {
+	case tool == "execute_bash":
+		command, _ := args["command"].(string)
+		entry.command = strings.TrimSpace(command)
+		kind := classifyBash(entry.command)
+		entry.mutating = kind == bashMutating
+		entry.verifier = kind == bashVerify
+		entry.reliable = kind != bashReadOnly && reliableExitStatus(entry.command)
+	case mutatingFileTools[tool], tool == "consult_group_agent":
+		// Assume mutation while running; a failed file tool is demoted in finish.
+		entry.mutating = true
+	default:
+		return nil
+	}
+	l.mu.Lock()
+	l.clock++
+	entry.start = l.clock
+	l.entries = append(l.entries, entry)
+	l.mu.Unlock()
+	return entry
+}
+
+func (l *execLedger) finish(entry *execEntry, success bool) {
+	if l == nil || entry == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.clock++
+	entry.end = l.clock
+	entry.success = success
+	if !success {
+		entry.verifier = false
+		// A failed write or shell command may still have partially applied, so
+		// a failure never demotes a mutating entry.
+	}
+}
+
+// barrier invalidates all earlier evidence without counting as a mutation.
+// It also resets the todo high-water mark and returns the new clock, which
+// callers keep as the baseline for "work since the latest user input".
+func (l *execLedger) barrier() uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.clock++
+	l.todoItems = 0
+	l.entries = append(l.entries, &execEntry{start: l.clock, end: l.clock, mutating: true, barrier: true})
+	return l.clock
+}
+
+func (l *execLedger) noteTodo(args map[string]any) {
+	var items []json.RawMessage
+	switch raw := args["todos"].(type) {
+	case string:
+		_ = json.Unmarshal([]byte(raw), &items)
+	case []any:
+		items = make([]json.RawMessage, len(raw))
+	}
+	l.mu.Lock()
+	if len(items) > l.todoItems {
+		l.todoItems = len(items)
+	}
+	l.mu.Unlock()
+}
+
+// verified reports whether a passed verification is backed by a real,
+// successful execute_bash call in this turn with the same command (and the same
+// call ID when supplied) and no mutation that overlapped or followed it.
+func (l *execLedger) verified(callID, command string) bool {
+	command = strings.TrimSpace(command)
+	callID = strings.TrimSpace(callID)
+	if command == "" {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := len(l.entries) - 1; i >= 0; i-- {
+		e := l.entries[i]
+		if e.tool != "execute_bash" || !e.success || !e.reliable || e.end == 0 || e.command != command || (callID != "" && e.callID != callID) {
+			continue
+		}
+		stale := false
+		for _, m := range l.entries {
+			if m != e && m.mutating && (m.end == 0 || m.end > e.start) {
+				stale = true
+				break
+			}
+		}
+		if !stale {
+			return true
+		}
+	}
+	return false
+}
+
+// hasMutation reports a workspace mutation that started after the baseline.
+func (l *execLedger) hasMutation(since uint64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, e := range l.entries {
+		if e.mutating && !e.barrier && e.start > since {
+			return true
+		}
+	}
+	return false
+}
+
+// now returns the current logical time, used to detect changes after a
+// completion record was saved.
+func (l *execLedger) now() uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.clock
+}
+
+// mutatedSince reports whether a workspace mutation started after the given
+// logical time or is still running.
+func (l *execLedger) mutatedSince(clock uint64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, e := range l.entries {
+		if e.mutating && !e.barrier && (e.end == 0 || e.end > clock) {
+			return true
+		}
+	}
+	return false
+}
+
+// workSummary counts successful file edits, successful verifier commands and
+// the largest todo list seen this turn.
+func (l *execLedger) workSummary(since uint64) (edits, verifiers, todos int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, e := range l.entries {
+		if e.start <= since {
+			continue
+		}
+		switch {
+		case mutatingFileTools[e.tool] && e.success:
+			edits++
+		case e.verifier && e.success:
+			verifiers++
+		}
+	}
+	return edits, verifiers, l.todoItems
+}
+
+type bashKind int
+
+const (
+	bashMutating bashKind = iota
+	bashReadOnly
+	bashVerify
+)
+
+var readOnlyWords = map[string]bool{
+	"ls": true, "cat": true, "head": true, "tail": true, "grep": true, "egrep": true, "rg": true,
+	"wc": true, "pwd": true, "echo": true, "printf": true, "true": true, "date": true, "which": true,
+	"stat": true, "file": true, "diff": true, "cmp": true, "sort": true, "uniq": true, "tree": true,
+	"cd": true, "test": true, "[": true,
+}
+
+// Flags that make otherwise read-only checkers rewrite files (snapshots, fixes).
+var writingFlags = map[string]bool{"-update": true, "--update": true, "-u": true, "--fix": true, "-fix": true, "--write": true, "-w": true, "--update-snapshots": true, "--output": true, "-o": true}
+
+var gitReadOnly = map[string]bool{"status": true, "diff": true, "log": true, "show": true, "rev-parse": true, "ls-files": true, "blame": true, "describe": true}
+
+// classifyBash is deliberately conservative: anything it cannot positively
+// recognise (redirects, subshells, background jobs, unknown programs) is
+// treated as potentially mutating, which only makes older evidence stale.
+// A compound command is verification/read-only only if every segment is.
+func classifyBash(command string) bashKind {
+	c := strings.TrimSpace(command)
+	if c == "" {
+		return bashMutating
+	}
+	for _, harmless := range []string{"2>&1", "&>/dev/null", ">/dev/null", "2>/dev/null", "> /dev/null", "2> /dev/null"} {
+		c = strings.ReplaceAll(c, harmless, " ")
+	}
+	if strings.ContainsAny(c, ">`") || strings.Contains(c, "$(") || strings.Contains(c, "<(") {
+		return bashMutating
+	}
+	c = strings.NewReplacer("&&", "\n", "||", "\n", ";", "\n", "|", "\n").Replace(c)
+	if strings.Contains(c, "&") {
+		return bashMutating
+	}
+	kind := bashReadOnly
+	for _, segment := range strings.Split(c, "\n") {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		switch classifySegment(strings.Fields(segment)) {
+		case bashMutating:
+			return bashMutating
+		case bashVerify:
+			kind = bashVerify
+		}
+	}
+	return kind
+}
+
+func classifySegment(words []string) bashKind {
+	for len(words) > 0 && strings.Contains(words[0], "=") && !strings.HasPrefix(words[0], "-") {
+		words = words[1:] // leading VAR=value assignments
+	}
+	if len(words) > 0 && words[0] == "time" {
+		words = words[1:]
+	}
+	if len(words) == 0 {
+		return bashReadOnly
+	}
+	name, rest := words[0], words[1:]
+	has := func(flags ...string) bool {
+		for _, word := range rest {
+			for _, flag := range flags {
+				if word == flag || strings.HasPrefix(word, flag+"=") {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	sub := ""
+	if len(rest) > 0 {
+		sub = rest[0]
+	}
+	for _, word := range rest {
+		if readOnlyWords[name] && word != "-o" && !strings.HasPrefix(word, "--output") {
+			continue // e.g. grep -w, sort -u are harmless; sort -o writes
+		}
+		if writingFlags[word] || strings.HasPrefix(word, "--output=") || strings.HasPrefix(word, "--fix=") || strings.HasPrefix(word, "--update") {
+			return bashMutating
+		}
+	}
+	switch name {
+	case "git":
+		if gitReadOnly[sub] {
+			return bashReadOnly
+		}
+	case "go":
+		switch sub {
+		case "test", "vet":
+			return bashVerify
+		case "build":
+			return bashVerify
+		case "list", "version", "env", "doc":
+			return bashReadOnly
+		}
+	case "gofmt":
+		if has("-l") && !has("-w") {
+			return bashReadOnly
+		}
+	case "cargo":
+		switch sub {
+		case "test", "check", "build", "clippy", "doc":
+			return bashVerify
+		}
+	case "npm", "pnpm", "yarn", "bun":
+		switch sub {
+		case "test", "t":
+			return bashVerify
+		case "run", "run-script":
+			if len(rest) > 1 {
+				switch rest[1] {
+				case "test", "lint", "build", "check", "typecheck":
+					return bashVerify
+				}
+			}
+		}
+	case "make":
+		for _, target := range rest {
+			switch target {
+			case "test", "check", "lint", "vet", "verify", "build":
+			default:
+				return bashMutating
+			}
+		}
+		if len(rest) > 0 {
+			return bashVerify
+		}
+	case "pytest", "py.test", "rspec", "jest", "vitest", "ctest":
+		return bashVerify
+	case "python", "python3":
+		if len(rest) >= 2 && rest[0] == "-m" && (rest[1] == "pytest" || rest[1] == "unittest") {
+			return bashVerify
+		}
+	case "mvn", "gradle", "./gradlew", "dotnet":
+		if sub == "test" || sub == "verify" || sub == "check" {
+			return bashVerify
+		}
+	case "tsc":
+		if has("--noEmit") {
+			return bashVerify
+		}
+	default:
+		if readOnlyWords[name] {
+			return bashReadOnly
+		}
+	}
+	return bashMutating
+}
+
+var pipefailSetter = regexp.MustCompile(`\bset\s+(-[A-Za-z]+\s+)*-o\s+pipefail\s*(;|&&|\n)`)
+
+// reliableExitStatus reports whether a command's exit status reflects all of
+// its steps. Under sh -c, `go test || true`, `go test; echo`, `go test | tail`
+// and background jobs all hide a failing check, so they cannot be evidence.
+// Only plain commands and && chains (or pipelines after set -o pipefail) count.
+func reliableExitStatus(command string) bool {
+	c := strings.TrimSpace(command)
+	for _, harmless := range []string{"2>&1", "&>/dev/null", ">/dev/null", "2>/dev/null", "> /dev/null", "2> /dev/null", ">&2"} {
+		c = strings.ReplaceAll(c, harmless, " ")
+	}
+	pipefail := pipefailSetter.MatchString(c)
+	c = pipefailSetter.ReplaceAllString(c, " ")
+	if strings.Contains(c, "||") {
+		return false
+	}
+	c = strings.ReplaceAll(c, "&&", " ")
+	if strings.ContainsAny(c, ";&\n") {
+		return false
+	}
+	return !strings.Contains(c, "|") || pipefail
+}
+
+// normalizeSpace collapses whitespace for quote comparison.
+func normalizeSpace(text string) string { return strings.Join(strings.Fields(text), " ") }
+
+// quoteGrounded checks that quote is a verbatim (whitespace-normalised) piece of
+// the latest user message accepted this turn and long enough to carry meaning. This
+// grounds a goal replacement in the user's own words; it is a speed bump
+// against invented authorization, NOT proof the user authorized the change.
+func quoteGrounded(quote, userText string) bool {
+	quote, text := normalizeSpace(quote), normalizeSpace(userText)
+	if quote == "" || text == "" {
+		return false
+	}
+	if utf8.RuneCountInString(text) < minQuoteRunes {
+		return quote == text
+	}
+	return utf8.RuneCountInString(quote) >= minQuoteRunes && strings.Contains(text, quote)
+}
+
+const minQuoteRunes = 6

@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"bqagent/internal/turn"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -66,11 +69,21 @@ func (model Model) auxiliaryLines() []string {
 	if model.panelOpen && (len(model.suggestions) > 0 || model.mention != nil) {
 		lines = strings.Split(model.renderSuggestions(width), "\n")
 	}
-	if model.queued != nil {
-		preview := strings.ReplaceAll(strings.TrimSpace(model.queued.value), "\n", " ↵ ")
-		if utf8.RuneCountInString(preview) > 100 {
-			preview = string([]rune(preview)[:100]) + "…"
+	if model.active != nil {
+		for i, input := range model.active.pending {
+			if i == 3 {
+				lines = append(lines, model.styles.dim.Render(fmt.Sprintf("…还有 %d 条待处理", len(model.active.pending)-i)))
+				break
+			}
+			label := "引导"
+			if input.kind == turn.FollowUp {
+				label = "跟进"
+			}
+			lines = append(lines, model.styles.dim.Render("待处理 · "+label+" · "+previewText(input.text)))
 		}
+	}
+	if model.queued != nil {
+		preview := previewText(model.queued.value)
 		lines = append(lines, model.styles.dim.Render("已排队 · "+preview))
 	}
 	for i := range lines {
@@ -203,4 +216,12 @@ func (model Model) liveView() tea.View {
 		view.MouseMode = tea.MouseModeCellMotion
 	}
 	return view
+}
+
+func previewText(value string) string {
+	preview := strings.ReplaceAll(strings.TrimSpace(value), "\n", " ↵ ")
+	if utf8.RuneCountInString(preview) > 100 {
+		preview = string([]rune(preview)[:100]) + "…"
+	}
+	return preview
 }

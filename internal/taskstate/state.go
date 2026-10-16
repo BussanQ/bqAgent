@@ -16,8 +16,11 @@ type Criterion struct {
 
 type Verification struct {
 	Command string `json:"command"`
-	Status  string `json:"status"` // passed, failed, unavailable
-	Details string `json:"details"`
+	// ToolCallID optionally pins a passed check to the execute_bash call that
+	// ran it in the completing turn; the command must still match that call.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Status     string `json:"status"` // passed, failed, unavailable
+	Details    string `json:"details"`
 }
 
 type State struct {

@@ -70,6 +70,10 @@ type tuiBackend struct {
 	effort    agent.ReasoningEffort
 }
 
+// SupportsTurnInput reports that the server consumes turn.InputQueue from the
+// turn context, so the TUI may steer or follow up a running turn.
+func (backend *tuiBackend) SupportsTurnInput() bool { return true }
+
 func (backend *tuiBackend) RunTurn(ctx context.Context, sessionID, message string, events apptui.TurnEvents) (apptui.TurnResult, error) {
 	return backend.RunTurnWithAttachments(ctx, sessionID, message, apptui.TurnAttachments{}, events)
 }

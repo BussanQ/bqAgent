@@ -85,6 +85,7 @@ func NewHandler(options HandlerOptions) http.Handler {
 	mux.HandleFunc("/api/v1/webui/acp/permissions", handler.handleACPPermissionResponse)
 	mux.HandleFunc("/api/v1/chat", handler.handleChat)
 	mux.HandleFunc("/api/v1/chat/stop", handler.handleStopTurn)
+	mux.HandleFunc("/api/v1/chat/input", handler.handleTurnInput)
 	mux.HandleFunc("/api/v1/runs/", handler.handleRun)
 	for _, channel := range options.Channels {
 		if channel == nil || !channel.Enabled() {
@@ -258,6 +259,85 @@ func (handler *handler) handleStopTurn(writer http.ResponseWriter, request *http
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]bool{"stopped": service.StopTurn(turnID)})
+}
+
+type turnInputRequest struct {
+	TurnID      string          `json:"turn_id"`
+	WorkspaceID string          `json:"workspace_id"`
+	Kind        string          `json:"kind"`
+	Text        string          `json:"text"`
+	Images      json.RawMessage `json:"images"`
+	Files       json.RawMessage `json:"files"`
+	Attachments json.RawMessage `json:"attachments"`
+}
+
+type turnInputResponse struct {
+	Status string `json:"status"`
+	ID     string `json:"id,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+	Text   string `json:"text,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+func hasJSONValue(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed != "" && trimmed != "null" && trimmed != "[]" && trimmed != "{}"
+}
+
+// handleTurnInput queues steering or follow-up text for an active turn. Like
+// stop, it is addressed by turn_id and never waits for the session lock.
+func (handler *handler) handleTurnInput(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
+		return
+	}
+	var body turnInputRequest
+	request.Body = http.MaxBytesReader(writer, request.Body, maxRequestBodySize)
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		writeJSON(writer, http.StatusBadRequest, turnInputResponse{Status: "rejected", Error: err.Error()})
+		return
+	}
+	reject := func(message string) {
+		writeJSON(writer, http.StatusBadRequest, turnInputResponse{Status: "rejected", Error: message})
+	}
+	turnID := strings.TrimSpace(body.TurnID)
+	if !validTurnID(turnID) {
+		reject("valid turn_id is required")
+		return
+	}
+	if hasJSONValue(body.Images) || hasJSONValue(body.Files) || hasJSONValue(body.Attachments) {
+		reject("attachments are not supported for turn input")
+		return
+	}
+	kind := turn.InputKind(strings.TrimSpace(body.Kind))
+	if kind != turn.Steering && kind != turn.FollowUp {
+		reject("kind must be steering or follow_up")
+		return
+	}
+	if strings.TrimSpace(body.Text) == "" {
+		reject("text is required")
+		return
+	}
+	service, err := handler.serviceForWorkspace(body.WorkspaceID)
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, os.ErrNotExist) {
+			status = http.StatusNotFound
+		}
+		writeError(writer, status, chatResponse{Error: err.Error()})
+		return
+	}
+	input, err := service.AddTurnInput(turnID, kind, body.Text)
+	switch {
+	case err == nil:
+		writeJSON(writer, http.StatusOK, turnInputResponse{Status: "accepted", ID: input.ID, Kind: string(input.Kind), Text: input.Text})
+	case errors.Is(err, ErrTurnNotFound):
+		writeJSON(writer, http.StatusNotFound, turnInputResponse{Status: "notfound", Error: "turn not found"})
+	case errors.Is(err, turn.ErrInputClosed):
+		writeJSON(writer, http.StatusConflict, turnInputResponse{Status: "closed", Error: err.Error()})
+	default:
+		reject(err.Error())
+	}
 }
 
 func (handler *handler) handleRun(writer http.ResponseWriter, request *http.Request) {

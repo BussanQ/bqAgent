@@ -70,6 +70,25 @@ type webUIDoneEvent struct {
 	ConversationType ConversationType   `json:"conversation_type"`
 	Group            *GroupInfo         `json:"group,omitempty"`
 	Generation       *GenerationMetrics `json:"generation,omitempty"`
+	PendingInputs    []turnInputPayload `json:"pending_inputs,omitempty"`
+}
+
+// turnInputPayload reports accepted inputs the turn never consumed.
+type turnInputPayload struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+}
+
+func pendingInputPayloads(inputs []turn.Input) []turnInputPayload {
+	if len(inputs) == 0 {
+		return nil
+	}
+	payloads := make([]turnInputPayload, 0, len(inputs))
+	for _, input := range inputs {
+		payloads = append(payloads, turnInputPayload{ID: input.ID, Kind: string(input.Kind), Text: input.Text})
+	}
+	return payloads
 }
 
 type webUIImagePayload struct {
@@ -513,10 +532,10 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			writeSSEEvent(writer, flusher, "stopped", map[string]any{"message": "已停止生成。", "turn_id": response.TurnID, "outcome": response.Outcome})
+			writeSSEEvent(writer, flusher, "stopped", map[string]any{"message": "已停止生成。", "turn_id": response.TurnID, "outcome": response.Outcome, "pending_inputs": pendingInputPayloads(response.PendingInputs)})
 			return
 		}
-		writeSSEEvent(writer, flusher, "error", map[string]any{"error": err.Error(), "turn_id": response.TurnID, "outcome": response.Outcome})
+		writeSSEEvent(writer, flusher, "error", map[string]any{"error": err.Error(), "turn_id": response.TurnID, "outcome": response.Outcome, "pending_inputs": pendingInputPayloads(response.PendingInputs)})
 		return
 	}
 
@@ -539,6 +558,7 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		ConversationType: response.ConversationType,
 		Group:            group,
 		Generation:       response.Generation,
+		PendingInputs:    pendingInputPayloads(response.PendingInputs),
 	})
 }
 

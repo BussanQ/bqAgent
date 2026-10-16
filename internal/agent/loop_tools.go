@@ -145,6 +145,17 @@ func (a *Agent) appendToolError(messages []map[string]any, toolCallID, format st
 // sequentially because it recurses or mutates state later calls may depend on.
 func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall) bool {
 	for _, toolCall := range toolCalls {
+		// A possibly side-effecting shell command must not overlap other calls
+		// in its batch: they could observe half-applied changes, and the
+		// verification ledger relies on a clear order.
+		if toolCall.Function.Name == "execute_bash" && len(toolCalls) > 1 {
+			var arguments struct {
+				Command string `json:"command"`
+			}
+			if json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments) != nil || classifyBash(arguments.Command) == bashMutating {
+				return true
+			}
+		}
 		switch toolCall.Function.Name {
 		case "write_file", "edit_file", "todo_write", "task_update", "task_scope":
 			return true
@@ -271,9 +282,21 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 		toolErr = fmt.Errorf("unknown tool '%s'", toolCall.Function.Name)
 		toolResult = fmt.Sprintf("Error: Unknown tool '%s'", toolCall.Function.Name)
 	} else {
+		run := turnRun(ctx)
+		var entry *execEntry
+		if run != nil {
+			entry = run.ledger.begin(toolCall.ID, toolCall.Function.Name, arguments)
+		}
 		toolResult, toolErr = function(ctx, arguments)
 		if toolErr != nil {
 			toolResult = formatToolError(toolErr, toolResult)
+		}
+		if run != nil {
+			succeeded := toolErr == nil && !strings.HasPrefix(strings.TrimSpace(toolResult), "Error:")
+			run.ledger.finish(entry, succeeded)
+			if succeeded && toolCall.Function.Name == "todo_write" {
+				run.ledger.noteTodo(arguments)
+			}
 		}
 	}
 	duration := time.Since(toolStartedAt)

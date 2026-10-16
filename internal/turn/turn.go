@@ -83,6 +83,9 @@ type Messages struct {
 }
 
 func (m *Messages) Apply(e Event) bool {
+	if e.Kind != "message.updated" && e.Kind != "message.completed" {
+		return false
+	}
 	if e.TurnID == "" || e.ItemID == "" || (m.TurnID != "" && m.TurnID != e.TurnID) {
 		return false
 	}

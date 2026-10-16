@@ -1806,6 +1806,14 @@
     position: relative;
   }
   .composer-hints { letter-spacing: .01em; }
+  .turn-input-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+  .turn-input-actions[hidden], .turn-input-queue[hidden] { display: none; }
+  .turn-input-btn { padding: 3px 10px; font-size: 12px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--text); background: var(--panel-strong); cursor: pointer; }
+  .turn-input-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .turn-input-queue { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; font-size: 12px; }
+  .turn-input-queue .turn-input-queued { display: flex; gap: 8px; align-items: baseline; padding: 4px 10px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted, var(--text)); }
+  .turn-input-queue .turn-input-queued span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .turn-input-chip { display: inline-block; margin-top: 6px; padding: 1px 8px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 11px; opacity: .8; }
   .input-shell {
     flex: 1 1 auto;
     min-width: 0;
