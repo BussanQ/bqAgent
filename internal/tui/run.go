@@ -55,6 +55,7 @@ func printResumeCommand(output io.Writer, finalModel tea.Model) error {
 	if !ok || strings.TrimSpace(model.sessionID) == "" {
 		return nil
 	}
-	_, err := fmt.Fprintf(output, "\nbqagent --resume %s\n", model.sessionID)
+	command := model.styles.dim.Render("bqagent --resume " + model.sessionID)
+	_, err := fmt.Fprintf(output, "\n%s\n", command)
 	return err
 }
