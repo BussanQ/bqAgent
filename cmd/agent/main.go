@@ -278,6 +278,9 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	if (options.server || options.serverRun) && len(fs.Args()) > 0 {
 		return cliOptions{}, nil, fmt.Errorf("server mode does not accept a task")
 	}
+	if options.resumeID != "" && strings.TrimSpace(strings.Join(fs.Args(), " ")) == "" && !options.background && !options.sessionRun {
+		options.chat = true
+	}
 	return options, fs.Args(), nil
 }
 

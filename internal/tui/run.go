@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -34,10 +35,26 @@ func Run(backend Backend, config Config) error {
 		tea.WithInput(config.Input),
 		tea.WithOutput(output.writer()),
 	)
-	_, err := program.Run()
+	finalModel, err := program.Run()
 	flushErr := output.finish()
 	if err != nil {
 		return err
 	}
-	return flushErr
+	if flushErr != nil {
+		return flushErr
+	}
+	return printResumeCommand(config.Output, finalModel)
+}
+
+func printResumeCommand(output io.Writer, finalModel tea.Model) error {
+	inline, ok := finalModel.(inlineModel)
+	if !ok {
+		return nil
+	}
+	model, ok := inline.model.(Model)
+	if !ok || strings.TrimSpace(model.sessionID) == "" {
+		return nil
+	}
+	_, err := fmt.Fprintf(output, "\nbqagent --resume %s\n", model.sessionID)
+	return err
 }

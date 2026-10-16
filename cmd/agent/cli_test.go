@@ -41,6 +41,25 @@ func TestParseCLIRejectsRemovedStreamFlag(t *testing.T) {
 	}
 }
 
+func TestParseCLIResumeWithoutTaskStartsChat(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		chat bool
+	}{
+		{[]string{"--resume", "saved-session"}, true},
+		{[]string{"--resume", "saved-session", " "}, true},
+		{[]string{"--resume", "saved-session", "continue"}, false},
+		{[]string{"--chat", "--resume", "saved-session", "continue"}, true},
+		{[]string{"--background", "--resume", "saved-session"}, false},
+		{[]string{"--session-run", "--resume", "saved-session"}, false},
+	} {
+		options, _, err := parseCLI(test.args)
+		if err != nil || options.chat != test.chat || options.resumeID != "saved-session" {
+			t.Fatalf("parseCLI(%q): options=%+v err=%v, want chat=%v", test.args, options, err, test.chat)
+		}
+	}
+}
+
 func TestParseCLIPreservesTaskAndChatWithoutPlanMode(t *testing.T) {
 	options, args, err := parseCLI([]string{"inspect repository"})
 	if err != nil || options.chat || len(args) != 1 || args[0] != "inspect repository" {

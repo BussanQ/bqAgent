@@ -105,6 +105,8 @@ TUI 与 WebUI 使用相同的图片限制：仅支持 PNG、JPEG、GIF，每条�
 
 ## TTY 回退与兼容性
 
+TUI 正常退出时，如果当前存在会话，会在终端恢复后打印 `bqagent --resume <会话ID>`，可直接复制执行以恢复聊天。不带任务的 `--resume` 自动进入交互聊天；带任务时仍为单次执行。尚未创建会话或 `/clear` 后尚未开始新会话时不打印恢复命令。
+
 stdin/stdout 不是 TTY，或 `TERM=dumb` 时，会自动使用原有逐行模式，便于管道、重定向和自动化测试。TUI 和逐行聊天均默认流式输出，无需额外命令行参数。设置 `NO_COLOR` 可关闭 TUI 与 Markdown 颜色。
 
 交互模型参考并致谢 [CodeHamr TUI](https://github.com/codehamr/codehamr/tree/main/internal/tui)：本实现沿用其 Bubble Tea 同代技术栈和“原生 scrollback + 底部常驻输入区”的设计方向，并按 bqAgent 的 Provider、Session、工具事件、Skills 与外部 Agent 语义重新实现。
