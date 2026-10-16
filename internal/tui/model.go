@@ -542,7 +542,7 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 }
 
 func (model *Model) toggleToolGroup() {
-	if len(model.tools.items) > 0 && model.active == nil && (model.reply != "" || model.tools.committed) {
+	if len(model.tools.items) > 0 && model.active == nil && (model.sequence > 0 || model.reply != "" || model.tools.committed) {
 		if model.inspectorPending {
 			model.inspectorPending = false
 			return
@@ -727,6 +727,9 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	}
 	cancelled := model.active.cancelled || errors.Is(event.err, context.Canceled)
 	model.active = nil
+	// Release native scrollback even when a short turn leaves tools unarchived.
+	model.toolMouse = false
+	model.tools.expanded = false
 	if event.err != nil && !cancelled {
 		model.flushStream()
 		model.enqueuePrint(turnFailureSummary(event.err.Error(), model.styles, model.contentWidth()))
@@ -745,7 +748,6 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 			model.reply += "\n\n" + event.result.Outcome.Notice
 		}
 		model.stream = ""
-		model.tools.expanded = false
 		model.liveCache = &streamViewCache{}
 	}
 	if event.result.SessionID != "" {
