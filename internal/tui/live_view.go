@@ -159,29 +159,27 @@ func (model Model) liveLines() []string {
 	return lines
 }
 
-// Keep retained conversation and tools at the top regardless of turn state,
-// while output and the input footer stay at the bottom. Return the tool header row for mouse hits.
+// Keep retained conversation, tools and replies together at the top, while
+// auxiliary panels and the input footer stay at the bottom. Return the tool header row for mouse hits.
 func (model Model) liveLayout() (lines []string, toolRow int) {
 	body := model.liveLines()
 	padding := model.frameLimit() - len(body)
 	retained := model.transcript[max(0, len(model.transcript)-padding):]
-	toolHeight, _, _ := model.liveBudgets()
+	toolHeight, _, auxiliaryHeight := model.liveBudgets()
 	toolRow = -1
 	if !model.tools.committed && toolHeight > 0 {
 		toolRow = len(retained)
-		lines = make([]string, len(retained)+toolHeight, model.frameLimit())
-		copy(lines, retained)
-		copy(lines[len(retained):], body[:toolHeight])
-		lines = append(lines, make([]string, padding-len(retained))...)
-		lines = append(lines, body[toolHeight:]...)
-	} else {
-		lines = make([]string, padding, model.frameLimit())
-		copy(lines, retained)
-		if model.sequence == 0 && model.sessionID == "" && model.active == nil && len(retained) > 0 && len(model.tools.items) == 0 && model.stream == "" && model.reply == "" {
-			model.drawStartupArt(lines[len(retained):])
-		}
-		lines = append(lines, body...)
 	}
+	contentEnd := max(0, len(body)-auxiliaryHeight-len(model.footerLines()))
+	lines = make([]string, len(retained), model.frameLimit())
+	copy(lines, retained)
+	lines = append(lines, body[:contentEnd]...)
+	gapStart := len(lines)
+	lines = append(lines, make([]string, padding-len(retained))...)
+	if model.sequence == 0 && model.sessionID == "" && model.active == nil && len(retained) > 0 && len(model.tools.items) == 0 && model.stream == "" && model.reply == "" {
+		model.drawStartupArt(lines[gapStart:])
+	}
+	lines = append(lines, body[contentEnd:]...)
 	return
 }
 

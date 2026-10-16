@@ -198,6 +198,9 @@ func TestStartupContentStaysAtTopThroughFirstResponse(t *testing.T) {
 					t.Fatal("startup content and question should remain at the top")
 				}
 			}
+			if stage == "token" && rows[len(model.transcript)] != "short response" {
+				t.Fatal("streaming response should immediately follow the question")
+			}
 			if len(rows) != model.frameLimit() || view.Cursor == nil || view.Cursor.Y != len(rows)-len(model.footerLines())+1+model.input.area.Cursor().Y {
 				t.Fatal("startup layout changed frame height or bottom input position")
 			}
@@ -238,6 +241,9 @@ func TestShortReplyCompletionKeepsTranscriptAtTop(t *testing.T) {
 					if rows[i] != row {
 						t.Fatalf("completion moved retained row %d: got %q, want %q", i, rows[i], row)
 					}
+				}
+				if !strings.Contains(rows[len(transcript)], "● short response") {
+					t.Fatal("completed reply should immediately follow the question")
 				}
 				if !strings.Contains(view.Content, "short response") || len(rows) != model.frameLimit() {
 					t.Fatal("completion lost reply or changed frame height")
@@ -280,20 +286,19 @@ func TestChatWithToolsKeepsActivityAtTop(t *testing.T) {
 						t.Fatalf("tools should follow the question at the top:\n%s", view.Content)
 					}
 					footerStart := len(rows) - len(model.footerLines())
-					gapEnd := footerStart
+					gapStart := 1 + len(model.tools.viewport(model.styles, model.contentWidth(), model.toolViewportHeight()))
 					if state != "tools_only" {
-						gapEnd--
-						if !strings.Contains(rows[gapEnd], "short response") {
-							t.Fatal("response should remain adjacent to the input footer")
+						if !strings.Contains(rows[gapStart], "short response") {
+							t.Fatal("response should immediately follow the tools")
 						}
+						gapStart++
 					}
-					toolEnd := 1 + len(model.tools.viewport(model.styles, model.contentWidth(), model.toolViewportHeight()))
-					if toolEnd >= gapEnd {
-						t.Fatal("tall terminal should have spare rows below tools")
+					if gapStart >= footerStart {
+						t.Fatal("tall terminal should have spare rows below the conversation")
 					}
-					for _, row := range rows[toolEnd:gapEnd] {
+					for _, row := range rows[gapStart:footerStart] {
 						if strings.TrimSpace(row) != "" {
-							t.Fatalf("expected unused row below tools: %q", row)
+							t.Fatalf("expected unused row below the conversation: %q", row)
 						}
 					}
 					if len(rows) != model.frameLimit() || view.Cursor == nil || view.Cursor.Y != footerStart+1+model.input.area.Cursor().Y {
@@ -344,18 +349,65 @@ func TestChatWithoutToolsKeepsTranscriptAtTop(t *testing.T) {
 				t.Fatal("short transcript should remain in the frame")
 			}
 			rows := strings.Split(model.View().Content, "\n")
-			body := model.liveLines()
 			if rows[0] != "recent-question" || rows[1] != "recent-answer" {
 				t.Fatalf("retained transcript should stay at the top:\n%s", model.View().Content)
 			}
-			for _, row := range rows[2 : len(rows)-len(body)] {
+			gapStart := 2
+			if state != "idle" {
+				if !strings.Contains(rows[gapStart], "short response") {
+					t.Fatal("response should immediately follow the transcript")
+				}
+				gapStart++
+			}
+			for _, row := range rows[gapStart : len(rows)-len(model.footerLines())] {
 				if strings.TrimSpace(row) != "" {
-					t.Fatalf("unused frame rows should be below the transcript: %q", row)
+					t.Fatalf("unused frame rows should be below the conversation: %q", row)
 				}
 			}
 			if len(rows) != model.frameLimit() {
 				t.Fatalf("frame height = %d, want %d", len(rows), model.frameLimit())
 			}
+		})
+	}
+}
+
+func TestReplyStaysAbovePaddingWithBottomPanels(t *testing.T) {
+	for _, final := range []bool{false, true} {
+		t.Run(fmt.Sprintf("final_%t", final), func(t *testing.T) {
+			model := toolDrawerModel(t, 0)
+			model.height = 60
+			model.sequence = 1
+			model.resizeInput()
+			model.enqueuePrint("recent-question")
+			if final {
+				model.reply = "short response"
+			} else {
+				model.stream = "short response"
+			}
+			model.input.setValue("/")
+			model.refreshSuggestions()
+			model.queued = &queuedPrompt{value: "next question"}
+			model.flushTranscript()
+			rows := strings.Split(model.View().Content, "\n")
+			if rows[0] != "recent-question" || !strings.Contains(rows[1], "short response") {
+				t.Fatal("bottom panels separated the response from the question")
+			}
+			auxiliary := model.auxiliaryLines()
+			if len(auxiliary) < 2 {
+				t.Fatal("expected suggestions and queued prompt")
+			}
+			panelStart := len(rows) - len(model.footerLines()) - len(auxiliary)
+			for i, row := range auxiliary {
+				if rows[panelStart+i] != row {
+					t.Fatal("auxiliary panels should remain adjacent to the input footer")
+				}
+			}
+			for _, row := range rows[2:panelStart] {
+				if strings.TrimSpace(row) != "" {
+					t.Fatalf("expected unused row after response: %q", row)
+				}
+			}
+			assertLiveFrameFits(t, model)
 		})
 	}
 }
