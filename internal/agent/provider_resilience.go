@@ -133,7 +133,8 @@ func (err *providerRequestError) ProviderRequestMetadata() ProviderRequestMetada
 }
 
 type ClientOptions struct {
-	StreamIdleTimeout time.Duration
+	StreamIdleTimeout     time.Duration
+	StreamProgressTimeout time.Duration
 	// ProviderID enables provider-specific extensions only for a configured
 	// provider, never inferred from a model name or a localhost port.
 	ProviderID string
@@ -146,10 +147,11 @@ type streamAttemptState struct {
 	semanticOutput bool
 }
 
-func (state *streamAttemptState) markSemantic() {
+func (state *streamAttemptState) markSemantic(ctx context.Context) {
 	if state != nil {
 		state.semanticOutput = true
 	}
+	reportModelProgress(ctx)
 }
 
 type providerAttempt func(ChatCompletionOptions, *streamAttemptState) (AssistantMessage, error)

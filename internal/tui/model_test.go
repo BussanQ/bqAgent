@@ -649,3 +649,12 @@ func TestModelDisplayNamesRenderAndCompleteWithIDs(t *testing.T) {
 		t.Fatal("missing ID fallback")
 	}
 }
+
+func TestLocalizedProgressRecognizesStallAndRecovery(t *testing.T) {
+	if got := localizedProgress("距上次有效进展已 45s，暂无有效进展，仍在等待"); got != "距上次有效进展已 45s，暂无有效进展" {
+		t.Fatalf("stall progress = %q", got)
+	}
+	if got := localizedProgress("模型已恢复有效进展"); got != "模型已恢复响应" {
+		t.Fatalf("recovery progress = %q", got)
+	}
+}

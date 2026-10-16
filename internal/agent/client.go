@@ -118,15 +118,16 @@ func (err *IncompleteStreamError) Error() string {
 }
 
 type Client struct {
-	httpClient        *http.Client
-	apiKey            string
-	baseURL           string
-	apiType           APIType
-	streamIdleTimeout time.Duration
-	nativeWebSearch   string
-	searchUnsupported sync.Map // model -> expiry; scoped to this endpoint and credential
-	retrySleep        func(context.Context, time.Duration) error
-	retryJitter       func(time.Duration) time.Duration
+	httpClient            *http.Client
+	apiKey                string
+	baseURL               string
+	apiType               APIType
+	streamIdleTimeout     time.Duration
+	streamProgressTimeout time.Duration
+	nativeWebSearch       string
+	searchUnsupported     sync.Map // model -> expiry; scoped to this endpoint and credential
+	retrySleep            func(context.Context, time.Duration) error
+	retryJitter           func(time.Duration) time.Duration
 
 	searchUnsupportedParameters sync.Map // nativeSearchParameterKey -> expiry
 	magpieSearch                bool
@@ -300,7 +301,7 @@ func NewClient(apiKey, baseURL string, httpClient *http.Client) *Client {
 }
 
 func NewClientWithAPIType(apiKey, baseURL string, apiType APIType, httpClient *http.Client) *Client {
-	return NewClientWithOptions(apiKey, baseURL, apiType, httpClient, ClientOptions{StreamIdleTimeout: DefaultStreamIdleTimeout})
+	return NewClientWithOptions(apiKey, baseURL, apiType, httpClient, ClientOptions{StreamIdleTimeout: DefaultStreamIdleTimeout, StreamProgressTimeout: DefaultStreamProgressTimeout})
 }
 
 func NewClientWithOptions(apiKey, baseURL string, apiType APIType, httpClient *http.Client, options ClientOptions) *Client {
@@ -315,14 +316,15 @@ func NewClientWithOptions(apiKey, baseURL string, apiType APIType, httpClient *h
 		httpClient = &http.Client{Timeout: 2 * time.Minute}
 	}
 	return &Client{
-		httpClient:        httpClient,
-		apiKey:            apiKey,
-		baseURL:           strings.TrimRight(baseURL, "/"),
-		apiType:           apiType,
-		streamIdleTimeout: options.StreamIdleTimeout,
-		nativeWebSearch:   strings.ToLower(strings.TrimSpace(options.NativeWebSearch)),
-		magpieSearch:      magpieSearch,
-		retryJitter:       defaultProviderRetryJitter,
+		httpClient:            httpClient,
+		apiKey:                apiKey,
+		baseURL:               strings.TrimRight(baseURL, "/"),
+		apiType:               apiType,
+		streamIdleTimeout:     options.StreamIdleTimeout,
+		streamProgressTimeout: options.StreamProgressTimeout,
+		nativeWebSearch:       strings.ToLower(strings.TrimSpace(options.NativeWebSearch)),
+		magpieSearch:          magpieSearch,
+		retryJitter:           defaultProviderRetryJitter,
 	}
 }
 
@@ -452,15 +454,17 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 }
 
 func (c *Client) CreateChatCompletionStreamWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error) {
-	return c.executeWithResilience(ctx, model, options, true, func(attemptOptions ChatCompletionOptions, state *streamAttemptState) (AssistantMessage, error) {
-		switch c.apiType {
-		case APITypeOpenAIResponse:
-			return c.createOpenAIResponseStream(ctx, model, messages, definitions, attemptOptions, state, onChunk)
-		case APITypeAnthropic:
-			return c.createAnthropicMessageStream(ctx, model, messages, definitions, attemptOptions, state, onChunk)
-		default:
-			return c.createChatCompletionStream(ctx, model, messages, definitions, attemptOptions, state, onChunk)
-		}
+	return c.withStreamProgressTimeout(ctx, func(ctx context.Context) (AssistantMessage, error) {
+		return c.executeWithResilience(ctx, model, options, true, func(attemptOptions ChatCompletionOptions, state *streamAttemptState) (AssistantMessage, error) {
+			switch c.apiType {
+			case APITypeOpenAIResponse:
+				return c.createOpenAIResponseStream(ctx, model, messages, definitions, attemptOptions, state, onChunk)
+			case APITypeAnthropic:
+				return c.createAnthropicMessageStream(ctx, model, messages, definitions, attemptOptions, state, onChunk)
+			default:
+				return c.createChatCompletionStream(ctx, model, messages, definitions, attemptOptions, state, onChunk)
+			}
+		})
 	})
 }
 
@@ -562,20 +566,23 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 			role = delta.Role
 		}
 		if delta.Content != "" {
-			state.markSemantic()
+			state.markSemantic(ctx)
 			contentBuilder.WriteString(delta.Content)
 			if onChunk != nil {
 				onChunk(delta.Content)
 			}
 		}
 		if delta.ReasoningContent != "" || delta.Reasoning != "" {
-			state.markSemantic()
+			state.markSemantic(ctx)
 			reportLiveTokenDelta(ctx, firstNonBlank(delta.ReasoningContent, delta.Reasoning))
 		}
 		if len(delta.ToolCalls) > 0 {
-			state.markSemantic()
+			state.semanticOutput = true
 		}
 		for _, tc := range delta.ToolCalls {
+			if tc.ID != "" || tc.Function.Name != "" || tc.Function.Arguments != "" {
+				reportModelProgress(ctx)
+			}
 			// Compatible providers may omit index. Keep distinct call IDs
 			// separate instead of treating every missing index as zero.
 			var ptc *partialToolCall

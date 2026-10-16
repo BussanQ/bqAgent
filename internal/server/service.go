@@ -234,7 +234,7 @@ func NewService(options ServiceOptions) *Service {
 	if options.SessionOptions != nil {
 		sessionOptions = *options.SessionOptions
 	}
-	clientOptions := agent.ClientOptions{StreamIdleTimeout: agent.DefaultStreamIdleTimeout}
+	clientOptions := agent.ClientOptions{StreamIdleTimeout: agent.DefaultStreamIdleTimeout, StreamProgressTimeout: agent.DefaultStreamProgressTimeout}
 	if options.ClientOptions != nil {
 		clientOptions = *options.ClientOptions
 	}

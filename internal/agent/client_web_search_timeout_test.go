@@ -72,7 +72,7 @@ func TestNativeWebSearchActiveStreamsHaveNoTotalTimeout(t *testing.T) {
 						}
 					}
 					items, terminal := nativeSearchSSE(t, false)
-					options := ClientOptions{NativeWebSearch: "on", StreamIdleTimeout: idle}
+					options := ClientOptions{NativeWebSearch: "on", StreamIdleTimeout: idle, StreamProgressTimeout: time.Minute}
 					apiType := APITypeOpenAIResponse
 					if strings.HasPrefix(provider, "Magpie") {
 						options.ProviderID = "magpie"

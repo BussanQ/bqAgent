@@ -101,9 +101,15 @@ func (c *instrumentedClient) CreateChatCompletionStreamWithOptions(ctx context.C
 		reporter.stop()
 		c.logModelRequest("chat", model, true, startedAt, message, err)
 	}()
+	if reporter != nil {
+		ctx = withModelProgressObserver(ctx, reporter.markActivity)
+	}
 
 	wrappedOnChunk := func(chunk string) {
-		reporter.markActivity()
+		// Custom clients without an observer fall back to non-empty chunks only.
+		if chunk != "" {
+			reporter.markActivity()
+		}
 		if onChunk != nil {
 			onChunk(chunk)
 		}
@@ -178,10 +184,19 @@ type modelProgressReporter struct {
 	stream       bool
 	interval     time.Duration
 	lastActivity time.Time
+	stalled      bool
+	stopped      bool
 	mu           sync.Mutex
 }
 
 var modelProgressInterval = 10 * time.Second
+
+// modelProgressStallThreshold is the stream idle time after which an explicit
+// waiting duration is reported instead of a generic status message.
+var modelProgressStallThreshold = 30 * time.Second
+
+const modelProgressStallMarker = "暂无有效进展"
+const modelProgressRecoveredMessage = "模型已恢复有效进展"
 
 var modelProgressMessages = []string{
 	"Assembling…",
@@ -228,22 +243,39 @@ func (r *modelProgressReporter) run(ctx context.Context, ticker modelProgressTic
 		case <-ctx.Done():
 			return
 		case <-ticker.C():
-			if r.shouldEmit() {
-				fmt.Fprintf(r.logWriter, "%s\n", selectModelProgressMessage(modelProgressMessages))
-			}
+			r.emit()
 		}
 	}
 }
 
-func (r *modelProgressReporter) shouldEmit() bool {
-	if !r.stream {
-		return true
-	}
-
+// emit writes while holding mu so stall and recovery lines stay ordered.
+func (r *modelProgressReporter) emit() {
 	r.mu.Lock()
-	lastActivity := r.lastActivity
-	r.mu.Unlock()
-	return modelProgressNow().Sub(lastActivity) >= r.interval
+	defer r.mu.Unlock()
+	if r.stopped {
+		return
+	}
+	if !r.stream {
+		fmt.Fprintf(r.logWriter, "%s\n", selectModelProgressMessage(modelProgressMessages))
+		return
+	}
+	idle := modelProgressNow().Sub(r.lastActivity)
+	if idle < r.interval {
+		return
+	}
+	if modelProgressStallThreshold > 0 && idle >= modelProgressStallThreshold {
+		r.stalled = true
+		fmt.Fprintf(r.logWriter, "距上次有效进展已 %s，%s，仍在等待\n", formatWaitDuration(idle), modelProgressStallMarker)
+		return
+	}
+	fmt.Fprintf(r.logWriter, "%s\n", selectModelProgressMessage(modelProgressMessages))
+}
+
+func formatWaitDuration(d time.Duration) string {
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(time.Second).String()
 }
 
 func (r *modelProgressReporter) markActivity() {
@@ -251,14 +283,24 @@ func (r *modelProgressReporter) markActivity() {
 		return
 	}
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped {
+		return
+	}
 	r.lastActivity = modelProgressNow()
-	r.mu.Unlock()
+	if r.stalled {
+		r.stalled = false
+		fmt.Fprintf(r.logWriter, "%s\n", modelProgressRecoveredMessage)
+	}
 }
 
 func (r *modelProgressReporter) stop() {
 	if r == nil {
 		return
 	}
+	r.mu.Lock()
+	r.stopped = true
+	r.mu.Unlock()
 	r.cancel()
 	<-r.done
 }

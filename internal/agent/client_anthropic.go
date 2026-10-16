@@ -193,7 +193,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 			reportLiveTokenUsage(ctx, usage)
 		case "content_block_start":
 			if event.ContentBlock.Type == "tool_use" {
-				state.markSemantic()
+				state.markSemantic(ctx)
 				if event.Index == nil || *event.Index < 0 {
 					return AssistantMessage{}, providerProtocolError("anthropic tool block start requires a non-negative index", nil)
 				}
@@ -214,7 +214,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 			switch event.Delta.Type {
 			case "text_delta":
 				if event.Delta.Text != "" {
-					state.markSemantic()
+					state.markSemantic(ctx)
 				}
 				content.WriteString(event.Delta.Text)
 				if onChunk != nil {
@@ -222,7 +222,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 				}
 			case "input_json_delta":
 				if event.Delta.PartialJSON != "" {
-					state.markSemantic()
+					state.markSemantic(ctx)
 				}
 				if event.Index == nil {
 					return AssistantMessage{}, providerProtocolError("anthropic tool argument delta requires an index", nil)
@@ -236,7 +236,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 			case "thinking_delta", "signature_delta":
 				reportLiveTokenDelta(ctx, event.Delta.Thinking)
 				if event.Delta.Thinking != "" || event.Delta.Signature != "" || event.Delta.Text != "" {
-					state.markSemantic()
+					state.markSemantic(ctx)
 				}
 			}
 		case "content_block_stop":

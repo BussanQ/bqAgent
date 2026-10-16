@@ -396,18 +396,28 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				CacheMode: cacheMode, CacheDowngradeReason: requestMetadata.CacheDowngradeReason,
 			})
 		}
+		if requestErr == nil {
+			requestErr = ctx.Err()
+		}
+		if requestErr == nil && strings.EqualFold(message.Completion.StopReason, "incomplete") && !message.Completion.OutputTruncated {
+			requestErr = fmt.Errorf("model response incomplete: %s", firstNonBlank(message.Completion.IncompleteReason, "unspecified reason"))
+		}
 		if requestErr != nil {
+			partial := firstNonBlank(streamedText.String(), contentText(message.Content))
+			if strings.TrimSpace(partial) != "" {
+				// Only preserve visible text, never incomplete or unexecuted tool calls.
+				text := "[未完成的回复：生成过程中断，以下内容仅为已收到的部分，不代表任务已完成。]\n\n" + partial
+				draft := map[string]any{"role": "assistant", "content": text, "phase": "commentary"}
+				updatedMessages = append(updatedMessages, draft)
+				if saveErr := a.recordMessages(draft); saveErr != nil {
+					return "", updatedMessages, errors.Join(requestErr, fmt.Errorf("save interrupted reply: %w", saveErr))
+				}
+				state.emit(itemID, "message.updated", "interrupted", text)
+			}
 			if errors.Is(requestErr, context.DeadlineExceeded) && ctx.Err() == nil && a.stageConfig.Timeout > 0 {
 				return a.finishStageCheckpoint(ctx, updatedMessages, "stage time budget reached", actualIterations)
 			}
-			err = requestErr
-			return "", updatedMessages, err
-		}
-		if err := ctx.Err(); err != nil {
-			return "", updatedMessages, err
-		}
-		if strings.EqualFold(message.Completion.StopReason, "incomplete") && !message.Completion.OutputTruncated {
-			return "", updatedMessages, fmt.Errorf("model response incomplete: %s", firstNonBlank(message.Completion.IncompleteReason, "unspecified reason"))
+			return "", updatedMessages, requestErr
 		}
 		message.normalizeInlineToolCalls()
 		truncatedToolBatch := message.Completion.OutputTruncated && len(message.ToolCalls) > 0

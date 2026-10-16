@@ -74,9 +74,16 @@ func (item *openAIResponseOutput) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type openAIResponseError struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+}
+
 type openAIResponseEnvelope struct {
-	EndTurn           *bool  `json:"end_turn,omitempty"`
-	Status            string `json:"status"`
+	Error             openAIResponseError `json:"error"`
+	EndTurn           *bool               `json:"end_turn,omitempty"`
+	Status            string              `json:"status"`
 	IncompleteDetails *struct {
 		Reason string `json:"reason"`
 	} `json:"incomplete_details,omitempty"`
@@ -111,6 +118,9 @@ func (c *Client) createOpenAIResponse(ctx context.Context, model string, message
 			return AssistantMessage{}, providerTransportError(ctx, err)
 		}
 		return AssistantMessage{}, providerProtocolError("decode responses response", err)
+	}
+	if decoded.Status == "failed" || decoded.Error.Message != "" || decoded.Error.Code != "" {
+		return AssistantMessage{}, providerStreamEventError(firstNonBlank(strings.TrimSpace(decoded.Error.Message), decoded.Error.Code, decoded.Error.Type, "upstream reported response.failed"), firstNonBlank(decoded.Error.Code, decoded.Error.Type))
 	}
 	return assistantFromOpenAIResponse(decoded), nil
 }
@@ -160,27 +170,23 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			OutputIndex int                    `json:"output_index"`
 			Item        openAIResponseOutput   `json:"item"`
 			Response    openAIResponseEnvelope `json:"response"`
-			Error       struct {
-				Message string `json:"message"`
-				Type    string `json:"type"`
-				Code    string `json:"code"`
-			} `json:"error"`
+			Error       openAIResponseError    `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			return AssistantMessage{}, providerProtocolError("invalid responses stream event", err)
 		}
 		eventCounts[event.Type]++
 		if event.Type == "response.failed" || event.Type == "error" {
-			message := firstNonBlank(strings.TrimSpace(event.Error.Message), strings.TrimSpace(event.Message))
+			message := firstNonBlank(strings.TrimSpace(event.Response.Error.Message), strings.TrimSpace(event.Error.Message), strings.TrimSpace(event.Message), event.Response.Error.Code, event.Response.Error.Type, event.Error.Code, event.Error.Type)
 			if message == "" {
 				message = "upstream reported " + event.Type
 			}
-			return AssistantMessage{}, providerStreamEventError(message, firstNonBlank(event.Error.Code, event.Error.Type, event.Type))
+			return AssistantMessage{}, providerStreamEventError(message, firstNonBlank(event.Response.Error.Code, event.Response.Error.Type, event.Error.Code, event.Error.Type, event.Type))
 		}
 		switch event.Type {
 		case "response.output_text.delta":
 			if event.Delta != "" {
-				state.markSemantic()
+				state.markSemantic(ctx)
 			}
 			content.WriteString(event.Delta)
 			messageDeltas[event.OutputIndex] += event.Delta
@@ -192,12 +198,12 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				messageItems[event.OutputIndex] = event.Item
 			}
 			if event.Item.Type == "function_call" {
-				state.markSemantic()
+				state.markSemantic(ctx)
 				calls[event.OutputIndex] = &partialCall{id: firstNonBlank(event.Item.CallID, event.Item.ID), name: event.Item.Name}
 			}
 		case "response.function_call_arguments.delta":
 			if event.Delta != "" {
-				state.markSemantic()
+				state.markSemantic(ctx)
 			}
 			call := calls[event.OutputIndex]
 			if call == nil {
@@ -208,8 +214,11 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			reportLiveTokenDelta(ctx, event.Delta)
 		case "response.function_call_arguments.done":
 			if event.Arguments != nil {
-				state.markSemantic()
+				state.semanticOutput = true
 				call := calls[event.OutputIndex]
+				if *event.Arguments != "" && (call == nil || call.arguments.String() != *event.Arguments) {
+					reportModelProgress(ctx)
+				}
 				if call == nil {
 					call = &partialCall{}
 					calls[event.OutputIndex] = call
@@ -222,7 +231,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				messageItems[event.OutputIndex] = event.Item
 			}
 			if event.Item.Type == "function_call" {
-				state.markSemantic()
+				state.markSemantic(ctx)
 				call := calls[event.OutputIndex]
 				if call == nil {
 					call = &partialCall{}
@@ -246,7 +255,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			}
 		}
 		if strings.Contains(event.Type, "reasoning") && strings.HasSuffix(event.Type, ".delta") && event.Delta != "" {
-			state.markSemantic()
+			state.markSemantic(ctx)
 			reportLiveTokenDelta(ctx, event.Delta)
 		}
 		reportLiveTokenUsage(ctx, tokenUsageFromOpenAIResponse(event.Response.Usage))

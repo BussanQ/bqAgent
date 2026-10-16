@@ -42,6 +42,25 @@ func TestConfigFromEnvParsesStreamIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnvParsesStreamProgressTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{{"", agent.DefaultStreamProgressTimeout}, {"45s", 45 * time.Second}, {"0", 0}, {"bad", agent.DefaultStreamProgressTimeout}, {"-1s", agent.DefaultStreamProgressTimeout}} {
+		t.Run(tc.value, func(t *testing.T) {
+			config := ConfigFromEnv(func(key string) string {
+				if key == "LLM_STREAM_PROGRESS_TIMEOUT" {
+					return tc.value
+				}
+				return ""
+			})
+			if config.StreamProgressTimeout != tc.want {
+				t.Fatalf("timeout=%s, want %s", config.StreamProgressTimeout, tc.want)
+			}
+		})
+	}
+}
+
 func TestConfigFromEnvKeepsUnsetModelEmpty(t *testing.T) {
 	config := ConfigFromEnv(func(string) string { return "" })
 	if config.Model != "" {

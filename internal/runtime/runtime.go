@@ -32,6 +32,7 @@ type Config struct {
 	Model                           string
 	Models                          []string
 	StreamIdleTimeout               time.Duration
+	StreamProgressTimeout           time.Duration
 	MaxIterations                   int
 	RunTraceEnabled                 bool
 	SessionTranscriptMode           session.TranscriptMode
@@ -114,6 +115,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		Model:                           model,
 		Models:                          splitEnvList(getenv("LLM_MODELS")),
 		StreamIdleTimeout:               envDurationAllowZero(getenv("LLM_STREAM_IDLE_TIMEOUT"), agent.DefaultStreamIdleTimeout),
+		StreamProgressTimeout:           envDurationAllowZero(getenv("LLM_STREAM_PROGRESS_TIMEOUT"), agent.DefaultStreamProgressTimeout),
 		MaxIterations:                   envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
 		RunTraceEnabled:                 envBool(getenv("RUN_TRACE_ENABLED"), false),
 		SessionTranscriptMode:           session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
@@ -243,7 +245,7 @@ func (factory Factory) BuildBackground(ctx context.Context) Runtime {
 func (factory Factory) build(background context.Context) Runtime {
 	apiType := agent.NormalizeAPIType(string(factory.Config.APIType))
 	model := agent.EffectiveModel(factory.Config.Model)
-	clientOptions := agent.ClientOptions{StreamIdleTimeout: factory.Config.StreamIdleTimeout, ProviderID: factory.Config.ProviderID, NativeWebSearch: factory.Config.NativeWebSearch}
+	clientOptions := agent.ClientOptions{StreamIdleTimeout: factory.Config.StreamIdleTimeout, StreamProgressTimeout: factory.Config.StreamProgressTimeout, ProviderID: factory.Config.ProviderID, NativeWebSearch: factory.Config.NativeWebSearch}
 	client := agent.NewClientWithOptions(factory.Config.APIKey, factory.Config.BaseURL, apiType, nil, clientOptions)
 	factory.logf("[Runtime] api_type=%s model=%s\n", apiType, model)
 

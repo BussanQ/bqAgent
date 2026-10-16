@@ -1529,6 +1529,12 @@ func estimateTokensFromRunes(runes int) int {
 }
 
 func localizedProgress(value string) string {
+	if strings.Contains(value, "暂无有效进展") {
+		return "距上次有效进展" + stallWaitText(value)
+	}
+	if strings.Contains(value, "模型已恢复有效进展") {
+		return "模型已恢复响应"
+	}
 	lower := strings.ToLower(value)
 	for _, marker := range []string{"assembling", "boiling", "calculating", "coalescing", "smooshing", "distilling", "formatting", "exploring"} {
 		if strings.Contains(lower, marker) {
@@ -1539,6 +1545,22 @@ func localizedProgress(value string) string {
 		return "正在处理阶段"
 	}
 	return ""
+}
+
+// stallWaitText extracts the "已 Ns" wait duration from a stall progress line.
+func stallWaitText(value string) string {
+	value = strings.TrimSpace(value)
+	if start := strings.Index(value, "距上次有效进展"); start >= 0 {
+		value = value[start+len("距上次有效进展"):]
+	}
+	if start := strings.Index(value, "已 "); start >= 0 {
+		rest := value[start:]
+		if end := strings.IndexAny(rest, "，,"); end >= 0 {
+			rest = rest[:end]
+		}
+		return strings.TrimSpace(rest) + "，暂无有效进展"
+	}
+	return "暂无有效进展"
 }
 
 // MCP status is optional to keep alternate backends independent of discovery.
