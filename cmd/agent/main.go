@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -66,7 +67,10 @@ func run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args []
 }
 
 func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args []string, getenv func(string) string, deps runDeps) int {
-	options, taskArgs, err := parseCLI(args)
+	options, taskArgs, err := parseCLIWithHelp(args, stdout)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		for _, arg := range args {
@@ -197,8 +201,13 @@ func applyDotEnv(getenv func(string) string, setenv func(string, string) error, 
 }
 
 func parseCLI(args []string) (cliOptions, []string, error) {
+	return parseCLIWithHelp(args, io.Discard)
+}
+
+func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string, error) {
 	fs := flag.NewFlagSet("bqagent", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	fs.Usage = func() {} // Errors are reported by runWithDeps; only help prints usage.
 
 	var options cliOptions
 	var daemon bool
@@ -221,6 +230,9 @@ func parseCLI(args []string) (cliOptions, []string, error) {
 	fs.StringVar(&options.subagentLease, "subagent-lease", "", "internal subagent execution lease")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printCLIHelp(helpOutput, fs)
+		}
 		return cliOptions{}, nil, err
 	}
 	if len(args) == 0 {
