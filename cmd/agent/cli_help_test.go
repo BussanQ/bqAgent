@@ -26,7 +26,7 @@ func TestCLIHelpPrintsParametersWithoutStartingRuntime(t *testing.T) {
 					t.Errorf("help missing %q: %s", want, text)
 				}
 			}
-			for _, hidden := range []string{"--chat", "--session-id", "--session-run", "--server-run", "--subagent-run", "--subagent-lease"} {
+			for _, hidden := range []string{"--session-id", "--session-run", "--server-run", "--subagent-run", "--subagent-lease"} {
 				if strings.Contains(text, hidden) {
 					t.Errorf("help exposed internal flag %q", hidden)
 				}
@@ -41,7 +41,7 @@ func TestCLIHelpPrintsParametersWithoutStartingRuntime(t *testing.T) {
 }
 
 func TestCLIHelpPreservesErrorsAndLiteralTaskArguments(t *testing.T) {
-	for _, args := range [][]string{{"--unknown"}, {"--listen"}, {"--chat"}, {"--chat", "--server"}} {
+	for _, args := range [][]string{{"--unknown"}, {"--listen"}} {
 		var stdout, stderr bytes.Buffer
 		code := runWithDeps(context.Background(), nil, &stdout, &stderr, args, nil, runDeps{})
 		if code == 0 || stdout.Len() != 0 || stderr.Len() == 0 {

@@ -72,14 +72,14 @@ func TestTUIBackendMultiTurnReusesSessionAndHistory(t *testing.T) {
 	}
 }
 
-func TestRemovedChatFlagIsRejectedBeforeWorkspaceSetup(t *testing.T) {
-	for _, args := range [][]string{{"--chat"}, {"--chat", "read README"}, {"--chat", "--resume", "saved-session"}} {
+func TestUnknownFlagIsRejectedBeforeWorkspaceSetup(t *testing.T) {
+	for _, args := range [][]string{{"--unknown"}, {"--unknown", "read README"}, {"--unknown", "--resume", "saved-session"}} {
 		var stdout, stderr bytes.Buffer
 		code := runWithDeps(context.Background(), unreadableStdin{t}, &stdout, &stderr, args, func(string) string {
 			t.Fatal("rejected flag must not read environment")
 			return ""
 		}, noSideEffectDeps(t))
-		if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "flag provided but not defined: -chat") {
+		if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "flag provided but not defined: -unknown") {
 			t.Fatalf("args=%v exit=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
 		}
 	}

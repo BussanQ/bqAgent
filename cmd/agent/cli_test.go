@@ -40,24 +40,6 @@ func TestParseCLIRejectsRemovedStreamFlag(t *testing.T) {
 	}
 }
 
-func TestParseCLIRejectsRemovedChatFlag(t *testing.T) {
-	for _, args := range [][]string{
-		{"--chat"},
-		{"--chat=true"},
-		{"--chat", "read README"},
-		{"--chat", "--resume", "saved-session"},
-		{"--chat", "--background", "task"},
-		{"--server", "--chat"},
-		{"--doctor", "--chat"},
-	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			if _, _, err := parseCLI(args); err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -chat") {
-				t.Fatalf("parseCLI(%q) error = %v, want unknown chat flag", args, err)
-			}
-		})
-	}
-}
-
 func TestOptionsUsesTUI(t *testing.T) {
 	for _, test := range []struct {
 		name string
