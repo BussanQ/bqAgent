@@ -75,27 +75,11 @@ func TestRunWithBackgroundCreatesSessionAndLaunchesChild(t *testing.T) {
 	}
 }
 
-func TestRunWithResumeRequiresTask(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agent", "sessions", "demo"), 0o755); err != nil {
-		t.Fatalf("failed to create session dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".agent", "sessions", "demo", "meta.json"), []byte(`{"id":"demo","workspace_root":"`+strings.ReplaceAll(root, `\\`, `\\\\`)+`","status":"created","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`), 0o644); err != nil {
-		t.Fatalf("failed to write meta.json: %v", err)
-	}
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	code := runWithDeps(context.Background(), nil, &stdout, &stderr, []string{"--resume", "demo"}, func(string) string { return "" }, runDeps{
-		getwd:           func() (string, error) { return root, nil },
-		executable:      func() (string, error) { return "bqagent-test", nil },
-		startBackground: func(string, []string, string, string) error { return nil },
-	})
-	if code != 1 {
-		t.Fatalf("runWithDeps returned code %d, want 1", code)
-	}
-	if !strings.Contains(stderr.String(), "resume requires a follow-up task") {
-		t.Fatalf("stderr = %q, want resume validation error", stderr.String())
+func TestRunWithResumeWithoutTaskRequiresTerminalBeforeSessionAccess(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps(context.Background(), unreadableStdin{t}, &stdout, &stderr, []string{"--resume", "demo"}, func(string) string { return "xterm" }, noSideEffectDeps(t))
+	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "TUI") || !strings.Contains(stderr.String(), "TTY") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }
 

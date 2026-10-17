@@ -19,7 +19,7 @@ Additional capabilities draw on ideas from `agent-claudecode.py` and OpenClaw:
 - Workspace-rooted system prompt assembly
 - A primary `.agent/` layout built around `AGENT.md`, `SOUL.md`, and `USER.md`
 - Continued support for `.agent/rules/*.md` and `.agent/skills/*/SKILL.md`
-- An always-streaming inline terminal TUI by default, also available explicitly with `--chat`
+- An always-streaming inline terminal TUI when started without a task on a TTY (stdin and stdout) with `TERM` not `dumb`; a task runs once and exits
 - [Automatic Herdr support](#herdr): asynchronous activity reports, session recovery, and bounded release without blocking model work
 - [Magpie Agent plugin](#magpie): select models in Magpie, connect through its gateway, and restore the original configuration on disconnect
 - Persistent session recovery with `--resume`
@@ -47,9 +47,9 @@ For WebUI-only development, run `npm run dev` in `internal/server/webui`; Vite p
 
 Start `bqagent` in a Herdr pane to enable automatic integration; no plugin is required. It activates only when `HERDR_ENV=1` and `HERDR_PANE_ID`, `HERDR_BIN_PATH`, and `HERDR_SOCKET_PATH` are all present.
 
-Foreground TUI, line-mode conversations, and single-run tasks report activity and session recovery metadata asynchronously, then release the pane on exit. TUI Provider setup reports `blocked` while waiting for a selection. Reporting failures do not block model work, and prompts, replies, and tool output are not sent. HTTP/Bot services, background jobs, and internal workers do not claim a pane.
+Foreground TUI and single-run tasks report activity and session recovery metadata asynchronously, then release the pane on exit. TUI Provider setup reports `blocked` while waiting for a selection. Reporting failures do not block model work, and prompts, replies, and tool output are not sent. HTTP/Bot services, background jobs, and internal workers do not claim a pane.
 
-Recovery requires **Herdr 0.9.2+** and `bqagent` on `PATH`. It opens an interactive conversation with the saved session context. See the [Herdr section in the TUI guide](../TUI.md#herdr-集成) for activation conditions, state mapping, and shutdown behavior; the guide also includes an English summary.
+Recovery requires **Herdr 0.9.2+** and `bqagent` on `PATH`. It runs `bqagent --resume <session-id>`, opening the interactive TUI with the saved session context. See the [Herdr section in the TUI guide](../TUI.md#herdr-集成) for activation conditions, state mapping, and shutdown behavior; the guide also includes an English summary.
 
 ### Magpie
 
@@ -100,7 +100,7 @@ set LLM_API_KEY=your-key-here
 
 ### LLM provider
 
-At startup, single-run tasks, Chat, background tasks, subagent workers, and Server prefer a valid [Magpie connection](#magpie), then the active provider in global `~/.agent/config.json`, and finally environment variables.
+At startup, single-run tasks, TUI, background tasks, subagent workers, and Server prefer a valid [Magpie connection](#magpie), then the active provider in global `~/.agent/config.json`, and finally environment variables.
 
 In the interactive TUI, use `/provider` to open the sequential setup wizard. The WebUI exposes the same configuration through its Provider settings control. Both interfaces share encrypted configuration storage and automatic model discovery.
 
@@ -245,7 +245,7 @@ For each name in `CLAUDE`, `CODEX`, `CURSOR`, `OPENCODE`, and `PI`, `AGENT_<NAME
 
 Claude defaults to `claude -p --output-format json`; Codex prefers the shared App Server by default, with `codex exec --json --skip-git-repo-check` as its legacy CLI fallback; Pi defaults to `pi --mode json`, receives prompts on stdin, and resumes with `--session <ID>`. Cursor defaults to ACP via `cursor-agent acp`, and OpenCode defaults to ACP via `opencode acp`. The corresponding executable must be visible in the PATH of the process that starts bqAgent; restart a long-lived chat/server process after installing an external agent or changing its transport environment.
 
-In `--chat` or `--server` sessions, use `/opencode <task>` to route the turn to OpenCode. Later messages remain bound to it until `/default` switches back to the built-in agent. OpenCode is ACP-only; configuring `AGENT_OPENCODE_CLI_CMD/ARGS` does not enable a CLI transport.
+In TUI or `--server` sessions, use `/opencode <task>` to route the turn to OpenCode. Later messages remain bound to it until `/default` switches back to the built-in agent. OpenCode is ACP-only; configuring `AGENT_OPENCODE_CLI_CMD/ARGS` does not enable a CLI transport.
 
 Codex automatically discovers the shared App Server without environment overrides. bqAgent first connects using `codex app-server proxy`. If that fails, it runs the idempotent `codex app-server daemon start` command and reconnects on success. Older Codex versions without daemon/proxy support, or unavailable shared services, fall back to a standalone `codex app-server` stdio process, then ACP/CLI. Probes only initialize the protocol; they never create threads or send model tasks. Closing bqAgent disconnects its proxies without stopping the shared daemon.
 
@@ -304,11 +304,8 @@ The internal `globalconfig` module now owns system configuration. The user-facin
 # single-run task
 go run ./cmd/agent "list all Go files in this repo"
 
-# start interactive multi-turn conversation by default (--chat is also accepted)
+# start the interactive TUI when no task is given (requires TTY stdin/stdout and TERM not dumb)
 go run ./cmd/agent
-
-# start a chat with an initial task
-go run ./cmd/agent --chat "read README.md and summarize it"
 
 # start a background session
 go run ./cmd/agent --background "read README.md and summarize it"
@@ -331,11 +328,11 @@ go run ./cmd/agent --ilink-status
 # resume a previous session
 go run ./cmd/agent --resume <session-id> "continue from the previous result"
 
-# resume a previous session in chat mode
-go run ./cmd/agent --chat --resume <session-id>
+# resume a previous session into the TUI (no task)
+go run ./cmd/agent --resume <session-id>
 ```
 
-If you run `bqagent` without any arguments, it starts an interactive multi-turn conversation, equivalent to passing `--chat`.
+If you run `bqagent` without a task, it starts the interactive TUI when stdin and stdout are TTYs and `TERM` is not `dumb`; otherwise it exits with an error. A task, including one passed with `--resume`, runs once and exits.
 
 ## Workspace layout
 
@@ -452,7 +449,7 @@ The session start date and the memory snapshot live in the per-session context, 
     [environment variables](#environment-variables).
   - The default file has no remote servers. Server URLs must be literal `http` or `https` URLs; only header
     values can use allowlisted environment placeholders.
-  - TUI, Chat, and WebUI services finish local initialization before waiting for any remote MCP server. Discovery runs in the background. The TUI status bar shows connecting, connected, and failed counts; WebUI diagnostics exposes per-server status. Each completed server publishes its tools for new turns; in-flight turns retain their original tool snapshot. Ordinary chat does not wait for MCP.
+  - TUI and WebUI services finish local initialization before waiting for any remote MCP server. Discovery runs in the background. The TUI status bar shows connecting, connected, and failed counts; WebUI diagnostics exposes per-server status. Each completed server publishes its tools for new turns; in-flight turns retain their original tool snapshot. Ordinary chat does not wait for MCP.
   - Parallel background discovery retains the shared 15-second budget and is cancelled when the UI or service closes. Single-run commands still wait for discovery before executing their task, with servers connected in parallel. There is no cross-process tool cache.
   - Discovery is best-effort: a server marked `"disabled": true`, missing, unreachable, or invalid is skipped
     (a warning is logged) and never aborts startup. Only the Streamable HTTP transport is supported.
@@ -472,7 +469,7 @@ Behavior notes:
 - file read/write failures also stop the current run with an error
 - relative `read_file` / `write_file` paths are resolved from the workspace root
 - `execute_bash` also runs from the workspace root
-- `--server` and `--chat` now share the same built-in local tool set, including shell, file, web search, and memory tools
+- `--server` and the interactive TUI now share the same built-in local tool set, including shell, file, web search, and memory tools
 
 Workspace skills use progressive disclosure. A recommended skill starts with metadata such as:
 
@@ -488,7 +485,7 @@ The discovery prompt does not include the skill body or aliases. The model first
 
 ## Sessions and background mode
 
-`--chat` (and no-argument startup) enters an always-streaming inline TUI on a real terminal. Completed messages remain in native scrollback while the input, completion panel, queue, and status bar stay at the bottom; no alternate screen is used. More than five tool calls are merged into a clickable detail group, with mouse tracking enabled only while that group is interactive. Redirected stdin/stdout and `TERM=dumb` automatically fall back to the legacy line mode. Sessions remain under global `~/.agent/sessions/`; resume validates the workspace and replays recent user/assistant text within a 200 KiB display budget. See the [inline TUI guide](../TUI.md) for shortcuts, commands, paste chips, queueing, prompt history, and `NO_COLOR`.
+Startup without a task (including `--resume` without a task) enters an always-streaming inline TUI on a TTY (stdin and stdout) with `TERM` not `dumb`. Completed messages remain in native scrollback while the input, completion panel, queue, and status bar stay at the bottom; no alternate screen is used. More than five tool calls are merged into a clickable detail group, with mouse tracking enabled only while that group is interactive. There is no line-mode fallback. Sessions remain under global `~/.agent/sessions/`; resume validates the workspace and replays recent user/assistant text within a 200 KiB display budget. See the [inline TUI guide](../TUI.md) for shortcuts, commands, paste chips, queueing, prompt history, and `NO_COLOR`.
 
 Long conversations now use request-time context management before each model call:
 
@@ -587,8 +584,8 @@ Structured, revisioned memory is stored in `.agent/memory/entries.jsonl` with so
 # Ask the agent to inspect the repo
 go run ./cmd/agent "what files are in this repository?"
 
-# Interactive conversation
-go run ./cmd/agent --chat
+# Interactive TUI
+go run ./cmd/agent
 
 # Use workspace rules and skills
 go run ./cmd/agent "follow the workspace rules and summarize the available skills"

@@ -14,7 +14,7 @@
 
 当前代码保留的主要能力包括：
 
-- 单次任务、默认内联终端 TUI、兼容逐行对话、会话恢复、后台任务和常驻 HTTP Server。
+- 单次任务、默认内联终端 TUI、无任务时进入的交互 TUI、会话恢复、后台任务和常驻 HTTP Server。
 - OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 三种模型协议。
 - 内嵌 WebUI、QQ Bot Gateway、微信 iLink、ServerChan Bot 等交互渠道。
 - 工作区文件与 Shell 工具、网页搜索与抓取、Skill、Memory、MCP 和独立子 Agent。
@@ -325,6 +325,12 @@
 
 - **移除 `--plan` 与内置 planner**：删除先生成步骤再逐步执行的规划模式，包括 `--plan` 命令行参数、`plan` 内置工具、独立的规划执行循环，以及 TUI 恢复命令和 Herdr 恢复中的 `--plan` 保留逻辑；所有任务统一走普通对话循环。
 - **保留通用任务拆解能力**：模型仍可在普通对话中自行拆解任务，`task_update`、`todo_write` 等任务进度工具不受影响；此前历史记录中的规划模式条目仅作演进留痕。
+
+### 2026-10-17 — 移除 `--chat` 与逐行模式
+
+- **移除 `--chat`**：无任务启动 `bqagent` 时，要求 stdin、stdout 均为 TTY 且 `TERM` 不是 `dumb`，满足后进入内联 TUI；有任务则一次执行后退出，`--resume` 同理（无任务进入 TUI，带任务一次执行）。
+- **移除逐行模式**：不再在非 TTY 或 `TERM=dumb` 时回退逐行聊天；文档与示例中的 `--chat` 均已删除。
+- **Herdr 恢复命令**：恢复 argv 改为 `bqagent --resume <session-id>`，不再包含 `--chat`。此前历史条目中的 `--chat` 与逐行模式仅作演进留痕。
 
 ## 当前演进主线总结
 

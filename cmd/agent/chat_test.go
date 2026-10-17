@@ -3,248 +3,145 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"os"
+	"fmt"
 	"strings"
 	"testing"
+
+	"bqagent/internal/agent"
+	appserver "bqagent/internal/server"
+	"bqagent/internal/tools"
+	apptui "bqagent/internal/tui"
+	"bqagent/internal/workspace"
 )
 
-func TestChatModeMultiTurnConversation(t *testing.T) {
-	var requestCount int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestCount++
-		reply := "reply-" + string(rune('0'+requestCount))
-		writer.Header().Set("Content-Type", "application/json")
-		response := map[string]any{
-			"choices": []map[string]any{
-				{"message": map[string]any{"role": "assistant", "content": reply}},
-			},
+// tuiMultiTurnClient is an in-process fake model: no network, no subprocess.
+type tuiMultiTurnClient struct {
+	sessionNoticeClient
+	requests [][]map[string]any
+}
+
+func (client *tuiMultiTurnClient) CreateChatCompletionStreamWithOptions(_ context.Context, _ string, messages []map[string]any, _ []tools.Definition, _ agent.ChatCompletionOptions, onChunk func(string)) (agent.AssistantMessage, error) {
+	client.requests = append(client.requests, append([]map[string]any(nil), messages...))
+	reply := fmt.Sprintf("reply-%d", len(client.requests))
+	if onChunk != nil {
+		onChunk(reply)
+	}
+	return agent.AssistantMessage{Role: "assistant", Content: reply}, nil
+}
+
+func newMultiTurnBackend(t *testing.T, client *tuiMultiTurnClient) *tuiBackend {
+	t.Helper()
+	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: t.TempDir()}
+	return &tuiBackend{workspace: ws, service: appserver.NewService(appserver.ServiceOptions{
+		WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir(), Client: client, Model: "test", SystemPrompt: "test",
+	})}
+}
+
+func TestTUIBackendMultiTurnReusesSessionAndHistory(t *testing.T) {
+	client := &tuiMultiTurnClient{}
+	backend := newMultiTurnBackend(t, client)
+	first, err := backend.RunTurn(context.Background(), "", "hello", apptui.TurnEvents{})
+	if err != nil || first.SessionID == "" || first.Reply != "reply-1" {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	second, err := backend.RunTurn(context.Background(), first.SessionID, "world", apptui.TurnEvents{})
+	if err != nil || second.SessionID != first.SessionID || second.Reply != "reply-2" {
+		t.Fatalf("second=%+v err=%v", second, err)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("model requests = %d, want 2", len(client.requests))
+	}
+	// The second request must carry the first user message and assistant reply.
+	text := fmt.Sprint(client.requests[1])
+	for _, want := range []string{"hello", "reply-1", "world"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("second request missing %q: %s", want, text)
 		}
-		_ = json.NewEncoder(writer).Encode(response)
-	}))
-	defer server.Close()
-
-	getenv := func(key string) string {
-		if key == "OPENAI_BASE_URL" {
-			return server.URL
-		}
-		return ""
 	}
-
-	stdin := strings.NewReader("hello\nworld\n/exit\n")
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	root := t.TempDir()
-
-	code := runWithDeps(context.Background(), stdin, &stdout, &stderr, []string{"--chat"}, getenv, runDeps{
-		getwd:           func() (string, error) { return root, nil },
-		executable:      func() (string, error) { return "bqagent-test", nil },
-		startBackground: func(string, []string, string, string) error { return nil },
-	})
-	if code != 0 {
-		t.Fatalf("runWithDeps returned code %d, want 0; stderr=%q", code, stderr.String())
+	history, err := backend.History(first.SessionID, apptui.ResumeHistoryBudget)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if requestCount != 2 {
-		t.Fatalf("API received %d requests, want 2", requestCount)
+	var got []string
+	for _, message := range history.Messages {
+		got = append(got, message.Role+":"+message.Content)
 	}
-	output := stdout.String()
-	if !strings.Contains(output, "reply-1") {
-		t.Fatalf("output missing reply-1: %q", output)
-	}
-	if !strings.Contains(output, "reply-2") {
-		t.Fatalf("output missing reply-2: %q", output)
+	want := []string{"user:hello", "assistant:reply-1", "user:world", "assistant:reply-2"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("history = %v, want %v", got, want)
 	}
 }
 
-func TestChatModeWithInitialTask(t *testing.T) {
-	var requestCount int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestCount++
-		writer.Header().Set("Content-Type", "application/json")
-		response := map[string]any{
-			"choices": []map[string]any{
-				{"message": map[string]any{"role": "assistant", "content": "done"}},
-			},
-		}
-		_ = json.NewEncoder(writer).Encode(response)
-	}))
-	defer server.Close()
-
-	getenv := func(key string) string {
-		if key == "OPENAI_BASE_URL" {
-			return server.URL
-		}
-		return ""
-	}
-
-	stdin := strings.NewReader("/exit\n")
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	root := t.TempDir()
-
-	code := runWithDeps(context.Background(), stdin, &stdout, &stderr, []string{"--chat", "read README"}, getenv, runDeps{
-		getwd:           func() (string, error) { return root, nil },
-		executable:      func() (string, error) { return "bqagent-test", nil },
-		startBackground: func(string, []string, string, string) error { return nil },
-	})
-	if code != 0 {
-		t.Fatalf("runWithDeps returned code %d, want 0; stderr=%q", code, stderr.String())
-	}
-	if requestCount != 1 {
-		t.Fatalf("API received %d requests, want 1 (initial task)", requestCount)
-	}
-}
-
-func TestChatModeExitsOnEOF(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		response := map[string]any{
-			"choices": []map[string]any{
-				{"message": map[string]any{"role": "assistant", "content": "ok"}},
-			},
-		}
-		_ = json.NewEncoder(writer).Encode(response)
-	}))
-	defer server.Close()
-
-	getenv := func(key string) string {
-		if key == "OPENAI_BASE_URL" {
-			return server.URL
-		}
-		return ""
-	}
-
-	stdin := strings.NewReader("") // immediate EOF
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	root := t.TempDir()
-
-	code := runWithDeps(context.Background(), stdin, &stdout, &stderr, []string{"--chat"}, getenv, runDeps{
-		getwd:           func() (string, error) { return root, nil },
-		executable:      func() (string, error) { return "bqagent-test", nil },
-		startBackground: func(string, []string, string, string) error { return nil },
-	})
-	if code != 0 {
-		t.Fatalf("runWithDeps returned code %d, want 0 on EOF; stderr=%q", code, stderr.String())
-	}
-}
-
-func TestChatCannotCombineWithBackground(t *testing.T) {
-	_, _, err := parseCLI([]string{"--chat", "--background", "task"})
-	if err == nil {
-		t.Fatal("parseCLI returned nil error, want --chat/--background conflict")
-	}
-	if !strings.Contains(err.Error(), "--chat cannot be combined with --background") {
-		t.Fatalf("error = %q, want chat/background conflict message", err.Error())
-	}
-}
-
-func TestChatModeSupportsExternalAgentRouting(t *testing.T) {
-	var requestCount int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestCount++
-		t.Fatalf("LLM server should not be called for external agent route")
-	}))
-	defer server.Close()
-
-	getenv := func(key string) string {
-		switch key {
-		case "OPENAI_BASE_URL":
-			return server.URL
-		case "AGENT_CLAUDE_CLI_CMD":
-			return os.Args[0]
-		case "AGENT_CLAUDE_CLI_ARGS":
-			return "-test.run=TestChatExternalHelperProcess -- chat-cli-claude"
-		default:
+func TestRemovedChatFlagIsRejectedBeforeWorkspaceSetup(t *testing.T) {
+	for _, args := range [][]string{{"--chat"}, {"--chat", "read README"}, {"--chat", "--resume", "saved-session"}} {
+		var stdout, stderr bytes.Buffer
+		code := runWithDeps(context.Background(), unreadableStdin{t}, &stdout, &stderr, args, func(string) string {
+			t.Fatal("rejected flag must not read environment")
 			return ""
+		}, noSideEffectDeps(t))
+		if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "flag provided but not defined: -chat") {
+			t.Fatalf("args=%v exit=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
 		}
-	}
-
-	stdin := strings.NewReader("/claude hello\n/exit\n")
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	root := t.TempDir()
-
-	code := runWithDeps(context.Background(), stdin, &stdout, &stderr, []string{"--chat"}, getenv, runDeps{
-		getwd:           func() (string, error) { return root, nil },
-		executable:      func() (string, error) { return "bqagent-test", nil },
-		startBackground: func(string, []string, string, string) error { return nil },
-	})
-	if code != 0 {
-		t.Fatalf("runWithDeps returned code %d, want 0; stderr=%q", code, stderr.String())
-	}
-	if requestCount != 0 {
-		t.Fatalf("LLM request count = %d, want 0", requestCount)
-	}
-	if !strings.Contains(stdout.String(), "claude reply") {
-		t.Fatalf("stdout = %q, want external agent reply", stdout.String())
 	}
 }
 
-func TestChatModeCanSwitchBackToDefaultModel(t *testing.T) {
-	var requestCount int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestCount++
-		writer.Header().Set("Content-Type", "application/json")
-		response := map[string]any{
-			"choices": []map[string]any{
-				{"message": map[string]any{"role": "assistant", "content": "default reply"}},
-			},
+func TestNonTTYWithoutTaskIsRejectedWithoutSideEffects(t *testing.T) {
+	for _, args := range [][]string{nil, {" "}, {"--resume", "saved-session"}, {"--resume", "saved-session", " "}} {
+		var stdout, stderr bytes.Buffer
+		// strings.Reader is never a terminal, so the TUI cannot start.
+		code := runWithDeps(context.Background(), unreadableStdin{t}, &stdout, &stderr, args, func(key string) string {
+			if key != "TERM" {
+				t.Fatalf("unexpected environment read %q before rejection", key)
+			}
+			return "xterm-256color"
+		}, noSideEffectDeps(t))
+		if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "TUI") || !strings.Contains(stderr.String(), "TTY") || !strings.Contains(stderr.String(), "任务描述") {
+			t.Fatalf("args=%q exit=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
 		}
-		_ = json.NewEncoder(writer).Encode(response)
-	}))
-	defer server.Close()
+	}
+}
 
-	getenv := func(key string) string {
-		switch key {
-		case "OPENAI_BASE_URL":
-			return server.URL
-		case "AGENT_CLAUDE_CLI_CMD":
-			return os.Args[0]
-		case "AGENT_CLAUDE_CLI_ARGS":
-			return "-test.run=TestChatExternalHelperProcess -- chat-cli-claude"
-		default:
+func TestSessionRunWithoutTaskFailsEarlyWithoutDeps(t *testing.T) {
+	for _, args := range [][]string{{"--session-run"}, {"--session-run", "--resume", "saved-session"}, {"--session-run", " "}} {
+		var stdout, stderr bytes.Buffer
+		code := runWithDeps(context.Background(), unreadableStdin{t}, &stdout, &stderr, args, func(string) string {
+			t.Fatal("must not read environment")
 			return ""
+		}, noSideEffectDeps(t))
+		if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "session runner requires a task") {
+			t.Fatalf("args=%q exit=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
 		}
-	}
-
-	stdin := strings.NewReader("/claude hello\n/default\nhello model\n/exit\n")
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	root := t.TempDir()
-
-	code := runWithDeps(context.Background(), stdin, &stdout, &stderr, []string{"--chat"}, getenv, runDeps{
-		getwd:           func() (string, error) { return root, nil },
-		executable:      func() (string, error) { return "bqagent-test", nil },
-		startBackground: func(string, []string, string, string) error { return nil },
-	})
-	if code != 0 {
-		t.Fatalf("runWithDeps returned code %d, want 0; stderr=%q", code, stderr.String())
-	}
-	if requestCount != 1 {
-		t.Fatalf("LLM request count = %d, want 1 after /default", requestCount)
-	}
-	output := stdout.String()
-	if !strings.Contains(output, "claude reply") {
-		t.Fatalf("stdout = %q, want external agent reply", output)
-	}
-	if !strings.Contains(output, "switched to default model") {
-		t.Fatalf("stdout = %q, want switch confirmation", output)
-	}
-	if !strings.Contains(output, "default reply") {
-		t.Fatalf("stdout = %q, want default model reply", output)
 	}
 }
 
-func TestChatExternalHelperProcess(t *testing.T) {
-	if len(os.Args) < 4 || os.Args[2] != "--" {
-		return
+func TestHelpHasNoEnvironmentOrWorkspaceSideEffects(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps(context.Background(), nil, &stdout, &stderr, []string{"--help"}, func(string) string {
+		t.Fatal("help must not read environment")
+		return ""
+	}, noSideEffectDeps(t))
+	if code != 0 || stderr.Len() != 0 || stdout.Len() == 0 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
-	if os.Args[3] != "chat-cli-claude" {
-		return
+}
+
+func noSideEffectDeps(t *testing.T) runDeps {
+	t.Helper()
+	return runDeps{
+		getwd:      func() (string, error) { t.Fatal("getwd called"); return "", nil },
+		executable: func() (string, error) { t.Fatal("executable called"); return "", nil },
+		setenv:     func(string, string) error { t.Fatal("setenv called"); return nil },
+		startBackground: func(string, []string, string, string) error {
+			t.Fatal("startBackground called")
+			return nil
+		},
 	}
-	_, _ = os.Stdout.WriteString(`{"result":"claude reply","session_id":"claude-session-1"}`)
-	os.Exit(0)
+}
+
+// unreadableStdin fails if the non-TTY rejection path consumes input.
+type unreadableStdin struct{ t *testing.T }
+
+func (stdin unreadableStdin) Read([]byte) (int, error) {
+	stdin.t.Fatal("stdin must not be read")
+	return 0, nil
 }

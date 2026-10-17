@@ -23,7 +23,7 @@ bqagent 的核心仍然很简单：
 - 基于 workspace 的 system prompt 装配
 - 以 `.agent/AGENT.md`、`SOUL.md`、`USER.md` 作为主布局
 - 继续支持 `.agent/rules/*.md` 和 `.agent/skills/*/SKILL.md`
-- 默认启动始终流式的内联终端 TUI（也可显式使用 `--chat`）
+- 无任务启动时，在 stdin/stdout 均为 TTY 且 `TERM` 不是 `dumb` 的终端中进入始终流式的内联 TUI；有任务则一次执行后退出
 - [Herdr 自动集成](#herdr)：异步状态上报、会话恢复及退出释放，失败不阻塞主功能
 - [Magpie Agent 插件](#magpie)：在 Magpie 中选择模型，通过统一网关接入，关闭接入后恢复原有配置
 - 使用 `--resume` 恢复持久会话
@@ -51,9 +51,9 @@ make build
 
 在 Herdr 窗格中启动 `bqagent` 即可自动接入，无需安装插件。仅当 `HERDR_ENV=1`，且 `HERDR_PANE_ID`、`HERDR_BIN_PATH`、`HERDR_SOCKET_PATH` 均存在时启用。
 
-前台 TUI、逐行对话和单次任务会异步上报工作状态与会话恢复信息，退出时释放窗格；TUI 的 Provider 配置等待选择时会上报 `blocked`。上报失败不阻塞模型工作，不发送提示词、回答或工具输出。HTTP/Bot 服务、后台任务和内部 worker 不接管窗格。
+前台 TUI 和单次任务会异步上报工作状态与会话恢复信息，退出时释放窗格；TUI 的 Provider 配置等待选择时会上报 `blocked`。上报失败不阻塞模型工作，不发送提示词、回答或工具输出。HTTP/Bot 服务、后台任务和内部 worker 不接管窗格。
 
-从 Herdr 恢复对话要求 **Herdr 0.9.2+**，并确保 `bqagent` 在 `PATH` 中。恢复后进入交互会话，保留原有会话上下文。协议条件、状态映射和退出行为见 [TUI 指南中的 Herdr 集成](./TUI.md#herdr-集成)。
+从 Herdr 恢复对话要求 **Herdr 0.9.2+**，并确保 `bqagent` 在 `PATH` 中。恢复命令为 `bqagent --resume <会话ID>`，无任务时进入交互 TUI，保留原有会话上下文。协议条件、状态映射和退出行为见 [TUI 指南中的 Herdr 集成](./TUI.md#herdr-集成)。
 
 ### Magpie
 
@@ -104,7 +104,7 @@ set LLM_API_KEY=your-key-here
 
 ### LLM 供应商
 
-启动时，单次任务、Chat、后台任务、子任务和 Server 优先使用有效的 [Magpie 接入配置](#magpie)；未启用时读取全局 `~/.agent/config.json` 中的当前 Provider，再回退到环境变量。
+启动时，单次任务、TUI、后台任务、子任务和 Server 优先使用有效的 [Magpie 接入配置](#magpie)；未启用时读取全局 `~/.agent/config.json` 中的当前 Provider，再回退到环境变量。
 
 交互式 TUI 中可使用 `/provider` 打开分步配置向导；WebUI 可通过右下角的 Provider 设置入口完成同样的配置。两者共用加密配置存储和模型自动发现逻辑。
 
@@ -249,7 +249,7 @@ Responses 默认请求最多 3 次内置工具调用和 4096 个输出 token。�
 
 Claude 默认使用 `claude -p --output-format json`；Codex 默认优先复用共享 App Server，旧版兼容的 CLI 后备命令是 `codex exec --json --skip-git-repo-check`。Cursor 默认通过 `cursor-agent acp` 使用 ACP，OpenCode 默认通过 `opencode acp` 使用 ACP。启动 bqAgent 的进程必须能从 PATH 找到对应的可执行文件；安装外部 Agent 或修改传输环境变量后，需要重启常驻 chat/server 进程以重新探测。
 
-在 `--chat` 或 `--server` 会话中，使用 `/opencode <任务>` 将当前轮次路由到 OpenCode；后续普通消息会保持绑定，直到通过 `/default` 返回内置 Agent。OpenCode 仅支持 ACP；配置 `AGENT_OPENCODE_CLI_CMD/ARGS` 不会启用 CLI 传输。
+在 TUI 或 `--server` 会话中，使用 `/opencode <任务>` 将当前轮次路由到 OpenCode；后续普通消息会保持绑定，直到通过 `/default` 返回内置 Agent。OpenCode 仅支持 ACP；配置 `AGENT_OPENCODE_CLI_CMD/ARGS` 不会启用 CLI 传输。
 
 Codex 默认自动探测共享 App Server，无需设置环境变量。bqAgent 先通过 `codex app-server proxy` 连接已有服务；连接失败时调用幂等的 `codex app-server daemon start`，成功后重新连接。旧版 Codex 不支持 daemon/proxy，或共享服务不可用时，尝试独立的 `codex app-server` stdio 进程，再回退到 ACP/CLI。探测只进行协议初始化，不创建线程或发送模型任务。关闭 bqAgent 只关闭代理连接，不停止共享服务。
 
@@ -310,11 +310,8 @@ doctor 接口接受可选的 `workspace_id` 查询参数，只读取已打开工
 # 单次任务
 go run ./cmd/agent "列出当前仓库里的所有 Go 文件"
 
-# 默认启动交互式多轮对话（也可显式传入 --chat）
+# 无任务时启动交互式 TUI（需要 stdin/stdout 为 TTY 且 TERM 不是 dumb）
 go run ./cmd/agent
-
-# 带初始任务的交互对话
-go run ./cmd/agent --chat "读取 README.md 并总结"
 
 # 启动后台会话
 go run ./cmd/agent --background "读取 README.md 并总结"
@@ -337,11 +334,11 @@ go run ./cmd/agent --ilink-status
 # 恢复之前的会话
 go run ./cmd/agent --resume <session-id> "基于刚才的结果继续"
 
-# 以对话模式恢复之前的会话
-go run ./cmd/agent --chat --resume <session-id>
+# 无任务恢复会话并进入 TUI
+go run ./cmd/agent --resume <session-id>
 ```
 
-如果不传任何参数，bqagent 默认启动交互式多轮对话，等同于传入 `--chat`。
+如果不传任何参数，bqagent 在 stdin、stdout 均为 TTY 且 `TERM` 不是 `dumb` 时进入交互式 TUI；否则报错退出。带任务的启动和带任务的 `--resume` 都是一次执行后退出，不会进入交互会话。
 
 ## 工作区布局
 
@@ -457,7 +454,7 @@ system prompt 按以下顺序装配，前面的部分不随会话变化，可被
     统一说明在[环境变量配置](#环境变量配置)章节。
   - 默认文件不配置远程 server。Server URL 必须是字面量 `http` 或 `https` URL；只有 header 值可以使用
     allowlist 中的环境变量占位符。
-  - TUI、Chat 和 WebUI 服务先完成本地初始化，后台发现 MCP 工具；TUI 状态栏显示连接中、已连接和失败数量，WebUI 系统诊断可查看各服务状态。每个服务发现完成后立即发布工具，新轮次使用最新快照，已开始的轮次保持原有工具集合。普通问答无需等待 MCP。
+  - TUI 和 WebUI 服务先完成本地初始化，后台发现 MCP 工具；TUI 状态栏显示连接中、已连接和失败数量，WebUI 系统诊断可查看各服务状态。每个服务发现完成后立即发布工具，新轮次使用最新快照，已开始的轮次保持原有工具集合。普通问答无需等待 MCP。
   - 后台发现保留整体 15 秒超时，多个服务并行使用这段预算；退出界面或关闭服务时取消未完成连接。单次命令仍在执行任务前等待发现，但服务间也并行连接。没有跨进程工具缓存。
   - 发现过程是 best-effort：标记 `"disabled": true`、文件缺失、服务器不可达或配置非法都会被跳过（仅记录一条
     警告），不会导致启动失败。当前仅支持 Streamable HTTP 传输。
@@ -477,7 +474,7 @@ system prompt 按以下顺序装配，前面的部分不随会话变化，可被
 - 文件读写失败也会直接让当前运行失败
 - 相对路径的 `read_file` / `write_file` 会按 workspace root 解析
 - `execute_bash` 也会在 workspace root 下运行
-- `--server` 和 `--chat` 现在共用同一套内置本地工具，包括 shell、文件、网页搜索和 memory 工具
+- `--server` 和交互 TUI 现在共用同一套内置本地工具，包括 shell、文件、网页搜索和 memory 工具
 
 Workspace Skill 使用渐进式披露。推荐在 Skill 顶部声明元数据：
 
@@ -493,7 +490,7 @@ aliases:
 
 ## 会话与后台模式
 
-`--chat`（以及不带参数启动）在真实终端中进入始终流式的内联 TUI：已完成消息进入原生 scrollback，底部保留输入框、候选面板、排队区和状态栏，不切换备用屏幕。超过 5 次的工具调用会合并为可点击的详情组，仅在该工具组可交互时临时开启鼠标追踪。stdin/stdout 重定向或 `TERM=dumb` 时自动回退原有逐行模式。对话会自动持久化到全局 `~/.agent/sessions/`；恢复会校验工作区边界并按 200 KiB 显示预算回放最近用户/助手文本。快捷键、命令面板、粘贴 Chip、队列、历史文件和 `NO_COLOR` 说明见[内联 TUI 指南](./TUI.md)。
+无任务启动（含无任务 `--resume`）在 stdin/stdout 均为 TTY 且 `TERM` 不是 `dumb` 时进入始终流式的内联 TUI：已完成消息进入原生 scrollback，底部保留输入框、候选面板、排队区和状态栏，不切换备用屏幕。超过 5 次的工具调用会合并为可点击的详情组，仅在该工具组可交互时临时开启鼠标追踪。不满足终端条件时不再回退逐行模式。对话会自动持久化到全局 `~/.agent/sessions/`；恢复会校验工作区边界并按 200 KiB 显示预算回放最近用户/助手文本。快捷键、命令面板、粘贴 Chip、队列、历史文件和 `NO_COLOR` 说明见[内联 TUI 指南](./TUI.md)。
 
 长对话现在会在每次请求模型前做上下文管理：
 
@@ -612,8 +609,8 @@ Memory 的事实源为 `.agent/memory/entries.jsonl`，支持 revision、来源 
 # 让智能体检查仓库
 go run ./cmd/agent "当前仓库里有哪些文件？"
 
-# 交互式对话
-go run ./cmd/agent --chat
+# 交互式 TUI
+go run ./cmd/agent
 
 # 使用 workspace 规则和技能
 go run ./cmd/agent "遵循当前 workspace 规则并总结可用技能"

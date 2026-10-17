@@ -8,5 +8,5 @@ func newHerdrReporter(getenv func(string) string, options cliOptions) *herdr.Rep
 	if options.background || options.sessionRun || options.server || options.serverRun || options.subagentRun != "" || options.doctor || options.ilinkLogin || options.ilinkStatus {
 		return nil
 	}
-	return herdr.New(getenv, []string{"bqagent", "--chat"})
+	return herdr.New(getenv, []string{"bqagent"})
 }

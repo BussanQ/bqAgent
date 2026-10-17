@@ -9,7 +9,7 @@ func TestHerdrSkipsNonForegroundModes(t *testing.T) {
 			t.Fatalf("mode claimed pane: %+v", options)
 		}
 	}
-	if reporter := newHerdrReporter(func(string) string { return "" }, cliOptions{chat: true}); reporter != nil {
+	if reporter := newHerdrReporter(func(string) string { return "" }, cliOptions{}); reporter != nil {
 		reporter.Close()
 		t.Fatal("ordinary terminal enabled Herdr")
 	}

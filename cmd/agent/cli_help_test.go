@@ -9,7 +9,7 @@ import (
 
 func TestCLIHelpPrintsParametersWithoutStartingRuntime(t *testing.T) {
 	var first string
-	for _, args := range [][]string{{"-h"}, {"--help"}, {"--chat", "--help"}, {"--doctor", "-h"}, {"--server", "--listen", ":9090", "--help"}} {
+	for _, args := range [][]string{{"-h"}, {"--help"}, {"--doctor", "-h"}, {"--server", "--listen", ":9090", "--help"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			// Nil dependencies would panic if help attempted workspace/runtime setup.
@@ -21,12 +21,12 @@ func TestCLIHelpPrintsParametersWithoutStartingRuntime(t *testing.T) {
 				t.Fatalf("exit=%d stderr=%q", code, stderr.String())
 			}
 			text := stdout.String()
-			for _, want := range []string{"用法:", "bqagent [选项] [任务描述]", "-h, --help", "--chat", "--resume string", "--background", "--server", "-d", "--listen string", "127.0.0.1:8080", "--server-url", "http://127.0.0.1:8080", "--doctor", "--doctor-active", "--doctor-json", "--ilink-login", "--ilink-status", "示例:", "/help"} {
+			for _, want := range []string{"用法:", "bqagent [选项] [任务描述]", "-h, --help", "--resume string", "--background", "--server", "-d", "--listen string", "127.0.0.1:8080", "--server-url", "http://127.0.0.1:8080", "--doctor", "--doctor-active", "--doctor-json", "--ilink-login", "--ilink-status", "示例:", "/help"} {
 				if !strings.Contains(text, want) {
 					t.Errorf("help missing %q: %s", want, text)
 				}
 			}
-			for _, hidden := range []string{"--session-id", "--session-run", "--server-run", "--subagent-run", "--subagent-lease"} {
+			for _, hidden := range []string{"--chat", "--session-id", "--session-run", "--server-run", "--subagent-run", "--subagent-lease"} {
 				if strings.Contains(text, hidden) {
 					t.Errorf("help exposed internal flag %q", hidden)
 				}
@@ -41,7 +41,7 @@ func TestCLIHelpPrintsParametersWithoutStartingRuntime(t *testing.T) {
 }
 
 func TestCLIHelpPreservesErrorsAndLiteralTaskArguments(t *testing.T) {
-	for _, args := range [][]string{{"--unknown"}, {"--listen"}, {"--chat", "--server"}} {
+	for _, args := range [][]string{{"--unknown"}, {"--listen"}, {"--chat"}, {"--chat", "--server"}} {
 		var stdout, stderr bytes.Buffer
 		code := runWithDeps(context.Background(), nil, &stdout, &stderr, args, nil, runDeps{})
 		if code == 0 || stdout.Len() != 0 || stderr.Len() == 0 {

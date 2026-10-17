@@ -1,8 +1,8 @@
 # bqAgent 内联终端 TUI
 
-在终端执行 `bqagent -h` 或 `bqagent --help` 可查看启动参数、默认值和使用示例；帮助写入标准输出并以退出码 0 结束，不初始化工作区或启动模型。也支持 `bqagent --chat --help`。进入 TUI 后使用 `/help` 查看快捷键和交互命令。启动选项应放在任务描述前，`--` 后的内容按任务文本处理。
+在终端执行 `bqagent -h` 或 `bqagent --help` 可查看启动参数、默认值和使用示例；帮助写入标准输出并以退出码 0 结束，不初始化工作区或启动模型。进入 TUI 后使用 `/help` 查看快捷键和交互命令。启动选项应放在任务描述前，`--` 后的内容按任务文本处理。
 
-不带参数启动 `bqagent`（或显式使用 `bqagent --chat`）时，真实 TTY 默认进入内联 TUI。对话保持在主屏幕；查看已完成回合的工具详情时临时使用备用屏幕，关闭后恢复原对话；已完成的用户消息、Markdown 回复和工具摘要会进入终端原生 scrollback。运行中出现可点击的折叠工具组时会临时开启鼠标追踪；回合正常完成、取消或失败后，统一收起工具区并关闭主屏鼠标追踪，恢复终端原生滚轮，工具组提交或清理时也会关闭。回合结束后使用 `Ctrl+O` 查看工具详情（包括取消或失败的回合），详情页内支持鼠标操作，返回对话后恢复原生滚动。
+无任务启动 `bqagent` 时，要求 stdin、stdout 均为 TTY 且 `TERM` 不是 `dumb`，满足后进入内联 TUI；有任务则一次执行后退出。对话保持在主屏幕；查看已完成回合的工具详情时临时使用备用屏幕，关闭后恢复原对话；已完成的用户消息、Markdown 回复和工具摘要会进入终端原生 scrollback。运行中出现可点击的折叠工具组时会临时开启鼠标追踪；回合正常完成、取消或失败后，统一收起工具区并关闭主屏鼠标追踪，恢复终端原生滚轮，工具组提交或清理时也会关闭。回合结束后使用 `Ctrl+O` 查看工具详情（包括取消或失败的回合），详情页内支持鼠标操作，返回对话后恢复原生滚动。
 
 ```text
 bqAgent  Harness
@@ -97,30 +97,30 @@ TUI 与 WebUI 使用相同的图片限制：仅支持 PNG、JPEG、GIF，每条�
 
 `/skill` 描述支持 frontmatter 中的单行文本及 `description: |`、`description: >` 多行块（含常见的保留换行、去除末尾换行及缩进标记）。同时兼容 `---` 和被编辑器转义为 `\---` 的分隔符；多行描述会合并为单行展示，超长内容保留原有长度限制。
 
-使用 `--chat --resume <session-id>` 时，只回放最近的用户和助手文本，总显示预算为 200 KiB；会提示省略条数，单条超限消息只在 TUI 中截断，不修改持久 Session。
+使用无任务的 `--resume <session-id>` 进入 TUI 时，只回放最近的用户和助手文本，总显示预算为 200 KiB；会提示省略条数，单条超限消息只在 TUI 中截断，不修改持久 Session。
 
 ## Herdr 集成
 
 在 Herdr 窗格中启动 bqAgent 即可自动启用，无需安装插件或配置额外依赖。遵循 [Herdr 接入协议](https://herdr.dev/zh-cn/docs/add-herdr-support/)，仅当 `HERDR_ENV=1` 且 `HERDR_PANE_ID`、`HERDR_BIN_PATH`、`HERDR_SOCKET_PATH` 均存在时启用；其他终端不启动发送器、不执行 Herdr 命令。
 
-- TUI 和兼容逐行模式：等待输入为 `idle`，处理请求为 `working`；TUI 的 Provider 配置等待用户选择时为 `blocked`。
+- TUI：等待输入为 `idle`，处理请求为 `working`；TUI 的 Provider 配置等待用户选择时为 `blocked`。
 - 前台单次任务：运行期间为 `working`。退出时释放窗格；HTTP/Bot 服务、后台任务和内部子智能体 worker 不接管窗格。
-- 会话创建后、模型开始工作前更新恢复信息。恢复命令为 `bqagent --chat --resume <session-id>`；模型和会话模式使用已有的持久会话配置。`/clear` 改为恢复一个新的空会话，不会重新打开旧会话。
+- 会话创建后、模型开始工作前更新恢复信息。恢复命令为 `bqagent --resume <session-id>`；模型和会话模式使用已有的持久会话配置。`/clear` 改为恢复一个新的空会话，不会重新打开旧会话。
 - 使用单个后台发送器，仅保留最新待发送状态，重复状态不发送，也不逐 token 上报。每次状态上报限时 1 秒，为 CLI 启动和 IPC 留出时间，错误静默忽略；退出取消在途上报并等待释放完成，释放调用使用独立的 1 秒超时，整个退出额外等待上限为 1.2 秒，完成即返回。运行期间主流程不等待 Herdr 响应，不执行重试循环。
 
-恢复要求 Herdr 0.9.2+，并且 `bqagent` 在 `PATH` 中；不能使用绝对路径作为恢复命令首项。单次任务恢复后进入交互会话，保留上下文并等待新的指令。需要验证时，可在 Herdr 窗格中运行 `herdr pane get "$HERDR_PANE_ID"` 或 `herdr agent list`。进程被强制终止而无法释放时，由 Herdr 自身清理机制兜底。上报仅含状态、会话 ID 和恢复参数，不含提示词、回复或工具输出。
+恢复要求 Herdr 0.9.2+，并且 `bqagent` 在 `PATH` 中；不能使用绝对路径作为恢复命令首项。恢复命令不带任务，进入交互 TUI，保留上下文并等待新的指令。需要验证时，可在 Herdr 窗格中运行 `herdr pane get "$HERDR_PANE_ID"` 或 `herdr agent list`。进程被强制终止而无法释放时，由 Herdr 自身清理机制兜底。上报仅含状态、会话 ID 和恢复参数，不含提示词、回复或工具输出。
 
-## TTY 回退与兼容性
+## TTY 要求与兼容性
 
 TUI 正常退出时，如果当前存在会话，会在终端恢复后打印 `bqagent --resume <会话ID>`，可直接复制执行以恢复聊天。不带任务的 `--resume` 自动进入交互聊天；带任务时仍为单次执行。尚未创建会话或 `/clear` 后尚未开始新会话时不打印恢复命令。
 
-stdin/stdout 不是 TTY，或 `TERM=dumb` 时，会自动使用原有逐行模式，便于管道、重定向和自动化测试。TUI 和逐行聊天均默认流式输出，无需额外命令行参数。设置 `NO_COLOR` 可关闭 TUI 与 Markdown 颜色。
+无任务启动时，stdin/stdout 不是 TTY 或 `TERM=dumb` 会报错退出，不再提供逐行模式；需要非交互使用时请传入任务描述，一次执行后退出。TUI 默认流式输出，无需额外命令行参数。设置 `NO_COLOR` 可关闭 TUI 与 Markdown 颜色。
 
 交互模型参考并致谢 [CodeHamr TUI](https://github.com/codehamr/codehamr/tree/main/internal/tui)：本实现沿用其 Bubble Tea 同代技术栈和“原生 scrollback + 底部常驻输入区”的设计方向，并按 bqAgent 的 Provider、Session、工具事件、Skills 与外部 Agent 语义重新实现。
 
 ## Inline terminal TUI (English summary)
 
-On a real TTY, no-argument startup and `--chat` use an inline, always-streaming Bubble Tea UI on the main screen. Completed-turn tool inspection temporarily uses the alternate screen: select a tool with the arrow keys and Enter, or click its row, to inspect its received arguments and output. Tool details support wheel/arrow scrolling, Page Up/Down, and Home/End. Esc returns to the list, and Ctrl+O restores the conversation. Upstream truncation remains explicitly marked. Mouse tracking is enabled only for a clickable collapsed tool group and disabled when the group is committed or cleared. `/provider` opens a sequential Provider setup wizard with encrypted API-key storage and either automatic model discovery or comma-separated custom models; the first custom model becomes the default. Redirected input/output and `TERM=dumb` fall back to the legacy line mode, which also streams by default. See the tables above for shortcuts, commands, queue behavior, persisted workspace history, resume limits, `NO_COLOR`, and the CodeHamr design acknowledgment.
+On a real TTY, startup without a task uses an inline, always-streaming Bubble Tea UI on the main screen. Completed-turn tool inspection temporarily uses the alternate screen: select a tool with the arrow keys and Enter, or click its row, to inspect its received arguments and output. Tool details support wheel/arrow scrolling, Page Up/Down, and Home/End. Esc returns to the list, and Ctrl+O restores the conversation. Upstream truncation remains explicitly marked. Mouse tracking is enabled only for a clickable collapsed tool group and disabled when the group is committed or cleared. `/provider` opens a sequential Provider setup wizard with encrypted API-key storage and either automatic model discovery or comma-separated custom models; the first custom model becomes the default. Startup without a task requires TTY stdin/stdout and `TERM` other than `dumb`; otherwise it exits with an error, and there is no line-mode fallback. Pass a task for a one-shot, non-interactive run. See the tables above for shortcuts, commands, queue behavior, persisted workspace history, resume limits, `NO_COLOR`, and the CodeHamr design acknowledgment.
 
 The status bar shows full-precision `in / out` totals for the current user turn, including tool-call rounds. Input includes cached tokens; output includes reasoning counted by the provider. All three native API adapters publish usage immediately when received. Until then, estimates update with streamed text, reasoning, and tool arguments and remain marked `~`. Missing usage stays estimated; explicit zero is authoritative. Counts persist after completion and reset on the next turn. No extra token-count API requests are made.
 
@@ -130,7 +130,7 @@ Press `Ctrl+C` twice within two seconds to exit safely, including in Provider se
 
 Typing `@` at the start of a word opens a fuzzy workspace file picker (git-aware index, refreshed after 10 seconds); Enter or Tab inserts `@path`, and on send up to five mentioned regular workspace files (2 MiB each, 6 MiB total) are attached with inlined text content, exactly like WebUI workspace-path attachments. `Ctrl+V` / `Alt+V` attach a clipboard image (screenshot data or a copied image file) as an atomic `[图片 #N]` label and otherwise paste text; pasted or dragged PNG/JPEG/GIF paths are attached too. Limits match the WebUI: 4 images, 3 MiB each, 8 MiB total, 20 MP; oversized PNG/JPEG images are re-encoded as JPEG and downscaled locally. Clipboard images use `osascript` on macOS, PowerShell on Windows, and `wl-paste` or `xclip` on Linux.
 
-Herdr support is automatic only when all four Herdr environment variables above are present and `HERDR_ENV=1`. Foreground TUI, line mode, and one-shot tasks report activity and session recovery metadata; Provider setup reports `blocked`. A single background sender coalesces pending states, ignores failures, and allows each status report up to 1 second for CLI startup and IPC; shutdown cancels pending work and waits for release with a separate 1-second timeout and at most 1.2 seconds of extra waiting, returning as soon as release finishes. Reporting never blocks model work. No token-by-token reporting or retry loop is used. Background jobs, internal workers, and HTTP/Bot services do not claim a pane. Recovery requires Herdr 0.9.2+ and `bqagent` on `PATH`; it opens the saved session in chat mode, preserving persisted model/mode settings. Clearing the session updates recovery to a new empty chat. Prompts, replies, and tool output are never reported.
+Herdr support is automatic only when all four Herdr environment variables above are present and `HERDR_ENV=1`. Foreground TUI and one-shot tasks report activity and session recovery metadata; Provider setup reports `blocked`. A single background sender coalesces pending states, ignores failures, and allows each status report up to 1 second for CLI startup and IPC; shutdown cancels pending work and waits for release with a separate 1-second timeout and at most 1.2 seconds of extra waiting, returning as soon as release finishes. Reporting never blocks model work. No token-by-token reporting or retry loop is used. Background jobs, internal workers, and HTTP/Bot services do not claim a pane. Recovery requires Herdr 0.9.2+ and `bqagent` on `PATH`; it opens the saved session in chat mode, preserving persisted model/mode settings. Clearing the session updates recovery to a new empty chat. Prompts, replies, and tool output are never reported.
 
 `/fast` 在开启、关闭之间循环切换，默认关闭；也支持 `/fast on`、`/fast off`、`/fast status`。设置按会话保存，恢复会话后继续生效，新会话默认关闭。开启后，OpenAI Chat Completions / Responses 请求携带 `service_tier=priority`，关闭后省略此参数。适用于支持该字段的 Codex、Cursor 等兼容 API；是否提供加速及其计费由上游决定，不支持的上游可能返回错误。Anthropic 协议暂不支持开启。此命令控制 bqAgent 自身 API 请求，不控制 `/codex`、`/cursor` 外部 Agent 进程。
 

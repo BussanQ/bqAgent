@@ -69,7 +69,7 @@ Pi Coding Agent 支持：
 bqAgent 支持：
 
 1. 单次 CLI
-2. `--chat` 交互模式
+2. 无任务启动的交互 TUI
 3. `--background` 后台进程
 4. `--resume` 持久会话恢复
 5. `--server` HTTP 服务

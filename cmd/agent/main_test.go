@@ -73,44 +73,13 @@ func TestRunUsesExplicitHelloTask(t *testing.T) {
 	}
 }
 
-func TestRunWithoutArgumentsStartsChatMode(t *testing.T) {
-	var requestCount int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestCount++
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"unexpected"}}]}`))
-	}))
-	defer server.Close()
-
-	getenv := func(key string) string {
-		if key == "OPENAI_BASE_URL" {
-			return server.URL
-		}
-		return ""
-	}
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	code := run(context.Background(), strings.NewReader("/exit\n"), &stdout, &stderr, nil, getenv)
-	if code != 0 {
-		t.Fatalf("run returned code %d, want 0; stderr=%q", code, stderr.String())
-	}
-	if requestCount != 0 {
-		t.Fatalf("API received %d requests, want 0 before chat input", requestCount)
-	}
-	if stdout.String() != "> " {
-		t.Fatalf("stdout = %q, want chat prompt", stdout.String())
-	}
-}
-
-func TestRunModesUseSavedProvider(t *testing.T) {
+func TestRunSingleTaskUsesSavedProvider(t *testing.T) {
 	tests := []struct {
 		name  string
 		args  []string
 		stdin string
 	}{
 		{name: "single task", args: []string{"hello"}},
-		{name: "chat", args: []string{"--chat"}, stdin: "hello\n/exit\n"},
 	}
 
 	for _, test := range tests {

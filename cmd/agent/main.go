@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -18,7 +17,6 @@ import (
 	"bqagent/internal/extagent"
 	"bqagent/internal/logging"
 	appruntime "bqagent/internal/runtime"
-	appserver "bqagent/internal/server"
 	"bqagent/internal/session"
 	"bqagent/internal/subagent"
 	apptrace "bqagent/internal/trace"
@@ -30,7 +28,6 @@ type cliOptions struct {
 	doctorActive  bool
 	doctorJSON    bool
 	background    bool
-	chat          bool
 	server        bool
 	ilinkLogin    bool
 	ilinkStatus   bool
@@ -78,6 +75,15 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 				return 2
 			}
 		}
+		return 1
+	}
+	task := strings.Join(taskArgs, " ")
+	if options.usesTUI(task) && !interactiveTerminal(stdin, stdout, getenv) {
+		fmt.Fprintln(stderr, tuiTerminalRequired)
+		return 1
+	}
+	if options.sessionRun && strings.TrimSpace(task) == "" {
+		fmt.Fprintln(stderr, "session runner requires a task")
 		return 1
 	}
 	if options.sessionRun || options.serverRun {
@@ -141,11 +147,6 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		return 1
 	}
 
-	task := strings.Join(taskArgs, " ")
-	if strings.TrimSpace(task) == "" && !options.background && !options.chat && !options.server && !options.serverRun && effectiveSessionID(options) == "" {
-		task = "Hello"
-	}
-
 	if options.background {
 		if options.server {
 			return runServerInBackground(stdout, stderr, deps, ws, options)
@@ -157,8 +158,8 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		return runServer(ctx, stdout, stderr, getenv, ws, systemPrompt, options)
 	}
 
-	if options.chat {
-		return runChat(ctx, stdin, stdout, stderr, getenv, ws, systemPrompt, task, options)
+	if options.usesTUI(task) {
+		return runTUI(ctx, stdin, stdout, stderr, getenv, ws, systemPrompt, options)
 	}
 
 	return runForeground(ctx, stdout, stderr, getenv, ws, systemPrompt, task, options)
@@ -216,7 +217,6 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 	fs.BoolVar(&options.doctorJSON, "doctor-json", false, "print diagnostic JSON (requires --doctor)")
 	fs.BoolVar(&options.background, "background", false, "run the task in the background")
 	fs.BoolVar(&daemon, "d", false, "run the HTTP server in the background")
-	fs.BoolVar(&options.chat, "chat", false, "interactive multi-turn conversation mode")
 	fs.BoolVar(&options.server, "server", false, "run a long-lived HTTP server")
 	fs.BoolVar(&options.ilinkLogin, "ilink-login", false, "trigger the running server's iLink login flow")
 	fs.BoolVar(&options.ilinkStatus, "ilink-status", false, "fetch the running server's iLink login status")
@@ -235,13 +235,10 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 		}
 		return cliOptions{}, nil, err
 	}
-	if len(args) == 0 {
-		options.chat = true
-	}
 	if (options.doctorActive || options.doctorJSON) && !options.doctor {
 		return cliOptions{}, nil, fmt.Errorf("--doctor-active and --doctor-json require --doctor")
 	}
-	if options.doctor && (daemon || options.background || options.chat || options.server || options.ilinkLogin || options.ilinkStatus || options.sessionRun || options.serverRun || options.resumeID != "" || options.sessionID != "" || options.subagentRun != "" || options.subagentLease != "" || len(fs.Args()) > 0) {
+	if options.doctor && (daemon || options.background || options.server || options.ilinkLogin || options.ilinkStatus || options.sessionRun || options.serverRun || options.resumeID != "" || options.sessionID != "" || options.subagentRun != "" || options.subagentLease != "" || len(fs.Args()) > 0) {
 		return cliOptions{}, nil, fmt.Errorf("--doctor cannot be combined with task execution flags")
 	}
 	if daemon {
@@ -257,19 +254,13 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 	if options.background && options.serverRun {
 		return cliOptions{}, nil, fmt.Errorf("--background cannot be combined with --server-run")
 	}
-	if options.chat && options.background {
-		return cliOptions{}, nil, fmt.Errorf("--chat cannot be combined with --background")
-	}
-	if options.server && options.chat {
-		return cliOptions{}, nil, fmt.Errorf("--server cannot be combined with --chat")
-	}
 	if options.server && effectiveSessionID(options) != "" {
 		return cliOptions{}, nil, fmt.Errorf("--server cannot be combined with --resume or --session-id")
 	}
 	if options.ilinkLogin && options.ilinkStatus {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-login cannot be combined with --ilink-status")
 	}
-	if (options.ilinkLogin || options.ilinkStatus) && (options.background || options.chat || options.server || options.sessionRun || options.serverRun || effectiveSessionID(options) != "") {
+	if (options.ilinkLogin || options.ilinkStatus) && (options.background || options.server || options.sessionRun || options.serverRun || effectiveSessionID(options) != "") {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-login and --ilink-status cannot be combined with execution or server flags")
 	}
 	if options.ilinkLogin && len(fs.Args()) > 0 {
@@ -281,7 +272,7 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 	if options.subagentLease != "" && options.subagentRun == "" {
 		return cliOptions{}, nil, fmt.Errorf("--subagent-lease requires --subagent-run")
 	}
-	if options.subagentRun != "" && (options.background || options.chat || options.server || options.sessionRun || options.serverRun || effectiveSessionID(options) != "" || len(fs.Args()) > 0) {
+	if options.subagentRun != "" && (options.background || options.server || options.sessionRun || options.serverRun || effectiveSessionID(options) != "" || len(fs.Args()) > 0) {
 		return cliOptions{}, nil, fmt.Errorf("--subagent-run cannot be combined with other execution flags or a task")
 	}
 	if options.ilinkStatus && len(fs.Args()) > 0 {
@@ -289,9 +280,6 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 	}
 	if (options.server || options.serverRun) && len(fs.Args()) > 0 {
 		return cliOptions{}, nil, fmt.Errorf("server mode does not accept a task")
-	}
-	if options.resumeID != "" && strings.TrimSpace(strings.Join(fs.Args(), " ")) == "" && !options.background && !options.sessionRun {
-		options.chat = true
 	}
 	return options, fs.Args(), nil
 }
@@ -495,69 +483,10 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	return 0
 }
 
-func runChatLegacy(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt, initialTask string, options cliOptions) int {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	sessionID := effectiveSessionID(options)
-	herdrReporter := newHerdrReporter(getenv, options)
-	defer herdrReporter.Close()
-	herdrReporter.Report("idle", sessionID)
-	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, nil)
-	defer func() { cancel(); _ = externalBroker.Close() }()
-
-	executeTurn := func(input string) error {
-		herdrReporter.Report("working", sessionID)
-		defer func() { herdrReporter.Report("idle", sessionID) }()
-		response, err := service.HandleTurnWithOptions(ctx, appserver.TurnRequest{
-			SessionID: sessionID,
-			Message:   input,
-		}, appserver.TurnOptions{
-			SessionSink: func(id string) {
-				sessionID = id
-				herdrReporter.Report("working", id)
-			},
-			OutputWriter: stdout,
-			Stream:       true,
-		})
-		if err != nil {
-			return err
-		}
-		sessionID = response.SessionID
-		return nil
-	}
-
-	if strings.TrimSpace(initialTask) != "" {
-		if err := executeTurn(initialTask); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-	}
-
-	scanner := bufio.NewScanner(stdin)
-	for {
-		fmt.Fprint(stdout, "> ")
-		if !scanner.Scan() {
-			break
-		}
-		line := scanner.Text()
-		if line == "/exit" {
-			break
-		}
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-
-		if err := executeTurn(line); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-	}
-
-	if scanErr := scanner.Err(); scanErr != nil {
-		fmt.Fprintln(stderr, scanErr)
-		return 1
-	}
-	return 0
+func (options cliOptions) usesTUI(task string) bool {
+	return strings.TrimSpace(task) == "" && !options.doctor && !options.background &&
+		!options.server && !options.serverRun && !options.sessionRun &&
+		!options.ilinkLogin && !options.ilinkStatus && options.subagentRun == ""
 }
 
 func effectiveSessionID(options cliOptions) string {

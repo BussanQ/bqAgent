@@ -42,7 +42,7 @@ func TestReporterDisabledOutsideHerdr(t *testing.T) {
 				return ""
 			}
 			return testEnv(key)
-		}, []string{"bqagent", "--chat"}, func(context.Context, string, []string) error { t.Error("disabled reporter ran a command"); return nil })
+		}, []string{"bqagent"}, func(context.Context, string, []string) error { t.Error("disabled reporter ran a command"); return nil })
 		if r != nil {
 			r.Close()
 			t.Fatalf("reporter enabled without %s", missing)
@@ -59,7 +59,7 @@ func TestReporterCoalescesWithoutBlockingAndReleases(t *testing.T) {
 	calls := make(chan []string, 8)
 	gate := make(chan struct{})
 	first := true
-	r := newReporter(testEnv, []string{"bqagent", "--chat"}, func(ctx context.Context, bin string, args []string) error {
+	r := newReporter(testEnv, []string{"bqagent"}, func(ctx context.Context, bin string, args []string) error {
 		if bin != testEnv("HERDR_BIN_PATH") {
 			t.Errorf("binary path was split: %q", bin)
 		}
@@ -102,7 +102,7 @@ func TestReporterCoalescesWithoutBlockingAndReleases(t *testing.T) {
 			break
 		}
 	}
-	if !reflect.DeepEqual(latest[separator:], []string{"bqagent", "--chat", "--resume", "two"}) {
+	if !reflect.DeepEqual(latest[separator:], []string{"bqagent", "--resume", "two"}) {
 		t.Fatalf("resume argv=%v", latest)
 	}
 	r.Close()
@@ -128,7 +128,7 @@ func TestReporterCoalescesWithoutBlockingAndReleases(t *testing.T) {
 func TestReporterCloseCancelsInFlightAndUsesFreshReleaseContext(t *testing.T) {
 	started := make(chan struct{})
 	released := make(chan struct{})
-	r := newReporter(testEnv, []string{"bqagent", "--chat"}, func(ctx context.Context, _ string, args []string) error {
+	r := newReporter(testEnv, []string{"bqagent"}, func(ctx context.Context, _ string, args []string) error {
 		if args[1] == "report-agent" {
 			close(started)
 			<-ctx.Done()
@@ -164,7 +164,7 @@ func TestReporterCloseCancelsInFlightAndUsesFreshReleaseContext(t *testing.T) {
 
 func TestReporterTimeoutDoesNotPreventLaterReports(t *testing.T) {
 	calls := make(chan []string, 4)
-	r := newReporter(testEnv, []string{"bqagent", "--chat"}, func(ctx context.Context, _ string, args []string) error {
+	r := newReporter(testEnv, []string{"bqagent"}, func(ctx context.Context, _ string, args []string) error {
 		calls <- args
 		if argument(args, "--state") == "working" {
 			<-ctx.Done()
@@ -184,7 +184,7 @@ func TestReporterTimeoutDoesNotPreventLaterReports(t *testing.T) {
 func TestReporterCloseWaitsForSlowRelease(t *testing.T) {
 	started := make(chan struct{})
 	released := make(chan error, 1)
-	r := newReporter(testEnv, []string{"bqagent", "--chat"}, func(ctx context.Context, _ string, args []string) error {
+	r := newReporter(testEnv, []string{"bqagent"}, func(ctx context.Context, _ string, args []string) error {
 		if args[1] == "report-agent" {
 			close(started)
 			<-ctx.Done()
@@ -247,7 +247,7 @@ func TestReporterCloseBoundsUnresponsiveRelease(t *testing.T) {
 
 func TestReporterAllowsSlowStartupReport(t *testing.T) {
 	completed := make(chan error, 1)
-	r := newReporter(testEnv, []string{"bqagent", "--chat"}, func(ctx context.Context, _ string, args []string) error {
+	r := newReporter(testEnv, []string{"bqagent"}, func(ctx context.Context, _ string, args []string) error {
 		if args[1] != "report-agent" {
 			return nil
 		}
@@ -313,13 +313,13 @@ func TestReporterResumeValidationAndClear(t *testing.T) {
 			t.Fatalf("accepted invalid argv: %v", argv)
 		}
 	}
-	r := &Reporter{pane: "w1:p1", resume: []string{"bqagent", "--chat"}}
+	r := &Reporter{pane: "w1:p1", resume: []string{"bqagent"}}
 	for _, id := range []string{"", "bad'value", "bad\x00value"} {
 		args := r.arguments(snapshot{state: "idle", sessionID: id}, false)
 		if argument(args, "--state") != "idle" || argument(args, "--agent-session-id") != "" {
 			t.Fatalf("bad session invalidated status: %v", args)
 		}
-		if !reflect.DeepEqual(args[len(args)-3:], []string{"--", "bqagent", "--chat"}) {
+		if !reflect.DeepEqual(args[len(args)-2:], []string{"--", "bqagent"}) {
 			t.Fatalf("clear/invalid session retained stale resume: %v", args)
 		}
 	}
@@ -327,7 +327,7 @@ func TestReporterResumeValidationAndClear(t *testing.T) {
 
 func TestReporterConcurrentCloseAndUpdates(t *testing.T) {
 	calls := make(chan []string, 1000)
-	r := newReporter(testEnv, []string{"bqagent", "--chat"}, func(_ context.Context, _ string, args []string) error { calls <- args; return nil })
+	r := newReporter(testEnv, []string{"bqagent"}, func(_ context.Context, _ string, args []string) error { calls <- args; return nil })
 	var writers sync.WaitGroup
 	for index := 0; index < 8; index++ {
 		writers.Add(1)

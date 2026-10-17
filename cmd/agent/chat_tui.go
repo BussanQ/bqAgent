@@ -17,9 +17,12 @@ import (
 	"golang.org/x/term"
 )
 
-func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt, initialTask string, options cliOptions) int {
+const tuiTerminalRequired = "TUI 需要标准输入和标准输出连接交互终端（TTY），且 TERM 不能为 dumb；非交互环境请提供任务描述，例如 bqagent \"分析项目\"，或用 --help 查看帮助。"
+
+func runTUI(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, systemPrompt string, options cliOptions) int {
 	if !interactiveTerminal(stdin, stdout, getenv) {
-		return runChatLegacy(ctx, stdin, stdout, stderr, getenv, ws, systemPrompt, initialTask, options)
+		fmt.Fprintln(stderr, tuiTerminalRequired)
+		return 1
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -36,7 +39,6 @@ func runChat(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, get
 		Output:       stdout,
 		Workspace:    ws.Root,
 		AgentDir:     ws.AgentDir(),
-		InitialTask:  initialTask,
 		SessionID:    effectiveSessionID(options),
 		NoColor:      noColor,
 	})

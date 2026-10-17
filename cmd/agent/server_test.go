@@ -103,13 +103,13 @@ func TestServerCannotAcceptTask(t *testing.T) {
 	}
 }
 
-func TestServerCannotCombineWithChat(t *testing.T) {
+func TestServerRejectsRemovedChatFlag(t *testing.T) {
 	_, _, err := parseCLI([]string{"--server", "--chat"})
 	if err == nil {
-		t.Fatal("parseCLI returned nil error, want server/chat conflict")
+		t.Fatal("parseCLI returned nil error, want unknown chat flag")
 	}
-	if !strings.Contains(err.Error(), "--server cannot be combined with --chat") {
-		t.Fatalf("error = %q, want server/chat validation", err.Error())
+	if !strings.Contains(err.Error(), "flag provided but not defined: -chat") {
+		t.Fatalf("error = %q, want unknown chat flag", err.Error())
 	}
 }
 

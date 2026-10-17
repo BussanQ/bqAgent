@@ -11,7 +11,7 @@ import (
 )
 
 func TestDoctorCLIValidationAndReadOnlyExitCodes(t *testing.T) {
-	for _, args := range [][]string{{"--doctor-json"}, {"--doctor-active"}, {"--doctor", "--chat"}, {"--doctor", "task"}, {"--doctor", "--server"}} {
+	for _, args := range [][]string{{"--doctor-json"}, {"--doctor-active"}, {"--doctor", "--background"}, {"--doctor", "task"}, {"--doctor", "--server"}} {
 		if _, _, err := parseCLI(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
