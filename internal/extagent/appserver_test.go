@@ -128,7 +128,7 @@ func TestAppServerLifecycleAndEarlyEvents(t *testing.T) {
 	for _, mode := range []string{"normal", "early"} {
 		t.Run(mode, func(t *testing.T) {
 			spec, log := appServerSpec(t, mode)
-			client, err := NewCodexAppServerClient(spec, t.TempDir())
+			client, err := NewCodexAppServerClient(context.Background(), spec, t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,7 +168,7 @@ func TestAppServerFailedTurnsAndCancellation(t *testing.T) {
 	for _, mode := range []string{"failed", "disconnect", "wait"} {
 		t.Run(mode, func(t *testing.T) {
 			spec, log := appServerSpec(t, mode)
-			client, err := NewCodexAppServerClient(spec, t.TempDir())
+			client, err := NewCodexAppServerClient(context.Background(), spec, t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -114,7 +114,7 @@ func newGroupTestBroker(root string, log *groupACPLog, names ...extagent.AgentNa
 			Agent: name, Kind: extagent.TransportACP, Command: extagent.CommandSpec{Command: string(name)},
 		}}
 	}
-	return extagent.NewBroker(extagent.NewStateStore(root), detections, func(spec extagent.CommandSpec, _ string) (extagent.ACPClient, error) {
+	return extagent.NewBroker(extagent.NewStateStore(root), detections, func(_ context.Context, spec extagent.CommandSpec, _ string) (extagent.ACPClient, error) {
 		return &groupFakeACP{name: spec.Command, log: log}, nil
 	})
 }
@@ -238,7 +238,7 @@ func TestGroupChatExternalAgentHasExplicitTimeout(t *testing.T) {
 	external := &blockingGroupACP{started: make(chan struct{})}
 	broker := extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{
 		extagent.AgentCursor: {Agent: extagent.AgentCursor, Preferred: &extagent.AgentTransport{Agent: extagent.AgentCursor, Kind: extagent.TransportACP, Command: extagent.CommandSpec{Command: "cursor-agent"}}},
-	}, func(extagent.CommandSpec, string) (extagent.ACPClient, error) { return external, nil })
+	}, func(context.Context, extagent.CommandSpec, string) (extagent.ACPClient, error) { return external, nil })
 	defer broker.Close()
 	service := NewService(ServiceOptions{WorkspaceRoot: root, ExternalBroker: broker, GroupExternalAgentTimeout: 20 * time.Millisecond})
 
@@ -256,7 +256,7 @@ func TestStoppingGroupTurnInvalidatesACPSession(t *testing.T) {
 	external := &blockingGroupACP{started: make(chan struct{})}
 	broker := extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{
 		extagent.AgentCursor: {Agent: extagent.AgentCursor, Preferred: &extagent.AgentTransport{Agent: extagent.AgentCursor, Kind: extagent.TransportACP, Command: extagent.CommandSpec{Command: "cursor-agent"}}},
-	}, func(extagent.CommandSpec, string) (extagent.ACPClient, error) { return external, nil })
+	}, func(context.Context, extagent.CommandSpec, string) (extagent.ACPClient, error) { return external, nil })
 	defer broker.Close()
 	service := NewService(ServiceOptions{WorkspaceRoot: root, ExternalBroker: broker, GroupExternalAgentTimeout: time.Minute})
 	saved, err := service.store.Create(session.CreateOptions{Task: "group", Chat: true, ConversationType: string(ConversationTypeGroup)})

@@ -61,7 +61,7 @@ func TestManagerSpawnsPersistedWorktreeTask(t *testing.T) {
 	runGit(t, root, "add", "README.md")
 	runGit(t, root, "commit", "-m", "init")
 	spec := extagent.CommandSpec{Command: "fake"}
-	broker := extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{extagent.AgentClaude: {Agent: extagent.AgentClaude, Preferred: &extagent.AgentTransport{Agent: extagent.AgentClaude, Kind: extagent.TransportACP, Command: spec}}}, func(extagent.CommandSpec, string) (extagent.ACPClient, error) { return fakeACP{}, nil })
+	broker := extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{extagent.AgentClaude: {Agent: extagent.AgentClaude, Preferred: &extagent.AgentTransport{Agent: extagent.AgentClaude, Kind: extagent.TransportACP, Command: spec}}}, func(context.Context, extagent.CommandSpec, string) (extagent.ACPClient, error) { return fakeACP{}, nil })
 	defer broker.Close()
 	manager := NewManager(root, broker, false)
 	task, err := manager.Spawn(SpawnOptions{ParentSessionID: "session-1", Agent: extagent.AgentClaude, Prompt: "inspect", Timeout: 5 * time.Second})
@@ -148,7 +148,7 @@ func TestRunPersistedParentCancellationMarksTaskInterrupted(t *testing.T) {
 	}
 	broker := extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{
 		extagent.AgentClaude: {Agent: extagent.AgentClaude, Preferred: &extagent.AgentTransport{Agent: extagent.AgentClaude, Kind: extagent.TransportACP, Command: extagent.CommandSpec{Command: "fake"}}},
-	}, func(extagent.CommandSpec, string) (extagent.ACPClient, error) { return canceledACP{}, nil })
+	}, func(context.Context, extagent.CommandSpec, string) (extagent.ACPClient, error) { return canceledACP{}, nil })
 	defer broker.Close()
 	manager := NewWorkerManager(root, broker, false)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -520,7 +520,7 @@ func TestReconcileOverCapacityBlocksNewStart(t *testing.T) {
 
 func testBroker(root string) *extagent.Broker {
 	spec := extagent.CommandSpec{Command: "fake"}
-	return extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{extagent.AgentClaude: {Agent: extagent.AgentClaude, Preferred: &extagent.AgentTransport{Agent: extagent.AgentClaude, Kind: extagent.TransportACP, Command: spec}}}, func(extagent.CommandSpec, string) (extagent.ACPClient, error) { return fakeACP{}, nil })
+	return extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{extagent.AgentClaude: {Agent: extagent.AgentClaude, Preferred: &extagent.AgentTransport{Agent: extagent.AgentClaude, Kind: extagent.TransportACP, Command: spec}}}, func(context.Context, extagent.CommandSpec, string) (extagent.ACPClient, error) { return fakeACP{}, nil })
 }
 
 func createTaskWithStatus(t *testing.T, store *Store, status Status) *Task {

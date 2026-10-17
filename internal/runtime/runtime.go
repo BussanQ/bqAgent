@@ -232,17 +232,19 @@ func envDurationAllowZero(raw string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
-func (factory Factory) Build() Runtime {
-	return factory.build(nil)
+// Build constructs the runtime and runs MCP discovery synchronously, bounded
+// by ctx so an interrupted caller does not wait out the discovery timeout.
+func (factory Factory) Build(ctx context.Context) Runtime {
+	return factory.build(ctx, false)
 }
 
 // BuildBackground leaves remote MCP discovery off the interactive startup path.
 // The caller must cancel ctx when the UI/server workspace closes.
 func (factory Factory) BuildBackground(ctx context.Context) Runtime {
-	return factory.build(ctx)
+	return factory.build(ctx, true)
 }
 
-func (factory Factory) build(background context.Context) Runtime {
+func (factory Factory) build(ctx context.Context, background bool) Runtime {
 	apiType := agent.NormalizeAPIType(string(factory.Config.APIType))
 	model := agent.EffectiveModel(factory.Config.Model)
 	clientOptions := agent.ClientOptions{StreamIdleTimeout: factory.Config.StreamIdleTimeout, StreamProgressTimeout: factory.Config.StreamProgressTimeout, ProviderID: factory.Config.ProviderID, NativeWebSearch: factory.Config.NativeWebSearch}
@@ -252,10 +254,10 @@ func (factory Factory) build(background context.Context) Runtime {
 	var mcpDefinitions []tools.Definition
 	var mcpFunctions map[string]tools.Function
 	var discovery *mcp.Discovery
-	if background == nil {
-		mcpDefinitions, mcpFunctions = factory.discoverMCPTools()
+	if background {
+		discovery = mcp.StartDiscovery(ctx, factory.loadMCPConfig(), factory.Getenv, factory.MCPHTTPClient, factory.logf, factory.MCPReport, mcpDiscoveryTimeout)
 	} else {
-		discovery = mcp.StartDiscovery(background, factory.loadMCPConfig(), factory.Getenv, factory.MCPHTTPClient, factory.logf, factory.MCPReport, mcpDiscoveryTimeout)
+		mcpDefinitions, mcpFunctions = factory.discoverMCPTools(ctx)
 	}
 	memoryStore := openMemoryStore(factory.MemoryDir)
 	globalMemoryStore := memoryStore
@@ -352,12 +354,15 @@ func (factory Factory) loadMCPConfig() mcp.Config {
 	return cfg
 }
 
-func (factory Factory) discoverMCPTools() ([]tools.Definition, map[string]tools.Function) {
+func (factory Factory) discoverMCPTools(ctx context.Context) ([]tools.Definition, map[string]tools.Function) {
 	cfg := factory.loadMCPConfig()
 	if !cfg.HasEnabledServers() {
 		return nil, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), mcpDiscoveryTimeout)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, mcpDiscoveryTimeout)
 	defer cancel()
 	return mcp.DiscoverWithStatus(ctx, cfg, factory.Getenv, factory.MCPHTTPClient, factory.logf, factory.MCPReport)
 }

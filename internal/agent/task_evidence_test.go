@@ -584,3 +584,34 @@ func TestNewUserInputRebaselinesScopeAndCloseout(t *testing.T) {
 		t.Fatalf("calls=%d outcome=%+v err=%v", len(client.messages), result.Outcome, err)
 	}
 }
+
+func TestVerificationIssueNamesConcreteCause(t *testing.T) {
+	app, _ := evidenceApp(t, "go test ./bad")
+	ctx, run := evidenceRun()
+	piped := "go test ./x -count=1 2>&1 | tail -5"
+	pipefailed := "set -o pipefail && go test ./y 2>&1 | tail -5"
+	for _, call := range []ToolCall{bashCall("piped", piped), bashCall("bad", "go test ./bad"), bashCall("early", "go test ./z"), editCall("edit"), bashCall("pipefailed", pipefailed), bashCall("read", "cat a.go")} {
+		app.runRegularToolCall(ctx, call)
+	}
+	for _, tc := range []struct{ command, id, want string }{
+		{"go test ./x -count=1", "", "closest execute_bash call ran"},
+		{"go test ./x -count=1", "", "set -o pipefail"},
+		{piped, "", "| tail"},
+		{"go test ./bad", "", "call failed"},
+		{"go test ./z", "", "edit_file call changed the workspace"},
+		{"cat a.go", "", "read-only"},
+		{"go test ./never", "", "no execute_bash call in this turn ran exactly this command"},
+		{"go test ./never", "missing", `tool_call_id "missing"`},
+	} {
+		if issue := run.ledger.verificationIssue(tc.id, tc.command); !strings.Contains(issue, tc.want) {
+			t.Fatalf("issue for %q = %q, want %q", tc.command, issue, tc.want)
+		}
+	}
+	if issue := run.ledger.verificationIssue("pipefailed", pipefailed); issue != "" {
+		t.Fatalf("pipefail-protected check rejected: %s", issue)
+	}
+	err := submitCompletion(app, ctx, completedWith(taskstate.Verification{Command: "go test ./x -count=1", Status: "passed", Details: "ok"}))
+	if err == nil || !strings.Contains(err.Error(), piped) || !strings.Contains(err.Error(), "pipefail") {
+		t.Fatalf("completion error does not explain the cause: %v", err)
+	}
+}

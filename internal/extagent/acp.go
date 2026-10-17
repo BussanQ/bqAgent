@@ -14,7 +14,9 @@ import (
 	"sync/atomic"
 )
 
-type ACPClientFactory func(CommandSpec, string) (ACPClient, error)
+// ACPClientFactory creates a client whose subprocess lifetime is bound to ctx.
+// Callers must Close the client; cancelling ctx also terminates the process.
+type ACPClientFactory func(context.Context, CommandSpec, string) (ACPClient, error)
 
 const (
 	acpScannerInitialBufferSize = 64 << 10
@@ -67,11 +69,14 @@ type acpPermissionAware interface {
 	setPermissionHandler(acpPermissionHandler)
 }
 
-func NewACPClient(spec CommandSpec, cwd string) (ACPClient, error) {
+func NewACPClient(ctx context.Context, spec CommandSpec, cwd string) (ACPClient, error) {
 	if strings.TrimSpace(spec.Command) == "" {
 		return nil, fmt.Errorf("acp command is required")
 	}
-	cmd := exec.CommandContext(context.Background(), spec.Command, spec.Args...)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, spec.Command, spec.Args...)
 	cmd.Dir = cwd
 	configureExternalProcess(cmd)
 	stdout, err := cmd.StdoutPipe()

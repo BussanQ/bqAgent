@@ -126,7 +126,7 @@ func TestNewDetectingBrokerReturnsBeforeProbeCompletes(t *testing.T) {
 	}
 	constructed := make(chan *Broker, 1)
 	go func() {
-		constructed <- NewDetectingBroker(context.Background(), NewStateStore(root), config, func(CommandSpec, string) (ACPClient, error) {
+		constructed <- NewDetectingBroker(context.Background(), NewStateStore(root), config, func(context.Context, CommandSpec, string) (ACPClient, error) {
 			return client, nil
 		}, nil)
 	}()
@@ -374,7 +374,7 @@ func TestBrokerCoalescesACPInitializationAndLetsWaiterCancel(t *testing.T) {
 	root := t.TempDir()
 	client := &blockingInitializeACPClient{started: make(chan struct{}), release: make(chan struct{})}
 	factoryCalls := 0
-	broker := NewBroker(NewStateStore(root), nil, func(CommandSpec, string) (ACPClient, error) {
+	broker := NewBroker(NewStateStore(root), nil, func(context.Context, CommandSpec, string) (ACPClient, error) {
 		factoryCalls++
 		return client, nil
 	})
@@ -425,7 +425,7 @@ func TestBrokerSerializesConcurrentTurnsForOneSession(t *testing.T) {
 	client := newTurnBlockingACPClient()
 	broker := NewBroker(NewStateStore(root), map[AgentName]DetectionResult{
 		AgentClaude: {Agent: AgentClaude, Preferred: &AgentTransport{Agent: AgentClaude, Kind: TransportACP, Command: CommandSpec{Command: "fake"}}},
-	}, func(CommandSpec, string) (ACPClient, error) { return client, nil })
+	}, func(context.Context, CommandSpec, string) (ACPClient, error) { return client, nil })
 	defer broker.Close()
 
 	first := make(chan error, 1)
@@ -470,7 +470,7 @@ func TestBrokerClearWaitsForTurnAndCannotBeUndoneByLateSave(t *testing.T) {
 	store := NewStateStore(root)
 	broker := NewBroker(store, map[AgentName]DetectionResult{
 		AgentClaude: {Agent: AgentClaude, Preferred: &AgentTransport{Agent: AgentClaude, Kind: TransportACP, Command: CommandSpec{Command: "fake"}}},
-	}, func(CommandSpec, string) (ACPClient, error) { return client, nil })
+	}, func(context.Context, CommandSpec, string) (ACPClient, error) { return client, nil })
 	defer broker.Close()
 
 	turnDone := make(chan error, 1)
@@ -509,7 +509,7 @@ func TestBrokerClearWaitsForTurnAndCannotBeUndoneByLateSave(t *testing.T) {
 func TestBrokerClearDoesNotReviveLateACPInitialization(t *testing.T) {
 	root := t.TempDir()
 	client := &blockingInitializeACPClient{started: make(chan struct{}), release: make(chan struct{})}
-	broker := NewBroker(NewStateStore(root), nil, func(CommandSpec, string) (ACPClient, error) {
+	broker := NewBroker(NewStateStore(root), nil, func(context.Context, CommandSpec, string) (ACPClient, error) {
 		return client, nil
 	})
 	defer broker.Close()
@@ -543,7 +543,7 @@ func TestBrokerClearDoesNotReviveLateACPInitialization(t *testing.T) {
 func TestBrokerClearClosesAllSessionACPClients(t *testing.T) {
 	root := t.TempDir()
 	var clients []*trackingACPClient
-	factory := func(CommandSpec, string) (ACPClient, error) {
+	factory := func(context.Context, CommandSpec, string) (ACPClient, error) {
 		client := &trackingACPClient{}
 		clients = append(clients, client)
 		return client, nil
@@ -811,7 +811,7 @@ func TestBrokerReconnectsOnceAfterCachedACPProcessExits(t *testing.T) {
 	factoryCalls := 0
 	broker := NewBroker(NewStateStore(root), map[AgentName]DetectionResult{
 		AgentCursor: {Agent: AgentCursor, Preferred: &AgentTransport{Agent: AgentCursor, Kind: TransportACP, Command: CommandSpec{Command: "cursor-agent"}}},
-	}, func(CommandSpec, string) (ACPClient, error) {
+	}, func(context.Context, CommandSpec, string) (ACPClient, error) {
 		client := clients[factoryCalls]
 		factoryCalls++
 		return client, nil

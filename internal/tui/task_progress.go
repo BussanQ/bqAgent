@@ -14,6 +14,8 @@ type taskProgress struct {
 	state  *taskstate.State
 	turnID string
 	seq    uint64
+	// stale marks a snapshot the agent reported as predating the turn's work.
+	stale bool
 }
 
 func (progress *taskProgress) apply(event turn.Event) bool {
@@ -29,6 +31,7 @@ func (progress *taskProgress) apply(event turn.Event) bool {
 		return false
 	}
 	progress.state, progress.turnID, progress.seq = state, event.TurnID, event.Seq
+	progress.stale = event.Phase == "stale"
 	return true
 }
 
@@ -41,6 +44,9 @@ func (progress taskProgress) lines() []string {
 		"active": "进行中", "completed": "已完成", "blocked": "受阻",
 		"awaiting_input": "等待输入", "cancelled": "已取消",
 	}[state.Status]
+	if progress.stale {
+		status += "（记录未更新）"
+	}
 	done := 0
 	for _, criterion := range state.Criteria {
 		if criterion.Done {

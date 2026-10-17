@@ -100,3 +100,48 @@ func TestTaskUpdateSuspensionOnlyHidesBookkeepingUntilProgress(t *testing.T) {
 		})
 	}
 }
+
+func TestRunTurnMarksUnfinishedTaskRecordStale(t *testing.T) {
+	edit := AssistantMessage{ToolCalls: []ToolCall{editCall("edit")}}
+	final := AssistantMessage{Content: "改动完成。", Phase: "final_answer"}
+	saved := activeTestTask()
+	saved.Remaining = []string{"verify"}
+	rejected := completedWith(taskstate.Verification{Command: "go test ./x", Status: "passed", Details: "ok"})
+	for _, tc := range []struct {
+		name      string
+		responses []AssistantMessage
+		stale     bool
+	}{
+		{"rejected record", []AssistantMessage{edit, {ToolCalls: []ToolCall{bashCall("verify", "go test ./x 2>&1 | tail -5")}}, taskUpdateMessage(rejected), final}, true},
+		{"edit after save", []AssistantMessage{taskUpdateMessage(saved), edit, final}, true},
+		{"saved after work", []AssistantMessage{edit, taskUpdateMessage(saved), final}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			active := activeTestTask()
+			var events []turn.Event
+			client := &taskDefinitionClient{stubClient{responses: tc.responses}}
+			app := NewWithOptions(client, "test", Options{TurnID: "turn", TaskStore: &memoryTaskStore{state: &active},
+				MessageSink: func(e turn.Event) { events = append(events, e) },
+				Functions: map[string]tools.Function{
+					"edit_file":    func(context.Context, map[string]any) (string, error) { return "edited", nil },
+					"execute_bash": func(context.Context, map[string]any) (string, error) { return "ok", nil },
+				}})
+			result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": active.Goal}}, 8)
+			if err != nil || result.Outcome.Status != turn.Completed {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+			stale := 0
+			for _, event := range events {
+				if event.Kind == "task.updated" && event.Phase == "stale" {
+					stale++
+					if !strings.Contains(event.Text, `"status":"active"`) {
+						t.Fatalf("stale event lost the saved snapshot: %s", event.Text)
+					}
+				}
+			}
+			if stale != map[bool]int{true: 1, false: 0}[tc.stale] {
+				t.Fatalf("stale events = %d, want stale=%t; events=%+v", stale, tc.stale, events)
+			}
+		})
+	}
+}

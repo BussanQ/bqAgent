@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"sync"
@@ -100,30 +101,87 @@ func (l *execLedger) barrier() uint64 {
 // successful execute_bash call in this turn with the same command (and the same
 // call ID when supplied) and no mutation that overlapped or followed it.
 func (l *execLedger) verified(callID, command string) bool {
+	return l.verificationIssue(callID, command) == ""
+}
+
+// verificationIssue returns "" when the verification is backed by evidence,
+// otherwise the concrete reason it is not, so the model can fix the actual
+// cause (an output-truncating pipe, a paraphrased command, a later edit)
+// instead of blindly retrying the same record.
+func (l *execLedger) verificationIssue(callID, command string) string {
 	command = strings.TrimSpace(command)
 	callID = strings.TrimSpace(callID)
 	if command == "" {
-		return false
+		return "the verification command is empty"
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	exact, near := "", ""
 	for i := len(l.entries) - 1; i >= 0; i-- {
 		e := l.entries[i]
-		if e.tool != "execute_bash" || !e.success || !e.reliable || e.end == 0 || e.command != command || (callID != "" && e.callID != callID) {
+		if e.tool != "execute_bash" || e.end == 0 || (callID != "" && e.callID != callID) {
 			continue
 		}
-		stale := false
-		for _, m := range l.entries {
-			if m != e && m.mutating && (m.end == 0 || m.end > e.start) {
-				stale = true
-				break
+		if e.command != command {
+			if near == "" && (callID != "" || strings.Contains(e.command, command)) {
+				near = fmt.Sprintf("the closest execute_bash call ran %q, which is not the recorded command; record the exact command string", e.command)
+				if e.success && !e.reliable {
+					near += ", and " + unreliableReason(e.command)
+				}
 			}
+			continue
 		}
-		if !stale {
-			return true
+		var issue string
+		switch {
+		case !e.success:
+			issue = "that execute_bash call failed"
+		case !e.reliable:
+			issue = unreliableReason(e.command)
+		default:
+			issue = l.staleReason(e)
+		}
+		if issue == "" {
+			return ""
+		}
+		if exact == "" {
+			exact = issue
 		}
 	}
-	return false
+	switch {
+	case exact != "":
+		return exact
+	case near != "":
+		return near
+	case callID != "":
+		return fmt.Sprintf("no finished execute_bash call with tool_call_id %q exists in this turn", callID)
+	}
+	return "no execute_bash call in this turn ran exactly this command"
+}
+
+// unreliableReason explains why a successful command does not prove a check passed.
+func unreliableReason(command string) string {
+	if classifyBash(command) == bashReadOnly {
+		return "it is a read-only command, not a test/build/lint check"
+	}
+	return "its exit status does not prove success: ||, ;, background jobs or a pipeline without set -o pipefail (e.g. `| tail`, `| head`, `| grep`) hide a failing check; rerun the check on its own, or prefix it with `set -o pipefail && `"
+}
+
+// staleReason names the mutation that overlapped or followed the evidence
+// entry, or returns "" when the evidence is still valid. Callers hold l.mu.
+func (l *execLedger) staleReason(e *execEntry) string {
+	for _, m := range l.entries {
+		if m == e || !m.mutating || (m.end != 0 && m.end <= e.start) {
+			continue
+		}
+		switch {
+		case m.barrier:
+			return "new user input or a goal change came after that execute_bash call; rerun the check"
+		case m.tool == "execute_bash":
+			return fmt.Sprintf("the possibly side-effecting command %q ran during or after that execute_bash call; rerun the check after the last change", m.command)
+		}
+		return fmt.Sprintf("a %s call changed the workspace during or after that execute_bash call; rerun the check after the last change", m.tool)
+	}
+	return ""
 }
 
 // hasMutation reports a workspace mutation that started after the baseline.

@@ -64,11 +64,14 @@ type appServerRun struct {
 	changed  chan struct{}
 }
 
-func NewCodexAppServerClient(spec CommandSpec, cwd string) (SessionClient, error) {
+func NewCodexAppServerClient(ctx context.Context, spec CommandSpec, cwd string) (SessionClient, error) {
 	if strings.TrimSpace(spec.Command) == "" {
 		return nil, fmt.Errorf("codex app-server command is required")
 	}
-	cmd := exec.CommandContext(context.Background(), spec.Command, spec.Args...)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, spec.Command, spec.Args...)
 	cmd.Dir = cwd
 	configureExternalProcess(cmd)
 	// Stderr is diagnostic, never protocol data. Avoid unbounded buffering.

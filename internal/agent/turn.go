@@ -38,7 +38,12 @@ type runState struct {
 	taskUpdated     bool
 	completionSaved bool
 	completedClock  uint64
-	declaration     *outcomeDeclaration // current request only; never restored from task history
+	// recordedClock is the ledger time of the latest saved task_update and
+	// recordFailed whether the latest attempt was rejected; both decide whether
+	// the saved progress record is stale at turn end.
+	recordedClock uint64
+	recordFailed  bool
+	declaration   *outcomeDeclaration // current request only; never restored from task history
 }
 
 // acceptUserInput must be called for every user message that joins the turn
@@ -122,7 +127,9 @@ func (a *Agent) RunTurn(ctx context.Context, messages []map[string]any, maxItera
 	ctx = context.WithValue(ctx, runStateKey{}, state)
 	metricsCtx, collector := withTurnGenerationCollector(ctx)
 	reply, history, err := a.runConversation(metricsCtx, duplicateMessages(messages), maxIterations)
-	a.reopenStaleCompletion(state)
+	if !a.reopenStaleCompletion(state) {
+		a.markStaleTask(state)
+	}
 	if err != nil {
 		status := turn.Failed
 		if errors.Is(err, context.Canceled) {

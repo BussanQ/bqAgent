@@ -58,7 +58,7 @@ func TestDoctorACPProbeOnlyInitializesAndCloses(t *testing.T) {
 		return nil
 	}}
 	e.options.External = extagent.Config{Agents: map[extagent.AgentName]extagent.AgentConfig{extagent.AgentClaude: {ACP: extagent.CommandSpec{Command: executable, Args: []string{"secret-argument"}}}}}
-	e.options.ACPFactory = func(extagent.CommandSpec, string) (extagent.ACPClient, error) { return client, nil }
+	e.options.ACPFactory = func(context.Context, extagent.CommandSpec, string) (extagent.ACPClient, error) { return client, nil }
 	report, err := e.Inspect(context.Background(), true)
 	if err != nil {
 		t.Fatal(err)

@@ -418,7 +418,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		Getenv:          getenv,
 		MCPConfigPaths:  ws.MCPConfigPaths(),
 		LogWriter:       stderr,
-	}.Build()
+	}.Build(ctx)
 	var runRecorder *apptrace.Recorder
 	if runtime.RunTraceEnabled {
 		var traceErr error

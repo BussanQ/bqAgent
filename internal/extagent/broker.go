@@ -45,6 +45,10 @@ type Broker struct {
 	detections      map[AgentName]DetectionResult
 	acpFactory      ACPClientFactory
 	cli             CLIAdapter
+	// rootCtx bounds the lifetime of spawned external-agent subprocesses. It
+	// is the broker's lifecycle context, never a single turn's context, so a
+	// shared client survives between turns and dies on shutdown or Close.
+	rootCtx         context.Context
 	detectionReady  chan struct{}
 	detectedAt      time.Time
 	detectionDone   sync.Once
@@ -75,6 +79,7 @@ func NewDetectingBroker(ctx context.Context, store *StateStore, config Config, f
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	broker.rootCtx = ctx
 	probeCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	broker.detectionCancel = cancel
 	go func() {
@@ -94,6 +99,7 @@ func newBroker(store *StateStore, factory ACPClientFactory) *Broker {
 		store:              store,
 		detections:         map[AgentName]DetectionResult{},
 		acpFactory:         factory,
+		rootCtx:            context.Background(),
 		detectionReady:     make(chan struct{}),
 		acpClients:         map[acpClientKey]ACPClient{},
 		acpInFlight:        map[acpClientKey]*acpClientFuture{},
@@ -615,9 +621,9 @@ func (broker *Broker) sessionClient(ctx context.Context, sessionID string, agent
 	var client ACPClient
 	var err error
 	if transport == TransportAppServer {
-		client, err = NewCodexAppServerClient(spec, cwd)
+		client, err = NewCodexAppServerClient(broker.rootCtx, spec, cwd)
 	} else {
-		client, err = broker.acpFactory(spec, cwd)
+		client, err = broker.acpFactory(broker.rootCtx, spec, cwd)
 	}
 	if err == nil {
 		broker.mu.Lock()

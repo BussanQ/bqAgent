@@ -17,7 +17,7 @@ import (
 // instructions, so this per-turn developer message stays short.
 const taskProgressInstructions = `Task tracking: task_update is the only persistent progress record. Ordinary Q&A and single-step edits need no task. For a multi-step programming task, create one before editing with the original goal, acceptance criteria and remaining implementation/verification work. Update it only at a stage change, an acceptance result, a blocker, or a scope change, then keep working; rewriting an unchanged plan is not progress.
 An active task stays the objective when the user says continue or asks for status: answer status briefly and keep working unless told to stop or wait. For a new unrelated question, call task_scope with relation=side_question and a reason; it detaches only this turn and leaves the saved task unchanged. Never use side_question to drop work requested in the current turn. Replace the goal only when the user changes or cancels it, using replace_goal with a reason.
-Mark a task completed only when every criterion has tool evidence, nothing remains and the targeted verification passed. Never remove criteria just to finish. Each passed verification must be a command this turn's execute_bash actually ran successfully after the last edit (optionally add its tool_call_id); a later edit makes it stale and it must be rerun. Re-assess saved blockers against the current request and continue when resolved. Progress tracking is advisory: a missing, stale or failed task_update must never stop substantive work or prevent a final answer. Do not repeat verification solely to repair progress metadata, and never record blocked or awaiting_input solely because progress recording failed. Reserve those statuses for concrete obstacles to the actual work or required user input. If tracking fails, explain the recording limitation briefly and report the actual work and verification results honestly.`
+Mark a task completed only when every criterion has tool evidence, nothing remains and the targeted verification passed. Never remove criteria just to finish. Each passed verification must be a command this turn's execute_bash actually ran successfully after the last edit (optionally add its tool_call_id), recorded as the exact command string; a later edit makes it stale and it must be rerun. Run checks on their own: a check piped into tail/head/grep (without set -o pipefail) or chained after an edit cannot prove success. Re-assess saved blockers against the current request and continue when resolved. Progress tracking is advisory: a missing, stale or failed task_update must never stop substantive work or prevent a final answer. Do not repeat verification solely to repair progress metadata, and never record blocked or awaiting_input solely because progress recording failed. Reserve those statuses for concrete obstacles to the actual work or required user input. If tracking fails, explain the recording limitation briefly and report the actual work and verification results honestly.`
 
 func (a *Agent) installTaskTool() {
 	if a.taskStore == nil {
@@ -25,17 +25,18 @@ func (a *Agent) installTaskTool() {
 	}
 	a.installTaskScopeTool()
 	a.toolDefinitions = append(a.toolDefinitions, tools.Definition{Type: "function", Function: tools.FunctionDefinition{
-		Name: "task_update", Description: "The only persistent progress record. Use it for multi-step programming work, not for ordinary Q&A or single-step edits. Call it only at a stage change, an acceptance result, a blocker, or a scope change; do not resend an unchanged plan (identical state is ignored and is not progress). state is JSON containing goal, status (active/completed/blocked/awaiting_input/cancelled), criteria [{description,done,evidence}], remaining [string], verification [{command,tool_call_id (optional),status (passed/failed/unavailable),details}], reason. Completion requires all criteria backed by evidence, no remaining work, and passed verification whose command was actually run successfully by execute_bash in this turn after the last change. This record is advisory: recording failures must not block actual work or the final answer, and are not task blockers. Preserve the original goal and criteria unless the user changes scope.",
+		Name: "task_update", Description: "The only persistent progress record. Use it for multi-step programming work, not for ordinary Q&A or single-step edits. Call it only at a stage change, an acceptance result, a blocker, or a scope change; do not resend an unchanged plan (identical state is ignored and is not progress). state is JSON containing goal, status (active/completed/blocked/awaiting_input/cancelled), criteria [{description,done,evidence}], remaining [string], verification [{command,tool_call_id (optional),status (passed/failed/unavailable),details}], reason. Completion requires all criteria backed by evidence, no remaining work, and passed verification whose exact command string was actually run successfully by execute_bash in this turn after the last change; a check piped into tail/head/grep without set -o pipefail does not count. This record is advisory: recording failures must not block actual work or the final answer, and are not task blockers. Preserve the original goal and criteria unless the user changes scope.",
 		Parameters: tools.JSONSchema{Type: "object", Properties: map[string]tools.JSONSchemaProperty{
 			"state":        {Type: "string", Description: "Complete task state as a JSON object."},
 			"replace_goal": {Type: "boolean", Description: "Only true for a new user-authorized objective or changed acceptance criteria; include reason in state and user_quote."},
 			"user_quote":   {Type: "string", Description: "With replace_goal: a verbatim excerpt (at least 6 characters, or the whole short message) of the user's message in this turn that requests the change."},
 		}, Required: []string{"state"}},
 	}})
-	a.functions["task_update"] = func(ctx context.Context, args map[string]any) (string, error) {
+	a.functions["task_update"] = func(ctx context.Context, args map[string]any) (result string, err error) {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
+		defer func() { turnRun(ctx).noteTaskRecord(err == nil) }()
 		if state := turnRun(ctx); state != nil && state.outcome.TaskRelation == turn.SideQuestion {
 			return "", fmt.Errorf("side-question turns cannot modify the saved task")
 		}
@@ -146,17 +147,59 @@ func sameTaskState(a, b taskstate.State) bool {
 
 // emitTask publishes the full task state (or "null") as a task.updated event.
 func (s *runState) emitTask(task *taskstate.State) {
+	phase := ""
+	if task != nil {
+		phase = task.Status
+	}
+	s.emitTaskPhase(task, phase)
+}
+
+// emitTaskPhase publishes a task snapshot with an explicit phase; "stale" tells
+// views that the snapshot predates this turn's actual work.
+func (s *runState) emitTaskPhase(task *taskstate.State, phase string) {
 	if s == nil || s.sink == nil {
 		return
 	}
-	text, phase := "null", ""
+	text := "null"
 	if task != nil {
-		phase = task.Status
 		if data, err := json.Marshal(task); err == nil {
 			text = string(data)
 		}
 	}
 	s.emit(s.id+"/task", "task.updated", phase, text)
+}
+
+// noteTaskRecord tracks the latest task_update attempt for markStaleTask.
+func (s *runState) noteTaskRecord(saved bool) {
+	if s == nil {
+		return
+	}
+	now := s.ledger.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recordFailed = !saved
+	if saved {
+		s.recordedClock = now
+	}
+}
+
+// markStaleTask flags, at turn end, an unfinished progress record that no
+// longer reflects this turn: the latest task_update was rejected, or the
+// workspace changed after the last save. The record is advisory, so this only
+// keeps views from presenting an outdated snapshot as current progress.
+func (a *Agent) markStaleTask(run *runState) bool {
+	if run == nil || a.task == nil || a.task.Status == "completed" || run.outcome.TaskRelation == turn.SideQuestion {
+		return false
+	}
+	run.mu.Lock()
+	since := max(run.inputClock, run.recordedClock)
+	failed := run.recordFailed
+	run.mu.Unlock()
+	if !failed && !run.ledger.hasMutation(since) {
+		return false
+	}
+	run.emitTaskPhase(a.task, "stale")
+	return true
 }
 
 type continuationContextKey struct{}
@@ -251,8 +294,11 @@ func verifyCompletionEvidence(run *runState, next taskstate.State) error {
 		return fmt.Errorf("completion requires verification executed in this turn; no turn execution record is available")
 	}
 	for _, check := range next.Verification {
-		if check.Status == "passed" && !run.ledger.verified(check.ToolCallID, check.Command) {
-			return fmt.Errorf("verification %q is not backed by a successful execute_bash call in this turn that ran exactly this command (matching tool_call_id when given) after the last edit or side-effecting command; run it now with execute_bash and record that command", check.Command)
+		if check.Status != "passed" {
+			continue
+		}
+		if issue := run.ledger.verificationIssue(check.ToolCallID, check.Command); issue != "" {
+			return fmt.Errorf("verification %q is not backed by a successful, reliable execute_bash call in this turn that ran exactly this command after the last edit or side-effecting command: %s", check.Command, issue)
 		}
 	}
 	return nil

@@ -31,7 +31,7 @@ func Detect(ctx context.Context, config Config, factory ACPClientFactory) map[Ag
 
 		if looksExecutable(cfg.ACP.Command) {
 			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			client, err := factory(cfg.ACP, config.WorkspaceRoot)
+			client, err := factory(probeCtx, cfg.ACP, config.WorkspaceRoot)
 			if err == nil {
 				err = client.Initialize(probeCtx)
 				_ = client.Close()
@@ -98,7 +98,7 @@ func detectCodexAppServer(ctx context.Context, cfg AgentConfig, cwd string,
 }
 
 func probeCodexAppServer(ctx context.Context, spec CommandSpec, cwd string) error {
-	client, err := NewCodexAppServerClient(spec, cwd)
+	client, err := NewCodexAppServerClient(ctx, spec, cwd)
 	if err != nil {
 		return err
 	}

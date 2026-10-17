@@ -103,3 +103,17 @@ func TestTaskProgressStatusAndLayoutRemainAuthoritative(t *testing.T) {
 		})
 	}
 }
+
+func TestTaskProgressMarksStaleSnapshotUntilNextRecord(t *testing.T) {
+	model := newInputModel(t, &inputFakeBackend{})
+	stale := taskSnapshot(t, tuiTaskFixture(), 1)
+	stale.Phase = "stale"
+	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "message", message: stale})
+	if view := strings.Join(model.auxiliaryLines(), "\n"); !strings.Contains(view, "任务 · 进行中（记录未更新） · 验收 1/1") {
+		t.Fatalf("stale snapshot not marked: %s", view)
+	}
+	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "message", message: taskSnapshot(t, tuiTaskFixture(), 2)})
+	if view := strings.Join(model.auxiliaryLines(), "\n"); strings.Contains(view, "记录未更新") || !strings.Contains(view, "任务 · 进行中") {
+		t.Fatalf("fresh snapshot kept stale marker: %s", view)
+	}
+}
