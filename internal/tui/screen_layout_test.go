@@ -100,7 +100,7 @@ func TestStartupArtCentersInUnusedSpace(t *testing.T) {
 	rows := strings.Split(model.View().Content, "\n")
 	first, last := -1, -1
 	for i, row := range rows {
-		if strings.TrimSpace(row) == ".---." {
+		if strings.TrimSpace(row) == ".-o-." {
 			first = i
 		}
 		if strings.TrimSpace(row) == "bqAgent" {
@@ -124,7 +124,7 @@ func TestStartupArtCentersInUnusedSpace(t *testing.T) {
 	if !strings.Contains(rows[0], "bqAgent") || len(rows) != model.frameLimit() {
 		t.Fatal("startup art moved the banner or changed frame height")
 	}
-	if strings.Contains(strings.Join(model.transcript, "\n"), ".---.") {
+	if strings.Contains(strings.Join(model.transcript, "\n"), ".-o-.") {
 		t.Fatal("decorative art must not enter conversation history")
 	}
 	assertLiveFrameFits(t, model)
@@ -132,7 +132,7 @@ func TestStartupArtCentersInUnusedSpace(t *testing.T) {
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	model = updated.(Model)
 	defer model.active.cancel()
-	if strings.Contains(model.View().Content, ".---.") {
+	if strings.Contains(model.View().Content, ".-o-.") {
 		t.Fatal("startup art must disappear after submitting a question")
 	}
 }
@@ -155,7 +155,7 @@ func TestStartupArtHidesWhenUnavailable(t *testing.T) {
 			model.resizeInput()
 			updated, _ := model.Update(startupMsg{})
 			model = updated.(Model)
-			if strings.Contains(model.View().Content, ".---.") {
+			if strings.Contains(model.View().Content, ".-o-.") {
 				t.Fatal("startup art should be hidden")
 			}
 			assertLiveFrameFits(t, model)

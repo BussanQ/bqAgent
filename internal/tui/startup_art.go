@@ -1,55 +1,53 @@
 package tui
 
-import "strings"
+import (
+	"strings"
 
-// Use three eighths of each available dimension, retaining enough room for
-// the face and chest details in smaller terminals.
+	"charm.land/lipgloss/v2"
+)
+
+// Keep the mascot compact on large terminals instead of stretching its face
+// and body to fill the available space.
 func startupRobot(width, height int) []string {
 	if width < 34 || height < 18 {
 		return nil
 	}
-	width = min(width-2, max(32, (width*3+7)/8))
-	height = min(height-2, max(16, (height*3+7)/8))
+	width = min(44, max(32, (width*3+7)/8))
+	height = min(20, max(16, (height*3+7)/8))
 	center := func(text string, size int) string {
 		left := (size - len(text)) / 2
 		return strings.Repeat(" ", left) + text + strings.Repeat(" ", size-len(text)-left)
 	}
-	head := width - 6
-	chest := width * 2 / 3
-	eye := strings.Repeat("=", max(3, head/6))
-	face := func(text string) string { return "[|" + center(text, head) + "|]" }
-	body := func(text string) string { return " /|" + center(text, chest) + "|\\ " }
+	head := width - 10
+	chest := head - 6
+	face := func(text string) string { return "| " + center(text, head-2) + " |" }
+	body := func(text string) string { return "| |" + center(text, chest) + "| |" }
 	art := []string{
-		".---.",
-		"'--+--'",
+		".-o-.",
 		"|",
 		"." + strings.Repeat("-", head) + ".",
+		"/" + strings.Repeat(" ", head) + "\\",
+		face("[o]    [o]"),
 	}
-	facePadding := (height - 16) / 2
-	for i := 0; i < facePadding/2; i++ {
-		art = append(art, face(""))
-	}
-	art = append(art, face("["+eye+"]    ["+eye+"]"))
-	for i := 0; i < facePadding-facePadding/2; i++ {
+	for i := 0; i < (height-16)/2; i++ {
 		art = append(art, face(""))
 	}
 	art = append(art,
-		face("'---v---'"),
+		face("`----'"),
 		"'"+strings.Repeat("-", head)+"'",
-		"|___|",
-		"."+strings.Repeat("-", chest)+".",
-		body("bqAgent"),
+		"|____|",
+		".-"+strings.Repeat("-", chest)+"-.",
+		body(">_"),
+		body("[=======]"),
 	)
-	bodyPadding := height - 16 - facePadding
-	for i := 0; i < bodyPadding; i++ {
+	for i := 0; i < height-16-(height-16)/2; i++ {
 		art = append(art, body(""))
 	}
 	art = append(art,
-		body("[ + ]     [:::]"),
-		"(_|"+strings.Repeat("_", chest)+"|_)",
-		"|  |"+strings.Repeat(" ", chest/2)+"|  |",
-		"|__|"+strings.Repeat(" ", chest/2)+"|__|",
-		"/____\\"+strings.Repeat(" ", chest/2-2)+"/____\\",
+		"'-|"+strings.Repeat("_", chest)+"|-'",
+		"|__|    |__|",
+		"/____\\  /____\\",
+		"",
 		"bqAgent",
 	)
 	for i, row := range art {
@@ -63,13 +61,33 @@ func (model Model) drawStartupArt(space []string) {
 	if len(art) == 0 {
 		return
 	}
+	shell, glow, detail := lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle()
+	if !model.config.NoColor {
+		shell = shell.Foreground(lipgloss.Color("#B59BE8"))
+		glow = glow.Foreground(lipgloss.Color("#7DDDD3")).Bold(true)
+		detail = detail.Foreground(lipgloss.Color("#77668F"))
+	}
 	top := (len(space) - len(art)) / 2
 	left := strings.Repeat(" ", (model.contentWidth()-len(art[0]))/2)
 	for i, row := range art {
-		style := model.styles.user
-		if strings.Contains(row, "=") || strings.Contains(row, "bqAgent") {
-			style = model.styles.accent
+		row = strings.TrimRight(row, " ")
+		if row == "" {
+			continue
 		}
-		space[top+i] = style.Render(left + strings.TrimRight(row, " "))
+		switch {
+		case strings.Contains(row, "bqAgent"):
+			row = model.styles.accent.Render(row)
+		case strings.Contains(row, "[o]"):
+			parts := strings.Split(row, "[o]")
+			row = shell.Render(parts[0]) + glow.Render("[o]") + shell.Render(parts[1]) + glow.Render("[o]") + shell.Render(parts[2])
+		case strings.Contains(row, ">_"):
+			parts := strings.SplitN(row, ">_", 2)
+			row = shell.Render(parts[0]) + model.styles.accent.Render(">_") + shell.Render(parts[1])
+		case strings.ContainsAny(row, "=_"):
+			row = detail.Render(row)
+		default:
+			row = shell.Render(row)
+		}
+		space[top+i] = left + row
 	}
 }
