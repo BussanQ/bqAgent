@@ -54,11 +54,7 @@ func (progress taskProgress) lines() []string {
 		}
 	}
 	lines := []string{fmt.Sprintf("任务 · %s · 验收 %d/%d · %s", status, done, len(state.Criteria), previewText(state.Goal))}
-	for i, criterion := range state.Criteria {
-		if i == 2 {
-			lines = append(lines, fmt.Sprintf("  …另有 %d 项验收条件", len(state.Criteria)-i))
-			break
-		}
+	for _, criterion := range state.Criteria {
 		mark := "[ ]"
 		if criterion.Done {
 			mark = "[✓]"

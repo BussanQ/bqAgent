@@ -96,6 +96,50 @@ func TestIlinkChannelLoginEndpoints(t *testing.T) {
 	}
 }
 
+// Login polling must stop with the channel: after shutdown no further
+// get_qrcode_status request may be issued and the goroutine must exit.
+func TestIlinkChannelLoginPollingStopsWithChannel(t *testing.T) {
+	var statusCalls atomic.Int32
+	var ilinkServer *httptest.Server
+	ilinkServer = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/ilink/bot/get_bot_qrcode":
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"ret":0,"qrcode":"qr-cancel","qrcode_img_content":"img-cancel"}`))
+		case "/ilink/bot/get_qrcode_status":
+			statusCalls.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"ret":0,"status":"pending"}`))
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ilinkServer.Close()
+
+	root := t.TempDir()
+	channel := NewIlinkChannel(
+		newTestService(root, "http://example.invalid"),
+		weixin.NewClientWithBaseURL(ilinkServer.URL, "1.0.2", ilinkServer.Client()),
+		weixin.NewTokenStore(root),
+		weixin.NewPollerStateStore(root),
+		weixin.NewChatStateStore(root),
+	)
+
+	lifecycleCtx, cancelLifecycle := context.WithCancel(context.Background())
+	channel.Start(lifecycleCtx)
+	if _, err := channel.StartLogin(context.Background()); err != nil {
+		t.Fatalf("StartLogin returned error: %v", err)
+	}
+	waitForCondition(t, 2*time.Second, func() bool { return statusCalls.Load() > 0 }, "first login status poll")
+
+	cancelLifecycle()
+	settled := statusCalls.Load()
+	time.Sleep(3 * ilinkIdleInterval)
+	if after := statusCalls.Load(); after != settled {
+		t.Fatalf("login polling continued after shutdown: %d -> %d calls", settled, after)
+	}
+}
+
 func TestChannelProgressWriterSendsProgressMessages(t *testing.T) {
 	var sent []string
 	writer := newChannelProgressWriter(context.Background(), func(_ context.Context, message string) error {

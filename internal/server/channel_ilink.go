@@ -159,7 +159,7 @@ func (channel *IlinkChannel) StartLogin(ctx context.Context) (IlinkStatus, error
 	}
 	channel.mu.Unlock()
 
-	go channel.pollLoginStatus(strings.TrimSpace(response.QRCode))
+	go channel.pollLoginStatus(ctx, strings.TrimSpace(response.QRCode))
 	return channel.Status(), nil
 }
 
@@ -400,25 +400,52 @@ func (channel *IlinkChannel) sendIlinkText(ctx context.Context, tokenState weixi
 	return channel.client.SendTextMessage(ctx, tokenState.BaseURL, tokenState.BotToken, update.UserID, update.ClientID, contextToken, text)
 }
 
-func (channel *IlinkChannel) pollLoginStatus(qrcode string) {
+// loginPollBaseContext returns the channel lifetime context so login polling
+// stops with the channel instead of outliving shutdown. Login can start before
+// Start runs, so a nil baseCtx falls back to the caller's request context.
+func (channel *IlinkChannel) loginPollBaseContext() (context.Context, bool) {
+	channel.mu.Lock()
+	defer channel.mu.Unlock()
+	if channel.stopping {
+		return nil, false
+	}
+	if channel.baseCtx != nil {
+		return channel.baseCtx, true
+	}
+	return nil, true
+}
+
+func (channel *IlinkChannel) pollLoginStatus(parent context.Context, qrcode string) {
+	if parent == nil {
+		parent = context.Background()
+	}
 	for {
 		channel.mu.Lock()
 		active := channel.login.InProgress && channel.login.QRCode == qrcode
+		stopping := channel.stopping
+		if !stopping && channel.baseCtx != nil {
+			parent = channel.baseCtx
+		}
 		channel.mu.Unlock()
-		if !active {
+		if !active || stopping || parent.Err() != nil {
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 45*time.Second)
 		response, err := channel.client.PollQRCodeStatus(ctx, qrcode)
 		cancel()
 		if err != nil {
+			if parent.Err() != nil {
+				return
+			}
 			channel.mu.Lock()
 			channel.login.LastError = err.Error()
 			channel.login.UpdatedAt = time.Now().UTC()
 			channel.lastError = err.Error()
 			channel.mu.Unlock()
-			time.Sleep(ilinkIdleInterval)
+			if !sleepContext(parent, ilinkIdleInterval) {
+				return
+			}
 			continue
 		}
 
@@ -459,7 +486,9 @@ func (channel *IlinkChannel) pollLoginStatus(qrcode string) {
 		channel.login.LastError = ""
 		channel.login.UpdatedAt = time.Now().UTC()
 		channel.mu.Unlock()
-		time.Sleep(ilinkIdleInterval)
+		if !sleepContext(parent, ilinkIdleInterval) {
+			return
+		}
 	}
 }
 

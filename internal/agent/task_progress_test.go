@@ -347,6 +347,34 @@ func taskEvents(events []turn.Event) []turn.Event {
 	return result
 }
 
+func TestTaskSnapshotOnNewTurnHidesFinishedState(t *testing.T) {
+	for _, status := range []string{"completed", "cancelled", "active", "blocked", "awaiting_input"} {
+		t.Run(status, func(t *testing.T) {
+			state := activeTestTask()
+			state.Status = status
+			state.Reason = "saved task"
+			store := &memoryTaskStore{state: &state}
+			var events []turn.Event
+			client := &stubClient{responses: []AssistantMessage{{Content: "answer"}}}
+			app := NewWithOptions(client, "test", Options{TurnID: "next-turn", TaskStore: store, MessageSink: func(e turn.Event) { events = append(events, e) }})
+			if _, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "status"}}, 10); err != nil {
+				t.Fatal(err)
+			}
+			got := taskEvents(events)
+			if len(got) == 0 {
+				t.Fatal("missing initial task snapshot")
+			}
+			finished := status == "completed" || status == "cancelled"
+			if (got[0].Text == "null") != finished {
+				t.Fatalf("status %s: initial snapshot = %s", status, got[0].Text)
+			}
+			if store.state.Status != status || app.task == nil || app.task.Status != status {
+				t.Fatal("hiding the snapshot changed the saved task")
+			}
+		})
+	}
+}
+
 func TestTaskUpdatedEventsOnLoadSaveAndUnchanged(t *testing.T) {
 	active := activeTestTask()
 	changed := active

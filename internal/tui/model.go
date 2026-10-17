@@ -656,6 +656,9 @@ func (model *Model) submit(value string, images ...Image) tea.Cmd {
 	model.sequence++
 	model.phase = phaseThinking
 	model.messages = turn.Messages{}
+	if model.task.state != nil && (model.task.state.Status == "completed" || model.task.state.Status == "cancelled") {
+		model.task = taskProgress{}
+	}
 	model.task.turnID, model.task.seq = "", 0
 	model.reportActivity("working")
 	model.progress = "正在思考"

@@ -289,7 +289,11 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			a.logf("[Task] could not load progress: %v; continuing without a saved task\n", err)
 			a.task, err = nil, nil
 		}
-		turnRun(ctx).emitTask(a.task)
+		visibleTask := a.task
+		if visibleTask != nil && (visibleTask.Status == "completed" || visibleTask.Status == "cancelled") {
+			visibleTask = nil
+		}
+		turnRun(ctx).emitTask(visibleTask)
 	}
 	messages = ensurePromptSnapshotMessages(messages, a.prompt)
 	startedAt := time.Now()
