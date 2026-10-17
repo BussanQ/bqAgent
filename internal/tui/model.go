@@ -199,7 +199,9 @@ func NewModel(backend Backend, config Config) Model {
 	model.startup = model.startupLines()
 	if model.sessionID != "" {
 		if history, err := backend.History(model.sessionID, ResumeHistoryBudget); err == nil {
-			model.task.state = history.Task
+			if history.Task != nil && history.Task.Status != "completed" && history.Task.Status != "cancelled" {
+				model.task.state = history.Task
+			}
 			model.startup = append(model.startup, model.renderHistory(history)...)
 		} else {
 			model.startup = append(model.startup, model.styles.error.Render("无法恢复会话："+err.Error()))
@@ -656,10 +658,10 @@ func (model *Model) submit(value string, images ...Image) tea.Cmd {
 	model.sequence++
 	model.phase = phaseThinking
 	model.messages = turn.Messages{}
-	if model.task.state != nil && (model.task.state.Status == "completed" || model.task.state.Status == "cancelled") {
-		model.task = taskProgress{}
-	}
-	model.task.turnID, model.task.seq = "", 0
+	// A new turn owns its own task snapshots: the agent re-sends an unfinished
+	// task at turn start, so the previous projection (and its stale mark) is
+	// dropped instead of lingering beside the new turn.
+	model.task = taskProgress{}
 	model.reportActivity("working")
 	model.progress = "正在思考"
 	model.startedAt = time.Now()

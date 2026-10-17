@@ -7,22 +7,43 @@ import (
 	"bqagent/internal/taskstate"
 )
 
-func TestTaskProgressClearsFinishedTaskOnSubmit(t *testing.T) {
+func TestTaskProgressClearsPreviousTaskOnSubmit(t *testing.T) {
+	// Any status: a task left over from the previous turn, finished or not,
+	// must not be shown beside the new turn.
 	for _, status := range []string{"completed", "cancelled", "active", "blocked", "awaiting_input"} {
 		t.Run(status, func(t *testing.T) {
 			model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
 			model.task = taskProgress{state: &taskstate.State{Goal: "上一轮任务", Status: status, Criteria: []taskstate.Criterion{{Description: "验收"}}}, turnID: "previous", seq: 8}
 			_ = model.submit("下一轮")
 			defer model.active.cancel()
-			finished := status == "completed" || status == "cancelled"
-			if (model.task.state == nil) != finished {
-				t.Fatalf("status %s: task = %+v", status, model.task.state)
+			if model.task.state != nil {
+				t.Fatalf("status %s: leftover task = %+v", status, model.task.state)
 			}
-			if finished && len(model.auxiliaryLines()) != 0 {
-				t.Fatalf("finished task still visible: %v", model.auxiliaryLines())
+			if len(model.auxiliaryLines()) != 0 {
+				t.Fatalf("status %s: leftover task still visible: %v", status, model.auxiliaryLines())
 			}
 			if model.task.turnID != "" || model.task.seq != 0 {
 				t.Fatal("previous turn event identity retained")
+			}
+		})
+	}
+}
+
+func TestResumeSkipsFinishedTaskInLivePanel(t *testing.T) {
+	for _, status := range []string{"completed", "cancelled", "active", "waiting"} {
+		t.Run(status, func(t *testing.T) {
+			live := status
+			if live == "waiting" {
+				live = "awaiting_input"
+			}
+			backend := &fakeBackend{history: History{ID: "saved", Task: &taskstate.State{Goal: "旧任务", Status: live, Criteria: []taskstate.Criterion{{Description: "验收"}}}}}
+			model := NewModel(backend, Config{SessionID: "saved", Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+			finished := live == "completed" || live == "cancelled"
+			if (model.task.state != nil) == finished {
+				t.Fatalf("status %s: live task = %+v", live, model.task.state)
+			}
+			if finished && len(model.auxiliaryLines()) != 0 {
+				t.Fatalf("status %s: resumed finished task visible: %v", live, model.auxiliaryLines())
 			}
 		})
 	}
