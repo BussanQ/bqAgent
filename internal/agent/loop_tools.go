@@ -28,10 +28,10 @@ func replayableToolCalls(toolCalls []ToolCall) []ToolCall {
 	return filtered
 }
 
-func (a *Agent) appendEmptyFinalRecovery(messages []map[string]any) ([]map[string]any, error) {
+func (a *Agent) appendEmptyFinalRecovery(messages []map[string]any, prompt string) ([]map[string]any, error) {
 	recoveryMessage := map[string]any{
 		"role":    "user",
-		"content": emptyFinalRecoveryPrompt,
+		"content": prompt,
 	}
 	updated := append(messages, recoveryMessage)
 	if err := a.recordMessages(recoveryMessage); err != nil {
@@ -146,7 +146,7 @@ func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall) bool {
 			}
 		}
 		switch toolCall.Function.Name {
-		case "write_file", "edit_file", "task_update", "task_scope":
+		case "write_file", "edit_file", "task_update", "task_scope", "turn_outcome":
 			return true
 		case "consult_group_agent":
 			return true

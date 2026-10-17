@@ -31,22 +31,19 @@ type runState struct {
 	// ledger holds this turn's real tool executions for completion evidence.
 	ledger execLedger
 
-	mu                     sync.Mutex
-	latestUser             string
-	explicitScope          bool
-	inputClock             uint64 // ledger time of the latest user input
-	taskUpdated            bool
-	reassessPrompts        int
-	completionSaved        bool
-	completedClock         uint64
-	staleCompletionPrompts int
-	closeoutPrompts        int
+	mu              sync.Mutex
+	latestUser      string
+	explicitScope   bool
+	inputClock      uint64 // ledger time of the latest user input
+	taskUpdated     bool
+	completionSaved bool
+	completedClock  uint64
+	declaration     *outcomeDeclaration // current request only; never restored from task history
 }
 
 // acceptUserInput must be called for every user message that joins the turn
 // (the initial request and any steering/follow-up). It grounds goal-change
-// quotes (only the latest user message counts), requires the saved task to be re-assessed again, re-arms the closeout
-// check and invalidates verification evidence gathered before the new input.
+// quotes in the latest user message and invalidates older verification evidence.
 func (s *runState) acceptUserInput(text string) {
 	if s == nil || strings.TrimSpace(text) == "" {
 		return
@@ -54,8 +51,7 @@ func (s *runState) acceptUserInput(text string) {
 	s.mu.Lock()
 	s.latestUser = text
 	s.taskUpdated = false
-	s.reassessPrompts = 0
-	s.closeoutPrompts = 0
+	s.declaration = nil
 	s.mu.Unlock()
 	if !s.explicitScope {
 		// A model-inferred side_question applied to the previous request only.
@@ -126,7 +122,7 @@ func (a *Agent) RunTurn(ctx context.Context, messages []map[string]any, maxItera
 	ctx = context.WithValue(ctx, runStateKey{}, state)
 	metricsCtx, collector := withTurnGenerationCollector(ctx)
 	reply, history, err := a.runConversation(metricsCtx, duplicateMessages(messages), maxIterations)
-	reopened := a.reopenStaleCompletion(state)
+	a.reopenStaleCompletion(state)
 	if err != nil {
 		status := turn.Failed
 		if errors.Is(err, context.Canceled) {
@@ -134,21 +130,10 @@ func (a *Agent) RunTurn(ctx context.Context, messages []map[string]any, maxItera
 		}
 		state.outcome.Set(status, err.Error())
 	}
+	state.applyDeclaredOutcome()
+	// Historical progress snapshots do not determine the current turn result.
 	if a.task != nil {
 		state.outcome.TaskStatus = a.task.Status
-		if err == nil && state.outcome.Status == turn.Completed && state.outcome.TaskRelation != turn.SideQuestion {
-			switch a.task.Status {
-			case "blocked":
-				state.outcome.Set(turn.Blocked, a.task.Reason)
-			case "awaiting_input":
-				state.outcome.Set(turn.AwaitingInput, a.task.Reason)
-			case "cancelled":
-				state.outcome.Set(turn.Interrupted, a.task.Reason)
-			}
-		}
-	}
-	if reopened && err == nil && state.outcome.Status == turn.Completed {
-		state.outcome.Set(turn.Blocked, "completion_stale_after_changes")
 	}
 	if err == nil && strings.TrimSpace(reply) != "" {
 		if state.finalItem == "" {

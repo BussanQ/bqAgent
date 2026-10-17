@@ -203,8 +203,8 @@ var gitReadOnly = map[string]bool{"status": true, "diff": true, "log": true, "sh
 // treated as potentially mutating, which only makes older evidence stale.
 // A compound command is verification/read-only only if every segment is.
 func classifyBash(command string) bashKind {
-	c := strings.TrimSpace(command)
-	if c == "" {
+	c, valid := shellControlText(strings.TrimSpace(command))
+	if !valid || c == "" {
 		return bashMutating
 	}
 	for _, harmless := range []string{"2>&1", "&>/dev/null", ">/dev/null", "2>/dev/null", "> /dev/null", "2> /dev/null"} {
@@ -268,6 +268,9 @@ func classifySegment(words []string) bashKind {
 	}
 	switch name {
 	case "git":
+		if sub == "diff" && has("--check") {
+			return bashVerify
+		}
 		if gitReadOnly[sub] {
 			return bashReadOnly
 		}
@@ -334,14 +337,69 @@ func classifySegment(words []string) bashKind {
 	return bashMutating
 }
 
-var pipefailSetter = regexp.MustCompile(`\bset\s+(-[A-Za-z]+\s+)*-o\s+pipefail\s*(;|&&|\n)`)
+// shellControlText masks quoted/escaped metacharacters so test regexes and
+// literal arguments are not mistaken for shell pipelines or command separators.
+// Expansions that can execute nested commands are deliberately unsupported.
+func shellControlText(command string) (string, bool) {
+	var text strings.Builder
+	var quote rune
+	escaped := false
+	chars := []rune(command)
+	for i, ch := range chars {
+		if escaped {
+			if ch == '\n' {
+				text.WriteByte(' ')
+			} else if strings.ContainsRune("|;&`<>$", ch) {
+				text.WriteByte('x')
+			} else {
+				text.WriteRune(ch)
+			}
+			escaped = false
+			continue
+		}
+		if ch == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			} else if quote == '"' && (ch == '`' || ch == '$' && i+1 < len(chars) && shellExpansionStart(chars[i+1])) {
+				return "", false
+			} else if strings.ContainsRune("|;&`<>$\n", ch) {
+				text.WriteByte('x')
+			} else {
+				text.WriteRune(ch)
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '$', '`':
+			return "", false
+		default:
+			text.WriteRune(ch)
+		}
+	}
+	return text.String(), quote == 0 && !escaped
+}
+
+func shellExpansionStart(ch rune) bool {
+	return ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || strings.ContainsRune("({_@*#?-$!", ch)
+}
+
+var pipefailSetter = regexp.MustCompile(`(^|[;&\n])\s*set\s+(-[A-Za-z]+\s+)*-o\s+pipefail\s*(;|&&|\n)`)
 
 // reliableExitStatus reports whether a command's exit status reflects all of
 // its steps. Under sh -c, `go test || true`, `go test; echo`, `go test | tail`
 // and background jobs all hide a failing check, so they cannot be evidence.
 // Only plain commands and && chains (or pipelines after set -o pipefail) count.
 func reliableExitStatus(command string) bool {
-	c := strings.TrimSpace(command)
+	c, valid := shellControlText(strings.TrimSpace(command))
+	if !valid || c == "" {
+		return false
+	}
 	for _, harmless := range []string{"2>&1", "&>/dev/null", ">/dev/null", "2>/dev/null", "> /dev/null", "2> /dev/null", ">&2"} {
 		c = strings.ReplaceAll(c, harmless, " ")
 	}

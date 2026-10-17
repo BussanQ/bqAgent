@@ -108,6 +108,33 @@ func TestTaskCompletionEvidenceMustMatchRealExecution(t *testing.T) {
 		{"and-chain of checks", func(app *Agent, ctx context.Context) {
 			app.runRegularToolCall(ctx, bashCall("b1", "go vet ./x && go test ./x"))
 		}, passed("go vet ./x && go test ./x", ""), false},
+		{"git diff check is verification", func(app *Agent, ctx context.Context) {
+			app.runRegularToolCall(ctx, bashCall("b1", "git diff --check"))
+		}, passed("git diff --check", "b1"), false},
+		{"quoted test alternation is not a pipeline", func(app *Agent, ctx context.Context) {
+			app.runRegularToolCall(ctx, bashCall("b1", "go test ./x -run '^(TestA|TestB)$'"))
+		}, passed("go test ./x -run '^(TestA|TestB)$'", "b1"), false},
+		{"double quoted alternation", func(app *Agent, ctx context.Context) {
+			app.runRegularToolCall(ctx, bashCall("b1", `go test ./x -run "^(TestA|TestB)$"`))
+		}, passed(`go test ./x -run "^(TestA|TestB)$"`, "b1"), false},
+		{"escaped test alternation", func(app *Agent, ctx context.Context) {
+			app.runRegularToolCall(ctx, bashCall("b1", `go test ./x -run TestA\|TestB`))
+		}, passed(`go test ./x -run TestA\|TestB`, "b1"), false},
+		{"quoted shell characters are literal", func(app *Agent, ctx context.Context) {
+			app.runRegularToolCall(ctx, bashCall("b1", "go test ./x -run 'TestA;TestB||TestC&TestD'"))
+		}, passed("go test ./x -run 'TestA;TestB||TestC&TestD'", "b1"), false},
+		{"real pipeline after quoted regex is rejected", func(app *Agent, ctx context.Context) {
+			app.runRegularToolCall(ctx, bashCall("b1", "go test ./x -run 'TestA|TestB' | tail -5"))
+		}, passed("go test ./x -run 'TestA|TestB' | tail -5", "b1"), true},
+		{"quoted fake pipefail cannot hide a pipeline", func(app *Agent, ctx context.Context) {
+			app.runRegularToolCall(ctx, bashCall("b1", "go test ./x -run 'set -o pipefail; TestA' | tail -5"))
+		}, passed("go test ./x -run 'set -o pipefail; TestA' | tail -5", "b1"), true},
+		{"quoted fake pipefail following and-chain cannot hide pipeline", func(app *Agent, ctx context.Context) {
+			app.runRegularToolCall(ctx, bashCall("b1", "true && go test ./x -run 'set -o pipefail; TestA' | tail -5"))
+		}, passed("true && go test ./x -run 'set -o pipefail; TestA' | tail -5", "b1"), true},
+		{"command substitution is not trusted evidence", func(app *Agent, ctx context.Context) {
+			app.runRegularToolCall(ctx, bashCall("b1", `go test ./x -run "$(./change.sh)"`))
+		}, passed(`go test ./x -run "$(./change.sh)"`, "b1"), true},
 		{"echo is not verification", func(app *Agent, ctx context.Context) { app.runRegularToolCall(ctx, bashCall("b1", "echo PASS")) }, passed("echo PASS", ""), true},
 		{"failed edit may have partially written", func(app *Agent, ctx context.Context) {
 			app.runRegularToolCall(ctx, bashCall("b1", "go test ./x"))
@@ -207,7 +234,7 @@ func TestClassifyBashIsConservative(t *testing.T) {
 		"make deploy":                             bashMutating,
 		"gofmt -w a.go":                           bashMutating,
 		"FOO=1 go test ./...":                     bashVerify,
-		"go test ./... >/dev/null 2>&1; echo $?":  bashVerify,
+		"go test ./... >/dev/null 2>&1; echo $?":  bashMutating,
 		"go test ./... || echo failed":            bashVerify,
 		"python3 -m pytest -x":                    bashVerify,
 		"python3 script.py":                       bashMutating,
@@ -351,21 +378,21 @@ func reassessReply(status string) AssistantMessage {
 	return taskUpdateMessage(state)
 }
 
-func TestBlockedTaskContinueRequiresReassessment(t *testing.T) {
+func TestBlockedTaskReassessmentDoesNotGateFinalAnswer(t *testing.T) {
 	for _, status := range []string{"blocked", "awaiting_input"} {
 		blocked := activeTestTask()
 		blocked.Status = status
 		blocked.Reason = "waiting for credentials"
 		t.Run(status+"/reassessed active then continues", func(t *testing.T) {
 			store := &memoryTaskStore{state: &blocked}
-			client := &stubClient{responses: []AssistantMessage{{Content: "收到"}, reassessReply("active"), {Content: "继续修复中", Phase: "commentary"}}}
+			client := &stubClient{responses: []AssistantMessage{{Content: "收到", Phase: "commentary"}, reassessReply("active"), {Content: "继续修复中", Phase: "commentary"}}}
 			app := NewWithOptions(client, "test", Options{TaskStore: store})
 			result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "凭据已经提供了，继续"}}, 3)
 			if err != nil || store.state.Status != "active" || len(client.messages) != 3 {
 				t.Fatalf("status=%s calls=%d err=%v", store.state.Status, len(client.messages), err)
 			}
-			if !requestHasText(client.messages[1], "acknowledging is not enough") || result.Outcome.TaskStatus != "active" {
-				t.Fatalf("missing reassessment prompt or status: %+v", result.Outcome)
+			if result.Outcome.TaskStatus != "active" {
+				t.Fatalf("missing task status: %+v", result.Outcome)
 			}
 		})
 		t.Run(status+"/same blocker re-recorded passes", func(t *testing.T) {
@@ -377,12 +404,12 @@ func TestBlockedTaskContinueRequiresReassessment(t *testing.T) {
 				t.Fatalf("calls=%d reply=%q err=%v", len(client.messages), result.Reply, err)
 			}
 		})
-		t.Run(status+"/ignoring prompts ends blocked explicitly", func(t *testing.T) {
+		t.Run(status+"/saved blocker does not gate a final answer", func(t *testing.T) {
 			store := &memoryTaskStore{state: &blocked}
 			client := &stubClient{responses: []AssistantMessage{{Content: "收到"}, {Content: "收到"}, {Content: "收到"}}}
 			app := NewWithOptions(client, "test", Options{TaskStore: store})
 			result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "继续"}}, 10)
-			if err != nil || len(client.messages) != 3 || result.Outcome.Status != turn.Blocked || result.Outcome.Reason != "task_reassessment_required" {
+			if err != nil || len(client.messages) != 1 || result.Outcome.Status != turn.Completed || result.Outcome.Reason != "" || result.Outcome.TaskStatus != status {
 				t.Fatalf("calls=%d outcome=%+v err=%v", len(client.messages), result.Outcome, err)
 			}
 		})
@@ -397,7 +424,7 @@ func TestBlockedTaskContinueRequiresReassessment(t *testing.T) {
 	}
 }
 
-func TestComplexTurnWithoutTaskRecordIsCheckedAtCloseout(t *testing.T) {
+func TestComplexTurnWithoutTaskRecordCanFinish(t *testing.T) {
 	bash := func(id, command string) AssistantMessage {
 		return AssistantMessage{ToolCalls: []ToolCall{bashCall(id, command)}}
 	}
@@ -408,7 +435,7 @@ func TestComplexTurnWithoutTaskRecordIsCheckedAtCloseout(t *testing.T) {
 		}
 	}
 	complete := completedWith(taskstate.Verification{Command: "go test ./x", Status: "passed", Details: "ok"})
-	t.Run("edits and verification force one record", func(t *testing.T) {
+	t.Run("edits and verification do not force a record", func(t *testing.T) {
 		store := &memoryTaskStore{}
 		client := &stubClient{responses: []AssistantMessage{
 			{ToolCalls: []ToolCall{editCall("e1")}}, {ToolCalls: []ToolCall{editCall("e2")}}, bash("b1", "go test ./x"),
@@ -416,16 +443,16 @@ func TestComplexTurnWithoutTaskRecordIsCheckedAtCloseout(t *testing.T) {
 		}}
 		app := NewWithOptions(client, "test", Options{TaskStore: store, Functions: functions()})
 		reply, err := app.Run(context.Background(), "implement it", 20)
-		if err != nil || reply != "recorded and done" || store.state == nil || store.state.Status != "completed" {
-			t.Fatalf("reply=%q task=%+v err=%v", reply, store.state, err)
+		if err != nil || reply != "done" || len(client.messages) != 4 || store.state != nil {
+			t.Fatalf("reply=%q calls=%d task=%+v err=%v", reply, len(client.messages), store.state, err)
 		}
 	})
-	t.Run("two edits without any check are forced and cannot silently complete", func(t *testing.T) {
+	t.Run("two edits without a record do not force bookkeeping", func(t *testing.T) {
 		store := &memoryTaskStore{}
 		client := &stubClient{responses: []AssistantMessage{{ToolCalls: []ToolCall{editCall("e1")}}, {ToolCalls: []ToolCall{editCall("e2")}}, {Content: "done"}, {Content: "done"}, {Content: "done"}}}
 		app := NewWithOptions(client, "test", Options{TaskStore: store, Functions: functions()})
 		result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "edit"}}, 20)
-		if err != nil || len(client.messages) != 5 || result.Outcome.Status != turn.Blocked || result.Outcome.Reason != "task_record_missing" {
+		if err != nil || len(client.messages) != 3 || result.Outcome.Status != turn.Completed || result.Outcome.Reason != "" {
 			t.Fatalf("calls=%d outcome=%+v err=%v", len(client.messages), result.Outcome, err)
 		}
 	})
@@ -499,11 +526,8 @@ func TestCompletionRecordReopenedWhenChangedAfterwards(t *testing.T) {
 		}}
 		app := NewWithOptions(client, "test", Options{TaskStore: store, Functions: functions})
 		result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "go"}}, 20)
-		if err != nil || len(client.messages) != 6 || store.state.Status != "active" || result.Outcome.TaskStatus != "active" || result.Outcome.Status != turn.Blocked || result.Outcome.Reason != "completion_stale_after_changes" {
+		if err != nil || len(client.messages) != 4 || store.state.Status != "active" || result.Outcome.TaskStatus != "active" || result.Outcome.Status != turn.Completed || result.Outcome.Reason != "" {
 			t.Fatalf("stale completion persisted: calls=%d task=%+v err=%v", len(client.messages), store.state, err)
-		}
-		if !requestHasText(client.messages[4], "that record and its verification are stale") {
-			t.Fatal("no stale-completion prompt")
 		}
 	})
 	t.Run("same batch edit after completion", func(t *testing.T) {
@@ -549,14 +573,14 @@ func TestNewUserInputRebaselinesScopeAndCloseout(t *testing.T) {
 	if _, err := app.functions["task_scope"](ctx, map[string]any{"relation": "side_question", "reason": "unrelated"}); err != nil {
 		t.Fatalf("earlier work blocked a new independent question: %v", err)
 	}
-	// A completed task does not absorb substantial new work after fresh input.
+	// A historical completed task must not force new work to create a record.
 	done := completedWith(taskstate.Verification{Command: "go test ./x", Status: "passed", Details: "ok"})
 	store := &memoryTaskStore{state: &done}
 	functions := map[string]tools.Function{"edit_file": func(context.Context, map[string]any) (string, error) { return "edited", nil }}
 	client := &stubClient{responses: []AssistantMessage{{ToolCalls: []ToolCall{editCall("e1")}}, {ToolCalls: []ToolCall{editCall("e2")}}, {Content: "done"}, {Content: "done"}, {Content: "done"}}}
 	agent := NewWithOptions(client, "test", Options{TaskStore: store, Functions: functions})
 	result, err := agent.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "new feature"}}, 20)
-	if err != nil || len(client.messages) != 5 || result.Outcome.Status != turn.Blocked || result.Outcome.Reason != "task_record_missing" {
+	if err != nil || len(client.messages) != 3 || result.Outcome.Status != turn.Completed || result.Outcome.Reason != "" {
 		t.Fatalf("calls=%d outcome=%+v err=%v", len(client.messages), result.Outcome, err)
 	}
 }

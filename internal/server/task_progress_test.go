@@ -44,7 +44,7 @@ func serverTaskUpdate(state taskstate.State) agent.AssistantMessage {
 func TestServiceRestoresTaskAndContinuesUntilVerified(t *testing.T) {
 	root := t.TempDir()
 	active := taskstate.State{Goal: "implement fast switch", Status: "active", Criteria: []taskstate.Criterion{{Description: "switch works"}}, Remaining: []string{"test switch"}}
-	client := &taskScriptClient{responses: []agent.AssistantMessage{serverTaskUpdate(active), {Role: "assistant", Content: "will test"}, {Role: "assistant", Content: "will test"}, {Role: "assistant", Content: "will test"}}}
+	client := &taskScriptClient{responses: []agent.AssistantMessage{serverTaskUpdate(active), {Role: "assistant", Content: "will test", Phase: "commentary"}, {Role: "assistant", Content: "will test", Phase: "commentary"}, {Role: "assistant", Content: "will test", Phase: "commentary"}}}
 	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: client, Model: "test", SystemPrompt: "test"})
 	response, err := service.HandleTurnWithOptions(context.Background(), TurnRequest{Message: "implement fast switch"}, TurnOptions{MaxIterations: 4})
 	if err != nil || !strings.Contains(response.Reply, "maximum of 4 iterations") {
@@ -52,7 +52,7 @@ func TestServiceRestoresTaskAndContinuesUntilVerified(t *testing.T) {
 	}
 	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "switch test succeeded"}}, Verification: []taskstate.Verification{{Command: "go test ./switch", Status: "passed", Details: "ok"}}}
 	client = &taskScriptClient{responses: []agent.AssistantMessage{
-		{Role: "assistant", Content: "not tested yet"},
+		{Role: "assistant", Content: "not tested yet", Phase: "commentary"},
 		{Role: "assistant", ToolCalls: []agent.ToolCall{{ID: "verify", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test ./switch"}`}}}},
 		serverTaskUpdate(complete), {Role: "assistant", Content: "verified", Phase: "final_answer"},
 	}}
@@ -101,7 +101,7 @@ func TestServiceCompletesLongTaskWithoutFollowupTurn(t *testing.T) {
 	responses := []agent.AssistantMessage{serverTaskUpdate(active)}
 	for i := 0; i < 6; i++ {
 		responses = append(responses,
-			agent.AssistantMessage{Content: ""},
+			agent.AssistantMessage{Content: "still working", Phase: "commentary"},
 			agent.AssistantMessage{Content: ""},
 			agent.AssistantMessage{Content: ""},
 			agent.AssistantMessage{Content: "still working", Phase: "commentary"},

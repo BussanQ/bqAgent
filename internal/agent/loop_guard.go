@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"bqagent/internal/tools"
 )
 
 const (
 	taskUpdateRecoveryThreshold   = 3
-	taskUpdateCheckpointThreshold = 5
-	taskUpdateStallRecoveryPrompt = "Repeated task_update calls are not task progress. Continue this same turn now with a substantive tool such as read_file, glob, grep, edit_file or execute_bash that does the actual work or verification. Call task_update again only when a real stage, acceptance result, blocker or scope change must be recorded."
+	taskUpdateStallRecoveryPrompt = "Repeated task_update calls are not task progress. Progress recording is temporarily unavailable until substantive work resumes. Continue this same turn with a substantive tool such as read_file, glob, grep, edit_file or execute_bash if work remains, or give the final answer if the actual work is done. Do not rerun successful verification or report a blocker solely to repair progress metadata."
 )
 
 type loopGuard struct {
@@ -31,13 +32,11 @@ type loopGuard struct {
 type loopGuardAction struct {
 	recoveryPrompt   string
 	checkpointReason string
-	stallCheckpoint  bool
 }
 
 func (action loopGuardAction) merge(next loopGuardAction) loopGuardAction {
-	if action.checkpointReason == "" || (action.stallCheckpoint && next.checkpointReason != "" && !next.stallCheckpoint) {
+	if action.checkpointReason == "" {
 		action.checkpointReason = next.checkpointReason
-		action.stallCheckpoint = next.stallCheckpoint
 	}
 	if action.recoveryPrompt == "" {
 		action.recoveryPrompt = next.recoveryPrompt
@@ -47,6 +46,23 @@ func (action loopGuardAction) merge(next loopGuardAction) loopGuardAction {
 
 func newLoopGuard(config StageConfig) *loopGuard {
 	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, argumentFailures: map[string]int{}, pathFailures: map[string]int{}, progress: newProgressTracker(), seenEdits: map[string]bool{}}
+}
+
+func (guard *loopGuard) taskUpdateSuspended() bool {
+	return guard.taskUpdateStall >= taskUpdateRecoveryThreshold
+}
+
+func (guard *loopGuard) filterDefinitions(definitions []tools.Definition) []tools.Definition {
+	if !guard.taskUpdateSuspended() {
+		return definitions
+	}
+	filtered := make([]tools.Definition, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.Function.Name != "task_update" {
+			filtered = append(filtered, definition)
+		}
+	}
+	return filtered
 }
 
 // Repeated successful operations within a recovered batch are intentional parts
@@ -65,6 +81,15 @@ func (guard *loopGuard) observeRecoveredTool(call ToolCall, result string, succe
 
 func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardAction {
 	if guard == nil {
+		return loopGuardAction{}
+	}
+	// Bookkeeping failures must never become a checkpoint for actual work.
+	// Suspend the tool after recovery until substantive progress resumes.
+	if call.Function.Name == "task_update" {
+		guard.taskUpdateStall++
+		if guard.taskUpdateStall == taskUpdateRecoveryThreshold {
+			return loopGuardAction{recoveryPrompt: taskUpdateStallRecoveryPrompt}
+		}
 		return loopGuardAction{}
 	}
 	failed := strings.HasPrefix(strings.TrimSpace(result), "Error:")
@@ -87,17 +112,7 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 		guard.failureCounts = map[string]int{}
 		guard.pathFailures = map[string]int{}
 	}
-	if call.Function.Name == "task_update" {
-		// task_update is bookkeeping: rewriting the plan (even with different
-		// states) without substantive work in between is not progress.
-		guard.taskUpdateStall++
-		if guard.taskUpdateStall == taskUpdateRecoveryThreshold {
-			return loopGuardAction{recoveryPrompt: taskUpdateStallRecoveryPrompt}
-		}
-		if guard.taskUpdateStall >= taskUpdateCheckpointThreshold {
-			return loopGuardAction{checkpointReason: "loop protection: repeated task_update without substantive work after recovery", stallCheckpoint: true}
-		}
-	} else if emptySearch := emptySearchSignature(call, result); emptySearch != "" {
+	if emptySearch := emptySearchSignature(call, result); emptySearch != "" {
 		if guard.lastEmptySearch == emptySearch {
 			guard.emptySearchCount++
 			if guard.emptySearchCount == 2 {
@@ -160,7 +175,7 @@ func (t *progressTracker) reset() { t.seen = map[string]bool{} }
 func (t *progressTracker) observe(call ToolCall, result string) bool {
 	t.edited = false
 	switch call.Function.Name {
-	case "task_scope", "task_update":
+	case "task_scope", "task_update", "turn_outcome":
 		return false
 	}
 	if !toolResultMadeProgress(call, result) {

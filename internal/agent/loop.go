@@ -239,6 +239,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 	if options.EnableNativeWebSearch || (options.ToolDefinitions == nil && options.Functions == nil) {
 		app.installNativeWebSearch(searchClient)
 	}
+	app.installTurnOutcomeTool()
 	app.installTaskTool()
 	return app
 }
@@ -285,7 +286,8 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 	if a.taskStore != nil {
 		a.task, err = a.taskStore.LoadTaskState()
 		if err != nil {
-			return "", messages, err
+			a.logf("[Task] could not load progress: %v; continuing without a saved task\n", err)
+			a.task, err = nil, nil
 		}
 		turnRun(ctx).emitTask(a.task)
 	}
@@ -331,7 +333,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if a.stageConfig.ImmediateProgress {
 			a.writeStageProgress(selectModelProgressMessage(modelProgressMessages))
 		}
-		definitions := a.toolDefinitionsForRun()
+		definitions := loopGuard.filterDefinitions(a.toolDefinitionsForRun())
 		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort, ServiceTier: a.serviceTier}
 		completionOptions.PromptCache = buildPromptCacheOptions(a.apiType, a.model, a.prompt, definitions, completionOptions)
 		requestMessages, compacted, budgetErr := a.buildRequestMessagesChecked(explorationCtx, messages, definitions, completionOptions)
@@ -487,6 +489,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 			}
 			if reason := a.continuationReason(ctx, message); reason != "" {
+				if strings.TrimSpace(message.FinalContent()) != "" {
+					emptyFinalRecoveries = 0
+				}
 				state.emit(itemID, "message.completed", "commentary", contentText(message.Content))
 				reason = continuations.recoveryPrompt(reason)
 				a.writeProgress("任务尚未完成，继续执行与验证。")
@@ -499,7 +504,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 			finalContent := message.FinalContent()
 			if message.Content != nil && strings.TrimSpace(finalContent) != "" {
-				if inputs != nil && canContinue && (state == nil || state.outcome.Status == turn.Completed) {
+				if inputs != nil && canContinue && state.canAcceptFollowUp() {
 					if pending := inputs.Finish(); len(pending) > 0 {
 						state.emit(itemID, "message.completed", "commentary", finalContent)
 						updatedMessages, err = a.appendTurnInputs(ctx, updatedMessages, pending)
@@ -526,7 +531,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				return "", updatedMessages, fmt.Errorf("%w after %d consecutive attempts", errEmptyFinalResponse, emptyFinalRecoveries)
 			}
 			a.writeStageProgress(fmt.Sprintf("Retrying empty final response (%d/%d)", emptyFinalRecoveries, maxEmptyFinalRecoveries))
-			updatedMessages, err = a.appendEmptyFinalRecovery(updatedMessages)
+			updatedMessages, err = a.appendEmptyFinalRecovery(updatedMessages, continuations.recoveryPrompt(emptyFinalRecoveryPrompt))
 			messages = updatedMessages
 			if err != nil {
 				return "", updatedMessages, err
@@ -592,7 +597,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
 				}
-				if action.checkpointReason != "" && !action.stallCheckpoint {
+				if action.checkpointReason != "" {
 					setTurnStop(ctx, turn.Blocked, action.checkpointReason)
 					return a.finishStageCheckpoint(ctx, updatedMessages, action.checkpointReason, actualIterations)
 				}
@@ -629,7 +634,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				guardAction = guardAction.merge(action)
 			}
 		}
-		if guardAction.checkpointReason != "" && (!guardAction.stallCheckpoint || loopGuard.taskUpdateStall >= taskUpdateCheckpointThreshold) {
+		if guardAction.checkpointReason != "" {
 			setTurnStop(ctx, turn.Blocked, guardAction.checkpointReason)
 			return a.finishStageCheckpoint(ctx, updatedMessages, guardAction.checkpointReason, actualIterations)
 		}

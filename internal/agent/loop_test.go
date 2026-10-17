@@ -484,7 +484,7 @@ func TestRunConversationRecoversRepeatedTaskUpdateWithoutStageProtection(t *test
 	if err != nil || result != "分析完成" || updates != 3 || reads != 1 {
 		t.Fatalf("result=%q updates=%d reads=%d err=%v", result, updates, reads, err)
 	}
-	recoveryMessage := client.messages[3][len(client.messages[3])-1]
+	recoveryMessage := client.messages[3][len(client.messages[3])-2]
 	prompt, _ := recoveryMessage["content"].(string)
 	if !strings.Contains(prompt, "not task progress") || !strings.Contains(prompt, "substantive tool") {
 		t.Fatalf("recovery prompt = %q", prompt)
@@ -494,22 +494,19 @@ func TestRunConversationRecoversRepeatedTaskUpdateWithoutStageProtection(t *test
 	}
 }
 
-func TestRunConversationStopsTaskUpdateWhenRecoveryIsIgnored(t *testing.T) {
+func TestRunConversationTaskUpdateStallDoesNotStopWork(t *testing.T) {
 	client := &stubClient{}
 	for i := 1; i <= 5; i++ {
 		client.responses = append(client.responses, AssistantMessage{ToolCalls: []ToolCall{taskUpdateStallCall(fmt.Sprintf("tu-%d", i), i)}})
 	}
-	client.responses = append(client.responses, AssistantMessage{Content: "已发现\n- 模型忽略纠偏\n\n未完成\n- 实质分析\n\n建议下一步\n- 回复“继续”"})
+	client.responses = append(client.responses,
+		AssistantMessage{ToolCalls: []ToolCall{{ID: "read", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"a.md"}`}}}},
+		AssistantMessage{Content: "分析完成"})
 	updates, reads := 0, 0
 	app := taskUpdateStallApp(client, &updates, &reads)
 	result, _, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "inspect"}}, 20)
-	if err != nil || updates != 5 || !strings.Contains(result, "忽略纠偏") {
-		t.Fatalf("result=%q updates=%d err=%v", result, updates, err)
-	}
-	last := client.messages[5]
-	checkpointPrompt, _ := last[len(last)-1]["content"].(string)
-	if !strings.Contains(checkpointPrompt, "must stop now") || !strings.Contains(checkpointPrompt, "task_update") {
-		t.Fatalf("checkpoint prompt = %q", checkpointPrompt)
+	if err != nil || updates != 5 || reads != 1 || result != "分析完成" || len(client.messages) != 7 {
+		t.Fatalf("result=%q updates=%d reads=%d calls=%d err=%v", result, updates, reads, len(client.messages), err)
 	}
 }
 
@@ -559,8 +556,8 @@ func TestLoopGuardTaskUpdateStallCountsDifferentStates(t *testing.T) {
 	if actions[1] != (loopGuardAction{}) || !strings.Contains(actions[2].recoveryPrompt, "substantive tool") || actions[2].checkpointReason != "" {
 		t.Fatalf("recovery actions = %#v", actions)
 	}
-	if !actions[4].stallCheckpoint || !strings.Contains(actions[4].checkpointReason, "task_update") {
-		t.Fatalf("checkpoint action = %#v", actions[4])
+	if actions[4].checkpointReason != "" || !guard.taskUpdateSuspended() {
+		t.Fatalf("bookkeeping should be suspended without stopping work: %#v", actions[4])
 	}
 }
 

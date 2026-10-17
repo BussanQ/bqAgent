@@ -256,7 +256,7 @@ func TestRunTaskCompletionRequiresAcceptanceAndVerification(t *testing.T) {
 	invalid := active
 	invalid.Status = "completed"
 	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted test passed"}}, Verification: []taskstate.Verification{{Command: "go test -run TestSwitch", Status: "passed", Details: "ok"}}}
-	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "will test"}, taskUpdateMessage(invalid), {Role: "assistant", ToolCalls: []ToolCall{{ID: "test", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}}, taskUpdateMessage(complete), {Role: "assistant", Content: "done"}}}
+	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "will test", Phase: "commentary"}, taskUpdateMessage(invalid), {Role: "assistant", ToolCalls: []ToolCall{{ID: "test", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}}, taskUpdateMessage(complete), {Role: "assistant", Content: "done"}}}
 	app := NewWithOptions(client, "test", Options{TaskStore: store, Functions: map[string]tools.Function{"execute_bash": func(context.Context, map[string]any) (string, error) { return "ok", nil }}})
 	reply, err := app.Run(context.Background(), "改完了吗", 10)
 	if err != nil || reply != "done" || store.state.Status != "completed" {
@@ -292,19 +292,9 @@ func TestRunContinuationLimitsAndOrdinaryAnswers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if status == "active" {
-				if !strings.Contains(reply, "maximum of 3 iterations") || len(client.messages) != 3 || store.state.Status != "active" {
-					t.Fatalf("reply=%q calls=%d", reply, len(client.messages))
-				}
-			} else if status == "blocked" || status == "awaiting_input" {
-				// A continued blocked task must be re-assessed by task_update; a bare
-				// acknowledgement is prompted twice, then ends with an explicit
-				// blocked outcome rather than silently passing.
-				if reply != "answer" || len(client.messages) != 3 || store.state.Status != status {
-					t.Fatalf("blocked task not re-assessed: %q calls=%d", reply, len(client.messages))
-				}
-			} else if reply != "answer" || len(client.messages) != 1 {
-				t.Fatalf("ordinary/blocked answer retried: %q calls=%d", reply, len(client.messages))
+			// Saved task state is advisory: every status ends after one answer.
+			if reply != "answer" || len(client.messages) != 1 || (status != "" && store.state.Status != status) {
+				t.Fatalf("task status %q retried or changed: %q calls=%d", status, reply, len(client.messages))
 			}
 		})
 	}
@@ -318,15 +308,15 @@ func TestRunContinuationLimitsAndOrdinaryAnswers(t *testing.T) {
 
 func TestTaskStateErrorsAndCancellationStopWork(t *testing.T) {
 	store := &memoryTaskStore{err: errors.New("disk failure")}
-	client := &stubClient{}
+	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "answer"}}}
 	app := NewWithOptions(client, "test", Options{TaskStore: store})
-	if _, err := app.Run(context.Background(), "work", 10); err == nil || len(client.messages) != 0 {
-		t.Fatal("task load error ignored")
+	if reply, err := app.Run(context.Background(), "work", 10); err != nil || reply != "answer" || len(client.messages) != 1 {
+		t.Fatalf("task load error blocked work: reply=%q err=%v calls=%d", reply, err, len(client.messages))
 	}
 	store.err = nil
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := app.Run(ctx, "work", 10); !errors.Is(err, context.Canceled) || len(client.messages) != 0 {
+	if _, err := app.Run(ctx, "work", 10); !errors.Is(err, context.Canceled) || len(client.messages) != 1 {
 		t.Fatalf("cancel err=%v", err)
 	}
 	active := activeTestTask()

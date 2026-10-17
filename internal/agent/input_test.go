@@ -96,10 +96,13 @@ func TestBlockedTurnLeavesFollowUpUnconsumed(t *testing.T) {
 	_ = q.Add(turn.Input{Kind: turn.FollowUp, Text: "next task"})
 	task := activeTestTask()
 	task.Status, task.Reason = "awaiting_input", "missing address"
-	client := &stubClient{responses: []AssistantMessage{{Content: "received"}, {Content: "received"}, {Content: "received"}}}
+	client := &stubClient{responses: []AssistantMessage{
+		turnOutcomeMessage(turn.AwaitingInput, "missing address"),
+		{Content: "missing address"},
+	}}
 	app := NewWithOptions(client, "test", Options{TaskStore: &memoryTaskStore{state: &task}})
 	result, err := app.RunTurn(turn.WithInputQueue(context.Background(), q), []map[string]any{{"role": "user", "content": "continue"}}, 10)
-	if err != nil || result.Outcome.Status != turn.Blocked || len(q.Close()) != 1 || len(client.messages) != 3 {
+	if err != nil || result.Outcome.Status != turn.AwaitingInput || len(q.Close()) != 1 || len(client.messages) != 2 {
 		t.Fatalf("result=%+v pending=%+v err=%v", result, q.Close(), err)
 	}
 }

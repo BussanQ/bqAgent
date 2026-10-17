@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ import (
 	"bqagent/internal/turn"
 )
 
-func TestServicePersistsDistinctTurnOutcomes(t *testing.T) {
+func TestServicePersistsTurnOutcomeIndependentOfTaskProgress(t *testing.T) {
 	for _, status := range []turn.Status{turn.Completed, turn.BudgetLimited, turn.Blocked, turn.AwaitingInput} {
 		t.Run(string(status), func(t *testing.T) {
 			client := &taskScriptClient{}
@@ -29,15 +30,51 @@ func TestServicePersistsDistinctTurnOutcomes(t *testing.T) {
 			client.responses = append(client.responses, agent.AssistantMessage{Content: "answer", Phase: phase})
 			service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
 			result, err := service.HandleTurnWithOptions(context.Background(), TurnRequest{Message: "work", TurnID: "test-turn"}, TurnOptions{MaxIterations: len(client.responses)})
-			if err != nil || result.Outcome.Status != status || result.TurnID != "test-turn" {
+			want := status
+			if status == turn.Blocked || status == turn.AwaitingInput {
+				if result.Outcome.TaskStatus != string(status) {
+					t.Fatalf("task progress status lost: %+v", result.Outcome)
+				}
+			}
+			if err != nil || result.Outcome.Status != want || result.TurnID != "test-turn" {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
 			saved, err := service.store.Open(result.SessionID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(saved.Meta().Status) != string(status) || saved.Meta().LastTurnOutcome == nil || saved.Meta().LastTurnOutcome.Status != status {
+			if string(saved.Meta().Status) != string(want) || saved.Meta().LastTurnOutcome == nil || saved.Meta().LastTurnOutcome.Status != want {
 				t.Fatalf("meta=%+v", saved.Meta())
+			}
+		})
+	}
+}
+
+func TestServicePersistsIndependentOutcomeWithoutTaskRecord(t *testing.T) {
+	for _, status := range []turn.Status{turn.Blocked, turn.AwaitingInput} {
+		t.Run(string(status), func(t *testing.T) {
+			client := &taskScriptClient{responses: []agent.AssistantMessage{
+				{ToolCalls: []agent.ToolCall{{ID: "outcome", Function: agent.FunctionCall{Name: "turn_outcome", Arguments: fmt.Sprintf(`{"status":%q,"reason":"address required"}`, status)}}}},
+				{Content: "请补充地址。"},
+			}}
+			service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
+			result, err := service.HandleTurn(context.Background(), TurnRequest{Message: "deploy"})
+			if err != nil || result.Outcome.Status != status || result.Outcome.Reason != "address required" {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+			saved, err := service.store.Open(result.SessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			task, err := saved.LoadTaskState()
+			if err != nil || task != nil || saved.Meta().LastTurnOutcome == nil || saved.Meta().LastTurnOutcome.Status != status || string(saved.Meta().Status) != string(status) {
+				t.Fatalf("task=%+v meta=%+v err=%v", task, saved.Meta(), err)
+			}
+			// A new request must not inherit the previous declaration.
+			client.responses = []agent.AssistantMessage{{Content: "独立问题的回答。"}}
+			next, err := service.HandleTurn(context.Background(), TurnRequest{SessionID: result.SessionID, Message: "explain this term"})
+			if err != nil || next.Outcome.Status != turn.Completed || next.Outcome.Reason != "" {
+				t.Fatalf("previous declaration leaked: result=%+v err=%v", next, err)
 			}
 		})
 	}

@@ -17,7 +17,7 @@ import (
 // instructions, so this per-turn developer message stays short.
 const taskProgressInstructions = `Task tracking: task_update is the only persistent progress record. Ordinary Q&A and single-step edits need no task. For a multi-step programming task, create one before editing with the original goal, acceptance criteria and remaining implementation/verification work. Update it only at a stage change, an acceptance result, a blocker, or a scope change, then keep working; rewriting an unchanged plan is not progress.
 An active task stays the objective when the user says continue or asks for status: answer status briefly and keep working unless told to stop or wait. For a new unrelated question, call task_scope with relation=side_question and a reason; it detaches only this turn and leaves the saved task unchanged. Never use side_question to drop work requested in the current turn. Replace the goal only when the user changes or cancels it, using replace_goal with a reason.
-Mark a task completed only when every criterion has tool evidence, nothing remains and the targeted verification passed; otherwise record blocked or awaiting_input with the concrete reason. Never remove criteria just to finish. Each passed verification must be a command this turn's execute_bash actually ran successfully after the last edit (optionally add its tool_call_id); a later edit makes it stale and it must be rerun. When the saved task is blocked or awaiting_input and the user continues it, re-assess it with task_update: set active when the blocker is gone, or keep it blocked with the concrete reason it still applies.`
+Mark a task completed only when every criterion has tool evidence, nothing remains and the targeted verification passed. Never remove criteria just to finish. Each passed verification must be a command this turn's execute_bash actually ran successfully after the last edit (optionally add its tool_call_id); a later edit makes it stale and it must be rerun. Re-assess saved blockers against the current request and continue when resolved. Progress tracking is advisory: a missing, stale or failed task_update must never stop substantive work or prevent a final answer. Do not repeat verification solely to repair progress metadata, and never record blocked or awaiting_input solely because progress recording failed. Reserve those statuses for concrete obstacles to the actual work or required user input. If tracking fails, explain the recording limitation briefly and report the actual work and verification results honestly.`
 
 func (a *Agent) installTaskTool() {
 	if a.taskStore == nil {
@@ -25,7 +25,7 @@ func (a *Agent) installTaskTool() {
 	}
 	a.installTaskScopeTool()
 	a.toolDefinitions = append(a.toolDefinitions, tools.Definition{Type: "function", Function: tools.FunctionDefinition{
-		Name: "task_update", Description: "The only persistent progress record. Use it for multi-step programming work, not for ordinary Q&A or single-step edits. Call it only at a stage change, an acceptance result, a blocker, or a scope change; do not resend an unchanged plan (identical state is ignored and is not progress). state is JSON containing goal, status (active/completed/blocked/awaiting_input/cancelled), criteria [{description,done,evidence}], remaining [string], verification [{command,tool_call_id (optional),status (passed/failed/unavailable),details}], reason. Completion requires all criteria backed by evidence, no remaining work, and passed verification whose command was actually run successfully by execute_bash in this turn after the last change. Preserve the original goal and criteria unless the user changes scope.",
+		Name: "task_update", Description: "The only persistent progress record. Use it for multi-step programming work, not for ordinary Q&A or single-step edits. Call it only at a stage change, an acceptance result, a blocker, or a scope change; do not resend an unchanged plan (identical state is ignored and is not progress). state is JSON containing goal, status (active/completed/blocked/awaiting_input/cancelled), criteria [{description,done,evidence}], remaining [string], verification [{command,tool_call_id (optional),status (passed/failed/unavailable),details}], reason. Completion requires all criteria backed by evidence, no remaining work, and passed verification whose command was actually run successfully by execute_bash in this turn after the last change. This record is advisory: recording failures must not block actual work or the final answer, and are not task blockers. Preserve the original goal and criteria unless the user changes scope.",
 		Parameters: tools.JSONSchema{Type: "object", Properties: map[string]tools.JSONSchemaProperty{
 			"state":        {Type: "string", Description: "Complete task state as a JSON object."},
 			"replace_goal": {Type: "boolean", Description: "Only true for a new user-authorized objective or changed acceptance criteria; include reason in state and user_quote."},
@@ -105,6 +105,18 @@ func (a *Agent) installTaskTool() {
 				run.ledger.barrier()
 			}
 		}
+		if run != nil {
+			switch next.Status {
+			case "blocked":
+				run.declareOutcome(turn.Blocked, next.Reason, false)
+			case "awaiting_input":
+				run.declareOutcome(turn.AwaitingInput, next.Reason, false)
+			case "cancelled":
+				run.declareOutcome(turn.Interrupted, next.Reason, false)
+			default:
+				run.declareOutcome(turn.Completed, "", false)
+			}
+		}
 		if unchanged {
 			return "Task state unchanged (no new information recorded). Continue substantive work instead of rewriting the plan; finish only after acceptance and verification, or explain the recorded blocker.", nil
 		}
@@ -159,9 +171,9 @@ func continuationContext(ctx context.Context) (context.Context, *continuationGua
 
 func (a *Agent) taskContext(ctx context.Context) string {
 	if a.taskStore == nil {
-		return ""
+		return turnOutcomeInstructions
 	}
-	text := taskProgressInstructions
+	text := taskProgressInstructions + "\n" + turnOutcomeInstructions
 	if a.task != nil {
 		data, _ := json.Marshal(a.task)
 		if isSideQuestion(ctx) {
@@ -216,14 +228,8 @@ func (a *Agent) continuationReason(ctx context.Context, message AssistantMessage
 	if message.Phase == "commentary" || message.Phase == "partial_answer" {
 		return "The previous assistant message was an intermediate progress update, not a final answer. Continue the authorized task now with substantive tools, or give a final answer if actually done or genuinely blocked."
 	}
-	if a.task != nil && a.task.Status == "active" && !isSideQuestion(ctx) {
-		return "The saved programming task is still active. Check its original goal, remaining work and acceptance criteria. Continue unfinished implementation or targeted verification now. Use task_update to record completion with evidence, or a concrete blocker/required user input. Do not stop at a promise to continue."
-	}
-	if reason := a.taskRecordReason(ctx); reason != "" {
-		return reason
-	}
-	// Tool count alone is not evidence of unfinished programming work. A
-	// complete ordinary answer must not be replaced by an unsolicited review.
+	// Saved progress is advisory. Only an incomplete/intermediate response
+	// warrants continuation; task metadata must not hold a final answer open.
 	return ""
 }
 
@@ -233,56 +239,6 @@ func (a *Agent) appendContinuation(messages []map[string]any, reason string) ([]
 		return messages, err
 	}
 	return append(messages, message), nil
-}
-
-const maxTaskRecordPrompts = 2
-
-// taskRecordReason enforces two task-record rules at the moment the model tries
-// to end the turn without tool calls:
-//  1. a blocked/awaiting_input task the user is continuing must be re-assessed
-//     by task_update in this turn, not merely acknowledged;
-//  2. substantial work (at least two successful edits) with no saved task must be recorded.
-//
-// Each rule prompts at most maxTaskRecordPrompts times. After that the turn may
-// end, but never silently: the outcome carries an explicit reason.
-func (a *Agent) taskRecordReason(ctx context.Context) string {
-	run := turnRun(ctx)
-	if a.taskStore == nil || run == nil || isSideQuestion(ctx) {
-		return ""
-	}
-	run.mu.Lock()
-	defer run.mu.Unlock()
-	if a.task != nil && a.task.Status == "completed" && run.completionSaved && run.ledger.mutatedSince(run.completedClock) {
-		if run.staleCompletionPrompts >= maxTaskRecordPrompts {
-			run.outcome.Set(turn.Blocked, "completion_stale_after_changes")
-			return ""
-		}
-		run.staleCompletionPrompts++
-		return "The task was recorded completed, but files or commands changed afterwards, so that record and its verification are stale. Re-run the targeted verification with execute_bash now, then call task_update again with the passed command; or record the task active with the remaining work."
-	}
-	edits, verifiers := run.ledger.workSummary(run.inputClock)
-	substantial := edits >= 2
-	terminal := a.task != nil && (a.task.Status == "completed" || a.task.Status == "cancelled")
-	if a.task != nil && !terminal {
-		if (a.task.Status != "blocked" && a.task.Status != "awaiting_input") || run.taskUpdated {
-			return ""
-		}
-		if run.reassessPrompts >= maxTaskRecordPrompts {
-			run.outcome.Set(turn.Blocked, "task_reassessment_required")
-			return ""
-		}
-		run.reassessPrompts++
-		return "The saved task is " + a.task.Status + " (" + a.task.Reason + ") and the user is continuing this conversation, so acknowledging is not enough. Re-assess it now: check whether the blocker still applies (use tools if needed), then call task_update — status active with the remaining work if it is resolved or the user supplied the input, or keep " + a.task.Status + " with the concrete reason it still applies this turn. Then continue or explain. If this message is an unrelated question, call task_scope with relation=side_question instead."
-	}
-	if !substantial || (a.task != nil && (!terminal || run.taskUpdated)) {
-		return ""
-	}
-	if run.closeoutPrompts >= maxTaskRecordPrompts {
-		run.outcome.Set(turn.Blocked, "task_record_missing")
-		return ""
-	}
-	run.closeoutPrompts++
-	return fmt.Sprintf("Before ending, review: this turn made %d successful edits, %d passing checks but no current task record covers it. Call task_update now to record the goal (if a different task was saved earlier, use replace_goal with user_quote), acceptance criteria with evidence, remaining work and verification (passed verification must be commands you actually ran with execute_bash after the last edit), then give the final answer.", edits, verifiers)
 }
 
 // verifyCompletionEvidence rejects a completed task whose passed verification
