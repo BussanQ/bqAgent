@@ -3,7 +3,7 @@ import { errorMessage } from "./api";
 import { byId } from "./dom";
 import { createAccountController } from "./account-controller";
 
-interface AuthStatus { required: boolean; authenticated: boolean }
+interface AuthStatus { required: boolean; authenticated: boolean; error?: string }
 
 export function createAuthController(api: APIClient, initialize: () => Promise<void>, clear: () => void) {
   const view = byId<HTMLElement>("login-view");
@@ -128,7 +128,7 @@ export function createAuthController(api: APIClient, initialize: () => Promise<v
       try {
         const status = await api.json<AuthStatus>("/api/v1/webui/auth", { signal: lifetime.signal });
         if (current !== generation) return;
-        if (status.required && !status.authenticated) showLogin();
+        if (status.required && !status.authenticated) showLogin(status.error ?? "");
         else await start(status.required);
       } catch (reason) {
         if (current === generation && !isCancellation(reason)) {

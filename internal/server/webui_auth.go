@@ -24,6 +24,7 @@ const (
 
 type webUIAuth struct {
 	required     bool
+	broken       bool
 	passwordHash [sha256.Size]byte
 	now          func() time.Time
 	mu           sync.Mutex
@@ -31,16 +32,25 @@ type webUIAuth struct {
 }
 
 type webUIAuthResponse struct {
-	Required      bool `json:"required"`
-	Authenticated bool `json:"authenticated"`
+	Required      bool   `json:"required"`
+	Authenticated bool   `json:"authenticated"`
+	Error         string `json:"error,omitempty"`
 }
+
+const webUIAuthBrokenMessage = "鉴权配置读取失败，请修复或删除全局配置文件后重启服务"
 
 func loadWebUIAuth(store *globalconfig.Store) *webUIAuth {
 	password := ""
 	if store != nil {
 		config, err := store.LoadWebUI()
 		if err != nil {
-			log.Printf("load WebUI authentication config: %v", err)
+			// The config file exists but cannot be read or parsed. A password may
+			// already be configured, so fail closed instead of silently dropping
+			// protection; a missing file is fine and stays passwordless.
+			log.Printf("load WebUI authentication config: %v; protected API endpoints will refuse requests", err)
+			auth := newWebUIAuth("")
+			auth.broken = true
+			return auth
 		} else if config != nil {
 			password = config.Password
 		}
@@ -59,7 +69,15 @@ func newWebUIAuth(password string) *webUIAuth {
 
 func (auth *webUIAuth) protect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if auth == nil || !auth.required || !webUIProtectedPath(request.URL.Path) {
+		if auth == nil || !webUIProtectedPath(request.URL.Path) {
+			next.ServeHTTP(writer, request)
+			return
+		}
+		if auth.broken {
+			writeJSON(writer, http.StatusServiceUnavailable, chatResponse{Error: webUIAuthBrokenMessage})
+			return
+		}
+		if !auth.required {
 			next.ServeHTTP(writer, request)
 			return
 		}
@@ -92,6 +110,10 @@ func (auth *webUIAuth) handle(writer http.ResponseWriter, request *http.Request)
 	writer.Header().Set("Vary", "Cookie")
 	switch request.Method {
 	case http.MethodGet:
+		if auth.broken {
+			writeJSON(writer, http.StatusOK, webUIAuthResponse{Required: true, Authenticated: false, Error: webUIAuthBrokenMessage})
+			return
+		}
 		writeJSON(writer, http.StatusOK, webUIAuthResponse{Required: auth.required, Authenticated: !auth.required || auth.authenticated(request)})
 	case http.MethodPost:
 		auth.login(writer, request)
@@ -104,6 +126,10 @@ func (auth *webUIAuth) handle(writer http.ResponseWriter, request *http.Request)
 }
 
 func (auth *webUIAuth) login(writer http.ResponseWriter, request *http.Request) {
+	if auth.broken {
+		writeError(writer, http.StatusServiceUnavailable, chatResponse{Error: webUIAuthBrokenMessage})
+		return
+	}
 	if !sameOriginRequest(request) {
 		writeError(writer, http.StatusForbidden, chatResponse{Error: "cross-origin login is not allowed"})
 		return
