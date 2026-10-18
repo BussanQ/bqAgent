@@ -197,6 +197,9 @@ func WriteFile(ctx context.Context, args map[string]any) (string, error) {
 
 func WriteFileToRoot(root string) Function {
 	return func(ctx context.Context, args map[string]any) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		path, err := requireString(args, "path")
 		if err != nil {
 			return "", err
@@ -210,6 +213,9 @@ func WriteFileToRoot(root string) Function {
 		if err != nil {
 			return "", err
 		}
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		if strings.TrimSpace(root) == "" {
 			err = os.WriteFile(resolvedPath, []byte(content), 0o644)
 		} else {
@@ -217,7 +223,9 @@ func WriteFileToRoot(root string) Function {
 			if openErr != nil {
 				err = openErr
 			} else {
-				err = atomicfile.WriteRoot(rootFS, relativePath, []byte(content), 0o644)
+				if err = ctx.Err(); err == nil {
+					err = atomicfile.WriteRoot(rootFS, relativePath, []byte(content), 0o644)
+				}
 				_ = rootFS.Close()
 			}
 		}
@@ -237,6 +245,9 @@ func EditFile(ctx context.Context, args map[string]any) (string, error) {
 // tool: it is far more token-efficient and safer than rewriting the whole file.
 func EditFileInRoot(root string) Function {
 	return func(ctx context.Context, args map[string]any) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		path, err := requireString(args, "path")
 		if err != nil {
 			return "", err
@@ -296,6 +307,9 @@ func EditFileInRoot(root string) Function {
 		} else {
 			updated = strings.Replace(content, oldString, newString, 1)
 			count = 1
+		}
+		if err := ctx.Err(); err != nil {
+			return "", err
 		}
 		if rootFS != nil {
 			err = atomicfile.WriteRoot(rootFS, relativePath, []byte(updated), 0o644)

@@ -237,6 +237,11 @@ func boundToolEventValue(value any, depth int) any {
 }
 
 func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (string, string) {
+	if err := ctx.Err(); err != nil {
+		result := formatToolError(err, "")
+		a.emitToolResult(toolCall, result, 0, true)
+		return toolCall.ID, result
+	}
 	toolStartedAt := time.Now()
 	parsedArguments, err := parseArguments(toolCall.Function.Arguments)
 	if err != nil {
@@ -276,7 +281,9 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 		if run != nil {
 			entry = run.ledger.begin(toolCall.ID, toolCall.Function.Name, arguments)
 		}
-		toolResult, toolErr = function(ctx, arguments)
+		if toolErr = ctx.Err(); toolErr == nil {
+			toolResult, toolErr = function(ctx, arguments)
+		}
 		if toolErr != nil {
 			toolResult = formatToolError(toolErr, toolResult)
 		}

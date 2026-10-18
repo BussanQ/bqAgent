@@ -259,6 +259,9 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			reportLiveTokenDelta(ctx, event.Delta)
 		}
 		reportLiveTokenUsage(ctx, tokenUsageFromOpenAIResponse(event.Response.Usage))
+		if sawTerminal {
+			break
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return AssistantMessage{}, providerTransportError(ctx, err)

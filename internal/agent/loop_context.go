@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"bqagent/internal/tools"
 	apptrace "bqagent/internal/trace"
@@ -439,26 +440,35 @@ func truncateMessageGroupToBudget(group []map[string]any, budgetTokens int) []ma
 		if dropOldestImagePart(cloned) {
 			continue
 		}
-		largestIndex := -1
-		largestContent := ""
-		for index, message := range cloned {
+		var largestContainer map[string]any
+		largestKey, largestContent := "", ""
+		for _, message := range cloned {
 			if len(responseItemsFromMessage(message)) > 0 {
 				continue
 			}
-			content, _ := message["content"].(string)
-			if len(content) > len(largestContent) {
-				largestIndex = index
-				largestContent = content
+			if content, ok := message["content"].(string); ok && len(content) > len(largestContent) {
+				largestContainer, largestKey, largestContent = message, "content", content
+			}
+			if parts, ok := message["content"].([]any); ok {
+				for _, raw := range parts {
+					part, ok := raw.(map[string]any)
+					if !ok {
+						continue
+					}
+					if text, ok := part["text"].(string); ok && len(text) > len(largestContent) {
+						largestContainer, largestKey, largestContent = part, "text", text
+					}
+				}
 			}
 		}
-		if largestIndex < 0 || len(largestContent) <= 16 {
+		if largestContainer == nil || len(largestContent) <= 16 {
 			break
 		}
 		maxChars := len(largestContent) / 2
 		if maxChars < 16 {
 			maxChars = 16
 		}
-		cloned[largestIndex]["content"] = truncateTextMiddle(largestContent, maxChars)
+		largestContainer[largestKey] = truncateTextMiddle(largestContent, maxChars)
 	}
 	// Native Responses items are indivisible: clipping only their display text
 	// would leave the actual replay payload oversized. Drop the whole group,
@@ -541,12 +551,21 @@ func truncateTextMiddle(text string, maxChars int) string {
 	}
 	marker := "\n... [content truncated to fit context budget] ...\n"
 	if maxChars <= len(marker)+2 {
+		for maxChars > 0 && !utf8.RuneStart(text[maxChars]) {
+			maxChars--
+		}
 		return text[:maxChars]
 	}
 	available := maxChars - len(marker)
 	head := available * 2 / 3
-	tail := available - head
-	return text[:head] + marker + text[len(text)-tail:]
+	tailStart := len(text) - (available - head)
+	for head > 0 && !utf8.RuneStart(text[head]) {
+		head--
+	}
+	for tailStart < len(text) && !utf8.RuneStart(text[tailStart]) {
+		tailStart++
+	}
+	return text[:head] + marker + text[tailStart:]
 }
 
 func estimateMessagesTokens(messages []map[string]any) int {

@@ -552,7 +552,7 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		RunID:            response.RunID,
 		Reply:            sanitizeChannelReply(response.Reply),
 		ReplyKind:        response.ReplyKind,
-		APIType:          string(service.apiType),
+		APIType:          string(response.APIType),
 		Model:            response.Model,
 		Mode:             response.Mode,
 		ConversationType: response.ConversationType,

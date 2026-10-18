@@ -601,6 +601,11 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				if recordErr != nil {
 					return "", updatedMessages, recordErr
 				}
+				if err := ctx.Err(); err != nil {
+					// Record cancellation for the remaining calls as well, preserving
+					// complete tool-call/result pairs without executing their functions.
+					continue
+				}
 				if action.checkpointReason != "" {
 					setTurnStop(ctx, turn.Blocked, action.checkpointReason)
 					return a.finishStageCheckpoint(ctx, updatedMessages, action.checkpointReason, actualIterations)
@@ -637,6 +642,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 				guardAction = guardAction.merge(action)
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			return "", updatedMessages, err
 		}
 		if guardAction.checkpointReason != "" {
 			setTurnStop(ctx, turn.Blocked, guardAction.checkpointReason)

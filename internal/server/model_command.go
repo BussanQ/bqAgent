@@ -21,6 +21,7 @@ type ModelOption struct {
 
 // ModelOptions returns a copy of the configured switchable model list.
 func (service *Service) ModelOptions() []ModelOption {
+	service = service.withLLMSnapshot()
 	options := make([]ModelOption, 0, len(service.models)+1)
 	options = append(options, ModelOption{Alias: "default", ID: service.model, DisplayName: service.ModelDisplayName(service.model)})
 	for _, model := range service.models {
@@ -57,6 +58,7 @@ func parseConfiguredModels(values []string) []configuredModel {
 }
 
 func (service *Service) resolveConfiguredModel(input string) (string, bool) {
+	service = service.withLLMSnapshot()
 	input = strings.TrimSpace(input)
 	for _, model := range service.models {
 		if strings.EqualFold(input, model.Alias) || input == model.ID {
@@ -67,6 +69,7 @@ func (service *Service) resolveConfiguredModel(input string) (string, bool) {
 }
 
 func (service *Service) effectiveModel(savedSession *session.Session) string {
+	service = service.withLLMSnapshot()
 	if savedSession != nil {
 		if current := strings.TrimSpace(savedSession.Meta().CurrentModel); current != "" {
 			return current
@@ -76,6 +79,7 @@ func (service *Service) effectiveModel(savedSession *session.Session) string {
 }
 
 func (service *Service) modelIsConfigured(modelID string) bool {
+	service = service.withLLMSnapshot()
 	for _, model := range service.models {
 		if model.ID == modelID {
 			return true
@@ -85,6 +89,7 @@ func (service *Service) modelIsConfigured(modelID string) bool {
 }
 
 func (service *Service) setSessionModel(sessionID, model string) error {
+	service = service.withLLMSnapshot()
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil
@@ -113,6 +118,7 @@ func (service *Service) SelectSessionModel(sessionID, model string) error {
 }
 
 func (service *Service) handleModelCommand(message string, savedSession *session.Session) (string, bool, error) {
+	service = service.withLLMSnapshot()
 	fields := strings.Fields(strings.TrimSpace(message))
 	if len(fields) == 0 || !strings.EqualFold(fields[0], "/model") {
 		return "", false, nil
@@ -165,5 +171,6 @@ func (service *Service) handleModelCommand(message string, savedSession *session
 
 // ModelDisplayName resolves a label within the active provider only.
 func (service *Service) ModelDisplayName(id string) string {
+	service = service.withLLMSnapshot()
 	return service.modelDisplayNames.Name(id)
 }

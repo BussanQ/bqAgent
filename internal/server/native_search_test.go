@@ -72,16 +72,16 @@ func TestServiceNativeWebSearchProviderSwitchPreservesMode(t *testing.T) {
 			for _, apiType := range []agent.APIType{agent.APITypeOpenAIResponse, agent.APITypeAnthropic, agent.APITypeOpenAI} {
 				service.ConfigureLLM("magpie", apiType, "", "http://127.0.0.1:3425/v1", "custom/model", nil, nil)
 				want := mode != "off"
-				if got := service.client.(*agent.Client).SupportsNativeWebSearch("custom/model"); got != want {
+				if got := service.withLLMSnapshot().client.(*agent.Client).SupportsNativeWebSearch("custom/model"); got != want {
 					t.Fatalf("provider switch: protocol=%s mode=%q native search=%v, want %v", apiType, mode, got, want)
 				}
 			}
 			service.ConfigureLLM("plain", agent.APITypeOpenAI, "other-key", "https://other.example/v1", "custom/model", nil, nil)
-			if service.client.(*agent.Client).SupportsNativeWebSearch("custom/model") || service.clientOptions.ProviderID != "plain" {
+			if service.withLLMSnapshot().client.(*agent.Client).SupportsNativeWebSearch("custom/model") || service.withLLMSnapshot().clientOptions.ProviderID != "plain" {
 				t.Fatal("Magpie search leaked into another provider after switching")
 			}
 			service.ConfigureLLM("magpie", agent.APITypeOpenAI, "", "http://127.0.0.1:3425/v1", "custom/model", nil, nil)
-			if service.client.(*agent.Client).SupportsNativeWebSearch("custom/model") != (mode != "off") {
+			if service.withLLMSnapshot().client.(*agent.Client).SupportsNativeWebSearch("custom/model") != (mode != "off") {
 				t.Fatal("switching back to Magpie lost search configuration")
 			}
 		})

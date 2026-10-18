@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"bqagent/internal/agent"
@@ -60,22 +61,29 @@ type ServiceOptions struct {
 	GlobalMemoryStore         *appmemory.Store
 }
 
+// llmConfiguration is immutable after publication. A turn retains one snapshot
+// so provider changes affect only subsequent turns.
+type llmConfiguration struct {
+	client            agent.ChatCompletionClient
+	clientOptions     agent.ClientOptions
+	apiType           agent.APIType
+	model             string
+	models            []configuredModel
+	modelDisplayNames modelcatalog.Names
+	providerID        string
+}
+
 type Service struct {
+	*llmConfiguration
+	llm                       *atomic.Pointer[llmConfiguration]
 	mcp                       *mcp.Discovery
 	doctor                    *doctor.Engine
 	store                     *session.Store
 	workspaceRoot             string
 	agentDir                  string
-	client                    agent.ChatCompletionClient
-	clientOptions             agent.ClientOptions
-	apiType                   agent.APIType
-	model                     string
-	models                    []configuredModel
-	modelDisplayNames         modelcatalog.Names
 	systemPrompt              string
 	systemPromptBuilder       func() (string, error)
 	promptSectionsBuilder     func() (workspace.PromptSections, error)
-	providerID                string
 	toolDefinitions           []tools.Definition
 	functions                 map[string]tools.Function
 	maxTurns                  int
@@ -158,6 +166,7 @@ type CacheMetrics struct {
 }
 
 type TurnResponse struct {
+	APIType          agent.APIType      `json:"api_type,omitempty"`
 	TurnID           string             `json:"turn_id"`
 	Outcome          turn.Outcome       `json:"outcome"`
 	SessionID        string             `json:"session_id"`
@@ -256,17 +265,20 @@ func NewService(options ServiceOptions) *Service {
 		log.Printf("session maintenance: %v", maintenanceErr)
 	}
 	service := &Service{
-		mcp:                       options.MCP,
-		providerID:                strings.TrimSpace(options.ProviderID),
+		mcp: options.MCP,
+		llmConfiguration: &llmConfiguration{
+			providerID:        strings.TrimSpace(options.ProviderID),
+			client:            options.Client,
+			clientOptions:     clientOptions,
+			apiType:           agent.NormalizeAPIType(string(options.APIType)),
+			model:             agent.EffectiveModel(options.Model),
+			models:            parseConfiguredModels(options.Models),
+			modelDisplayNames: maps.Clone(options.ModelDisplayNames),
+		},
+		llm:                       &atomic.Pointer[llmConfiguration]{},
 		store:                     store,
 		workspaceRoot:             options.WorkspaceRoot,
 		agentDir:                  options.AgentDir,
-		client:                    options.Client,
-		clientOptions:             clientOptions,
-		apiType:                   agent.NormalizeAPIType(string(options.APIType)),
-		model:                     agent.EffectiveModel(options.Model),
-		models:                    parseConfiguredModels(options.Models),
-		modelDisplayNames:         maps.Clone(options.ModelDisplayNames),
 		systemPrompt:              options.SystemPrompt,
 		systemPromptBuilder:       options.SystemPromptBuilder,
 		promptSectionsBuilder:     options.PromptSectionsBuilder,
@@ -286,6 +298,7 @@ func NewService(options ServiceOptions) *Service {
 		globalMemoryStore:         options.GlobalMemoryStore,
 		activeTurns:               newActiveTurnRegistry(),
 	}
+	service.llm.Store(service.llmConfiguration)
 	if options.RunTraceEnabled {
 		service.traceStore = apptrace.NewStore(options.WorkspaceRoot)
 	}
@@ -297,13 +310,34 @@ func (service *Service) ConfigureLLM(providerID string, apiType agent.APIType, a
 		return
 	}
 	apiType = agent.NormalizeAPIType(string(apiType))
-	service.providerID = strings.TrimSpace(providerID)
-	service.apiType = apiType
-	service.clientOptions.ProviderID = service.providerID
-	service.client = agent.NewClientWithOptions(apiKey, baseURL, apiType, nil, service.clientOptions)
-	service.model = agent.EffectiveModel(model)
-	service.models = parseConfiguredModels(models)
-	service.modelDisplayNames = maps.Clone(names)
+	clientOptions := service.withLLMSnapshot().clientOptions
+	clientOptions.ProviderID = strings.TrimSpace(providerID)
+	service.llm.Store(&llmConfiguration{
+		providerID:        clientOptions.ProviderID,
+		apiType:           apiType,
+		clientOptions:     clientOptions,
+		client:            agent.NewClientWithOptions(apiKey, baseURL, apiType, nil, clientOptions),
+		model:             agent.EffectiveModel(model),
+		models:            parseConfiguredModels(models),
+		modelDisplayNames: maps.Clone(names),
+	})
+}
+
+// The view shares runtime registries and stores, but never reloads LLM fields.
+// Nested calls on it therefore use exactly the same provider snapshot.
+func (service *Service) withLLMSnapshot() *Service {
+	if service == nil || (service.llm == nil && service.llmConfiguration != nil) {
+		return service
+	}
+	view := *service
+	if service.llm != nil {
+		view.llmConfiguration = service.llm.Load()
+	}
+	if view.llmConfiguration == nil {
+		view.llmConfiguration = &llmConfiguration{}
+	}
+	view.llm = nil
+	return &view
 }
 
 func (service *Service) HandleTurn(ctx context.Context, request TurnRequest) (TurnResponse, error) {
@@ -404,6 +438,8 @@ func commandFromArgs(args map[string]any) string {
 }
 
 func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnRequest, options TurnOptions) (response TurnResponse, err error) {
+	service = service.withLLMSnapshot()
+	defer func() { response.APIType = service.apiType }()
 	turnID := strings.TrimSpace(request.TurnID)
 	if turnID == "" {
 		turnID = turn.NewID()
@@ -1401,6 +1437,7 @@ func (service *Service) currentSystemPrompt(query string, model string) (string,
 }
 
 func (service *Service) currentPromptSnapshot(model string) (agent.PromptSnapshot, string, error) {
+	service = service.withLLMSnapshot()
 	if service == nil {
 		return agent.PromptSnapshot{}, "", nil
 	}
@@ -1516,6 +1553,7 @@ type RuntimeLLMInfo struct {
 }
 
 func (service *Service) RuntimeLLMInfo() RuntimeLLMInfo {
+	service = service.withLLMSnapshot()
 	if service == nil {
 		return RuntimeLLMInfo{}
 	}
@@ -1523,6 +1561,7 @@ func (service *Service) RuntimeLLMInfo() RuntimeLLMInfo {
 }
 
 func (service *Service) RuntimeLLMInfoForSession(sessionID string) RuntimeLLMInfo {
+	service = service.withLLMSnapshot()
 	info := service.RuntimeLLMInfo()
 	if service == nil || strings.TrimSpace(sessionID) == "" {
 		return info

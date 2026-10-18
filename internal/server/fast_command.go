@@ -9,6 +9,7 @@ import (
 )
 
 func (service *Service) sessionServiceTier(saved *session.Session) string {
+	service = service.withLLMSnapshot()
 	if saved != nil && saved.Meta().FastMode && service.apiType != agent.APITypeAnthropic {
 		return "priority"
 	}
@@ -16,6 +17,7 @@ func (service *Service) sessionServiceTier(saved *session.Session) string {
 }
 
 func (service *Service) handleFastCommand(message string, saved *session.Session, attachments bool) (string, bool, error) {
+	service = service.withLLMSnapshot()
 	fields := strings.Fields(message)
 	if len(fields) == 0 || !strings.EqualFold(fields[0], "/fast") {
 		return "", false, nil

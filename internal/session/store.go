@@ -400,13 +400,8 @@ func (session *Session) loadResumableMessages() ([]map[string]any, bool, error) 
 		if err == nil {
 			return messages, false, nil
 		}
-		if workingErr == nil {
-			fallback, fallbackErr := session.loadSeparateWorkingMessages()
-			if fallbackErr == nil {
-				return fallback, true, nil
-			}
-			return nil, false, errors.Join(err, fallbackErr)
-		}
+		// A damaged journal must not silently roll back to an older snapshot.
+		// Only an incomplete final record is repaired by the JSONL reader.
 		return nil, false, err
 	}
 	if workingErr == nil {

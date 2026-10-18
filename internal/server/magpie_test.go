@@ -26,17 +26,17 @@ func TestApplySavedProviderPrefersMagpieUntilDisconnected(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"model":"p/m","base_url":"http://localhost:12345/v1","api_key":"test-key"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	service := &Service{agentDir: dir}
+	service := NewService(ServiceOptions{AgentDir: dir, WorkspaceRoot: t.TempDir()})
 	handler := &handler{providers: store}
 	handler.applySavedProvider(service)
-	if service.providerID != "magpie" || service.model != "p/m" || service.apiType != agent.APITypeOpenAIResponse {
+	if info := service.RuntimeLLMInfo(); info.ProviderID != "magpie" || info.Model != "p/m" || info.APIType != agent.APITypeOpenAIResponse {
 		t.Fatal("HTTP startup replaced the Magpie connection with the saved provider")
 	}
 	if err := os.WriteFile(path, []byte(`{}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	handler.applySavedProvider(service)
-	if service.providerID != "saved" || service.model != "original" || service.apiType != agent.APITypeAnthropic {
+	if info := service.RuntimeLLMInfo(); info.ProviderID != "saved" || info.Model != "original" || info.APIType != agent.APITypeAnthropic {
 		t.Fatal("HTTP startup did not restore the saved provider after disconnect")
 	}
 }

@@ -257,6 +257,9 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 		case "message_stop":
 			sawMessageStop = true
 		}
+		if sawMessageStop {
+			break
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return AssistantMessage{}, providerTransportError(ctx, err)

@@ -16,6 +16,7 @@ import { renderMarkdown } from "./markdown";
 import { waitForModelSelection } from "./model-selection";
 import { initParticleField, redrawParticleField, refreshParticleCapability, refreshParticlePalette } from "./particles";
 import { SSEBuffer, MessageSnapshots } from "./stream";
+import { StreamRenderQueue } from "./stream-render";
 import { initialTheme } from "./theme";
 import { isTaskUpdatedEvent, renderTaskPanel, TaskProgress } from "./task-progress";
 import { inputKindForKey, isInputAppliedEvent, TURN_INPUT_STATE_LABELS, TurnInputSession, type TurnInputKind } from "./turn-input";
@@ -103,6 +104,8 @@ import { createDoctorController } from "./doctor-controller";
   var currentGroup: GroupInfo | null = null;
   var mentionQuery: MentionQuery | null = null;
   var busy = false;
+  var streamRender: StreamRenderQueue | null = null;
+  window.addEventListener("beforeunload", () => streamRender?.dispose(), { once: true });
   var currentTurnId = "";
   var currentController: AbortController | null = null;
   var stopRequested = false;
@@ -549,7 +552,8 @@ import { createDoctorController } from "./doctor-controller";
     stack.appendChild(bubble);
     msg.appendChild(stack);
     thread.appendChild(msg);
-    scrollToBottom();
+    if (streamRender) streamRender.schedule();
+    else scrollToBottom();
     return bubble;
   }
 
@@ -1456,7 +1460,18 @@ import { createDoctorController } from "./doctor-controller";
     var streamTurnId = currentTurnId;
     var streamed = "";
     var progress = "";
+    var renders = new StreamRenderQueue(main);
+    streamRender = renders;
+    function queueText(target: HTMLDivElement, text: string, notice = false): void {
+      renders.schedule(target, () => {
+        caret.remove();
+        target.classList.toggle("notice", notice);
+        target.textContent = text;
+        target.appendChild(caret);
+      });
+    }
     function closeCoordinatorSegment(): void {
+      renders.flush();
       if (!bubble) {
         streamed = "";
         progress = "";
@@ -1514,7 +1529,9 @@ import { createDoctorController } from "./doctor-controller";
         if (chunk.done) break;
         var events = eventBuffer.push(decoder.decode(chunk.value, { stream: true }));
         for (var eventIndex = 0; eventIndex < events.length; eventIndex++) {
+          if (finished) break;
           var evt = events[eventIndex];
+          if (evt.event === "done" || evt.event === "stopped" || evt.event === "error") renders.flush();
           if (evt.event === "message_snapshot") {
             var snapshot = parseJSONEvent<MessageSnapshot>(evt.data);
             if (isTaskUpdatedEvent(snapshot)) {
@@ -1525,10 +1542,7 @@ import { createDoctorController } from "./doctor-controller";
             } else if (snapshots.apply(snapshot) && snapshots.latest) {
               streamed = snapshots.latest.text;
               var snapshotBubble = ensureCoordinatorBubble();
-              caret.remove();
-              snapshotBubble.classList.remove("notice");
-              snapshotBubble.textContent = streamed;
-              snapshotBubble.appendChild(caret);
+              queueText(snapshotBubble, streamed);
             }
           } else if (evt.event === "tool_start" || evt.event === "tool_result") {
             var toolPayload = parseJSONEvent<ToolEventPayload>(evt.data);
@@ -1624,25 +1638,24 @@ import { createDoctorController } from "./doctor-controller";
             if (conversationType !== "group" && progressPayload.message && !streamed) {
               var progressBubble = ensureCoordinatorBubble();
               progress = progressPayload.message;
-              caret.remove();
-              progressBubble.classList.add("notice");
-              progressBubble.textContent = progress;
-              progressBubble.appendChild(caret);
+              queueText(progressBubble, progress, true);
             }
           } else {
             var payload = parseJSONEvent<{ delta?: string }>(evt.data);
             if (payload.delta && !snapshots.latest) {
               var streamBubble = ensureCoordinatorBubble();
               streamed += payload.delta;
-              caret.remove();
-              streamBubble.classList.remove("notice");
-              streamBubble.textContent = streamed;
-              streamBubble.appendChild(caret);
+              queueText(streamBubble, streamed);
             }
           }
-          scrollToBottom();
+          renders.schedule();
+        }
+        if (finished) {
+          void reader.cancel().catch(() => {});
+          break;
         }
       }
+      renders.flush();
       eventBuffer.push(decoder.decode());
       finished = finished || eventBuffer.terminal;
 
@@ -1660,6 +1673,7 @@ import { createDoctorController } from "./doctor-controller";
         statusEl.classList.add("error");
       }
     } catch (err) { if (isCancellation(err) && api.suspended) return;
+      renders.flush();
       expireACPPermissionCards(pendingPermissions);
       var caughtBubble = ensureCoordinatorBubble();
       clearStreamingState(caughtBubble);
@@ -1677,13 +1691,15 @@ import { createDoctorController } from "./doctor-controller";
         statusEl.classList.add("error");
       }
     } finally {
+      if (!api.suspended) renders.flush();
+      renders.dispose();
+      streamRender = null;
       clearStreamingState(bubble);
       inputSession.finish(pendingFromServer);
       setBusy(false);
       currentTurnId = "";
       currentController = null;
       stopRequested = false;
-      scrollToBottom();
       workspaceController.refreshWorkspaceTree();
     }
   }

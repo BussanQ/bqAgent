@@ -83,6 +83,7 @@ func webUIProtectedPath(path string) bool {
 		path == "/api/v1/status" ||
 		path == "/api/v1/chat" ||
 		path == "/api/v1/chat/stop" ||
+		path == "/api/v1/chat/input" ||
 		strings.HasPrefix(path, "/api/v1/runs/")
 }
 
