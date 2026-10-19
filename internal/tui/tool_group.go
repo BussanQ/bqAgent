@@ -156,7 +156,7 @@ func (group toolGroup) render(styles theme, interactive bool, width int) string 
 		hint := "详情已合并"
 		if group.expanded {
 			marker = "▼"
-			hint = "点击工具查看详情 · Ctrl+O 收起"
+			hint = "点击工具查看详情 · ← / Ctrl+O 收起"
 		} else if interactive {
 			hint = "Ctrl+O 展开"
 		}
@@ -165,14 +165,14 @@ func (group toolGroup) render(styles theme, interactive bool, width int) string 
 		header = "◆ " + header
 		if interactive && group.canExpand() {
 			if group.expanded {
-				header += " · 点击工具查看详情 · Ctrl+O 收起"
+				header += " · 点击工具查看详情 · ← / Ctrl+O 收起"
 			} else {
 				header += " · Ctrl+O 展开详情"
 			}
 		}
 	}
 	if interactive && group.expanded && group.detail > 0 && group.detail <= len(group.items) {
-		lines := []string{styles.accent.Render("工具详情 · 点击标题返回列表 · 滚轮滚动 · Ctrl+O 收起")}
+		lines := []string{styles.accent.Render("工具详情 · ← 返回列表 · 点击标题返回 · 滚轮滚动 · Ctrl+O 收起")}
 		return strings.Join(append(lines, group.items[group.detail-1].detailLines(width)...), "\n")
 	}
 	lines := []string{styles.accent.Render(header)}

@@ -48,10 +48,10 @@ func (item toolDisplay) inspectorSummary(styles theme, width int) string {
 }
 
 func (model Model) toolInspectorHeader() []string {
-	title := "本轮工具列表 · Ctrl+O / Esc 返回"
+	title := "本轮工具列表 · ← / Ctrl+O 返回"
 	hint := "↑/↓ 选择 · Enter 或点击查看详情"
 	if model.inspection.detail {
-		title = "工具详情 · Esc / 点击标题返回列表 · Ctrl+O 返回对话"
+		title = "工具详情 · ← / 点击标题返回列表 · Ctrl+O 返回对话"
 		hint = "↑/↓ / 滚轮 滚动 · PgUp/PgDn 翻页 · Home/End 首尾"
 	}
 	lines := []string{model.styles.accent.Render(title), model.styles.dim.Render(hint)}
@@ -97,9 +97,7 @@ func (model *Model) handleToolInspectorKey(name string) []tea.Cmd {
 			model.inspection.offset = 0
 		}
 	case "left":
-		if model.inspection.detail {
-			model.backFromToolDetail()
-		}
+		model.backFromToolDetail()
 	case "up", "down", "pgup", "pgdown", "home", "end":
 		step := 1
 		if name == "pgup" || name == "pgdown" {

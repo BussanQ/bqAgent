@@ -296,6 +296,56 @@ func TestFirstToolExpansionOnlyShowsSummaryRows(t *testing.T) {
 	}
 }
 
+func TestToolDetailsLeftReturnsWithoutCancelling(t *testing.T) {
+	for _, running := range []bool{true, false} {
+		t.Run(fmt.Sprintf("running_%t", running), func(t *testing.T) {
+			model := toolDrawerModel(t, 6)
+			model.sequence = 1
+			cancelled := false
+			if running {
+				model.active = &activeTurn{sequence: 1, cancel: func() { cancelled = true }}
+			}
+			model.input.setValue("draft")
+			update := func(key tea.KeyPressMsg) {
+				updated, _ := model.Update(key)
+				model = updated.(Model)
+			}
+			update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+			if running {
+				model.tools.detail = 1
+				model.tools.offset = 2
+			} else {
+				update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			}
+			if !strings.Contains(model.View().Content, "←") {
+				t.Fatal("detail header missing left-arrow hint")
+			}
+			update(tea.KeyPressMsg{Code: tea.KeyLeft})
+			if cancelled || model.tools.detail != 0 || model.inspection.detail || model.View().MouseMode != tea.MouseModeCellMotion {
+				t.Fatal("left must return to list without cancelling or releasing list interaction")
+			}
+			update(tea.KeyPressMsg{Code: tea.KeyLeft})
+			if cancelled || model.tools.expanded || model.toolInspector || model.View().AltScreen || model.View().MouseMode != tea.MouseModeNone || model.input.value() != "draft" {
+				t.Fatal("left from list must restore conversation and draft without cancelling")
+			}
+			// Outside tools the left arrow still edits the prompt.
+			update(tea.KeyPressMsg{Code: tea.KeyLeft})
+			update(tea.KeyPressMsg{Code: 'X', Text: "X"})
+			if model.input.value() != "drafXt" {
+				t.Fatalf("left no longer moves input cursor: %q", model.input.value())
+			}
+			if running {
+				update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+				model.tools.detail = 1
+				update(tea.KeyPressMsg{Code: tea.KeyEscape})
+				if !cancelled || !model.active.cancelled {
+					t.Fatal("Esc must still cancel the running task from tool details")
+				}
+			}
+		})
+	}
+}
+
 func TestRunningToolDrawerWheelReachesOutputTail(t *testing.T) {
 	model := toolDrawerModel(t, 6)
 	model.active = &activeTurn{sequence: 1, cancel: func() {}}

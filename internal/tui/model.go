@@ -410,6 +410,17 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 	case "ctrl+o":
 		model.toggleToolGroup()
 		return nil
+	case "left":
+		if model.tools.expanded {
+			if model.tools.detail > 0 {
+				model.tools.detail = 0
+				model.tools.offset = 0
+			} else {
+				model.tools.expanded = false
+				model.toolMouse = false
+			}
+			return nil
+		}
 	case "ctrl+q":
 		return model.requestQuit()
 	case "ctrl+l":
@@ -1666,7 +1677,8 @@ func (model Model) helpText() string {
   Ctrl+L 清理当前视口和草稿（保留 Session）
   Ctrl+O 展开/收起工具；回合完成后打开工具列表
   工具列表中 ↑/↓ 选择，Enter 或点击查看单项详情
-  单项详情中方向键/滚轮滚动，Home/End 跳到首尾；Esc 返回列表
+  工具详情按 ← 返回列表，再按 ← 返回对话；Ctrl+O 直接返回对话
+  回合完成后的单项详情中 ↑/↓ /滚轮滚动，Home/End 跳到首尾
   工具错误默认最多预览 3 行；详情显示已收到的参数和输出
   回答完整展示，使用终端滚动查看
 
