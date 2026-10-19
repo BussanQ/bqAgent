@@ -7,8 +7,34 @@ import (
 	"testing"
 	"time"
 
+	"bqagent/internal/turn"
+
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestStatusUsesCompactSeparators(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.runtime = RuntimeInfo{Provider: "api", Model: "model"}
+	model.contextUsage = &turn.ContextUsage{Tokens: 6000, Limit: 200000}
+	model.usage = &TokenUsage{InputTokens: 8100, OutputTokens: 17}
+	model.turnElapsed = 4200 * time.Millisecond
+	model.metrics = &GenerationMetrics{FirstTokenLatencyMS: 3730, CacheUsageAvailable: true, PromptTokens: 8100}
+	want := "3%/200K· in 8.1K· out 17· 耗时 4.2s· TPS —· 首字 3.73s· 缓存命中 0%"
+	for _, width := range []int{100, 40} {
+		status := ansi.Strip(model.renderStatus(width))
+		if strings.Contains(status, " · ") || strings.Contains(status, "·  ") {
+			t.Fatalf("status retains separator padding: %q", status)
+		}
+		if width == 100 && !strings.HasPrefix(status, want) {
+			t.Fatalf("status = %q, want prefix %q", status, want)
+		}
+		for _, line := range strings.Split(status, "\n") {
+			if ansi.StringWidth(line) > width {
+				t.Fatalf("status overflowed width %d: %q", width, line)
+			}
+		}
+	}
+}
 
 func TestStatusPlacesActivityLeftAndRuntimeRight(t *testing.T) {
 	for _, state := range []string{"idle", "running", "completed"} {
@@ -21,21 +47,21 @@ func TestStatusPlacesActivityLeftAndRuntimeRight(t *testing.T) {
 			prefix := "Enter 发送"
 			if state != "idle" {
 				model.usage = &TokenUsage{InputTokens: 398800, OutputTokens: 4500}
-				prefix = "in 398.8K · out 4.5K"
+				prefix = "in 398.8K· out 4.5K"
 			}
 			if state == "running" {
 				model.phase = phaseThinking
 				model.startedAt = time.Now()
 			}
-			for _, width := range []int{200, 40} {
+			for _, width := range []int{200, 30} {
 				status := ansi.Strip(model.renderStatus(width))
-				if !strings.HasPrefix(status, prefix) || !strings.HasSuffix(status, "api/model · Run") || strings.Contains(status, "20261011") {
+				if !strings.HasPrefix(status, prefix) || !strings.HasSuffix(status, "api/model· Run") || strings.Contains(status, "20261011") {
 					t.Fatalf("width %d: swapped status = %q", width, status)
 				}
 				if width == 200 && (strings.Contains(status, "\n") || ansi.StringWidth(status) != width) {
 					t.Fatalf("runtime should align to right edge: %q", status)
 				}
-				if width == 40 && !strings.Contains(status, "\napi/model") {
+				if width == 30 && !strings.Contains(status, "\napi/model") {
 					t.Fatalf("narrow layout should put runtime below activity: %q", status)
 				}
 			}
@@ -46,13 +72,13 @@ func TestStatusPlacesActivityLeftAndRuntimeRight(t *testing.T) {
 func TestStatusShowsProviderNamespaceAfterModelSwitch(t *testing.T) {
 	model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
 	model.runtime = RuntimeInfo{Provider: "gateway", APIType: "openai-response", Model: "plain", ModelDisplayName: "Plain"}
-	if !strings.HasSuffix(ansi.Strip(model.renderStatus(200)), "gateway/Plain · Run") {
+	if !strings.HasSuffix(ansi.Strip(model.renderStatus(200)), "gateway/Plain· Run") {
 		t.Fatal("missing configured provider for unqualified model")
 	}
 	for _, provider := range []string{"group", "other"} {
 		model.active = &activeTurn{sequence: model.sequence}
 		model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "done", result: TurnResult{Model: provider + "/auto-deepseek", ModelDisplayName: "Deepseek"}})
-		if got := ansi.Strip(model.renderStatus(200)); !strings.HasSuffix(got, provider+"/Deepseek · Run") || strings.Contains(got, "openai-response/Deepseek") {
+		if got := ansi.Strip(model.renderStatus(200)); !strings.HasSuffix(got, provider+"/Deepseek· Run") || strings.Contains(got, "openai-response/Deepseek") {
 			t.Fatalf("provider did not follow selected model: %q", got)
 		}
 	}

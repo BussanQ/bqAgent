@@ -30,6 +30,9 @@ func printCLIHelp(output io.Writer, flags *flag.FlagSet) {
 			prefix = "-"
 		}
 		valueName, usage := flag.UnquoteUsage(option)
+		if option.Name == "resume" {
+			valueName = "[sessionID]"
+		}
 		fmt.Fprintf(output, "  %s%s", prefix, option.Name)
 		if valueName != "" {
 			fmt.Fprintf(output, " %s", valueName)
@@ -44,6 +47,7 @@ func printCLIHelp(output io.Writer, flags *flag.FlagSet) {
 示例:
   bqagent
   bqagent "分析当前项目"
+  bqagent --resume
   bqagent --resume <sessionID>
   bqagent --resume <sessionID> "继续完成任务"
   bqagent --background "执行任务"

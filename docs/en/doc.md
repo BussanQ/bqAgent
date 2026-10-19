@@ -329,7 +329,10 @@ go run ./cmd/agent --ilink-status
 # resume a previous session
 go run ./cmd/agent --resume <session-id> "continue from the previous result"
 
-# resume a previous session into the TUI (no task)
+# resume the most recently updated session in the current workspace
+go run ./cmd/agent --resume
+
+# resume a specific session into the TUI (no task)
 go run ./cmd/agent --resume <session-id>
 ```
 

@@ -24,21 +24,22 @@ import (
 )
 
 type cliOptions struct {
-	doctor        bool
-	doctorActive  bool
-	doctorJSON    bool
-	background    bool
-	server        bool
-	ilinkLogin    bool
-	ilinkStatus   bool
-	listen        string
-	serverURL     string
-	resumeID      string
-	sessionID     string
-	sessionRun    bool
-	serverRun     bool
-	subagentRun   string
-	subagentLease string
+	doctor          bool
+	doctorActive    bool
+	doctorJSON      bool
+	background      bool
+	server          bool
+	ilinkLogin      bool
+	ilinkStatus     bool
+	listen          string
+	serverURL       string
+	resumeID        string
+	resumeRequested bool
+	sessionID       string
+	sessionRun      bool
+	serverRun       bool
+	subagentRun     string
+	subagentLease   string
 }
 
 type runDeps struct {
@@ -122,6 +123,10 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 		ws.GlobalAgentDir = agentDir
 	} else {
 		ws.GlobalAgentDir = ""
+	}
+	if err := options.resolveResume(ws); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	dotEnv := loadWorkspaceDotEnv(getenv, ws.Root, options.subagentRun != "")
 	if options.doctor {
@@ -222,30 +227,35 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 	fs.BoolVar(&options.ilinkStatus, "ilink-status", false, "fetch the running server's iLink login status")
 	fs.StringVar(&options.listen, "listen", "127.0.0.1:8080", "HTTP listen address for server mode")
 	fs.StringVar(&options.serverURL, "server-url", "http://127.0.0.1:8080", "base URL of a running server for client-style commands")
-	fs.StringVar(&options.resumeID, "resume", "", "resume an existing session")
+	fs.StringVar(&options.resumeID, "resume", "", "resume a session; omit the ID to resume the latest conversation in this workspace")
 	fs.StringVar(&options.sessionID, "session-id", "", "internal session identifier")
 	fs.BoolVar(&options.sessionRun, "session-run", false, "internal background session runner")
 	fs.BoolVar(&options.serverRun, "server-run", false, "internal background server runner")
 	fs.StringVar(&options.subagentRun, "subagent-run", "", "internal persisted subagent worker id")
 	fs.StringVar(&options.subagentLease, "subagent-lease", "", "internal subagent execution lease")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(normalizeResumeArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printCLIHelp(helpOutput, fs)
 		}
 		return cliOptions{}, nil, err
 	}
+	fs.Visit(func(option *flag.Flag) {
+		if option.Name == "resume" {
+			options.resumeRequested = true
+		}
+	})
 	if (options.doctorActive || options.doctorJSON) && !options.doctor {
 		return cliOptions{}, nil, fmt.Errorf("--doctor-active and --doctor-json require --doctor")
 	}
-	if options.doctor && (daemon || options.background || options.server || options.ilinkLogin || options.ilinkStatus || options.sessionRun || options.serverRun || options.resumeID != "" || options.sessionID != "" || options.subagentRun != "" || options.subagentLease != "" || len(fs.Args()) > 0) {
+	if options.doctor && (daemon || options.background || options.server || options.ilinkLogin || options.ilinkStatus || options.sessionRun || options.serverRun || options.resumeRequested || options.sessionID != "" || options.subagentRun != "" || options.subagentLease != "" || len(fs.Args()) > 0) {
 		return cliOptions{}, nil, fmt.Errorf("--doctor cannot be combined with task execution flags")
 	}
 	if daemon {
 		options.server = true
 		options.background = true
 	}
-	if options.resumeID != "" && options.sessionID != "" {
+	if options.resumeRequested && options.sessionID != "" {
 		return cliOptions{}, nil, fmt.Errorf("--resume and --session-id cannot be used together")
 	}
 	if options.background && options.sessionRun {
@@ -254,13 +264,13 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 	if options.background && options.serverRun {
 		return cliOptions{}, nil, fmt.Errorf("--background cannot be combined with --server-run")
 	}
-	if options.server && effectiveSessionID(options) != "" {
+	if (options.server || options.serverRun) && (options.resumeRequested || effectiveSessionID(options) != "") {
 		return cliOptions{}, nil, fmt.Errorf("--server cannot be combined with --resume or --session-id")
 	}
 	if options.ilinkLogin && options.ilinkStatus {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-login cannot be combined with --ilink-status")
 	}
-	if (options.ilinkLogin || options.ilinkStatus) && (options.background || options.server || options.sessionRun || options.serverRun || effectiveSessionID(options) != "") {
+	if (options.ilinkLogin || options.ilinkStatus) && (options.background || options.server || options.sessionRun || options.serverRun || options.resumeRequested || effectiveSessionID(options) != "") {
 		return cliOptions{}, nil, fmt.Errorf("--ilink-login and --ilink-status cannot be combined with execution or server flags")
 	}
 	if options.ilinkLogin && len(fs.Args()) > 0 {
@@ -272,7 +282,7 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 	if options.subagentLease != "" && options.subagentRun == "" {
 		return cliOptions{}, nil, fmt.Errorf("--subagent-lease requires --subagent-run")
 	}
-	if options.subagentRun != "" && (options.background || options.server || options.sessionRun || options.serverRun || effectiveSessionID(options) != "" || len(fs.Args()) > 0) {
+	if options.subagentRun != "" && (options.background || options.server || options.sessionRun || options.serverRun || options.resumeRequested || effectiveSessionID(options) != "" || len(fs.Args()) > 0) {
 		return cliOptions{}, nil, fmt.Errorf("--subagent-run cannot be combined with other execution flags or a task")
 	}
 	if options.ilinkStatus && len(fs.Args()) > 0 {

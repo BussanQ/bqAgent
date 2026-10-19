@@ -1473,13 +1473,13 @@ func (model Model) renderStatus(width int) string {
 		left = "provider"
 	}
 	left = modelcatalog.QualifiedName(left, model.runtime.Model, model.runtime.ModelDisplayName)
-	left += " · " + displayMode(model.runtime.Mode)
+	left += "· " + displayMode(model.runtime.Mode)
 	right := model.statusNotice
 	if model.inputNotice != "" {
 		right = model.inputNotice
 	} else if model.phase != phaseIdle {
 		elapsed := formatTurnElapsed(time.Since(model.startedAt))
-		right = fmt.Sprintf("%s · %s %s · 耗时 %s", model.tokenUsageStatus(), model.spinner.View(), model.phaseLabel(), elapsed)
+		right = fmt.Sprintf("%s· %s %s· 耗时 %s", model.tokenUsageStatus(), model.spinner.View(), model.phaseLabel(), elapsed)
 	} else if model.metrics != nil || model.usage != nil || model.turnElapsed > 0 {
 		parts := []string{}
 		if model.metrics != nil || model.usage != nil {
@@ -1509,28 +1509,28 @@ func (model Model) renderStatus(width int) string {
 				parts = append(parts, fmt.Sprintf("缓存命中 %.0f%%", rate))
 			}
 		}
-		right = strings.Join(parts, " · ")
+		right = strings.Join(parts, "· ")
 	}
 	if status := model.mcpStatusLabel(); status != "" {
 		if right == "" {
 			right = status
 		} else {
-			right = status + " · " + right
+			right = status + "· " + right
 		}
 	}
 	if model.quitConfirmationActive() {
 		right = quitConfirmHint
 	}
 	if right == "" {
-		right = "Enter 发送 · Alt+Enter 换行 · / 命令"
+		right = "Enter 发送· Alt+Enter 换行· / 命令"
 		if model.active != nil && model.active.inputs != nil {
-			right = "Enter 引导 · Alt+Q/Ctrl+S 跟进 · Alt+Enter 换行"
+			right = "Enter 引导· Alt+Q/Ctrl+S 跟进· Alt+Enter 换行"
 		}
 	}
 	if usage := model.contextUsage; usage != nil && usage.Limit > 0 && !model.quitConfirmationActive() {
 		// Keep the context indicator visible even on narrow terminals. Unlike
 		// in/out billing totals, each backend snapshot replaces the previous one.
-		right = fmt.Sprintf("%.0f%%/%s · %s", 100*float64(max(0, usage.Tokens))/float64(usage.Limit), formatTokenCount(usage.Limit), right)
+		right = fmt.Sprintf("%.0f%%/%s· %s", 100*float64(max(0, usage.Tokens))/float64(usage.Limit), formatTokenCount(usage.Limit), right)
 	}
 	left, right = right, left
 	left = ansi.Truncate(left, width, "…")
@@ -1553,15 +1553,15 @@ func formatTurnElapsed(elapsed time.Duration) string {
 
 func (model Model) tokenUsageStatus() string {
 	if model.usage != nil {
-		return "in " + formatTokenCount(model.usage.InputTokens) + " · out " + formatTokenCount(model.usage.OutputTokens)
+		return "in " + formatTokenCount(model.usage.InputTokens) + "· out " + formatTokenCount(model.usage.OutputTokens)
 	}
 	if model.metrics != nil {
-		return "in " + formatTokenCount(model.metrics.PromptTokens) + " · out " + formatTokenCount(model.metrics.CompletionTokens)
+		return "in " + formatTokenCount(model.metrics.PromptTokens) + "· out " + formatTokenCount(model.metrics.CompletionTokens)
 	}
 	if model.liveRunes > 0 {
-		return "in — · out " + formatTokenCount(model.liveTokens)
+		return "in —· out " + formatTokenCount(model.liveTokens)
 	}
-	return "in — · out —"
+	return "in —· out —"
 }
 
 func formatTokenCount(tokens int) string {
@@ -1819,5 +1819,5 @@ func (model Model) mcpStatusLabel() string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "MCP " + strings.Join(parts, " · ")
+	return "MCP " + strings.Join(parts, "· ")
 }

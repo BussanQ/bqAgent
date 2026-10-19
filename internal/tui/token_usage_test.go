@@ -9,24 +9,24 @@ import (
 func TestTokenUsageStatusSurvivesToolsAndCompletion(t *testing.T) {
 	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
 	model.submit("search")
-	if got := model.tokenUsageStatus(); got != "in — · out —" {
+	if got := model.tokenUsageStatus(); got != "in —· out —" {
 		t.Fatalf("before first request = %q", got)
 	}
 	usage := TokenUsage{InputTokens: 12345, OutputTokens: 12, OutputEstimated: true, Calls: 2}
 	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "usage", usage: usage})
 	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "token", text: "a"})
-	if got := model.renderStatus(100); !strings.Contains(got, "in 12.3K · out 12") {
+	if got := model.renderStatus(100); !strings.Contains(got, "in 12.3K· out 12") {
 		t.Fatalf("active status = %q", got)
 	}
 	usage.OutputTokens, usage.OutputEstimated = 58, false
 	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "usage", usage: usage})
 	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "tool", tool: ToolEvent{Kind: "tool_start", ID: "call-1", Name: "lookup"}})
-	if got := model.renderStatus(40); !strings.Contains(got, "in 12.3K · out 58") {
+	if got := model.renderStatus(40); !strings.Contains(got, "in 12.3K· out 58") {
 		t.Fatalf("tool phase in narrow terminal = %q", got)
 	}
 	model.handleTurnEvent(turnEvent{sequence: model.sequence - 1, kind: "usage", usage: TokenUsage{OutputTokens: 999}})
 	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "done", result: TurnResult{Metrics: &GenerationMetrics{PromptTokens: 100, CompletionTokens: 8}}})
-	if got := model.tokenUsageStatus(); got != "in 12.3K · out 58" {
+	if got := model.tokenUsageStatus(); got != "in 12.3K· out 58" {
 		t.Fatalf("completion must retain whole-turn usage, not final-call metrics: %q", got)
 	}
 	model.submit("next")
@@ -35,7 +35,7 @@ func TestTokenUsageStatusSurvivesToolsAndCompletion(t *testing.T) {
 	}
 	model.usage = &usage
 	model.clearSession()
-	if model.usage != nil || model.tokenUsageStatus() != "in — · out —" {
+	if model.usage != nil || model.tokenUsageStatus() != "in —· out —" {
 		t.Fatal("clear retained previous usage")
 	}
 }
@@ -62,10 +62,10 @@ func TestTokenUsageStatusCompactUnitsForAllSources(t *testing.T) {
 		model Model
 		want  string
 	}{
-		{"usage", Model{usage: &TokenUsage{InputTokens: 1234567, OutputTokens: 8707}}, "in 1.2M · out 8.7K"},
-		{"estimated usage", Model{usage: &TokenUsage{InputTokens: 1234567, OutputTokens: 8707, InputEstimated: true, OutputEstimated: true}}, "in 1.2M · out 8.7K"},
-		{"metrics", Model{metrics: &GenerationMetrics{PromptTokens: 982338, CompletionTokens: 8707}}, "in 982.3K · out 8.7K"},
-		{"live", Model{liveRunes: 4000, liveTokens: 1000}, "in — · out 1K"},
+		{"usage", Model{usage: &TokenUsage{InputTokens: 1234567, OutputTokens: 8707}}, "in 1.2M· out 8.7K"},
+		{"estimated usage", Model{usage: &TokenUsage{InputTokens: 1234567, OutputTokens: 8707, InputEstimated: true, OutputEstimated: true}}, "in 1.2M· out 8.7K"},
+		{"metrics", Model{metrics: &GenerationMetrics{PromptTokens: 982338, CompletionTokens: 8707}}, "in 982.3K· out 8.7K"},
+		{"live", Model{liveRunes: 4000, liveTokens: 1000}, "in —· out 1K"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := test.model.tokenUsageStatus(); got != test.want {

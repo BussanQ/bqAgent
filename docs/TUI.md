@@ -99,7 +99,7 @@ TUI 与 WebUI 使用相同的图片限制：仅支持 PNG、JPEG、GIF，每条�
 
 `/skill` 描述支持 frontmatter 中的单行文本及 `description: |`、`description: >` 多行块（含常见的保留换行、去除末尾换行及缩进标记）。同时兼容 `---` 和被编辑器转义为 `\---` 的分隔符；多行描述会合并为单行展示，超长内容保留原有长度限制。
 
-使用无任务的 `--resume <session-id>` 进入 TUI 时，只回放最近的用户和助手文本，总显示预算为 200 KiB；会提示省略条数，单条超限消息只在 TUI 中截断，不修改持久 Session。
+`bqagent --resume` 不带会话 ID 时恢复当前工作区最近更新的会话；当前工作区没有历史会话时提示错误。使用无任务的 `--resume` 或 `--resume <session-id>` 进入 TUI 时，只回放最近的用户和助手文本，总显示预算为 200 KiB；会提示省略条数，单条超限消息只在 TUI 中截断，不修改持久 Session。
 
 ## Herdr 集成
 

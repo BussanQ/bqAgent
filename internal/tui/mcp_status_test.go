@@ -33,7 +33,7 @@ func TestMCPStatusHidesTenSecondsAfterStartup(t *testing.T) {
 	}
 	updated, _ := model.Update(tickMsg(deadline.Add(-time.Nanosecond)))
 	model = updated.(Model)
-	if status := model.renderStatus(200); !strings.Contains(status, "MCP 已连接 2 · 失败 1") {
+	if status := model.renderStatus(200); !strings.Contains(status, "MCP 已连接 2· 失败 1") {
 		t.Fatalf("status before deadline = %q", status)
 	}
 	polls := backend.polls + 1 // The deadline tick checks for a final state change before hiding.
@@ -76,7 +76,7 @@ func TestMCPStatusWaitsForBackgroundDiscovery(t *testing.T) {
 			}
 			backend.statuses[0].State = "available"
 			update(now.Add(time.Second))
-			if !model.mcpStatusUntil.IsZero() || !strings.Contains(model.renderStatus(200), "MCP 连接中 1 · 已连接 1") {
+			if !model.mcpStatusUntil.IsZero() || !strings.Contains(model.renderStatus(200), "MCP 连接中 1· 已连接 1") {
 				t.Fatal("partial completion started countdown before all servers finished")
 			}
 			backend.statuses[1].State = "error"
@@ -88,7 +88,7 @@ func TestMCPStatusWaitsForBackgroundDiscovery(t *testing.T) {
 			}
 			backend.statuses[0].CheckedAt = finished.Add(time.Second)
 			update(deadline.Add(-time.Nanosecond))
-			if !model.mcpStatusUntil.Equal(deadline) || !strings.Contains(model.renderStatus(200), "MCP 已连接 1 · 失败 1") {
+			if !model.mcpStatusUntil.Equal(deadline) || !strings.Contains(model.renderStatus(200), "MCP 已连接 1· 失败 1") {
 				t.Fatal("final status was hidden early or timestamp-only change reset countdown")
 			}
 			update(deadline)
@@ -137,7 +137,7 @@ func TestMCPStatusUpdatesWithoutAppendingHistory(t *testing.T) {
 		updated, _ := model.Update(tickMsg(time.Now()))
 		model = updated.(Model)
 	}
-	if status := model.renderStatus(160); !strings.Contains(status, "MCP 已连接 1 · 失败 1") || strings.Contains(status, "连接中") {
+	if status := model.renderStatus(160); !strings.Contains(status, "MCP 已连接 1· 失败 1") || strings.Contains(status, "连接中") {
 		t.Fatalf("updated status = %q", status)
 	}
 	if len(model.printQueue) != 0 || model.phase != phaseIdle {

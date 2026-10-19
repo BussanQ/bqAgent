@@ -76,10 +76,12 @@ func TestRunWithBackgroundCreatesSessionAndLaunchesChild(t *testing.T) {
 }
 
 func TestRunWithResumeWithoutTaskRequiresTerminalBeforeSessionAccess(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := runWithDeps(context.Background(), unreadableStdin{t}, &stdout, &stderr, []string{"--resume", "demo"}, func(string) string { return "xterm" }, noSideEffectDeps(t))
-	if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "TUI") || !strings.Contains(stderr.String(), "TTY") {
-		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	for _, args := range [][]string{{"--resume", "demo"}, {"--resume"}} {
+		var stdout, stderr bytes.Buffer
+		code := runWithDeps(context.Background(), unreadableStdin{t}, &stdout, &stderr, args, func(string) string { return "xterm" }, noSideEffectDeps(t))
+		if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "TUI") || !strings.Contains(stderr.String(), "TTY") {
+			t.Fatalf("args=%v exit=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+		}
 	}
 }
 

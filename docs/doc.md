@@ -335,7 +335,10 @@ go run ./cmd/agent --ilink-status
 # 恢复之前的会话
 go run ./cmd/agent --resume <session-id> "基于刚才的结果继续"
 
-# 无任务恢复会话并进入 TUI
+# 恢复当前工作区最近更新的会话并进入 TUI
+go run ./cmd/agent --resume
+
+# 无任务恢复指定会话并进入 TUI
 go run ./cmd/agent --resume <session-id>
 ```
 
