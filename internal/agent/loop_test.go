@@ -815,7 +815,17 @@ func TestRunExecutesInlineToolCallContent(t *testing.T) {
 		},
 	}
 	var logs bytes.Buffer
-	app := New(client, "", &logs)
+	calls := 0
+	app := NewWithOptions(client, "", Options{
+		LogWriter: &logs,
+		Functions: map[string]tools.Function{"read_file": func(_ context.Context, arguments map[string]any) (string, error) {
+			calls++
+			if arguments["path"] != "README.md" {
+				t.Fatalf("read_file arguments = %#v", arguments)
+			}
+			return "README fixture content", nil
+		}},
+	})
 
 	result, err := app.Run(context.Background(), "search", 3)
 	if err != nil {
@@ -827,7 +837,16 @@ func TestRunExecutesInlineToolCallContent(t *testing.T) {
 	if len(client.messages) != 2 {
 		t.Fatalf("client saw %d requests, want 2", len(client.messages))
 	}
-	assistantMessage := client.messages[1][2]
+	var assistantMessage map[string]any
+	for _, message := range client.messages[1] {
+		if message["role"] == "assistant" && message["tool_calls"] != nil {
+			assistantMessage = message
+			break
+		}
+	}
+	if assistantMessage == nil {
+		t.Fatal("follow-up request missing assistant tool call message")
+	}
 	if content := assistantMessage["content"]; content != nil {
 		t.Fatalf("assistant content = %#v, want nil for tool call follow-up", content)
 	}
@@ -839,8 +858,8 @@ func TestRunExecutesInlineToolCallContent(t *testing.T) {
 		t.Fatalf("saw %d tool messages, want 1", len(toolMessages))
 	}
 	content, _ := toolMessages[0]["content"].(string)
-	if !strings.Contains(content, "Error:") || !strings.Contains(content, "README.md") {
-		t.Fatalf("tool content = %q, want executed inline tool result", content)
+	if calls != 1 || content != "README fixture content" {
+		t.Fatalf("tool calls=%d content=%q, want one execution with fixture result", calls, content)
 	}
 	if !strings.Contains(logs.String(), "[Tool] read_file(map[path:README.md])") {
 		t.Fatalf("logs did not include inline tool call: %q", logs.String())

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -138,9 +139,11 @@ type Model struct {
 	statusNotice  string
 	// inputNotice reports prompt-editing results such as image attachments.
 	// It outranks the status line until the next key press.
-	inputNotice string
-	clipboard   clipboardReader
-	mcpStatus   []mcp.ServerStatus
+	inputNotice     string
+	clipboard       clipboardReader
+	mcpStatus       []mcp.ServerStatus
+	mcpStatusUntil  time.Time
+	mcpStatusHidden bool
 }
 
 type historyPrint struct {
@@ -194,7 +197,7 @@ func NewModel(backend Backend, config Config) Model {
 	if !config.NoColor {
 		model.spinner.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(accentColor))
 	}
-	model.refreshMCPStatus()
+	model.refreshMCPStatus(time.Now())
 	model.runtime = backend.RuntimeInfo(model.sessionID)
 	model.commands = mergeCommands(backend.Commands())
 	model.history, _ = model.historyStore.load()
@@ -293,7 +296,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			commands = append(commands, command)
 		}
 	case tickMsg:
-		model.refreshMCPStatus()
+		model.refreshMCPStatus(time.Time(message))
 		if !time.Time(message).Before(model.quitConfirmUntil) {
 			model.quitConfirmUntil = time.Time{}
 		}
@@ -1761,13 +1764,37 @@ func stallWaitText(value string) string {
 }
 
 // MCP status is optional to keep alternate backends independent of discovery.
-func (model *Model) refreshMCPStatus() {
+func (model *Model) refreshMCPStatus(now time.Time) {
+	if model.mcpStatusHidden {
+		return
+	}
 	if backend, ok := model.backend.(interface{ MCPStatus() []mcp.ServerStatus }); ok {
-		model.mcpStatus = backend.MCPStatus()
+		statuses := backend.MCPStatus()
+		changed := !slices.EqualFunc(model.mcpStatus, statuses, func(a, b mcp.ServerStatus) bool {
+			return a.Name == b.Name && a.State == b.State && a.Reason == b.Reason && a.Tools == b.Tools
+		})
+		model.mcpStatus = statuses
+		for _, status := range statuses {
+			if status.State == "connecting" || status.State == "unverified" {
+				// Wait for background discovery before starting the visibility countdown.
+				model.mcpStatusUntil = time.Time{}
+				return
+			}
+		}
+		if changed || model.mcpStatusUntil.IsZero() {
+			model.mcpStatusUntil = now.Add(10 * time.Second)
+		}
+		if !now.Before(model.mcpStatusUntil) {
+			model.mcpStatusHidden = true
+			model.mcpStatus = nil
+		}
 	}
 }
 
 func (model Model) mcpStatusLabel() string {
+	if model.mcpStatusHidden || (!model.mcpStatusUntil.IsZero() && !time.Now().Before(model.mcpStatusUntil)) {
+		return ""
+	}
 	var connecting, available, failed int
 	for _, status := range model.mcpStatus {
 		switch status.State {

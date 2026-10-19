@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -34,12 +33,6 @@ func (c *runtimeTaskClient) CreateChatCompletion(_ context.Context, _ string, me
 	if !foundTool || !foundGoal {
 		c.t.Fatalf("runtime did not restore task: tool=%v goal=%v", foundTool, foundGoal)
 	}
-	if c.calls == 2 {
-		state := taskstate.State{Goal: "saved coding objective", Status: "awaiting_input", Reason: "missing requirement", Criteria: []taskstate.Criterion{{Description: "implement requirement"}}}
-		raw, _ := json.Marshal(state)
-		args, _ := json.Marshal(map[string]any{"state": string(raw)})
-		return agent.AssistantMessage{ToolCalls: []agent.ToolCall{{ID: "reassess", Function: agent.FunctionCall{Name: "task_update", Arguments: string(args)}}}}, nil
-	}
 	return agent.AssistantMessage{Role: "assistant", Content: "needs input"}, nil
 }
 func (c *runtimeTaskClient) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, _ func(string)) (agent.AssistantMessage, error) {
@@ -59,8 +52,13 @@ func TestRuntimeRestoresTaskFromSessionRecorder(t *testing.T) {
 	runtime := Runtime{Client: client, Model: "test", WorkspaceRoot: root, TaskToolEnabled: true}
 	app := runtime.NewAgent(nil, "test", saved, false)
 	reply, err := app.Run(context.Background(), "status", 10)
-	if err != nil || reply != "needs input" || client.calls != 3 {
+	// Restored progress is advisory and must not force another model call.
+	if err != nil || reply != "needs input" || client.calls != 1 {
 		t.Fatalf("reply=%q err=%v calls=%d", reply, err, client.calls)
+	}
+	got, err := saved.LoadTaskState()
+	if err != nil || got == nil || got.Goal != "saved coding objective" || got.Status != "awaiting_input" || got.Reason != "missing requirement" || len(got.Criteria) != 1 || got.Criteria[0].Description != "implement requirement" {
+		t.Fatalf("restored task changed: %+v err=%v", got, err)
 	}
 }
 

@@ -119,7 +119,7 @@ func TestTurnMessageSnapshotsReplaceDraftAndPreserveIdentity(t *testing.T) {
 	}
 }
 
-func TestTaskSideQuestionPreservesTaskAndResumeEnforcesWork(t *testing.T) {
+func TestTaskSideQuestionPreservesTaskAndResumeRestoresRelation(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(stringBool(explicit), func(t *testing.T) {
 			active := activeTestTask()
@@ -142,9 +142,10 @@ func TestTaskSideQuestionPreservesTaskAndResumeEnforcesWork(t *testing.T) {
 			}
 			client = &stubClient{responses: []AssistantMessage{{Content: "done"}}}
 			app = NewWithOptions(client, "test", Options{TaskStore: store})
-			resumed, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "继续"}}, 1)
-			if err != nil || resumed.Outcome.Status != turn.BudgetLimited || store.state.Status != "active" {
-				t.Fatalf("resume=%+v %v", resumed, err)
+			resumed, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "继续"}}, 4)
+			actual, _ = json.Marshal(store.state)
+			if err != nil || resumed.Reply != "done" || resumed.Outcome.Status != turn.Completed || resumed.Outcome.TaskRelation != turn.ContinueTask || resumed.Outcome.TaskStatus != "active" || len(client.messages) != 1 || string(original) != string(actual) {
+				t.Fatalf("resume=%+v task=%s calls=%d err=%v", resumed, actual, len(client.messages), err)
 			}
 		})
 	}
@@ -170,8 +171,8 @@ func TestTaskSideQuestionCannotMutateSavedTask(t *testing.T) {
 	}
 }
 
-func TestResponsesEmptyFinalSnapshotDoesNotReuseDraft(t *testing.T) {
-	payload := `data: {"type":"response.output_text.delta","output_index":0,"delta":"discarded draft"}
+func TestResponsesEmptyFinalSnapshotPreservesStreamedText(t *testing.T) {
+	payload := `data: {"type":"response.output_text.delta","output_index":0,"delta":"streamed answer"}
 
 data: {"type":"response.completed","response":{"status":"completed","output":[]}}
 
@@ -180,7 +181,7 @@ data: {"type":"response.completed","response":{"status":"completed","output":[]}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(payload))}, nil
 	})})
 	message, err := client.CreateChatCompletionStream(context.Background(), "test", nil, nil, nil)
-	if err != nil || message.FinalContent() != "" {
+	if err != nil || message.FinalContent() != "streamed answer" {
 		t.Fatalf("message=%+v err=%v", message, err)
 	}
 }

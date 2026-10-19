@@ -213,7 +213,13 @@ func TestRunDoesNotRecoverTruncatedBashBatch(t *testing.T) {
 		t.Fatalf("Run = %q, %v", result, err)
 	}
 	request := client.messages[1]
-	if !strings.Contains(fmt.Sprint(request[len(request)-1]["content"]), "No tools from that batch were executed") {
+	foundRecovery := false
+	for _, message := range request {
+		if message["role"] == "user" && strings.Contains(contentText(message["content"]), "No tools from that batch were executed") {
+			foundRecovery = true
+		}
+	}
+	if !foundRecovery {
 		t.Fatalf("truncation guard was bypassed: %#v", request)
 	}
 }
