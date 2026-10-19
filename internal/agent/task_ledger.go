@@ -124,7 +124,7 @@ func (l *execLedger) verificationIssue(callID, command string) string {
 		}
 		if e.command != command {
 			if near == "" && (callID != "" || strings.Contains(e.command, command)) {
-				near = fmt.Sprintf("the closest execute_bash call ran %q, which is not the recorded command; record the exact command string", e.command)
+				near = fmt.Sprintf("the closest execute_bash call ran %q, which is not the recorded command; record the exact command string", abbreviateCommand(e.command))
 				if e.success && !e.reliable {
 					near += ", and " + unreliableReason(e.command)
 				}

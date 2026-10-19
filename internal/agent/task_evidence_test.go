@@ -615,3 +615,22 @@ func TestVerificationIssueNamesConcreteCause(t *testing.T) {
 		t.Fatalf("completion error does not explain the cause: %v", err)
 	}
 }
+
+func TestCompletionRejectionLeadsWithCauseAndAbbreviatesCommand(t *testing.T) {
+	app, _ := evidenceApp(t, "")
+	ctx, _ := evidenceRun()
+	long := "set -o pipefail && echo " + strings.Repeat("统计-", 200) + " && go test ./never"
+	err := submitCompletion(app, ctx, completedWith(taskstate.Verification{Command: long, ToolCallID: "execute_bash-7", Status: "passed", Details: "ok"}))
+	if err == nil {
+		t.Fatal("unbacked completion accepted")
+	}
+	message := err.Error()
+	cause := strings.Index(message, `no finished execute_bash call with tool_call_id "execute_bash-7"`)
+	command := strings.Index(message, "Recorded command:")
+	if !strings.HasPrefix(message, "task_update rejected: verification[0]") || cause < 0 || command < cause {
+		t.Fatalf("cause must come before the command: %s", message)
+	}
+	if strings.Contains(message, long) || !strings.Contains(message, "go test ./never") || len([]rune(message)) > 600 {
+		t.Fatalf("long command should be abbreviated but recognizable (%d runes): %s", len([]rune(message)), message)
+	}
+}

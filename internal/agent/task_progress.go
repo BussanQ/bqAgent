@@ -25,12 +25,8 @@ func (a *Agent) installTaskTool() {
 	}
 	a.installTaskScopeTool()
 	a.toolDefinitions = append(a.toolDefinitions, tools.Definition{Type: "function", Function: tools.FunctionDefinition{
-		Name: "task_update", Description: "The only persistent progress record. Use it for multi-step programming work, not for ordinary Q&A or single-step edits. Call it only at a stage change, an acceptance result, a blocker, or a scope change; do not resend an unchanged plan (identical state is ignored and is not progress). state is JSON containing goal, status (active/completed/blocked/awaiting_input/cancelled), criteria [{description,done,evidence}], remaining [string], verification [{command,tool_call_id (optional),status (passed/failed/unavailable),details}], reason. Completion requires all criteria backed by evidence, no remaining work, and passed verification whose exact command string was actually run successfully by execute_bash in this turn after the last change; a check piped into tail/head/grep without set -o pipefail does not count. This record is advisory: recording failures must not block actual work or the final answer, and are not task blockers. Preserve the original goal and criteria unless the user changes scope.",
-		Parameters: tools.JSONSchema{Type: "object", Properties: map[string]tools.JSONSchemaProperty{
-			"state":        {Type: "string", Description: "Complete task state as a JSON object."},
-			"replace_goal": {Type: "boolean", Description: "Only true for a new user-authorized objective or changed acceptance criteria; include reason in state and user_quote."},
-			"user_quote":   {Type: "string", Description: "With replace_goal: a verbatim excerpt (at least 6 characters, or the whole short message) of the user's message in this turn that requests the change."},
-		}, Required: []string{"state"}},
+		Name: "task_update", Description: "The only persistent progress record. Use it for multi-step programming work, not for ordinary Q&A or single-step edits. Call it only at a stage change, an acceptance result, a blocker, or a scope change; do not resend an unchanged plan (identical state is ignored and is not progress). Create the task with state; afterwards prefer update, which changes only the given fields of the saved task. Completion requires all criteria backed by evidence, no remaining work, and passed verification whose exact command string was actually run successfully by execute_bash in this turn after the last change; a check piped into tail/head/grep without set -o pipefail does not count. This record is advisory: recording failures must not block actual work or the final answer, and are not task blockers. Preserve the original goal and criteria unless the user changes scope.",
+		RawParameters: json.RawMessage(taskUpdateParameters),
 	}})
 	a.functions["task_update"] = func(ctx context.Context, args map[string]any) (result string, err error) {
 		if err := ctx.Err(); err != nil {
@@ -40,12 +36,8 @@ func (a *Agent) installTaskTool() {
 		if state := turnRun(ctx); state != nil && state.outcome.TaskRelation == turn.SideQuestion {
 			return "", fmt.Errorf("side-question turns cannot modify the saved task")
 		}
-		raw, err := requireStringArgument("task_update", args, "state")
+		next, err := a.taskUpdateState(args)
 		if err != nil {
-			return "", err
-		}
-		var next taskstate.State
-		if err = json.Unmarshal([]byte(raw), &next); err != nil {
 			return "", err
 		}
 		if err = next.Validate(); err != nil {
@@ -293,15 +285,31 @@ func verifyCompletionEvidence(run *runState, next taskstate.State) error {
 	if run == nil {
 		return fmt.Errorf("completion requires verification executed in this turn; no turn execution record is available")
 	}
-	for _, check := range next.Verification {
+	for index, check := range next.Verification {
 		if check.Status != "passed" {
 			continue
 		}
 		if issue := run.ledger.verificationIssue(check.ToolCallID, check.Command); issue != "" {
-			return fmt.Errorf("verification %q is not backed by a successful, reliable execute_bash call in this turn that ran exactly this command after the last edit or side-effecting command: %s", check.Command, issue)
+			// Lead with the cause: a long command printed first buries it, and
+			// models then resubmit the same record instead of fixing it.
+			return fmt.Errorf("task_update rejected: verification[%d] cannot prove completion: %s. Recorded command: %q. A passed verification must be an execute_bash call in this turn that ran exactly this command successfully after the last edit or side-effecting command; fix the record or rerun the check, do not resubmit it unchanged", index, issue, abbreviateCommand(check.Command))
 		}
 	}
 	return nil
+}
+
+const maxCommandPreviewRunes = 160
+
+// abbreviateCommand keeps both ends of a long command so the model can still
+// recognize it without the command drowning out the rejection reason.
+func abbreviateCommand(command string) string {
+	runes := []rune(command)
+	if len(runes) <= maxCommandPreviewRunes {
+		return command
+	}
+	head := maxCommandPreviewRunes * 2 / 3
+	tail := maxCommandPreviewRunes - head
+	return string(runes[:head]) + " … " + string(runes[len(runes)-tail:])
 }
 
 // reopenStaleCompletion keeps a completion record honest: if the workspace was
