@@ -240,6 +240,7 @@ Responses 默认请求最多 3 次内置工具调用和 4096 个输出 token。�
 | `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` 仅使用有界的 `messages.jsonl`；`full` 保留 append-only 审计历史和独立工作快照。 |
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | 每个 `output.log` 保留的尾部大小；`0` 禁用裁剪。 |
 | `RUN_TRACE_ENABLED` | `false` | 保存 `.agent/runs/<run-id>/` Trace 并启用运行反馈接口。 |
+| `ENABLE_TASK_TOOL` | `false` | 启用 `task_update` / `task_scope` 持久化任务记录、任务提示、会话恢复与 TUI/WebUI 任务进度；关闭时不暴露这些工具、不注入已保存任务、不读写 `task.json`（已有文件原样保留），`turn_outcome` 不受影响。 |
 
 默认请求超过 200K token 后压缩到 18K（9%）目标；精确计数从约 170K 开始尝试。固定系统指令不会被裁剪，因此系统指令或工具定义本身超过目标时无法保证压到 18K。TUI 状态栏展示最近请求的上下文占比（相对于压缩触发阈值），以 `45%/200K` 格式显示，数值可能为估算，压缩后刷新；它不同于累计 `in/out` 用量。
 

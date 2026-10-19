@@ -28,7 +28,7 @@ func TestServicePersistsTurnOutcomeIndependentOfTaskProgress(t *testing.T) {
 				phase = "commentary"
 			}
 			client.responses = append(client.responses, agent.AssistantMessage{Content: "answer", Phase: phase})
-			service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
+			service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
 			result, err := service.HandleTurnWithOptions(context.Background(), TurnRequest{Message: "work", TurnID: "test-turn"}, TurnOptions{MaxIterations: len(client.responses)})
 			want := status
 			if status == turn.Blocked || status == turn.AwaitingInput {
@@ -82,7 +82,7 @@ func TestServicePersistsIndependentOutcomeWithoutTaskRecord(t *testing.T) {
 
 func TestWebUIUsesSharedMessageSnapshotsAndOutcome(t *testing.T) {
 	client := &taskScriptClient{responses: []agent.AssistantMessage{{Content: "checking", Phase: "commentary"}, {Content: "主要用 Go", Phase: "final_answer"}}}
-	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
+	service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
 	channel := NewWebUIChannel(service, true)
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest("POST", "/api/v1/webui/chat", strings.NewReader(`{"message":"用什么语言","turn_id":"web-turn"}`))
@@ -120,7 +120,7 @@ func TestWebUIUsesSharedMessageSnapshotsAndOutcome(t *testing.T) {
 
 func TestServiceSideQuestionDoesNotPauseSavedTask(t *testing.T) {
 	client := &taskScriptClient{responses: []agent.AssistantMessage{{Content: "working", Phase: "commentary"}}}
-	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
+	service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
 	first, err := service.HandleTurnWithOptions(context.Background(), TurnRequest{Message: "implement"}, TurnOptions{MaxIterations: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +160,7 @@ func (c failingTurnClient) CreateChatCompletionStream(context.Context, string, [
 func TestServiceFailureAndCancellationAreNotCompleted(t *testing.T) {
 	for _, runErr := range []error{errors.New("provider failed"), context.Canceled} {
 		t.Run(runErr.Error(), func(t *testing.T) {
-			service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: failingTurnClient{runErr}, Model: "test", SystemPrompt: "test"})
+			service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: t.TempDir(), Client: failingTurnClient{runErr}, Model: "test", SystemPrompt: "test"})
 			var sessionID string
 			response, err := service.HandleTurnWithOptions(context.Background(), TurnRequest{Message: "work"}, TurnOptions{SessionSink: func(id string) { sessionID = id }})
 			want := turn.Failed
@@ -186,7 +186,7 @@ func TestWebUIBudgetStopUsesBackendOutcome(t *testing.T) {
 	SetWebUIStageMaxIterations(1)
 	t.Cleanup(func() { SetWebUIStageMaxIterations(old) })
 	client := &taskScriptClient{responses: []agent.AssistantMessage{{Content: "working", Phase: "commentary"}, {Content: "还需分析"}}}
-	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
+	service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest("POST", "/api/v1/webui/chat", strings.NewReader(`{"message":"analyze"}`))
 	request.Header.Set("Content-Type", "application/json")

@@ -15,7 +15,7 @@ import (
 func TestWebUITaskSnapshotPublishesPersistedState(t *testing.T) {
 	task := taskstate.State{Goal: "单一进度来源", Status: "blocked", Reason: "缺少运行参数", Criteria: []taskstate.Criterion{{Description: strings.Repeat("完整验收", 300)}}, Remaining: []string{"提供参数后验证"}}
 	client := &taskScriptClient{responses: []agent.AssistantMessage{serverTaskUpdate(task), {Content: "等待参数"}}}
-	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: filepath.Join(t.TempDir(), ".agent"), Client: client, Model: "test", SystemPrompt: "test"})
+	service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: t.TempDir(), AgentDir: filepath.Join(t.TempDir(), ".agent"), Client: client, Model: "test", SystemPrompt: "test"})
 	channel := NewWebUIChannel(service, true)
 	h := NewHandler(HandlerOptions{Service: service, Channels: []Channel{channel}})
 	writer := httptest.NewRecorder()
@@ -52,7 +52,7 @@ func TestWebUITaskSnapshotPublishesPersistedState(t *testing.T) {
 }
 
 func TestConversationHistoryRestoresTaskOutsideTranscriptBudget(t *testing.T) {
-	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: filepath.Join(t.TempDir(), ".agent")})
+	service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: t.TempDir(), AgentDir: filepath.Join(t.TempDir(), ".agent")})
 	saved, err := service.store.Create(session.CreateOptions{Task: "任务恢复", Chat: true})
 	if err != nil {
 		t.Fatal(err)

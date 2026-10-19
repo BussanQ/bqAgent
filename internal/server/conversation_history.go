@@ -316,9 +316,12 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 			filtered = append(filtered, ConversationHistoryMessage{Role: role, Sender: groupHistorySender(conversationType, role), Content: content})
 		}
 	}
-	task, err := saved.LoadTaskState()
-	if err != nil {
-		return ConversationHistory{}, conversationHistoryLoadError{err: fmt.Errorf("load conversation task: %w", err)}
+	var task *taskstate.State
+	if service.taskToolEnabled {
+		task, err = saved.LoadTaskState()
+		if err != nil {
+			return ConversationHistory{}, conversationHistoryLoadError{err: fmt.Errorf("load conversation task: %w", err)}
+		}
 	}
 	result := ConversationHistory{ID: saved.ID(), Title: saved.Meta().Task, Mode: storedChatMode(saved.Meta().CurrentMode), ConversationType: conversationType, Task: task, Messages: filtered}
 	if conversationType == ConversationTypeGroup {

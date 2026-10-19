@@ -22,7 +22,7 @@ import (
 
 func TestTUIBackendRestoresPersistedTaskInHistory(t *testing.T) {
 	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: t.TempDir()}
-	service := appserver.NewService(appserver.ServiceOptions{WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir()})
+	service := appserver.NewService(appserver.ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: ws.Root, AgentDir: ws.AgentDir()})
 	store := session.NewStore(ws.Root, session.Options{AgentDir: ws.AgentDir()})
 	saved, err := store.Create(session.CreateOptions{Task: "实现功能", Chat: true})
 	if err != nil {

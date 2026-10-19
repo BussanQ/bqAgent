@@ -208,7 +208,7 @@ func (a *Agent) taskContext(ctx context.Context) string {
 	if a.taskStore == nil {
 		return turnOutcomeInstructions
 	}
-	text := taskProgressInstructions + "\n" + turnOutcomeInstructions
+	text := taskProgressInstructions + "\n" + turnOutcomeInstructions + " " + turnOutcomeTaskInstructions
 	if a.task != nil {
 		data, _ := json.Marshal(a.task)
 		if isSideQuestion(ctx) {

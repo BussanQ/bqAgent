@@ -45,7 +45,7 @@ func TestServiceRestoresTaskAndContinuesUntilVerified(t *testing.T) {
 	root := t.TempDir()
 	active := taskstate.State{Goal: "implement fast switch", Status: "active", Criteria: []taskstate.Criterion{{Description: "switch works"}}, Remaining: []string{"test switch"}}
 	client := &taskScriptClient{responses: []agent.AssistantMessage{serverTaskUpdate(active), {Role: "assistant", Content: "will test", Phase: "commentary"}, {Role: "assistant", Content: "will test", Phase: "commentary"}, {Role: "assistant", Content: "will test", Phase: "commentary"}}}
-	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: client, Model: "test", SystemPrompt: "test"})
+	service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: root, Client: client, Model: "test", SystemPrompt: "test"})
 	response, err := service.HandleTurnWithOptions(context.Background(), TurnRequest{Message: "implement fast switch"}, TurnOptions{MaxIterations: 4})
 	if err != nil || !strings.Contains(response.Reply, "maximum of 4 iterations") {
 		t.Fatalf("first=%+v err=%v", response, err)
@@ -57,7 +57,7 @@ func TestServiceRestoresTaskAndContinuesUntilVerified(t *testing.T) {
 		serverTaskUpdate(complete), {Role: "assistant", Content: "verified", Phase: "final_answer"},
 	}}
 	checks := 0
-	service = NewService(ServiceOptions{WorkspaceRoot: root, Client: client, Model: "test", SystemPrompt: "test", Functions: map[string]tools.Function{"execute_bash": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil }}})
+	service = NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: root, Client: client, Model: "test", SystemPrompt: "test", Functions: map[string]tools.Function{"execute_bash": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil }}})
 	result, err := service.HandleTurn(context.Background(), TurnRequest{SessionID: response.SessionID, Message: "改完了吗"})
 	if err != nil || result.Reply != "verified" || checks != 1 {
 		t.Fatalf("resume=%+v checks=%d err=%v", result, checks, err)
@@ -84,7 +84,7 @@ func TestServiceRestoresTaskAndContinuesUntilVerified(t *testing.T) {
 
 func TestAskModeDoesNotResumeOrMutateCodingTask(t *testing.T) {
 	client := &taskScriptClient{responses: []agent.AssistantMessage{{Role: "assistant", Content: "status only"}}}
-	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
+	service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
 	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "status", Mode: ChatModeAsk})
 	if err != nil || response.Reply != "status only" {
 		t.Fatalf("response=%+v err=%v", response, err)
@@ -113,7 +113,7 @@ func TestServiceCompletesLongTaskWithoutFollowupTurn(t *testing.T) {
 		serverTaskUpdate(complete), agent.AssistantMessage{Content: "verified", Phase: "final_answer"})
 	client := &taskScriptClient{responses: responses}
 	edits, checks := 0, 0
-	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test", Functions: map[string]tools.Function{
+	service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test", Functions: map[string]tools.Function{
 		"edit_switch":  func(context.Context, map[string]any) (string, error) { edits++; return "", nil },
 		"execute_bash": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
 	}})
@@ -128,5 +128,45 @@ func TestServiceCompletesLongTaskWithoutFollowupTurn(t *testing.T) {
 	state, err := saved.LoadTaskState()
 	if err != nil || state == nil || state.Status != "completed" {
 		t.Fatalf("state=%+v err=%v", state, err)
+	}
+}
+
+func TestServiceTaskToolDisabledByDefaultIgnoresSavedTaskAndHistory(t *testing.T) {
+	root := t.TempDir()
+	enabled := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: root, Client: &taskScriptClient{responses: []agent.AssistantMessage{{Role: "assistant", Content: "hi"}}}, Model: "test", SystemPrompt: "test"})
+	first, err := enabled.HandleTurn(context.Background(), TurnRequest{Message: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := enabled.store.Open(first.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := taskstate.State{Goal: "saved objective", Status: "active", Criteria: []taskstate.Criterion{{Description: "works"}}, Remaining: []string{"verify"}}
+	if err = saved.SaveTaskState(active); err != nil {
+		t.Fatal(err)
+	}
+	client := &taskScriptClient{responses: []agent.AssistantMessage{{Role: "assistant", Content: "plain answer", Phase: "final_answer"}}}
+	service := NewService(ServiceOptions{WorkspaceRoot: root, Client: client, Model: "test", SystemPrompt: "test"})
+	result, err := service.HandleTurn(context.Background(), TurnRequest{SessionID: first.SessionID, Message: "改完了吗"})
+	if err != nil || result.Reply != "plain answer" || len(client.messages) != 1 {
+		t.Fatalf("result=%+v calls=%d err=%v", result, len(client.messages), err)
+	}
+	encoded, _ := json.Marshal(client.messages[0])
+	if strings.Contains(string(encoded), "saved objective") || strings.Contains(string(encoded), "task_update") {
+		t.Fatalf("task guidance leaked: %s", encoded)
+	}
+	for _, d := range client.definitions[0] {
+		if d.Function.Name == "task_update" || d.Function.Name == "task_scope" {
+			t.Fatalf("disabled task tool exposed %s", d.Function.Name)
+		}
+	}
+	history, err := service.ConversationHistory(first.SessionID, 0)
+	if err != nil || history.Task != nil {
+		t.Fatalf("history task=%+v err=%v", history.Task, err)
+	}
+	got, err := saved.LoadTaskState()
+	if err != nil || got == nil || got.Goal != active.Goal || got.Status != "active" {
+		t.Fatalf("disk task changed: %+v err=%v", got, err)
 	}
 }

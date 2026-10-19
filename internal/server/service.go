@@ -55,6 +55,7 @@ type ServiceOptions struct {
 	MemoryAppend              func(task, result string) error
 	Context                   agent.ContextConfig
 	RunTraceEnabled           bool
+	TaskToolEnabled           bool
 	SessionOptions            *session.Options
 	Subagents                 *subagent.Manager
 	MemoryStore               *appmemory.Store
@@ -99,6 +100,7 @@ type Service struct {
 	memoryStore               *appmemory.Store
 	globalMemoryStore         *appmemory.Store
 	activeTurns               *activeTurnRegistry
+	taskToolEnabled           bool
 }
 
 type FileAttachment struct {
@@ -297,6 +299,7 @@ func NewService(options ServiceOptions) *Service {
 		memoryStore:               options.MemoryStore,
 		globalMemoryStore:         options.GlobalMemoryStore,
 		activeTurns:               newActiveTurnRegistry(),
+		taskToolEnabled:           options.TaskToolEnabled,
 	}
 	service.llm.Store(service.llmConfiguration)
 	if options.RunTraceEnabled {
@@ -988,7 +991,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		}
 	}
 	var taskStore taskstate.Store
-	if mode == ChatModeRun {
+	if mode == ChatModeRun && service.taskToolEnabled {
 		taskStore = conversation.Session
 	}
 	app := agent.NewWithOptions(service.client, effectiveModel, agent.Options{

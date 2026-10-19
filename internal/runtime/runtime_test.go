@@ -205,6 +205,20 @@ func TestConfigFromEnvEnablesRunTrace(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnvTaskToolDefaultsOffAndEnablesExplicitly(t *testing.T) {
+	for value, want := range map[string]bool{"": false, "false": false, "garbage": false, "true": true} {
+		config := ConfigFromEnv(func(key string) string {
+			if key == "ENABLE_TASK_TOOL" {
+				return value
+			}
+			return ""
+		})
+		if config.TaskToolEnabled != want {
+			t.Fatalf("ENABLE_TASK_TOOL=%q: TaskToolEnabled = %v, want %v", value, config.TaskToolEnabled, want)
+		}
+	}
+}
+
 func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 	config := ConfigFromEnv(func(key string) string {
 		switch key {

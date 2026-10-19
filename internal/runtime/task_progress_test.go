@@ -56,10 +56,56 @@ func TestRuntimeRestoresTaskFromSessionRecorder(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &runtimeTaskClient{t: t}
-	runtime := Runtime{Client: client, Model: "test", WorkspaceRoot: root}
+	runtime := Runtime{Client: client, Model: "test", WorkspaceRoot: root, TaskToolEnabled: true}
 	app := runtime.NewAgent(nil, "test", saved, false)
 	reply, err := app.Run(context.Background(), "status", 10)
 	if err != nil || reply != "needs input" || client.calls != 3 {
 		t.Fatalf("reply=%q err=%v calls=%d", reply, err, client.calls)
 	}
+}
+
+func TestRuntimeTaskToolDisabledIgnoresSavedTaskAndKeepsDisk(t *testing.T) {
+	root := t.TempDir()
+	saved, err := session.NewStore(root).Create(session.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := taskstate.State{Goal: "saved coding objective", Status: "active", Criteria: []taskstate.Criterion{{Description: "implement requirement"}}, Remaining: []string{"finish"}}
+	if err = saved.SaveTaskState(state); err != nil {
+		t.Fatal(err)
+	}
+	client := &disabledTaskClient{t: t}
+	app := Runtime{Client: client, Model: "test", WorkspaceRoot: root}.NewAgent(nil, "test", saved, false)
+	reply, err := app.Run(context.Background(), "continue", 10)
+	if err != nil || reply != "plain answer" || client.calls != 1 {
+		t.Fatalf("reply=%q err=%v calls=%d", reply, err, client.calls)
+	}
+	got, err := saved.LoadTaskState()
+	if err != nil || got == nil || got.Goal != state.Goal || got.Status != "active" {
+		t.Fatalf("saved task changed: %+v err=%v", got, err)
+	}
+}
+
+type disabledTaskClient struct {
+	t     *testing.T
+	calls int
+}
+
+func (c *disabledTaskClient) CreateChatCompletion(_ context.Context, _ string, messages []map[string]any, definitions []tools.Definition) (agent.AssistantMessage, error) {
+	c.calls++
+	for _, d := range definitions {
+		if d.Function.Name == "task_update" || d.Function.Name == "task_scope" {
+			c.t.Fatalf("disabled task tool exposed %s", d.Function.Name)
+		}
+	}
+	for _, m := range messages {
+		content, _ := m["content"].(string)
+		if strings.Contains(content, "saved coding objective") || strings.Contains(content, "task_update") {
+			c.t.Fatalf("task guidance leaked into prompt: %q", content)
+		}
+	}
+	return agent.AssistantMessage{Role: "assistant", Content: "plain answer"}, nil
+}
+func (c *disabledTaskClient) CreateChatCompletionStream(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, _ func(string)) (agent.AssistantMessage, error) {
+	return c.CreateChatCompletion(ctx, model, messages, definitions)
 }

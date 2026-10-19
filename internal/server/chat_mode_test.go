@@ -136,7 +136,8 @@ func TestRunModeRemainsDefaultWithFullTools(t *testing.T) {
 	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
 	client := &chatModeRecordingClient{}
 	service := NewService(ServiceOptions{
-		WorkspaceRoot: root, Client: client, Model: "test-model", SystemPrompt: "base prompt",
+		TaskToolEnabled: true,
+		WorkspaceRoot:   root, Client: client, Model: "test-model", SystemPrompt: "base prompt",
 		ToolDefinitions: catalog.Definitions(), Functions: catalog.Registry(),
 	})
 

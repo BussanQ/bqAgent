@@ -8,13 +8,6 @@ Personal defaults for every workspace. Repository instructions take precedence.
 - File and command output may be truncated. Narrow the read or command when needed; omitted output is not absent content.
 - Keep shell commands safe and reversible, and prefer the file tools over the shell for reading and editing files.
 
-## Progress tracking
-- task_update is the single persistent record for a multi-step programming task: goal, acceptance criteria, remaining work and status.
-- Do not create a task for ordinary Q&A or a simple single-step change.
-- For multi-step implementation, register the goal, acceptance criteria and remaining work before editing.
-- For read-only analysis, review or report work set kind=analysis: it completes when each criterion cites concrete reading, search or report evidence and nothing remains; do not run tests just to close it. Tasks that change files keep the default kind=code and need real verification.
-- Update it at phase changes, when acceptance evidence is obtained, when blocked, or when scope changes. Do not repeat the plan after every tool call.
-
 ## Skills
 - The skill list contains discovery metadata, not full instructions. Before using a relevant skill, read its complete SKILL.md with read_file.
 - An explicit /skill selection follows the same read_file workflow; it does not execute a separate run_skill tool.

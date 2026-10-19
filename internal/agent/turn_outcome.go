@@ -9,7 +9,10 @@ import (
 	"bqagent/internal/turn"
 )
 
-const turnOutcomeInstructions = `Use turn_outcome to report a concrete obstacle to this request (blocked), required user information or authorization (awaiting_input), or to clear a resolved obstacle (completed). It works independently of task progress and requires no task record. Give the final answer explaining the obstacle after declaring it. Never declare a blocker solely because progress recording failed. Historical task status alone does not declare this turn's outcome. A successful task_update recording blocked/awaiting_input also declares that current obstacle unless turn_outcome was used explicitly. Clear an explicit declaration with turn_outcome(status=completed) once resolved.`
+const turnOutcomeInstructions = `Use turn_outcome to report a concrete obstacle to this request (blocked), required user information or authorization (awaiting_input), or to clear a resolved obstacle (completed). It works independently of task progress and requires no task record. Give the final answer explaining the obstacle after declaring it. Never declare a blocker solely because progress recording failed. Clear an explicit declaration with turn_outcome(status=completed) once resolved.`
+
+// turnOutcomeTaskInstructions apply only when the task tool is enabled.
+const turnOutcomeTaskInstructions = `Historical task status alone does not declare this turn's outcome. A successful task_update recording blocked/awaiting_input also declares that current obstacle unless turn_outcome was used explicitly.`
 
 type outcomeDeclaration struct {
 	status   turn.Status
@@ -19,7 +22,7 @@ type outcomeDeclaration struct {
 
 func (a *Agent) installTurnOutcomeTool() {
 	a.toolDefinitions = append(a.toolDefinitions, tools.Definition{Type: "function", Function: tools.FunctionDefinition{
-		Name: "turn_outcome", Description: "Declare the outcome of the current request independently of task_update or progress storage. Use blocked for a concrete obstacle, awaiting_input for necessary user information/authorization, and completed to clear a resolved obstacle. Include a concrete reason for blocked/awaiting_input, then give the final answer. Do not use for progress recording errors. Does not stop tools or override runtime failures, cancellation or execution limits.",
+		Name: "turn_outcome", Description: "Declare the outcome of the current request independently of any task record or progress storage. Use blocked for a concrete obstacle, awaiting_input for necessary user information/authorization, and completed to clear a resolved obstacle. Include a concrete reason for blocked/awaiting_input, then give the final answer. Do not use for progress recording errors. Does not stop tools or override runtime failures, cancellation or execution limits.",
 		Parameters: tools.JSONSchema{Type: "object", Properties: map[string]tools.JSONSchemaProperty{
 			"status": {Type: "string", Description: "blocked, awaiting_input, or completed"},
 			"reason": {Type: "string", Description: "Concrete obstacle or required user input; required unless status is completed."},

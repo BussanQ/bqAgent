@@ -236,6 +236,7 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` uses only bounded `messages.jsonl`; `full` keeps append-only audit history and a separate working snapshot. |
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | Retained tail of each `output.log`; `0` disables trimming. |
 | `RUN_TRACE_ENABLED` | `false` | Persists `.agent/runs/<run-id>/` traces and enables run feedback APIs. |
+| `ENABLE_TASK_TOOL` | `false` | Enables the `task_update` / `task_scope` persistent task record, task prompts, session restore and TUI/WebUI task progress. When off, these tools are not exposed, saved tasks are not injected, `task.json` is neither read nor written (existing files are left untouched), and `turn_outcome` is unaffected. |
 
 By default, requests above 200K tokens compact toward 18K (9%); exact counting starts around 170K. Fixed system instructions are preserved, so instructions or tool definitions exceeding the target can prevent reaching 18K. The TUI shows the latest request size relative to the compaction trigger, using the format `45%/200K`, and refreshes after compaction; values may be estimated. This differs from cumulative `in/out` usage.
 

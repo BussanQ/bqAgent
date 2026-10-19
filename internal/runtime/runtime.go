@@ -35,6 +35,7 @@ type Config struct {
 	StreamProgressTimeout           time.Duration
 	MaxIterations                   int
 	RunTraceEnabled                 bool
+	TaskToolEnabled                 bool
 	SessionTranscriptMode           session.TranscriptMode
 	SessionOutputMaxBytes           int64
 	BashOutputMaxBytes              int64
@@ -86,6 +87,7 @@ type Runtime struct {
 	Models          []string
 	MaxIterations   int
 	RunTraceEnabled bool
+	TaskToolEnabled bool
 	SessionOptions  session.Options
 	WorkspaceRoot   string
 	Context         agent.ContextConfig
@@ -118,6 +120,7 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		StreamProgressTimeout:           envDurationAllowZero(getenv("LLM_STREAM_PROGRESS_TIMEOUT"), agent.DefaultStreamProgressTimeout),
 		MaxIterations:                   envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
 		RunTraceEnabled:                 envBool(getenv("RUN_TRACE_ENABLED"), false),
+		TaskToolEnabled:                 envBool(getenv("ENABLE_TASK_TOOL"), false),
 		SessionTranscriptMode:           session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
 		SessionOutputMaxBytes:           envInt64(getenv("SESSION_OUTPUT_MAX_BYTES"), session.DefaultOutputMaxBytes),
 		BashOutputMaxBytes:              envPositiveInt64(getenv("BASH_OUTPUT_MAX_BYTES"), tools.DefaultBashOutputMaxBytes),
@@ -290,6 +293,7 @@ func (factory Factory) build(ctx context.Context, background bool) Runtime {
 		Models:          append([]string(nil), factory.Config.Models...),
 		MaxIterations:   factory.Config.MaxIterations,
 		RunTraceEnabled: factory.Config.RunTraceEnabled,
+		TaskToolEnabled: factory.Config.TaskToolEnabled,
 		SessionOptions: session.Options{
 			TranscriptMode: factory.Config.SessionTranscriptMode,
 			OutputMaxBytes: factory.Config.SessionOutputMaxBytes,
@@ -379,7 +383,12 @@ func (runtime Runtime) NewAgent(logWriter io.Writer, systemPrompt string, record
 }
 
 func (runtime Runtime) NewAgentWithProgress(logWriter io.Writer, progressWriter io.Writer, systemPrompt string, recorder agent.MessageRecorder, stream bool) *agent.Agent {
-	taskStore, _ := recorder.(taskstate.Store)
+	// A nil TaskStore disables task_update, task_scope, task prompts and
+	// history-based continuation; turn_outcome is independent of it.
+	var taskStore taskstate.Store
+	if runtime.TaskToolEnabled {
+		taskStore, _ = recorder.(taskstate.Store)
+	}
 	return agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{
 		EnableNativeWebSearch: true,
 
