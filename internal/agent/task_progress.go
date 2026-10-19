@@ -17,7 +17,7 @@ import (
 // instructions, so this per-turn developer message stays short.
 const taskProgressInstructions = `Task tracking: task_update is the only persistent progress record. Ordinary Q&A and single-step edits need no task. For a multi-step programming task, create one before editing with the original goal, acceptance criteria and remaining implementation/verification work. Update it only at a stage change, an acceptance result, a blocker, or a scope change, then keep working; rewriting an unchanged plan is not progress.
 An active task stays the objective when the user says continue or asks for status: answer status briefly and keep working unless told to stop or wait. For a new unrelated question, call task_scope with relation=side_question and a reason; it detaches only this turn and leaves the saved task unchanged. Never use side_question to drop work requested in the current turn. Replace the goal only when the user changes or cancels it, using replace_goal with a reason.
-Mark a task completed only when every criterion has tool evidence, nothing remains and the targeted verification passed. Never remove criteria just to finish. Each passed verification must be a command this turn's execute_bash actually ran successfully after the last edit (optionally add its tool_call_id), recorded as the exact command string; a later edit makes it stale and it must be rerun. Run checks on their own: a check piped into tail/head/grep (without set -o pipefail) or chained after an edit cannot prove success. Re-assess saved blockers against the current request and continue when resolved. Progress tracking is advisory: a missing, stale or failed task_update must never stop substantive work or prevent a final answer. Do not repeat verification solely to repair progress metadata, and never record blocked or awaiting_input solely because progress recording failed. Reserve those statuses for concrete obstacles to the actual work or required user input. If tracking fails, explain the recording limitation briefly and report the actual work and verification results honestly.`
+Set kind=analysis for read-only investigation/review/report tasks (default kind=code changes files). An analysis task completes when every criterion cites concrete evidence from reading, search or the delivered report and nothing remains; do not run tests just to close it, and it is rejected if this turn edited files or ran a file-writing command. A code task is completed only when every criterion has tool evidence, nothing remains and the targeted verification passed. Never remove criteria just to finish. Each passed verification must be a command this turn's execute_bash actually ran successfully after the last edit (optionally add its tool_call_id), recorded as the exact command string; a later edit makes it stale and it must be rerun. Run checks on their own: a check piped into tail/head/grep (without set -o pipefail) or chained after an edit cannot prove success. Re-assess saved blockers against the current request and continue when resolved. Progress tracking is advisory: a missing, stale or failed task_update must never stop substantive work or prevent a final answer. Do not repeat verification solely to repair progress metadata, and never record blocked or awaiting_input solely because progress recording failed. Reserve those statuses for concrete obstacles to the actual work or required user input. If tracking fails, explain the recording limitation briefly and report the actual work and verification results honestly.`
 
 func (a *Agent) installTaskTool() {
 	if a.taskStore == nil {
@@ -25,7 +25,7 @@ func (a *Agent) installTaskTool() {
 	}
 	a.installTaskScopeTool()
 	a.toolDefinitions = append(a.toolDefinitions, tools.Definition{Type: "function", Function: tools.FunctionDefinition{
-		Name: "task_update", Description: "The only persistent progress record. Use it for multi-step programming work, not for ordinary Q&A or single-step edits. Call it only at a stage change, an acceptance result, a blocker, or a scope change; do not resend an unchanged plan (identical state is ignored and is not progress). Create the task with state; afterwards prefer update, which changes only the given fields of the saved task. Completion requires all criteria backed by evidence, no remaining work, and passed verification whose exact command string was actually run successfully by execute_bash in this turn after the last change; a check piped into tail/head/grep without set -o pipefail does not count. This record is advisory: recording failures must not block actual work or the final answer, and are not task blockers. Preserve the original goal and criteria unless the user changes scope.",
+		Name: "task_update", Description: "The only persistent progress record. Use it for multi-step programming work, not for ordinary Q&A or single-step edits. Call it only at a stage change, an acceptance result, a blocker, or a scope change; do not resend an unchanged plan (identical state is ignored and is not progress). Create the task with state; afterwards prefer update, which changes only the given fields of the saved task. Set state.kind=analysis for read-only analysis (no tests required). Code-task completion requires all criteria backed by evidence, no remaining work, and passed verification whose exact command string was actually run successfully by execute_bash in this turn after the last change; a check piped into tail/head/grep without set -o pipefail does not count. This record is advisory: recording failures must not block actual work or the final answer, and are not task blockers. Preserve the original goal and criteria unless the user changes scope.",
 		RawParameters: json.RawMessage(taskUpdateParameters),
 	}})
 	a.functions["task_update"] = func(ctx context.Context, args map[string]any) (result string, err error) {
@@ -47,7 +47,7 @@ func (a *Agent) installTaskTool() {
 		replace, _ := args["replace_goal"].(bool)
 		replaced := false
 		if a.task != nil {
-			changed := a.task.Goal != next.Goal
+			changed := a.task.Goal != next.Goal || a.task.IsAnalysis() != next.IsAnalysis()
 			for _, old := range a.task.Criteria {
 				found := false
 				for _, criterion := range next.Criteria {
@@ -282,17 +282,27 @@ func verifyCompletionEvidence(run *runState, next taskstate.State) error {
 	if next.Status != "completed" {
 		return nil
 	}
+	if next.IsAnalysis() {
+		// Analysis completes on criteria evidence, but cannot be used to
+		// close out real changes without the verification a code task needs.
+		if run != nil && run.ledger.hasDefiniteWrite() {
+			return fmt.Errorf("task_update rejected: this turn edited files or ran a file-writing command, so it is not a read-only analysis task; if the user asked for changes, record the work as a code task (replace_goal with the user's quote) instead of kind=analysis")
+		}
+	}
 	if run == nil {
+		if next.IsAnalysis() {
+			return nil
+		}
 		return fmt.Errorf("completion requires verification executed in this turn; no turn execution record is available")
 	}
 	for index, check := range next.Verification {
 		if check.Status != "passed" {
 			continue
 		}
-		if issue := run.ledger.verificationIssue(check.ToolCallID, check.Command); issue != "" {
+		if issue := run.ledger.verificationIssueFor(check.ToolCallID, check.Command, next.IsAnalysis()); issue != "" {
 			// Lead with the cause: a long command printed first buries it, and
 			// models then resubmit the same record instead of fixing it.
-			return fmt.Errorf("task_update rejected: verification[%d] cannot prove completion: %s. Recorded command: %q. A passed verification must be an execute_bash call in this turn that ran exactly this command successfully after the last edit or side-effecting command; fix the record or rerun the check, do not resubmit it unchanged", index, issue, abbreviateCommand(check.Command))
+			return fmt.Errorf("task_update rejected: verification[%d] cannot prove completion: %s. Recorded command: %q. Correct or drop this entry; do not rerun a check that already succeeded just to repair metadata. The record is advisory, so you may give the final answer with the real results", index, issue, abbreviateCommand(check.Command))
 		}
 	}
 	return nil

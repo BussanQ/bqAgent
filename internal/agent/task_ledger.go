@@ -26,6 +26,10 @@ type execEntry struct {
 	// reliable means the command's exit status reflects every step (no ||, ;,
 	// background job or un-pipefailed pipeline) and it is not merely a read.
 	reliable bool
+	// write marks a definite change: a file edit tool or a shell command with an
+	// explicit write signal. Unlike mutating it is not a conservative guess, so
+	// a read-only command the classifier cannot parse never counts as a change.
+	write bool
 	// barrier entries are synthetic (new user input, goal change). They
 	// invalidate older evidence but are not workspace mutations.
 	barrier bool
@@ -54,11 +58,13 @@ func (l *execLedger) begin(callID, tool string, args map[string]any) *execEntry 
 		entry.command = strings.TrimSpace(command)
 		kind := classifyBash(entry.command)
 		entry.mutating = kind == bashMutating
+		entry.write = entry.mutating && explicitShellWrite(entry.command)
 		entry.verifier = kind == bashVerify
 		entry.reliable = kind != bashReadOnly && reliableExitStatus(entry.command)
 	case mutatingFileTools[tool], tool == "consult_group_agent":
 		// Assume mutation while running; a failed file tool is demoted in finish.
 		entry.mutating = true
+		entry.write = mutatingFileTools[tool]
 	default:
 		return nil
 	}
@@ -109,6 +115,14 @@ func (l *execLedger) verified(callID, command string) bool {
 // cause (an output-truncating pipe, a paraphrased command, a later edit)
 // instead of blindly retrying the same record.
 func (l *execLedger) verificationIssue(callID, command string) string {
+	return l.verificationIssueFor(callID, command, false)
+}
+
+// verificationIssueFor with evidenceOnly (analysis tasks) accepts any exactly
+// matching successful execute_bash call, including read-only ones such as
+// go list or grep, without the test/build/lint and staleness requirements;
+// the caller has already ruled out definite writes this turn.
+func (l *execLedger) verificationIssueFor(callID, command string, evidenceOnly bool) string {
 	command = strings.TrimSpace(command)
 	callID = strings.TrimSpace(callID)
 	if command == "" {
@@ -125,7 +139,7 @@ func (l *execLedger) verificationIssue(callID, command string) string {
 		if e.command != command {
 			if near == "" && (callID != "" || strings.Contains(e.command, command)) {
 				near = fmt.Sprintf("the closest execute_bash call ran %q, which is not the recorded command; record the exact command string", abbreviateCommand(e.command))
-				if e.success && !e.reliable {
+				if !evidenceOnly && e.success && !e.reliable {
 					near += ", and " + unreliableReason(e.command)
 				}
 			}
@@ -135,6 +149,8 @@ func (l *execLedger) verificationIssue(callID, command string) string {
 		switch {
 		case !e.success:
 			issue = "that execute_bash call failed"
+		case evidenceOnly:
+			issue = ""
 		case !e.reliable:
 			issue = unreliableReason(e.command)
 		default:
@@ -191,6 +207,61 @@ func (l *execLedger) hasMutation(since uint64) bool {
 	for _, e := range l.entries {
 		if e.mutating && !e.barrier && e.start > since {
 			return true
+		}
+	}
+	return false
+}
+
+// hasDefiniteWrite reports a file edit or explicit shell write in this turn,
+// whether or not it succeeded (a failed write may be partially applied).
+func (l *execLedger) hasDefiniteWrite() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, e := range l.entries {
+		if e.write && !e.barrier {
+			return true
+		}
+	}
+	return false
+}
+
+var writingWords = map[string]bool{"rm": true, "mv": true, "cp": true, "mkdir": true, "touch": true, "tee": true, "patch": true, "chmod": true, "truncate": true, "ln": true, "install": true}
+var writingGit = map[string]bool{"commit": true, "apply": true, "checkout": true, "reset": true, "restore": true, "merge": true, "rebase": true, "add": true, "stash": true, "push": true, "clean": true, "am": true, "cherry-pick": true}
+
+// explicitShellWrite recognises clear file-writing shell commands only.
+func explicitShellWrite(command string) bool {
+	c, valid := shellControlText(strings.TrimSpace(command))
+	if !valid {
+		return false // cannot parse: not a definite write
+	}
+	for _, harmless := range []string{"2>&1", "&>/dev/null", ">/dev/null", "2>/dev/null", "> /dev/null", "2> /dev/null"} {
+		c = strings.ReplaceAll(c, harmless, " ")
+	}
+	if strings.Contains(c, ">") {
+		return true
+	}
+	c = strings.NewReplacer("&&", "\n", "||", "\n", ";", "\n", "|", "\n").Replace(c)
+	for _, segment := range strings.Split(c, "\n") {
+		words := strings.Fields(segment)
+		for len(words) > 0 && strings.Contains(words[0], "=") {
+			words = words[1:]
+		}
+		if len(words) == 0 {
+			continue
+		}
+		name := words[0]
+		if writingWords[name] {
+			return true
+		}
+		if name == "git" && len(words) > 1 && writingGit[words[1]] {
+			return true
+		}
+		if name == "sed" || name == "perl" {
+			for _, w := range words[1:] {
+				if strings.HasPrefix(w, "-i") {
+					return true
+				}
+			}
 		}
 	}
 	return false

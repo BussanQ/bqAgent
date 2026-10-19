@@ -20,6 +20,7 @@ const taskUpdateParameters = `{
       "description": "Complete task state. Use it to create the task or, with replace_goal, to change its scope.",
       "properties": {
         "goal": {"type": "string"},
+        "kind": {"type": "string", "enum": ["code", "analysis"], "description": "analysis: read-only investigation or report; completes on criteria evidence from reading/search, no tests needed. code (default): changes files; completion needs a passed, really executed verification. An analysis task cannot complete after a file edit or file-writing command in this turn."},
         "status": {"type": "string", "enum": ["active", "completed", "blocked", "awaiting_input", "cancelled"]},
         "criteria": {"type": "array", "items": {"type": "object", "properties": {
           "description": {"type": "string"}, "done": {"type": "boolean"}, "evidence": {"type": "string"}

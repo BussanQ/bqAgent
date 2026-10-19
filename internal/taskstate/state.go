@@ -23,7 +23,16 @@ type Verification struct {
 	Details    string `json:"details"`
 }
 
+// Kind values. An empty Kind means KindCode so saved tasks stay valid.
+const (
+	KindCode     = "code"
+	KindAnalysis = "analysis"
+)
+
 type State struct {
+	// Kind is "code" (default; completion needs executed verification) or
+	// "analysis" (read-only investigation/report; verification is optional).
+	Kind         string         `json:"kind,omitempty"`
 	Goal         string         `json:"goal"`
 	Status       string         `json:"status"` // active, completed, blocked, awaiting_input, cancelled
 	Criteria     []Criterion    `json:"criteria"`
@@ -38,7 +47,15 @@ type Store interface {
 	SaveTaskState(State) error
 }
 
+// IsAnalysis reports a read-only analysis task.
+func (state State) IsAnalysis() bool { return state.Kind == KindAnalysis }
+
 func (state State) Validate() error {
+	switch state.Kind {
+	case "", KindCode, KindAnalysis:
+	default:
+		return fmt.Errorf("invalid task kind %q: use code or analysis", state.Kind)
+	}
 	if strings.TrimSpace(state.Goal) == "" || len(state.Criteria) == 0 {
 		return fmt.Errorf("goal and acceptance criteria are required")
 	}
@@ -75,8 +92,11 @@ func (state State) Validate() error {
 			return fmt.Errorf("verification has not passed")
 		}
 	}
-	if state.Status == "completed" && (len(state.Remaining) > 0 || len(state.Verification) == 0) {
-		return fmt.Errorf("completion requires no remaining work and recorded verification")
+	if state.Status == "completed" && len(state.Remaining) > 0 {
+		return fmt.Errorf("completion requires no remaining work")
+	}
+	if state.Status == "completed" && !state.IsAnalysis() && len(state.Verification) == 0 {
+		return fmt.Errorf("completion of a code task requires recorded verification; for a read-only analysis task set kind=analysis")
 	}
 	return nil
 }

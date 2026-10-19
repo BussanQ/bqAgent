@@ -5,7 +5,22 @@ import (
 	"testing"
 
 	"bqagent/internal/taskstate"
+	"bqagent/internal/turn"
 )
+
+func TestTaskProgressAcceptsCompletedAnalysisWithoutTests(t *testing.T) {
+	var progress taskProgress
+	if !progress.apply(turn.Event{
+		TurnID: "analysis", ItemID: "analysis/task", Seq: 1, Kind: "task.updated", Phase: "completed",
+		Text: `{"kind":"analysis","goal":"分析项目","status":"completed","criteria":[{"description":"梳理入口并给出报告","done":true,"evidence":"阅读 cmd/agent/main.go，报告说明入口与模块关系"}],"remaining":[]}`,
+	}) {
+		t.Fatal("completed analysis snapshot rejected without test verification")
+	}
+	lines := progress.lines()
+	if len(lines) < 2 || !strings.Contains(lines[0], "已完成") || !strings.Contains(lines[0], "验收 1/1") {
+		t.Fatalf("analysis completion not reflected in task panel: %v", lines)
+	}
+}
 
 func TestTaskProgressClearsPreviousTaskOnSubmit(t *testing.T) {
 	// Any status: a task left over from the previous turn, finished or not,

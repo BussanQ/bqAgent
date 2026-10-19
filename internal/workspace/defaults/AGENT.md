@@ -12,6 +12,7 @@ Personal defaults for every workspace. Repository instructions take precedence.
 - task_update is the single persistent record for a multi-step programming task: goal, acceptance criteria, remaining work and status.
 - Do not create a task for ordinary Q&A or a simple single-step change.
 - For multi-step implementation, register the goal, acceptance criteria and remaining work before editing.
+- For read-only analysis, review or report work set kind=analysis: it completes when each criterion cites concrete reading, search or report evidence and nothing remains; do not run tests just to close it. Tasks that change files keep the default kind=code and need real verification.
 - Update it at phase changes, when acceptance evidence is obtained, when blocked, or when scope changes. Do not repeat the plan after every tool call.
 
 ## Skills
