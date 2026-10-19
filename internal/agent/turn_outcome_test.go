@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"bqagent/internal/tools"
@@ -150,6 +151,72 @@ func TestExplicitTurnOutcomeTakesPrecedenceOverProgress(t *testing.T) {
 		result, err := app.RunTurn(context.Background(), nil, 10)
 		if err != nil || result.Outcome.Status != want {
 			t.Fatalf("resolved=%t result=%+v err=%v", resolved, result, err)
+		}
+	}
+}
+
+func TestTurnOutcomeCompletedRequiresCurrentObstacle(t *testing.T) {
+	for _, scenario := range []string{"none", "blocked", "awaiting_input", "task obstacle", "already completed", "new input", "interrupted"} {
+		t.Run(scenario, func(t *testing.T) {
+			app := NewWithOptions(&stubClient{}, "test", Options{})
+			ctx, run := evidenceRun()
+			wantSuccess := false
+			switch scenario {
+			case "blocked", "awaiting_input":
+				if _, err := app.functions["turn_outcome"](ctx, map[string]any{"status": scenario, "reason": "address required"}); err != nil {
+					t.Fatal(err)
+				}
+				wantSuccess = true
+			case "task obstacle":
+				run.declareOutcome(turn.Blocked, "address required", false)
+				wantSuccess = true
+			case "already completed":
+				run.declareOutcome(turn.Blocked, "address required", true)
+				run.declareOutcome(turn.Completed, "", true)
+			case "new input":
+				run.declareOutcome(turn.AwaitingInput, "address required", true)
+				run.acceptUserInput("address supplied")
+			case "interrupted":
+				run.declareOutcome(turn.Interrupted, "cancelled", false)
+			}
+			before := run.declaration
+			_, err := app.functions["turn_outcome"](ctx, map[string]any{"status": "completed"})
+			if wantSuccess {
+				if err != nil || run.declaration == nil || run.declaration.status != turn.Completed || !run.declaration.explicit {
+					t.Fatalf("obstacle not cleared: declaration=%+v err=%v", run.declaration, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "Give the final answer directly") || run.declaration != before {
+				t.Fatalf("invalid completion changed declaration: before=%+v after=%+v err=%v", before, run.declaration, err)
+			}
+		})
+	}
+}
+
+func TestTurnOutcomeUnnecessaryCompletionDoesNotBlockAnswer(t *testing.T) {
+	for _, historical := range []bool{false, true} {
+		options := Options{}
+		if historical {
+			task := activeTestTask()
+			task.Status, task.Reason = "blocked", "old obstacle"
+			options.TaskStore = &memoryTaskStore{state: &task}
+		}
+		client := &stubClient{responses: []AssistantMessage{
+			turnOutcomeMessage(turn.Completed, ""),
+			{Content: "nerdctl ps -q | xargs -r nerdctl stop"},
+		}}
+		app := NewWithOptions(client, "test", options)
+		result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "nerdctl 停止所有容器的命令"}}, 4)
+		if err != nil || result.Outcome.Status != turn.Completed || result.Reply != "nerdctl ps -q | xargs -r nerdctl stop" || len(client.messages) != 2 {
+			t.Fatalf("history=%t result=%+v calls=%d err=%v", historical, result, len(client.messages), err)
+		}
+		found := false
+		for _, message := range client.messages[1] {
+			if message["role"] == "tool" && strings.Contains(contentText(message["content"]), "completed requires an existing blocked/awaiting_input declaration") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("history=%t unnecessary completion was not rejected", historical)
 		}
 	}
 }
