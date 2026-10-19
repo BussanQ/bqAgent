@@ -88,6 +88,7 @@ type Model struct {
 	phase            phase
 	progress         string
 	startedAt        time.Time
+	turnElapsed      time.Duration // frozen duration of the last turn run in this process; zero when unknown
 	stream           string
 	reply            string
 	replyRendered    bool
@@ -668,6 +669,7 @@ func (model *Model) submit(value string, images ...Image) tea.Cmd {
 	model.reportActivity("working")
 	model.progress = "正在思考"
 	model.startedAt = time.Now()
+	model.turnElapsed = 0
 	model.metrics = nil
 	model.usage = nil
 	model.liveTokens = 0
@@ -877,6 +879,9 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 			}
 		}
 		model.active.pending = nil
+	}
+	if !model.startedAt.IsZero() {
+		model.turnElapsed = max(0, time.Since(model.startedAt))
 	}
 	model.active = nil
 	// Release native scrollback even when a short turn leaves tools unarchived.
@@ -1140,6 +1145,7 @@ func (model *Model) clearSession() {
 	model.runtime = model.backend.RuntimeInfo("")
 	model.metrics = nil
 	model.usage = nil
+	model.turnElapsed = 0
 	model.liveTokens = 0
 	model.liveRunes = 0
 	model.queued = nil
@@ -1469,10 +1475,16 @@ func (model Model) renderStatus(width int) string {
 	if model.inputNotice != "" {
 		right = model.inputNotice
 	} else if model.phase != phaseIdle {
-		elapsed := time.Since(model.startedAt).Round(100 * time.Millisecond)
-		right = fmt.Sprintf("%s · %s %s · %s", model.tokenUsageStatus(), model.spinner.View(), model.phaseLabel(), elapsed)
-	} else if model.metrics != nil || model.usage != nil {
-		parts := []string{model.tokenUsageStatus()}
+		elapsed := formatTurnElapsed(time.Since(model.startedAt))
+		right = fmt.Sprintf("%s · %s %s · 耗时 %s", model.tokenUsageStatus(), model.spinner.View(), model.phaseLabel(), elapsed)
+	} else if model.metrics != nil || model.usage != nil || model.turnElapsed > 0 {
+		parts := []string{}
+		if model.metrics != nil || model.usage != nil {
+			parts = append(parts, model.tokenUsageStatus())
+		}
+		if model.turnElapsed > 0 {
+			parts = append(parts, "耗时 "+formatTurnElapsed(model.turnElapsed))
+		}
 		speedLabel := "TPS —"
 		if model.metrics != nil {
 			if speed := model.metrics.TokensPerSecond; speed > 0 && !math.IsNaN(speed) && !math.IsInf(speed, 0) {
@@ -1525,6 +1537,15 @@ func (model Model) renderStatus(width int) string {
 		return model.styles.dim.Render(left + "\n" + right)
 	}
 	return model.styles.dim.Render(left + strings.Repeat(" ", space) + right)
+}
+
+// formatTurnElapsed keeps sub-minute runs at the live 100ms precision and
+// rounds longer ones to whole seconds, e.g. 1m24s.
+func formatTurnElapsed(elapsed time.Duration) string {
+	if elapsed >= time.Minute {
+		return elapsed.Round(time.Second).String()
+	}
+	return elapsed.Round(100 * time.Millisecond).String()
 }
 
 func (model Model) tokenUsageStatus() string {

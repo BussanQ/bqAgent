@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -53,5 +55,70 @@ func TestStatusShowsProviderNamespaceAfterModelSwitch(t *testing.T) {
 		if got := ansi.Strip(model.renderStatus(200)); !strings.HasSuffix(got, provider+"/Deepseek · Run") || strings.Contains(got, "openai-response/Deepseek") {
 			t.Fatalf("provider did not follow selected model: %q", got)
 		}
+	}
+}
+
+func TestStatusFreezesTurnElapsedAfterFinish(t *testing.T) {
+	newModel := func() Model {
+		model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+		model.runtime = RuntimeInfo{Provider: "api", Model: "model"}
+		return model
+	}
+	for _, kind := range []string{"done", "cancel", "fail"} {
+		t.Run(kind, func(t *testing.T) {
+			model := newModel()
+			model.phase = phaseThinking
+			model.startedAt = time.Now().Add(-84 * time.Second)
+			model.active = &activeTurn{sequence: model.sequence}
+			event := turnEvent{sequence: model.sequence, kind: "done"}
+			if kind == "cancel" {
+				event.err = context.Canceled
+			} else if kind == "fail" {
+				event.err = errors.New("boom")
+			}
+			model.handleTurnEvent(event)
+			first := ansi.Strip(model.renderStatus(200))
+			if !strings.Contains(first, "耗时 1m24s") {
+				t.Fatalf("missing frozen elapsed: %q", first)
+			}
+			model.startedAt = model.startedAt.Add(-time.Hour)
+			if second := ansi.Strip(model.renderStatus(200)); second != first {
+				t.Fatalf("elapsed kept ticking: %q vs %q", first, second)
+			}
+			for _, line := range strings.Split(ansi.Strip(model.renderStatus(30)), "\n") {
+				if ansi.StringWidth(line) > 30 {
+					t.Fatalf("elapsed overflowed narrow status: %q", line)
+				}
+			}
+		})
+	}
+}
+
+func TestStatusElapsedUpdatesAndResetsOnNextTurn(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.turnElapsed = 84 * time.Second
+	model.submit("分析项目")
+	defer model.active.cancel()
+	if model.turnElapsed != 0 || model.startedAt.IsZero() {
+		t.Fatal("next turn did not reset its elapsed time")
+	}
+	model.startedAt = time.Now().Add(-2 * time.Second)
+	first := ansi.Strip(model.renderStatus(200))
+	model.startedAt = model.startedAt.Add(-82 * time.Second)
+	second := ansi.Strip(model.renderStatus(200))
+	if !strings.Contains(first, "耗时 2s") || !strings.Contains(second, "耗时 1m24s") {
+		t.Fatalf("running elapsed did not update: %q -> %q", first, second)
+	}
+}
+
+func TestStatusElapsedResetsForNewSessionState(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	if strings.Contains(ansi.Strip(model.renderStatus(200)), "耗时") {
+		t.Fatal("fresh/resumed session must not show invented elapsed")
+	}
+	model.turnElapsed = 3 * time.Second
+	model.clearSession()
+	if model.turnElapsed != 0 || strings.Contains(ansi.Strip(model.renderStatus(200)), "耗时") {
+		t.Fatal("clearSession must drop elapsed")
 	}
 }
