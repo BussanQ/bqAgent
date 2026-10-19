@@ -158,7 +158,7 @@ func (group toolGroup) render(styles theme, interactive bool, width int) string 
 			marker = "▼"
 			hint = "点击工具查看详情 · Ctrl+O 收起"
 		} else if interactive {
-			hint = "点击或 Ctrl+O 展开"
+			hint = "Ctrl+O 展开"
 		}
 		header = fmt.Sprintf("%s %s · %s", marker, header, hint)
 	} else {
@@ -167,7 +167,7 @@ func (group toolGroup) render(styles theme, interactive bool, width int) string 
 			if group.expanded {
 				header += " · 点击工具查看详情 · Ctrl+O 收起"
 			} else {
-				header += " · 点击或 Ctrl+O 展开详情"
+				header += " · Ctrl+O 展开详情"
 			}
 		}
 	}

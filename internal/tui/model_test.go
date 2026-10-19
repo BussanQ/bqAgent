@@ -82,7 +82,7 @@ func TestModelContinuousTokenUpdatesDoNotCopyBuilder(t *testing.T) {
 	}
 }
 
-func TestToolGroupCollapsesAfterFiveAndMouseExpands(t *testing.T) {
+func TestToolGroupCollapsesAfterFiveAndKeyboardExpands(t *testing.T) {
 	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
 	model.width = 70
 	model.height = 24
@@ -97,7 +97,7 @@ func TestToolGroupCollapsesAfterFiveAndMouseExpands(t *testing.T) {
 		}
 	}
 	collapsed := model.View().Content
-	if !strings.Contains(collapsed, "工具活动 · 6 次") || !strings.Contains(collapsed, "点击或 Ctrl+O 展开") || strings.Contains(collapsed, "file-1.go") {
+	if !strings.Contains(collapsed, "工具活动 · 6 次") || !strings.Contains(collapsed, "Ctrl+O 展开") || strings.Contains(collapsed, "file-1.go") {
 		t.Fatalf("collapsed tool group = %q", collapsed)
 	}
 	model.handleKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
@@ -115,6 +115,10 @@ func TestToolGroupCollapsesAfterFiveAndMouseExpands(t *testing.T) {
 	headerY := toolHeaderScreenY(t, model)
 	updated, _ := model.Update(tea.MouseClickMsg{X: 1, Y: headerY, Button: tea.MouseLeft})
 	model = updated.(Model)
+	if model.tools.expanded || model.View().MouseMode != tea.MouseModeNone {
+		t.Fatal("a late click while tracking is disabled must not reopen the drawer")
+	}
+	model.handleKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 	expanded := model.View().Content
 	if !model.tools.expanded || !strings.Contains(expanded, "file-1.go") || !strings.Contains(expanded, "点击工具查看详情") {
 		t.Fatalf("expanded tool group = %q", expanded)

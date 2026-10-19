@@ -9,6 +9,51 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+func TestRunningToolDrawerMouseTrackingFollowsExpansion(t *testing.T) {
+	for _, collapse := range []string{"keyboard", "mouse"} {
+		t.Run(collapse, func(t *testing.T) {
+			model := toolDrawerModel(t, 30)
+			model.sequence = 1
+			model.active = &activeTurn{sequence: 1, events: make(chan turnEvent), cancel: func() {}}
+			update := func(message tea.Msg) {
+				updated, _ := model.Update(message)
+				model = updated.(Model)
+			}
+			if model.View().MouseMode != tea.MouseModeNone {
+				t.Fatal("collapsed tools captured native scrollback")
+			}
+			update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+			update(turnEvent{sequence: 1, kind: "tool", tool: ToolEvent{Kind: "tool_start", ID: "next", Name: "read_file"}})
+			if !model.tools.expanded || model.View().MouseMode != tea.MouseModeCellMotion {
+				t.Fatal("new tool interrupted expanded mouse interaction")
+			}
+			update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+			if model.tools.offset == 0 {
+				t.Fatal("expanded tool list did not scroll")
+			}
+			if collapse == "mouse" {
+				update(tea.MouseClickMsg{X: 1, Y: toolHeaderScreenY(t, model), Button: tea.MouseLeft})
+			} else {
+				update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+			}
+			update(turnEvent{sequence: 1, kind: "tool", tool: ToolEvent{Kind: "tool_result", ID: "next", Name: "read_file", Status: "succeeded", Preview: "result"}})
+			update(turnEvent{sequence: 1, kind: "progress", text: "waiting for model"})
+			if model.tools.expanded || model.toolMouse || model.View().MouseMode != tea.MouseModeNone {
+				t.Fatal("tool results or model waiting reclaimed native scrollback")
+			}
+			update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+			model.commitToolGroup()
+			if model.tools.expanded || model.toolMouse || model.View().MouseMode != tea.MouseModeNone {
+				t.Fatal("archiving expanded tools did not release mouse tracking")
+			}
+			update(turnEvent{sequence: 1, kind: "tool", tool: ToolEvent{Kind: "tool_start", ID: "after-archive", Name: "read_file"}})
+			if model.View().MouseMode != tea.MouseModeNone {
+				t.Fatal("new tools after archiving reclaimed native scrollback")
+			}
+		})
+	}
+}
+
 func TestTurnCompletionRestoresNativeMouseScrolling(t *testing.T) {
 	for _, count := range []int{1, 6} {
 		for _, expanded := range []bool{false, true} {
@@ -32,11 +77,14 @@ func TestTurnCompletionRestoresNativeMouseScrolling(t *testing.T) {
 						}
 						update(turnEvent{sequence: 1, kind: "tool", tool: ToolEvent{Kind: "tool_result", ID: id, Name: "read_file", Status: "succeeded", Preview: preview}})
 					}
-					if model.View().MouseMode != tea.MouseModeCellMotion {
-						t.Fatal("running tools should retain mouse interaction")
+					if model.View().MouseMode != tea.MouseModeNone {
+						t.Fatal("collapsed running tools must preserve native scrolling")
 					}
 					if expanded {
 						update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+						if model.View().MouseMode != tea.MouseModeCellMotion {
+							t.Fatal("expanded tools must enable mouse interaction")
+						}
 					}
 					update(turnEvent{sequence: 1, kind: "token", text: "short response"})
 					model.input.setValue("unsent draft")

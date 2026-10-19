@@ -433,9 +433,7 @@ func (model *Model) handleKey(key tea.KeyPressMsg) []tea.Cmd {
 		}
 		if model.tools.expanded {
 			model.tools.expanded = false
-			if model.tools.committed {
-				model.toolMouse = false
-			}
+			model.toolMouse = false
 			return nil
 		}
 		model.closePanel()
@@ -559,7 +557,7 @@ func (model *Model) handleMouse(message tea.MouseClickMsg) []tea.Cmd {
 		model.handleToolInspectorMouse(event)
 		return nil
 	}
-	if !model.tools.canExpand() || event.Button != tea.MouseLeft || model.toolViewportHeight() == 0 {
+	if !model.toolMouse || !model.tools.canExpand() || event.Button != tea.MouseLeft || model.toolViewportHeight() == 0 {
 		return nil
 	}
 	viewLines, headerRow := model.liveLayout()
@@ -605,9 +603,7 @@ func (model *Model) toggleToolGroup() {
 		model.tools.expanded = !model.tools.expanded
 		model.tools.detail = 0
 		model.tools.offset = 0
-		if model.tools.committed {
-			model.toolMouse = model.tools.expanded
-		}
+		model.toolMouse = model.tools.expanded
 	}
 }
 
@@ -860,9 +856,7 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 			}
 			model.phase = phaseTool
 			model.progress = "正在运行工具 " + event.tool.Name
-			if model.tools.add(event.tool) && !model.toolMouse {
-				model.toolMouse = true
-			}
+			model.tools.add(event.tool)
 		}
 		return commands
 	}

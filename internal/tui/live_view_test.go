@@ -19,7 +19,6 @@ func toolDrawerModel(t *testing.T, count int) Model {
 		model.tools.add(ToolEvent{Kind: "tool_start", ID: id, Seq: uint64(i), Name: "read_file", Arguments: map[string]any{"path": fmt.Sprintf("file-%03d.go", i)}})
 		model.tools.add(ToolEvent{Kind: "tool_result", ID: id, Name: "read_file", Status: "succeeded"})
 	}
-	model.toolMouse = count > toolCollapseThreshold
 	return model
 }
 
@@ -62,6 +61,9 @@ func TestToolDrawerToggleRestoresSingleRowAndSingleHistory(t *testing.T) {
 		if cmd != nil {
 			t.Fatal("toggle must not emit history or terminal commands")
 		}
+		if model.toolMouse != model.tools.expanded || (model.View().MouseMode == tea.MouseModeCellMotion) != model.tools.expanded {
+			t.Fatal("mouse tracking must follow drawer expansion")
+		}
 		assertLiveFrameFits(t, model)
 		content := model.View().Content
 		rows := strings.Count(content, "\n") + 1
@@ -84,16 +86,11 @@ func TestToolDrawerToggleRestoresSingleRowAndSingleHistory(t *testing.T) {
 			t.Fatal("toggle mutated tool records")
 		}
 	}
-	// The summary remains clickable after the frame shrinks.
-	lines := strings.Split(model.View().Content, "\n")
-	header := 0
-	for !strings.Contains(lines[header], "工具活动") {
-		header++
-	}
-	updated, _ := model.Update(tea.MouseClickMsg{X: 1, Y: model.height - len(lines) + header, Button: tea.MouseLeft})
+	// Reopening uses the keyboard while native scrollback owns the mouse.
+	updated, _ := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 	model = updated.(Model)
-	if !model.tools.expanded {
-		t.Fatal("collapsed summary was not clickable")
+	if !model.tools.expanded || model.View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("Ctrl+O did not reopen the drawer with mouse interaction")
 	}
 	model.commitToolGroup()
 	model.commitToolGroup()
@@ -125,6 +122,9 @@ func TestToolDrawerCollapseRestoresCompactLayout(t *testing.T) {
 				updated, _ = model.Update(collapse)
 				model = updated.(Model)
 				after := model.View()
+				if model.toolMouse || after.MouseMode != tea.MouseModeNone {
+					t.Fatal("collapsing the drawer must restore native scrolling")
+				}
 				if model.tools.expanded || after.Content != before.Content {
 					t.Fatalf("collapse left extra rows or lost content: %q", after.Content)
 				}
