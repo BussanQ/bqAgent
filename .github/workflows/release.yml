@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  schedule:
+    # UTC 01:00 = Beijing 09:00. GitHub schedules may be delayed.
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Publish as a prerelease'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: internal/server/webui/package-lock.json
+      - name: Test release packaging
+        run: python3 -m unittest discover -s scripts -p 'test_release.py' -v
+      - name: Build embedded WebUI
+        run: make webui-build webui-verify
+      - name: Choose release version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Include drafts so a failed upload does not reuse its reserved version.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name' > "$RUNNER_TEMP/release-tags"
+          git tag --list >> "$RUNNER_TEMP/release-tags"
+          tag=$(python3 scripts/release_version.py < "$RUNNER_TEMP/release-tags")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Build release archives
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: sh scripts/build-release.sh
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          PRERELEASE: ${{ github.event_name == 'schedule' || inputs.prerelease }}
+        shell: bash
+        run: |
+          args=(--draft --target "$GITHUB_SHA" --title "bqAgent $RELEASE_TAG" --generate-notes)
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" "${args[@]}"
+          gh release upload "$RELEASE_TAG" release/*
+          gh release edit "$RELEASE_TAG" --draft=false

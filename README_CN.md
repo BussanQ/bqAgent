@@ -8,7 +8,7 @@
 
 bqagent 是一个为真实本地工作流而生的 Agent Runtime：既保留小而清晰的执行核心，也具备多 Agent 编排、长期记忆、完整上下文管理与多通道交互能力。
 
-完整使用说明请参阅[项目文档](./docs/doc.md)；终端快捷键、命令面板、TTY 回退与 scrollback 行为请参阅[内联 TUI 指南](./docs/TUI.md)。
+完整使用说明请参阅[项目文档](./docs/doc.md)；终端快捷键、命令面板、TTY 回退与 scrollback 行为请参阅[内联 TUI 指南](./docs/TUI.md)。GitHub 定时发布配置请参阅[Release 自动发布指南](./docs/github-releases.md)。
 
 ## 为什么是 bqagent？
 
