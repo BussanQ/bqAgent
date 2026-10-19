@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"bqagent/internal/turn"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -449,5 +451,60 @@ func TestFinalReplyAlignsWholeBodyAndPreservesNestedIndentation(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestFinalReplyMarkerUsesSuccessColor(t *testing.T) {
+	model := toolDrawerModel(t, 0)
+	model.styles = newTheme(false)
+	rendered := model.renderFinalReply("回答内容", model.contentWidth())
+	if !strings.HasPrefix(rendered, model.styles.ok.Render("●")+" ") {
+		t.Fatalf("answer marker should use the green style: %q", rendered)
+	}
+}
+
+func TestCommentaryAndToolGroupsAlternateInHistory(t *testing.T) {
+	model := toolDrawerModel(t, 0)
+	model.active = &activeTurn{sequence: 1, events: make(chan turnEvent, 8)}
+	model.sequence = 1
+	message := func(item string, seq uint64, kind, text string) {
+		model.handleTurnEvent(turnEvent{sequence: 1, kind: "message", message: turn.Event{TurnID: "t", ItemID: item, Seq: seq, Kind: kind, Text: text}})
+	}
+	tool := func(id, kind string) {
+		model.handleTurnEvent(turnEvent{sequence: 1, kind: "tool", tool: ToolEvent{Kind: kind, ID: id, Name: "read_file", Status: "succeeded"}})
+	}
+	message("a", 1, "message.completed", "第一段说明")
+	tool("1", "tool_start")
+	tool("1", "tool_result")
+	message("b", 2, "message.completed", "第二段说明")
+	tool("2", "tool_start")
+	tool("2", "tool_result")
+	message("a", 3, "message.completed", "第一段说明") // late duplicate must not reappear
+	message("c", 4, "message.updated", "最终回答草稿")
+
+	text := strings.Join(model.printQueue, "\n")
+	first, group1, second := strings.Index(text, "第一段说明"), strings.Index(text, "工具活动"), strings.Index(text, "第二段说明")
+	if first < 0 || group1 <= first || second <= group1 || strings.Count(text, "第一段说明") != 1 {
+		t.Fatalf("commentary and tools should alternate once each: %q", text)
+	}
+	if len(model.tools.items) != 1 || model.stream != "最终回答草稿" {
+		t.Fatalf("latest tools and draft should stay live: tools=%d stream=%q", len(model.tools.items), model.stream)
+	}
+}
+
+func TestCommentaryIsCommittedWhenNextMessageStartsWithoutToolEvent(t *testing.T) {
+	model := toolDrawerModel(t, 0)
+	model.active = &activeTurn{sequence: 1, events: make(chan turnEvent, 8)}
+	model.sequence = 1
+	for _, event := range []turn.Event{
+		{TurnID: "t", ItemID: "a", Seq: 1, Kind: "message.completed", Text: "被拦截前的说明"},
+		{TurnID: "t", ItemID: "b", Seq: 2, Kind: "message.updated", Text: "下一轮草稿"},
+		{TurnID: "t", ItemID: "a", Seq: 3, Kind: "message.updated", Text: "迟到的旧消息"},
+	} {
+		model.handleTurnEvent(turnEvent{sequence: 1, kind: "message", message: event})
+	}
+	text := strings.Join(model.printQueue, "\n")
+	if strings.Count(text, "被拦截前的说明") != 1 || model.stream != "下一轮草稿" || strings.Contains(text, "迟到的旧消息") {
+		t.Fatalf("print=%q stream=%q", text, model.stream)
 	}
 }

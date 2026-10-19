@@ -16,7 +16,7 @@ func TestTurnSeparatorClearlySeparatesQuestions(t *testing.T) {
 	if !strings.Contains(text, "上一轮回答末尾\n\n\n──") {
 		t.Fatalf("new turn needs visible space and a distinct rule: %q", text)
 	}
-	if strings.Count(text, "❯❯") != 1 || !strings.Contains(text, "\n\n▸ 最新问题\n  补充说明\n\n最新回答") {
+	if strings.Count(text, "❯❯") != 1 || !strings.Contains(text, "\n\n➤ 最新问题\n  补充说明\n\n最新回答") {
 		t.Fatalf("turn heading or question spacing missing: %q", text)
 	}
 }

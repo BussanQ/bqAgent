@@ -74,14 +74,16 @@ const quitConfirmHint = "再次按 Ctrl+C 退出（2 秒内）"
 
 type Model struct {
 	messages turn.Messages
-	task     taskProgress
-	backend  Backend
-	config   Config
-	styles   theme
-	input    promptInput
-	spinner  spinner.Model
-	width    int
-	height   int
+	// sealedItems are commentary messages already printed to history.
+	sealedItems map[string]bool
+	task        taskProgress
+	backend     Backend
+	config      Config
+	styles      theme
+	input       promptInput
+	spinner     spinner.Model
+	width       int
+	height      int
 
 	phase            phase
 	progress         string
@@ -658,6 +660,7 @@ func (model *Model) submit(value string, images ...Image) tea.Cmd {
 	model.sequence++
 	model.phase = phaseThinking
 	model.messages = turn.Messages{}
+	model.sealedItems = map[string]bool{}
 	// A new turn owns its own task snapshots: the agent re-sends an unfinished
 	// task at turn start, so the previous projection (and its stale mark) is
 	// dropped instead of lingering beside the new turn.
@@ -807,8 +810,19 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 			usage := event.usage
 			model.usage = &usage
 		case "message":
+			if model.sealedItems[event.message.ItemID] {
+				break // Already committed to history before its tools ran.
+			}
 			before := utf8.RuneCountInString(model.messages.Items[event.message.ItemID].Text)
+			previous := model.messages.Latest.ItemID
 			if model.messages.Apply(event.message) {
+				if previous != "" && previous != model.messages.Latest.ItemID && model.stream != "" {
+					// A new message replaces the displayed one; commit the old text
+					// (after the tools that preceded it) instead of overwriting it.
+					model.sealItem(previous)
+					model.commitToolGroup()
+					model.flushStream()
+				}
 				model.liveRunes += max(0, utf8.RuneCountInString(event.message.Text)-before)
 				model.liveTokens = estimateTokensFromRunes(model.liveRunes)
 				model.phase = phaseStreaming
@@ -830,7 +844,13 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 				model.progress = text
 			}
 		case "tool":
-			if model.messages.TurnID == "" {
+			// Commentary and tool calls alternate: print the previous tool group,
+			// then the commentary that followed it, so neither replaces the other.
+			if model.stream != "" {
+				model.commitToolGroup()
+				if model.messages.TurnID != "" {
+					model.sealItem(model.messages.Latest.ItemID)
+				}
 				model.flushStream()
 			}
 			model.phase = phaseTool
@@ -981,6 +1001,13 @@ func tickCommand() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(now time.Time) tea.Msg { return tickMsg(now) })
 }
 
+func (model *Model) sealItem(id string) {
+	if model.sealedItems == nil {
+		model.sealedItems = map[string]bool{}
+	}
+	model.sealedItems[id] = true
+}
+
 func (model *Model) flushStream() {
 	if model.stream == "" {
 		return
@@ -995,7 +1022,7 @@ func (model *Model) enqueueUserTurn(value string) {
 }
 
 func (model Model) renderUserMessage(value string) string {
-	return model.styles.user.Render("▸") + " " + strings.ReplaceAll(value, "\n", "\n  ") + "\n"
+	return model.styles.user.Render("➤") + " " + strings.ReplaceAll(value, "\n", "\n  ") + "\n"
 }
 
 func (model Model) renderTurnSeparator() string {

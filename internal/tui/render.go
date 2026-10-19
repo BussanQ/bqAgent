@@ -33,7 +33,7 @@ func newTheme(noColor bool) theme {
 		dim:    lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")),
 		error:  lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6B6B")),
 		ok:     lipgloss.NewStyle().Foreground(lipgloss.Color("#69DB7C")),
-		user:   lipgloss.NewStyle().Foreground(lipgloss.Color("#C9A7FF")).Bold(true),
+		user:   lipgloss.NewStyle().Foreground(lipgloss.Color("#74C0FC")).Bold(true),
 	}
 }
 
@@ -88,7 +88,7 @@ func (model Model) renderFinalReply(value string, width int) string {
 	for i := range lines {
 		prefix := "  "
 		if i == 0 {
-			prefix = model.styles.accent.Render("●") + " "
+			prefix = model.styles.ok.Render("●") + " "
 		}
 		lines[i] = prefix + lines[i]
 	}

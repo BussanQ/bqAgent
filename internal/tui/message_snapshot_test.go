@@ -23,7 +23,10 @@ func TestMessageSnapshotsNeverAppendOrPrintOnToolToggle(t *testing.T) {
 		model.handleTurnEvent(turnEvent{sequence: 1, kind: "message", message: e})
 	}
 	model.handleTurnEvent(turnEvent{sequence: 1, kind: "message", message: events[0]})
-	if len(model.messages.Items) != 2 || model.stream != "最终结论" || len(model.printQueue) != 0 {
+	// The earlier commentary is committed once, after its tools; duplicates and
+	// stale snapshots print nothing more and the final text stays live.
+	printed := strings.Join(model.printQueue, "\n")
+	if len(model.messages.Items) != 2 || model.stream != "最终结论" || strings.Count(printed, "checking") != 1 || strings.Contains(printed, "old") || strings.Contains(printed, "最终结论") {
 		t.Fatalf("stream=%q records=%d prints=%v", model.stream, len(model.messages.Items), model.printQueue)
 	}
 	model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: "最终结论", Outcome: turn.Outcome{Status: turn.Completed}}})
