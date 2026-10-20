@@ -106,6 +106,7 @@ func (w *Workspace) environmentSection() string {
 		}
 		lines = append(lines, shell+".")
 	}
+	lines = append(lines, "A command still running after the yield timeout returns status running with a job_id; that is not success. Use bash_wait or bash_kill with the job_id; jobs do not survive the current turn.")
 	if w != nil && insideGitRepository(w.Root) {
 		lines = append(lines, "Git repository: yes")
 	} else {

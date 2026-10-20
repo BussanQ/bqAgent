@@ -35,26 +35,19 @@ func ExecuteBashInDirWithMaxOutput(root string, maxOutputBytes int64) Function {
 			return "", err
 		}
 
-		cmd := shellCommand(ctx, command)
-		if root != "" {
-			cmd.Dir = root
+		if manager := BashJobsFromContext(ctx); manager != nil {
+			return manager.execute(ctx, root, command, maxOutputBytes)
 		}
-		// A nil Stdin is wired to the null device, so commands that read stdin
-		// get EOF instead of blocking on an interactive prompt.
-		cmd.Stdin = nil
-		// Bound the post-cancel I/O wait and kill the whole process tree on
-		// cancellation (Unix); see configureProcessGroup and commandWaitDelay.
-		cmd.WaitDelay = commandWaitDelay
-		configureProcessGroup(cmd)
 
 		// A shared writer preserves the observed stdout/stderr write order while
 		// placing both streams under one retention budget. It always accepts the
-		// whole write so os/exec continues draining both pipes after truncation.
+		// whole write so the pipe keeps draining after truncation.
 		outputBuffer := newBoundedOutput(maxOutputBytes, DefaultBashOutputMaxBytes)
-		cmd.Stdout = outputBuffer
-		cmd.Stderr = outputBuffer
-
-		err = cmd.Run()
+		proc, err := startBashProcess(ctx, root, command, outputBuffer)
+		if err != nil {
+			return "", err
+		}
+		err = proc.wait()
 		output := outputBuffer.String()
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return output, ctxErr

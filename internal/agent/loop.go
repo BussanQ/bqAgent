@@ -132,6 +132,7 @@ type Options struct {
 	ToolEventSink   ToolEventSink
 	Context         ContextConfig
 	Stage           StageConfig
+	BashJobs        tools.BashJobOptions
 	ReasoningEffort ReasoningEffort
 	ServiceTier     string
 	Trace           *apptrace.Recorder
@@ -165,6 +166,7 @@ type Agent struct {
 	contextUsageMu  sync.Mutex
 	promptUsage     promptUsageBaseline
 	stageConfig     StageConfig
+	bashJobOptions  tools.BashJobOptions
 	reasoningEffort ReasoningEffort
 	serviceTier     string
 	trace           *apptrace.Recorder
@@ -233,6 +235,7 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 		toolEventSink:   options.ToolEventSink,
 		contextConfig:   contextConfig,
 		stageConfig:     normalizeStageConfig(options.Stage),
+		bashJobOptions:  options.BashJobs,
 		reasoningEffort: options.ReasoningEffort,
 		serviceTier:     options.ServiceTier,
 		trace:           options.Trace,

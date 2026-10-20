@@ -81,6 +81,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		GroupExternalAgentTimeout: groupExternalAgentTimeoutFromEnv(getenv),
 		MemoryAppend:              memoryAppend,
 		Context:                   runtime.Context,
+		BashJobs:                  runtime.BashJobs,
 		RunTraceEnabled:           runtime.RunTraceEnabled,
 		TaskToolEnabled:           runtime.TaskToolEnabled,
 		SessionOptions:            &runtime.SessionOptions,

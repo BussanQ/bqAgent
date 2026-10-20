@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"bqagent/internal/agent"
 	"bqagent/internal/session"
@@ -190,6 +191,25 @@ func TestConfigFromEnvUsesToolOutputLimitDefaultsAndOverrides(t *testing.T) {
 	})
 	if invalid.BashOutputMaxBytes != 1<<20 || invalid.ReadFileMaxBytes != 1<<20 {
 		t.Fatalf("invalid tool limits = bash %d read %d, want defaults", invalid.BashOutputMaxBytes, invalid.ReadFileMaxBytes)
+	}
+}
+
+func TestConfigFromEnvBashJobs(t *testing.T) {
+	defaults := ConfigFromEnv(func(string) string { return "" })
+	if defaults.BashJobs.YieldTimeout != 30*time.Second || defaults.BashJobs.MaxTimeout != 0 || defaults.BashJobs.MaxConcurrent != 3 {
+		t.Fatalf("bash job defaults = %+v", defaults.BashJobs)
+	}
+	set := ConfigFromEnv(func(key string) string {
+		return map[string]string{"BASH_YIELD_TIMEOUT": "5s", "BASH_MAX_TIMEOUT": "2m", "BASH_MAX_CONCURRENT": "2"}[key]
+	})
+	if set.BashJobs.YieldTimeout != 5*time.Second || set.BashJobs.MaxTimeout != 2*time.Minute || set.BashJobs.MaxConcurrent != 2 {
+		t.Fatalf("bash job overrides = %+v", set.BashJobs)
+	}
+	invalid := ConfigFromEnv(func(key string) string {
+		return map[string]string{"BASH_YIELD_TIMEOUT": "0", "BASH_MAX_TIMEOUT": "-1s", "BASH_MAX_CONCURRENT": "0"}[key]
+	})
+	if invalid.BashJobs.YieldTimeout != 30*time.Second || invalid.BashJobs.MaxTimeout != 0 || invalid.BashJobs.MaxConcurrent != 3 {
+		t.Fatalf("invalid bash jobs = %+v", invalid.BashJobs)
 	}
 }
 

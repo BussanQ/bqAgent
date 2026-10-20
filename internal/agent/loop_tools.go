@@ -122,8 +122,7 @@ func (a *Agent) appendToolError(messages []map[string]any, toolCallID, format st
 func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall) bool {
 	for _, toolCall := range toolCalls {
 		// A possibly side-effecting shell command must not overlap other calls
-		// in its batch: they could observe half-applied changes, and the
-		// verification ledger relies on a clear order.
+		// in its batch, including after it yields to the model.
 		if toolCall.Function.Name == "execute_bash" && len(toolCalls) > 1 {
 			var arguments struct {
 				Command string `json:"command"`
@@ -133,7 +132,7 @@ func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall) bool {
 			}
 		}
 		switch toolCall.Function.Name {
-		case "write_file", "edit_file", "task_update", "task_scope", "turn_outcome":
+		case "bash_wait", "bash_kill", "write_file", "edit_file", "task_update", "task_scope", "turn_outcome":
 			return true
 		case "consult_group_agent":
 			return true
@@ -258,25 +257,31 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 
 	toolResult := ""
 	var toolErr error
+	var bashStatus *tools.BashJobStatus
 	function, ok := a.functions[toolCall.Function.Name]
 	if !ok {
 		toolErr = fmt.Errorf("unknown tool '%s'", toolCall.Function.Name)
 		toolResult = fmt.Sprintf("Error: Unknown tool '%s'", toolCall.Function.Name)
+	} else if conflict := pendingBashConflict(ctx, toolCall.Function.Name, arguments); conflict != "" {
+		toolErr = fmt.Errorf("%s", conflict)
+		toolResult = formatToolError(toolErr, "")
 	} else {
 		run := turnRun(ctx)
 		var entry *execEntry
 		if run != nil {
 			entry = run.ledger.begin(toolCall.ID, toolCall.Function.Name, arguments)
 		}
+		callCtx, _ := tools.WithBashResultCapture(ctx)
 		if toolErr = ctx.Err(); toolErr == nil {
-			toolResult, toolErr = function(ctx, arguments)
+			toolResult, toolErr = function(callCtx, arguments)
 		}
+		bashStatus = tools.BashResultFromContext(callCtx)
 		if toolErr != nil {
 			toolResult = formatToolError(toolErr, toolResult)
 		}
 		if run != nil {
 			succeeded := toolErr == nil && !strings.HasPrefix(strings.TrimSpace(toolResult), "Error:")
-			run.ledger.finish(entry, succeeded)
+			run.observeBashResult(entry, bashStatus, succeeded)
 		}
 	}
 	duration := time.Since(toolStartedAt)
@@ -284,6 +289,8 @@ func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (stri
 	status := "completed"
 	if toolErr != nil {
 		status = "failed"
+	} else if bashStatus != nil && bashStatus.Status == tools.BashJobStatusRunning {
+		status = "running in background"
 	}
 	a.writeStageProgress(fmt.Sprintf("Tool %s %s", toolCall.Function.Name, status))
 	a.emitToolResult(toolCall, toolResult, duration, toolErr != nil)

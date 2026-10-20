@@ -218,6 +218,9 @@ Responses 默认请求最多 3 次内置工具调用和 4096 个输出 token。�
 |---|---|---|
 | `AGENT_MAX_ITERATIONS` | `1000` | 全局循环失控保险上限。 |
 | `BASH_OUTPUT_MAX_BYTES` | `1048576` | `execute_bash` 保留的 stdout/stderr 合并输出字节上限；超额输出仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
+| `BASH_YIELD_TIMEOUT` | `30s` | `execute_bash` 等待命令的时长；超时后命令转入后台，返回 `status=running` 与 `job_id`（不代表成功），可用 `bash_wait`/`bash_kill` 处理。必须为正 duration，非法值使用默认值。后台任务不跨 turn，turn 结束时回收。 |
+| `BASH_MAX_TIMEOUT` | `0` | 单个 bash 任务的最长存活时间；`0` 表示禁用。不得为负，非法值使用默认值。无进展不会自动 kill。 |
+| `BASH_MAX_CONCURRENT` | `3` | 单 turn 内同时运行的后台 bash 任务上限。非正数或非法值使用默认值。 |
 | `READ_FILE_MAX_BYTES` | `1048576` | `read_file` 返回的文件内容字节上限；超额内容仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
 | `CHANNEL_AGENT_MAX_ITERATIONS` | `30` | QQ、iLink、ServerChan Bot 等消息渠道的单轮最大迭代数；不限制 WebUI。 |
 | `CHANNEL_TURN_TIMEOUT` | `10m` | QQ、iLink、ServerChan Bot 等消息渠道的整轮超时；不限制 WebUI。 |

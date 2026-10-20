@@ -23,6 +23,11 @@ import (
 // configured MCP servers so a slow or unreachable server cannot hang startup.
 const mcpDiscoveryTimeout = 15 * time.Second
 
+const (
+	defaultBashYieldTimeout  = 30 * time.Second
+	defaultBashMaxConcurrent = 3
+)
+
 type Config struct {
 	ProviderID                      string
 	ModelDisplayNames               modelcatalog.Names
@@ -39,6 +44,7 @@ type Config struct {
 	SessionTranscriptMode           session.TranscriptMode
 	SessionOutputMaxBytes           int64
 	BashOutputMaxBytes              int64
+	BashJobs                        tools.BashJobOptions
 	ReadFileMaxBytes                int64
 	SearchProvider                  string
 	SearchAPIKey                    string
@@ -91,6 +97,7 @@ type Runtime struct {
 	SessionOptions  session.Options
 	WorkspaceRoot   string
 	Context         agent.ContextConfig
+	BashJobs        tools.BashJobOptions
 	Memory          *appmemory.Store
 	GlobalMemory    *appmemory.Store
 }
@@ -111,19 +118,24 @@ func ConfigFromEnv(getenv func(string) string) Config {
 	searchAPIKey := firstNonEmpty(getenv("SEARCH_API_KEY"), getenv("FIRECRAWL_API_KEY"))
 	searchBaseURL := firstNonEmpty(getenv("SEARCH_BASE_URL"), getenv("FIRECRAWL_BASE_URL"))
 	return Config{
-		APIType:                         apiType,
-		APIKey:                          apiKey,
-		BaseURL:                         baseURL,
-		Model:                           model,
-		Models:                          splitEnvList(getenv("LLM_MODELS")),
-		StreamIdleTimeout:               envDurationAllowZero(getenv("LLM_STREAM_IDLE_TIMEOUT"), agent.DefaultStreamIdleTimeout),
-		StreamProgressTimeout:           envDurationAllowZero(getenv("LLM_STREAM_PROGRESS_TIMEOUT"), agent.DefaultStreamProgressTimeout),
-		MaxIterations:                   envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
-		RunTraceEnabled:                 envBool(getenv("RUN_TRACE_ENABLED"), false),
-		TaskToolEnabled:                 envBool(getenv("ENABLE_TASK_TOOL"), false),
-		SessionTranscriptMode:           session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
-		SessionOutputMaxBytes:           envInt64(getenv("SESSION_OUTPUT_MAX_BYTES"), session.DefaultOutputMaxBytes),
-		BashOutputMaxBytes:              envPositiveInt64(getenv("BASH_OUTPUT_MAX_BYTES"), tools.DefaultBashOutputMaxBytes),
+		APIType:               apiType,
+		APIKey:                apiKey,
+		BaseURL:               baseURL,
+		Model:                 model,
+		Models:                splitEnvList(getenv("LLM_MODELS")),
+		StreamIdleTimeout:     envDurationAllowZero(getenv("LLM_STREAM_IDLE_TIMEOUT"), agent.DefaultStreamIdleTimeout),
+		StreamProgressTimeout: envDurationAllowZero(getenv("LLM_STREAM_PROGRESS_TIMEOUT"), agent.DefaultStreamProgressTimeout),
+		MaxIterations:         envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
+		RunTraceEnabled:       envBool(getenv("RUN_TRACE_ENABLED"), false),
+		TaskToolEnabled:       envBool(getenv("ENABLE_TASK_TOOL"), false),
+		SessionTranscriptMode: session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
+		SessionOutputMaxBytes: envInt64(getenv("SESSION_OUTPUT_MAX_BYTES"), session.DefaultOutputMaxBytes),
+		BashOutputMaxBytes:    envPositiveInt64(getenv("BASH_OUTPUT_MAX_BYTES"), tools.DefaultBashOutputMaxBytes),
+		BashJobs: tools.BashJobOptions{
+			YieldTimeout:  envPositiveDuration(getenv("BASH_YIELD_TIMEOUT"), defaultBashYieldTimeout),
+			MaxTimeout:    envNonNegativeDuration(getenv("BASH_MAX_TIMEOUT"), 0),
+			MaxConcurrent: envPositiveInt(getenv("BASH_MAX_CONCURRENT"), defaultBashMaxConcurrent),
+		},
 		ReadFileMaxBytes:                envPositiveInt64(getenv("READ_FILE_MAX_BYTES"), tools.DefaultReadFileMaxBytes),
 		SearchProvider:                  searchProvider,
 		SearchAPIKey:                    searchAPIKey,
@@ -220,6 +232,34 @@ func envPositiveInt64(raw string, fallback int64) int64 {
 	return parsed
 }
 
+func envPositiveDuration(raw string, fallback time.Duration) time.Duration {
+	parsed, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envNonNegativeDuration(raw string, fallback time.Duration) time.Duration {
+	text := strings.TrimSpace(raw)
+	if text == "0" {
+		return 0
+	}
+	parsed, err := time.ParseDuration(text)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envPositiveInt(raw string, fallback int) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
 func envDurationAllowZero(raw string, fallback time.Duration) time.Duration {
 	text := strings.TrimSpace(raw)
 	if text == "" {
@@ -300,6 +340,7 @@ func (factory Factory) build(ctx context.Context, background bool) Runtime {
 			AgentDir:       factory.AgentDir,
 		},
 		WorkspaceRoot: factory.WorkspaceRoot,
+		BashJobs:      factory.Config.BashJobs,
 		Context: agent.ContextConfig{
 			Enabled:                  factory.Config.ContextManagementEnabled,
 			MaxInputTokens:           factory.Config.ContextMaxInputTokens,
@@ -403,5 +444,6 @@ func (runtime Runtime) NewAgentWithProgress(logWriter io.Writer, progressWriter 
 		Stream:          stream,
 		WorkspaceRoot:   runtime.WorkspaceRoot,
 		Context:         runtime.Context,
+		BashJobs:        runtime.BashJobs,
 	})
 }

@@ -54,6 +54,7 @@ type ServiceOptions struct {
 	GroupExternalAgentTimeout time.Duration
 	MemoryAppend              func(task, result string) error
 	Context                   agent.ContextConfig
+	BashJobs                  tools.BashJobOptions
 	RunTraceEnabled           bool
 	TaskToolEnabled           bool
 	SessionOptions            *session.Options
@@ -93,6 +94,7 @@ type Service struct {
 	groupExternalAgentTimeout time.Duration
 	memoryAppend              func(task, result string) error
 	context                   agent.ContextConfig
+	bashJobOptions            tools.BashJobOptions
 	processGroupStops         *processGroupStopRegistry
 	environmentCommands       *environmentCommandGuard
 	traceStore                *apptrace.Store
@@ -293,6 +295,7 @@ func NewService(options ServiceOptions) *Service {
 		groupExternalAgentTimeout: groupExternalAgentTimeout,
 		memoryAppend:              options.MemoryAppend,
 		context:                   options.Context,
+		bashJobOptions:            options.BashJobs,
 		processGroupStops:         newProcessGroupStopRegistry(),
 		environmentCommands:       newEnvironmentCommandGuard(0),
 		subagents:                 options.Subagents,
@@ -413,18 +416,49 @@ func (service *Service) functionsForTurn(peerKey string, sessionID string) map[s
 			return message, fmt.Errorf("environment install/repair command blocked after previous failure")
 		}
 		toolCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
+		var timeoutCancel context.CancelFunc
 		tracked := false
 		if _, ok := classifyEnvironmentCommand(command); ok {
 			tracked = true
-			timeoutCtx, timeoutCancel := context.WithTimeout(toolCtx, service.environmentCommands.CommandTimeout())
-			defer timeoutCancel()
-			toolCtx = timeoutCtx
+			toolCtx, timeoutCancel = context.WithTimeout(toolCtx, service.environmentCommands.CommandTimeout())
 		}
 		unregister := service.processGroupStops.Register(keys, command, cancel)
-		defer unregister()
+		cleanup := func() {
+			unregister()
+			if timeoutCancel != nil {
+				timeoutCancel()
+			}
+			cancel()
+		}
+		deferred := false
+		defer func() {
+			if !deferred {
+				cleanup()
+			}
+		}()
 		output, err := original(toolCtx, args)
-		if tracked {
+		if result := tools.BashResultFromContext(toolCtx); result != nil && result.Status == tools.BashJobStatusRunning {
+			jobs := tools.BashJobsFromContext(toolCtx)
+			if done, snapshot := jobs.Completion(result.JobID); done != nil {
+				deferred = true
+				go func() {
+					defer cleanup()
+					<-done
+					if tracked {
+						final := snapshot()
+						var jobErr error
+						if final.Status != tools.BashJobStatusCompleted {
+							jobErr = toolCtx.Err()
+							if jobErr == nil {
+								jobErr = fmt.Errorf("background command %s: %s", final.Status, final.Error)
+							}
+						}
+						service.environmentCommands.Record(keys, command, final.Output, jobErr)
+					}
+				}()
+			}
+		}
+		if tracked && !deferred {
 			service.environmentCommands.Record(keys, command, output, err)
 			if err != nil && errors.Is(err, context.DeadlineExceeded) {
 				return output, fmt.Errorf("%s", environmentCommandTimeoutMessage(command, service.environmentCommands.CommandTimeout()))
@@ -1014,6 +1048,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		TaskRelation:    request.TaskRelation,
 		ToolEventSink:   options.ToolEventSink,
 		Context:         service.context,
+		BashJobs:        service.bashJobOptions,
 		Stage:           options.Stage,
 		ReasoningEffort: request.ReasoningEffort,
 		ServiceTier:     service.sessionServiceTier(conversation.Session),

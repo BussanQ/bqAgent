@@ -9,3 +9,6 @@ import "os/exec"
 // killing a full process subtree on Windows would require a Job object, which is
 // out of scope here.
 func configureProcessGroup(cmd *exec.Cmd) {}
+
+// killProcessGroup is a no-op on Windows; see configureProcessGroup.
+func killProcessGroup(cmd *exec.Cmd) {}

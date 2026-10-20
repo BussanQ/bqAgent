@@ -214,6 +214,9 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 |---|---|---|
 | `AGENT_MAX_ITERATIONS` | `1000` | Global loop runaway safety limit. |
 | `BASH_OUTPUT_MAX_BYTES` | `1048576` | Maximum combined stdout/stderr bytes retained by `execute_bash`; excess output is drained and discarded, then the result ends with a truncation marker. Non-positive or invalid values use the default. |
+| `BASH_YIELD_TIMEOUT` | `30s` | How long `execute_bash` waits for a command; after that it keeps running in the background and returns `status=running` with a `job_id` (not a success). Use `bash_wait`/`bash_kill`. Must be a positive duration; invalid values use the default. Jobs do not survive the turn and are reclaimed when it ends. |
+| `BASH_MAX_TIMEOUT` | `0` | Hard lifetime cap per bash job; `0` disables it. Must not be negative; invalid values use the default. Jobs are never killed for lack of progress. |
+| `BASH_MAX_CONCURRENT` | `3` | Maximum concurrently running background bash jobs per turn. Non-positive or invalid values use the default. |
 | `READ_FILE_MAX_BYTES` | `1048576` | Maximum file-content bytes returned by `read_file`; excess content is drained and discarded, then the result ends with a truncation marker. Non-positive or invalid values use the default. |
 | `CHANNEL_AGENT_MAX_ITERATIONS` | `30` | Maximum iterations per turn for QQ, iLink, ServerChan Bot, and other message channels; does not limit WebUI. |
 | `CHANNEL_TURN_TIMEOUT` | `10m` | Whole-turn timeout for QQ, iLink, ServerChan Bot, and other message channels; does not limit WebUI. |

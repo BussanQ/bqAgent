@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"bqagent/internal/tools"
 	"bqagent/internal/turn"
 )
 
@@ -29,7 +30,8 @@ type runState struct {
 	scopeLocked bool
 
 	// ledger holds this turn's real tool executions for completion evidence.
-	ledger execLedger
+	ledger      execLedger
+	bashEntries map[string]*execEntry
 
 	mu              sync.Mutex
 	latestUser      string
@@ -125,8 +127,12 @@ func (a *Agent) RunTurn(ctx context.Context, messages []map[string]any, maxItera
 		}
 	}
 	ctx = context.WithValue(ctx, runStateKey{}, state)
+	ctx, jobs := tools.WithBashJobs(ctx, a.bashJobOptions)
+	defer jobs.Close()
 	metricsCtx, collector := withTurnGenerationCollector(ctx)
 	reply, history, err := a.runConversation(metricsCtx, duplicateMessages(messages), maxIterations)
+	history, cleanupErr := a.closeBashJobs(ctx, jobs, history)
+	err = errors.Join(err, cleanupErr)
 	if !a.reopenStaleCompletion(state) {
 		a.markStaleTask(state)
 	}

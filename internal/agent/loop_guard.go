@@ -83,6 +83,22 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 	if guard == nil {
 		return loopGuardAction{}
 	}
+	if call.Function.Name == "bash_wait" {
+		if status, ok := bashWaitStatus(result); ok {
+			fresh := guard.progress.observe(call, result)
+			key := "bash_wait\x00" + status.JobID
+			if fresh || status.Status != "running" {
+				guard.callCounts[key] = 0
+				guard.taskUpdateStall = 0
+				return loopGuardAction{}
+			}
+			guard.callCounts[key]++
+			if guard.callCounts[key] >= 3 {
+				return loopGuardAction{recoveryPrompt: "This Bash job has produced no new output across several waits. Silence does not prove it is stuck. Consider the command's expected duration, use a longer bounded bash_wait, or explicitly bash_kill it if no longer needed; do not restart it while it is running."}
+			}
+			return loopGuardAction{}
+		}
+	}
 	// Bookkeeping failures must never become a checkpoint for actual work.
 	// Suspend the tool after recovery until substantive progress resumes.
 	if call.Function.Name == "task_update" {
@@ -160,9 +176,11 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 // task_update) never count. Limit: it is a conservative dedup, not proof of a
 // real workspace change.
 type progressTracker struct {
-	seen   map[string]bool
-	edits  map[string]bool
-	edited bool // last observe saw a novel successful edit/write
+	seen         map[string]bool
+	edits        map[string]bool
+	edited       bool // last observe saw a novel successful edit/write
+	bashOutput   map[string]int64
+	bashFinished map[string]bool
 }
 
 func newProgressTracker() *progressTracker {
@@ -174,6 +192,23 @@ func (t *progressTracker) reset() { t.seen = map[string]bool{} }
 // observe reports whether the call is new substantive progress.
 func (t *progressTracker) observe(call ToolCall, result string) bool {
 	t.edited = false
+	if call.Function.Name == "bash_wait" {
+		status, ok := bashWaitStatus(result)
+		if !ok {
+			return false
+		}
+		if t.bashOutput == nil {
+			t.bashOutput = map[string]int64{}
+			t.bashFinished = map[string]bool{}
+		}
+		fresh := status.OutputBytes > t.bashOutput[status.JobID]
+		t.bashOutput[status.JobID] = max(t.bashOutput[status.JobID], status.OutputBytes)
+		if status.Status != "running" && !t.bashFinished[status.JobID] {
+			fresh = true
+			t.bashFinished[status.JobID] = true
+		}
+		return fresh
+	}
 	switch call.Function.Name {
 	case "task_scope", "task_update", "turn_outcome":
 		return false

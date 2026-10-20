@@ -261,6 +261,9 @@ func (guard *continuationGuard) recoveryPrompt(reason string) string {
 }
 
 func (a *Agent) continuationReason(ctx context.Context, message AssistantMessage) string {
+	if reason := pendingBashContinuation(ctx); reason != "" {
+		return reason
+	}
 	if message.Completion.OutputTruncated || strings.EqualFold(message.Completion.StopReason, "incomplete") {
 		return "The previous response was incomplete (" + message.Completion.IncompleteReason + "). Continue from the saved evidence; do not treat partial text as task completion. Use smaller tool batches if needed."
 	}

@@ -61,6 +61,7 @@ func TestBuildPromptSectionsLayersCoreRepositoryAndEnvironment(t *testing.T) {
 		"Only run targeted tests.",
 		"# Environment\nOS: macOS (darwin/arm64)",
 		"execute_bash runs commands with sh -c (POSIX shell); the user's login shell is zsh. BSD userland",
+		"bash_wait or bash_kill with the job_id; jobs do not survive the current turn.",
 		"Git repository: yes",
 		"# Memory Policy",
 	} {
