@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -139,10 +140,73 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	type partialCall struct {
 		id        string
 		name      string
+		itemID    string
+		callID    string
+		added     bool
 		arguments strings.Builder
 	}
 	content := strings.Builder{}
 	calls := map[int]*partialCall{}
+	callByIdentity := map[string]int{}
+	// resolveCall locates a call by output_index and/or item identity. A missing
+	// output_index is never treated as 0: it is only accepted when a known
+	// item_id/call_id locates the call. Conflicting identities are rejected so
+	// distinct calls cannot be merged or silently overwritten. When the event has
+	// no payload and nothing locates it, it is ignored (nil, nil).
+	resolveCall := func(index *int, itemID, callID string, hasPayload bool) (*partialCall, error) {
+		if index != nil && *index < 0 {
+			return nil, providerProtocolError("responses stream invalid output_index", fmt.Errorf("negative output_index %d", *index))
+		}
+		key := 0
+		if index != nil {
+			key = *index
+		}
+		located := index != nil
+		for _, identity := range []string{"item:" + itemID, "call:" + callID} {
+			if identity == "item:" || identity == "call:" {
+				continue
+			}
+			other, ok := callByIdentity[identity]
+			if !ok {
+				continue
+			}
+			if !located {
+				key, located = other, true
+			} else if other != key {
+				return nil, providerProtocolError("responses stream tool call identity conflict", fmt.Errorf("%s is bound to output_index %d, got %d", identity, other, key))
+			}
+		}
+		if !located {
+			if !hasPayload {
+				return nil, nil
+			}
+			return nil, providerProtocolError("responses stream tool call missing output_index", fmt.Errorf("item_id %q, call_id %q does not match a known tool call", itemID, callID))
+		}
+		call := calls[key]
+		if call != nil && ((call.itemID != "" && itemID != "" && call.itemID != itemID) || (call.callID != "" && callID != "" && call.callID != callID)) {
+			return nil, providerProtocolError("responses stream tool call identity conflict", fmt.Errorf("output_index %d is already bound to a different tool call", key))
+		}
+		if call == nil {
+			call = &partialCall{}
+			calls[key] = call
+		}
+		if itemID != "" {
+			call.itemID = itemID
+			callByIdentity["item:"+itemID] = key
+		}
+		if callID != "" {
+			call.callID = callID
+			callByIdentity["call:"+callID] = key
+		}
+		return call, nil
+	}
+	// eventItemID merges the item id carried by the item and by the event.
+	eventItemID := func(item, event string) (string, error) {
+		if item != "" && event != "" && item != event {
+			return "", providerProtocolError("responses stream tool call identity conflict", fmt.Errorf("item.id %q differs from item_id %q", item, event))
+		}
+		return firstNonBlank(item, event), nil
+	}
 	usage := TokenUsage{}
 	completion := CompletionState{}
 	sawTerminal := false
@@ -167,7 +231,8 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			Message     string                 `json:"message"`
 			Delta       string                 `json:"delta"`
 			Arguments   *string                `json:"arguments"`
-			OutputIndex int                    `json:"output_index"`
+			OutputIndex *int                   `json:"output_index"`
+			ItemID      string                 `json:"item_id"`
 			Item        openAIResponseOutput   `json:"item"`
 			Response    openAIResponseEnvelope `json:"response"`
 			Error       openAIResponseError    `json:"error"`
@@ -176,6 +241,10 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 			return AssistantMessage{}, providerProtocolError("invalid responses stream event", err)
 		}
 		eventCounts[event.Type]++
+		messageIndex := 0
+		if event.OutputIndex != nil {
+			messageIndex = *event.OutputIndex
+		}
 		if event.Type == "response.failed" || event.Type == "error" {
 			message := firstNonBlank(strings.TrimSpace(event.Response.Error.Message), strings.TrimSpace(event.Error.Message), strings.TrimSpace(event.Message), event.Response.Error.Code, event.Response.Error.Type, event.Error.Code, event.Error.Type)
 			if message == "" {
@@ -189,53 +258,74 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				state.markSemantic(ctx)
 			}
 			content.WriteString(event.Delta)
-			messageDeltas[event.OutputIndex] += event.Delta
+			messageDeltas[messageIndex] += event.Delta
 			if onChunk != nil {
 				onChunk(event.Delta)
 			}
 		case "response.output_item.added":
 			if event.Item.Type != "function_call" {
-				messageItems[event.OutputIndex] = event.Item
+				messageItems[messageIndex] = event.Item
 			}
 			if event.Item.Type == "function_call" {
 				state.markSemantic(ctx)
-				calls[event.OutputIndex] = &partialCall{id: firstNonBlank(event.Item.CallID, event.Item.ID), name: event.Item.Name}
+				itemID, err := eventItemID(event.Item.ID, event.ItemID)
+				if err != nil {
+					return AssistantMessage{}, err
+				}
+				call, err := resolveCall(event.OutputIndex, itemID, event.Item.CallID, true)
+				if err != nil {
+					return AssistantMessage{}, err
+				}
+				if call.added {
+					return AssistantMessage{}, providerProtocolError("responses stream duplicate tool call", fmt.Errorf("tool call %q was added twice", call.id))
+				}
+				call.added = true
+				call.id, call.name = firstNonBlank(event.Item.CallID, event.Item.ID, call.id), event.Item.Name
 			}
 		case "response.function_call_arguments.delta":
 			if event.Delta != "" {
 				state.markSemantic(ctx)
 			}
-			call := calls[event.OutputIndex]
+			call, err := resolveCall(event.OutputIndex, event.ItemID, "", event.Delta != "")
+			if err != nil {
+				return AssistantMessage{}, err
+			}
 			if call == nil {
-				call = &partialCall{}
-				calls[event.OutputIndex] = call
+				continue
 			}
 			call.arguments.WriteString(event.Delta)
 			reportLiveTokenDelta(ctx, event.Delta)
 		case "response.function_call_arguments.done":
 			if event.Arguments != nil {
 				state.semanticOutput = true
-				call := calls[event.OutputIndex]
-				if *event.Arguments != "" && (call == nil || call.arguments.String() != *event.Arguments) {
-					reportModelProgress(ctx)
+				call, err := resolveCall(event.OutputIndex, event.ItemID, "", *event.Arguments != "")
+				if err != nil {
+					return AssistantMessage{}, err
 				}
-				if call == nil {
-					call = &partialCall{}
-					calls[event.OutputIndex] = call
+				if call != nil {
+					if *event.Arguments != "" && call.arguments.String() != *event.Arguments {
+						reportModelProgress(ctx)
+					}
+					call.arguments.Reset()
+					call.arguments.WriteString(*event.Arguments)
 				}
-				call.arguments.Reset()
-				call.arguments.WriteString(*event.Arguments)
 			}
 		case "response.output_item.done":
 			if event.Item.Type != "function_call" {
-				messageItems[event.OutputIndex] = event.Item
+				messageItems[messageIndex] = event.Item
 			}
 			if event.Item.Type == "function_call" {
 				state.markSemantic(ctx)
-				call := calls[event.OutputIndex]
-				if call == nil {
-					call = &partialCall{}
-					calls[event.OutputIndex] = call
+				itemID, err := eventItemID(event.Item.ID, event.ItemID)
+				if err != nil {
+					return AssistantMessage{}, err
+				}
+				call, err := resolveCall(event.OutputIndex, itemID, event.Item.CallID, true)
+				if err != nil {
+					return AssistantMessage{}, err
+				}
+				if call.name != "" && event.Item.Name != "" && call.name != event.Item.Name {
+					return AssistantMessage{}, providerProtocolError("responses stream tool call identity conflict", fmt.Errorf("tool name changed from %q to %q", call.name, event.Item.Name))
 				}
 				call.id = firstNonBlank(event.Item.CallID, event.Item.ID, call.id)
 				call.name = firstNonBlank(event.Item.Name, call.name)

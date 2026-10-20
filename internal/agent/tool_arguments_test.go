@@ -2,9 +2,10 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 
 	"bqagent/internal/tools"
@@ -46,83 +47,100 @@ func TestParseArgumentsConcatenatedObjects(t *testing.T) {
 }
 
 func TestRunRecoversConcatenatedToolArguments(t *testing.T) {
-	// The reported Bash commands, with only the private path replaced. Tool
-	// implementations are stubs; no shell commands or filesystem reads run.
-	commands := []string{
-		"f=/tmp/service.log\nsed -n '805,853p' $f | cut -c1-250; echo ======; sed -n '854,891p' $f | cut -c1-250",
-		"f=/tmp/service.log\nsed -n '93,186p' $f | cut -c1-250; echo =====; sed -n '467,612p' $f | cut -c1-250",
-	}
-	arguments := make([]string, len(commands))
-	for i, command := range commands {
-		encoded, err := json.Marshal(map[string]string{"command": command})
-		if err != nil {
-			t.Fatal(err)
-		}
-		arguments[i] = string(encoded)
-	}
-	// Exercise both concurrent and special/sequential dispatch branches.
-	for _, name := range []string{"execute_bash", "write_file"} {
+	for _, name := range []string{"grep", "read_file", "write_file", "custom_tool", "execute_bash"} {
 		t.Run(name, func(t *testing.T) {
-			call := func(id, args string) ToolCall {
-				return ToolCall{ID: id, Type: "function", Function: FunctionCall{Name: name, Arguments: args}}
+			arguments := []string{`{"pattern":"foo","path":"internal"}`, `{"pattern":"bar","path":"internal"}`}
+			key := "pattern"
+			want := []string{"foo", "bar"}
+			if name == "execute_bash" {
+				arguments = []string{`{"command":"echo first"}`, `{"command":"echo second"}`}
+				key = "command"
+				want = []string{"echo first", "echo second"}
 			}
 			client := &stubClient{responses: []AssistantMessage{
-				{ToolCalls: []ToolCall{call("bad", arguments[0]+arguments[1])}},
-				{ToolCalls: []ToolCall{call("fixed-1", arguments[0]), call("fixed-2", arguments[1])}},
+				{ToolCalls: []ToolCall{{ID: "original", Type: "function", Function: FunctionCall{Name: name, Arguments: strings.Join(arguments, "")}}}},
 				{Content: "done"},
 			}}
-			wantRequests := 3
-			if name == "execute_bash" {
-				// The model never repairs its response. The runtime must execute
-				// both commands before asking the model for the final answer.
-				client.responses = append(client.responses[:1], AssistantMessage{Content: "done"})
-				wantRequests = 2
-			}
-			var executions [2]atomic.Int32
+			var executions []string
+			var mu sync.Mutex
+			recorder := &capturingRecorder{}
 			app := NewWithOptions(client, "", Options{
-				Context: ContextConfig{Enabled: false},
+				Context: ContextConfig{Enabled: false}, Recorder: recorder,
 				Functions: map[string]tools.Function{name: func(_ context.Context, args map[string]any) (string, error) {
-					for i, command := range commands {
-						if args["command"] == command {
-							executions[i].Add(1)
-							return "ok", nil
-						}
+					mu.Lock()
+					defer mu.Unlock()
+					value, _ := args[key].(string)
+					if key == "pattern" && args["path"] != "internal" {
+						t.Errorf("path changed: %#v", args)
 					}
-					t.Errorf("unexpected command: %#v", args)
-					return "", nil
+					executions = append(executions, value)
+					return "result: " + value, nil
 				}},
-				ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: name}}},
 			})
-			result, err := app.Run(context.Background(), "analyze the service log", 3)
-			if err != nil || result != "done" || len(client.messages) != wantRequests {
-				t.Fatalf("Run = %q, %v, requests=%d", result, err, len(client.messages))
+			result, history, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "analyze"}}, 3)
+			if err != nil || result != "done" || len(client.messages) != 2 || !slices.Equal(executions, want) {
+				t.Fatalf("Run = %q, %v; requests=%d, executions=%#v", result, err, len(client.messages), executions)
 			}
-			for i := range executions {
-				if executions[i].Load() != 1 {
-					t.Fatalf("command %d executed %d times, want exactly once after correction", i, executions[i].Load())
-				}
-			}
-			messages := extractToolMessages(client.messages[1])
-			if name == "execute_bash" {
-				if len(messages) != 2 || messages[0]["tool_call_id"] == messages[1]["tool_call_id"] {
-					t.Fatalf("expected two distinct results after automatic recovery: %#v", messages)
-				}
+			for _, messages := range [][]map[string]any{history, recorder.recorded, client.messages[1]} {
+				var calls []ToolCall
 				for _, message := range messages {
-					if message["content"] != "ok" {
-						t.Fatalf("automatic recovery failed: %#v", message)
-					}
+					calls = append(calls, messageToolCalls(message)...)
 				}
-				return
-			}
-			if len(messages) != 1 || messages[0]["tool_call_id"] != "bad" {
-				t.Fatalf("recovery tool results = %#v", messages)
-			}
-			content, _ := messages[0]["content"].(string)
-			for _, expected := range []string{"2 concatenated JSON objects", "This tool call was not executed", "separate tool call", "unique call ID"} {
-				if !strings.Contains(content, expected) {
-					t.Fatalf("tool error %q missing %q", content, expected)
+				results := extractToolMessages(messages)
+				if len(calls) != 2 || len(results) != 2 || calls[0].ID == calls[1].ID {
+					t.Fatalf("expected two distinct call/result pairs: %#v", messages)
+				}
+				for i, call := range calls {
+					if call.ID == "" || call.Function.Name != name || call.Function.Arguments != arguments[i] || results[i]["tool_call_id"] != call.ID || results[i]["content"] != "result: "+want[i] {
+						t.Fatalf("unexpected call/result: %#v, %#v", call, results[i])
+					}
 				}
 			}
 		})
+	}
+}
+
+func TestRunRejectsAmbiguousConcatenatedToolArguments(t *testing.T) {
+	for _, name := range []string{"grep", "write_file", "execute_bash"} {
+		invalid := []string{
+			`{"command":"echo first"}{"command":`,
+			`{"command":"echo first"}{"command":"echo second"}junk`,
+			`{"command":"echo first"}[]`,
+			`{"command":"echo first"}null`,
+			`[]{"command":"echo second"}`, `null`, `[]`,
+			strings.Repeat(`{"command":"echo first"}`, maxRecoveredToolCalls+1),
+		}
+		if name == "execute_bash" {
+			for _, object := range []string{
+				`{}`, `{"command":null}`, `{"command":" "}`, `{"command":1}`,
+				`{"command":"echo second","timeout":1}`,
+				`{"command":"echo second","command":"echo hidden"}`,
+			} {
+				invalid = append(invalid, `{"command":"echo first"}`+object)
+			}
+		}
+		for _, raw := range invalid {
+			t.Run(name+"/"+raw, func(t *testing.T) {
+				client := &stubClient{responses: []AssistantMessage{
+					{ToolCalls: []ToolCall{{ID: "invalid", Function: FunctionCall{Name: name, Arguments: raw}}}},
+					{Content: "done"},
+				}}
+				app := NewWithOptions(client, "", Options{
+					Context: ContextConfig{Enabled: false},
+					Functions: map[string]tools.Function{name: func(context.Context, map[string]any) (string, error) {
+						t.Error("ambiguous arguments reached a tool")
+						return "", nil
+					}},
+				})
+				result, err := app.Run(context.Background(), "analyze", 3)
+				if err != nil || result != "done" || len(client.messages) != 2 {
+					t.Fatalf("Run = %q, %v", result, err)
+				}
+				results := extractToolMessages(client.messages[1])
+				if len(results) != 1 || results[0]["tool_call_id"] != "invalid" || !strings.HasPrefix(fmt.Sprint(results[0]["content"]), "Error:") {
+					t.Fatalf("missing invalid argument result: %#v", results)
+				}
+			})
+		}
 	}
 }

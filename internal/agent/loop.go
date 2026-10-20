@@ -441,13 +441,13 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		}
 		message.normalizeInlineToolCalls()
 		truncatedToolBatch := message.Completion.OutputTruncated && len(message.ToolCalls) > 0
-		recoveredBashCalls := false
+		recoveredToolCalls := false
 		if truncatedToolBatch {
 			message.ToolCalls = replayableToolCalls(message.ToolCalls)
 		} else {
-			message.ToolCalls, recoveredBashCalls = recoverConcatenatedBashCalls(message.ToolCalls)
-			if recoveredBashCalls {
-				a.logf("[Agent] Split concatenated execute_bash arguments into separate tool calls; executing batch sequentially\n")
+			message.ToolCalls, recoveredToolCalls = recoverConcatenatedToolCalls(message.ToolCalls)
+			if recoveredToolCalls {
+				a.logf("[Agent] Split concatenated tool arguments into separate tool calls; executing batch sequentially\n")
 			}
 		}
 
@@ -552,7 +552,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		// a turn containing them runs sequentially. A turn of only independent tools
 		// runs concurrently and appends results in the original order.
 		guardAction := loopGuardAction{}
-		if recoveredBashCalls || a.hasSpecialToolCalls(message.ToolCalls) {
+		if recoveredToolCalls || a.hasSpecialToolCalls(message.ToolCalls) {
 			recoveredSuccesses := map[string]bool{}
 			for _, toolCall := range message.ToolCalls {
 				parsedArguments, err := parseArguments(toolCall.Function.Arguments)
@@ -587,7 +587,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				_, toolResult := a.runRegularToolCall(explorationCtx, toolCall)
 				continuations.observe(toolCall, toolResult)
 				var action loopGuardAction
-				if recoveredBashCalls {
+				if recoveredToolCalls {
 					action = loopGuard.observeRecoveredTool(toolCall, toolResult, recoveredSuccesses)
 				} else {
 					action = loopGuard.observeTool(toolCall, toolResult)
@@ -606,7 +606,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					// complete tool-call/result pairs without executing their functions.
 					continue
 				}
-				if action.checkpointReason != "" {
+				// Finish a recovered batch before checkpointing so no split call
+				// is silently dropped or left without its result in history.
+				if action.checkpointReason != "" && !recoveredToolCalls {
 					setTurnStop(ctx, turn.Blocked, action.checkpointReason)
 					return a.finishStageCheckpoint(ctx, updatedMessages, action.checkpointReason, actualIterations)
 				}

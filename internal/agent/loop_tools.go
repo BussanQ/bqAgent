@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -87,19 +86,7 @@ func parseArguments(raw string) (any, error) {
 // Count only a complete sequence of objects. Never silently accept a valid
 // prefix, combine duplicate keys, or choose one command from malformed input.
 func concatenatedArgumentObjects(raw string) int {
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	count := 0
-	for {
-		var object map[string]json.RawMessage
-		err := decoder.Decode(&object)
-		if err == io.EOF {
-			return count
-		}
-		if err != nil || object == nil {
-			return 0
-		}
-		count++
-	}
+	return len(concatenatedToolArgumentObjects(raw, 0))
 }
 
 func requireStringArgument(toolName string, args map[string]any, key string) (string, error) {
