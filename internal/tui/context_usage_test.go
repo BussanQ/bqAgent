@@ -15,10 +15,14 @@ func TestContextStatusReplacesSnapshotsAndSurvivesTurns(t *testing.T) {
 	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "usage", usage: TokenUsage{InputTokens: 900000, OutputTokens: 10000}})
 	for _, usage := range []turn.ContextUsage{
 		{Tokens: 90000, Limit: 200000},
+		{Tokens: 170000, Limit: 200000},
 		{Tokens: 18000, Limit: 200000, Estimated: true},
 	} {
 		model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "context", contextUsage: usage})
 		want := "45%/200K"
+		if usage.Tokens == 170000 {
+			want = "85%/200K"
+		}
 		if usage.Estimated {
 			want = "9%/200K"
 		}

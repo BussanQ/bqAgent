@@ -86,8 +86,11 @@ func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	if config.ContextMaxInputTokens != defaults.MaxInputTokens {
 		t.Fatalf("ContextMaxInputTokens = %d, want %d", config.ContextMaxInputTokens, defaults.MaxInputTokens)
 	}
-	if config.ContextCompressionTriggerTokens != defaults.CompressionTriggerTokens {
-		t.Fatalf("compression trigger = %d, want %d", config.ContextCompressionTriggerTokens, defaults.CompressionTriggerTokens)
+	if defaults.CompressionTriggerTokens != 0 || defaults.CompressionTriggerPercent != 85 {
+		t.Fatalf("agent defaults trigger = %d percent %d, want 0/85", defaults.CompressionTriggerTokens, defaults.CompressionTriggerPercent)
+	}
+	if config.ContextCompressionTriggerTokens != 170000 || config.ContextCompressionTriggerPercent != 85 {
+		t.Fatalf("compression trigger = %d percent %d, want derived 170000/85", config.ContextCompressionTriggerTokens, config.ContextCompressionTriggerPercent)
 	}
 	if config.ContextTargetInputTokens != defaults.TargetInputTokens {
 		t.Fatalf("ContextTargetInputTokens = %d, want %d", config.ContextTargetInputTokens, defaults.TargetInputTokens)
@@ -104,8 +107,8 @@ func TestConfigFromEnvUsesContextDefaults(t *testing.T) {
 	if config.ContextSummarizationEnabled != defaults.SummarizationEnabled {
 		t.Fatalf("ContextSummarizationEnabled = %t, want %t", config.ContextSummarizationEnabled, defaults.SummarizationEnabled)
 	}
-	if config.ContextSummaryTriggerTokens != defaults.SummaryTriggerTokens {
-		t.Fatalf("ContextSummaryTriggerTokens = %d, want %d", config.ContextSummaryTriggerTokens, defaults.SummaryTriggerTokens)
+	if config.ContextSummaryTriggerTokens != config.ContextCompressionTriggerTokens {
+		t.Fatalf("ContextSummaryTriggerTokens = %d, want follow trigger %d", config.ContextSummaryTriggerTokens, config.ContextCompressionTriggerTokens)
 	}
 	if config.ContextSummaryModel != defaults.SummaryModel {
 		t.Fatalf("ContextSummaryModel = %q, want %q", config.ContextSummaryModel, defaults.SummaryModel)
@@ -248,7 +251,7 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 			return "bad"
 		case "CONTEXT_MAX_INPUT_TOKENS":
 			return "bad"
-		case "CONTEXT_COMPRESSION_TRIGGER_TOKENS", "CONTEXT_TARGET_INPUT_TOKENS":
+		case "CONTEXT_COMPRESSION_TRIGGER_TOKENS", "CONTEXT_COMPRESSION_TRIGGER_PERCENT", "CONTEXT_TARGET_INPUT_TOKENS":
 			return "bad"
 		case "CONTEXT_RESPONSE_RESERVE_TOKENS":
 			return "bad"
@@ -275,8 +278,11 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 	if config.ContextMaxInputTokens != defaults.MaxInputTokens {
 		t.Fatalf("ContextMaxInputTokens = %d, want fallback %d", config.ContextMaxInputTokens, defaults.MaxInputTokens)
 	}
-	if config.ContextCompressionTriggerTokens != defaults.CompressionTriggerTokens {
-		t.Fatalf("compression trigger = %d, want %d", config.ContextCompressionTriggerTokens, defaults.CompressionTriggerTokens)
+	if defaults.CompressionTriggerTokens != 0 || defaults.CompressionTriggerPercent != 85 {
+		t.Fatalf("agent defaults trigger = %d percent %d, want 0/85", defaults.CompressionTriggerTokens, defaults.CompressionTriggerPercent)
+	}
+	if config.ContextCompressionTriggerTokens != 170000 || config.ContextCompressionTriggerPercent != 85 {
+		t.Fatalf("compression trigger = %d percent %d, want derived 170000/85", config.ContextCompressionTriggerTokens, config.ContextCompressionTriggerPercent)
 	}
 	if config.ContextTargetInputTokens != defaults.TargetInputTokens {
 		t.Fatalf("ContextTargetInputTokens = %d, want fallback %d", config.ContextTargetInputTokens, defaults.TargetInputTokens)
@@ -293,8 +299,70 @@ func TestConfigFromEnvFallsBackOnInvalidContextValues(t *testing.T) {
 	if config.ContextSummarizationEnabled != defaults.SummarizationEnabled {
 		t.Fatalf("ContextSummarizationEnabled = %t, want fallback %t", config.ContextSummarizationEnabled, defaults.SummarizationEnabled)
 	}
-	if config.ContextSummaryTriggerTokens != defaults.SummaryTriggerTokens {
-		t.Fatalf("ContextSummaryTriggerTokens = %d, want fallback %d", config.ContextSummaryTriggerTokens, defaults.SummaryTriggerTokens)
+	if config.ContextSummaryTriggerTokens != 170000 {
+		t.Fatalf("ContextSummaryTriggerTokens = %d, want fallback 170000", config.ContextSummaryTriggerTokens)
+	}
+}
+
+func envMap(values map[string]string) func(string) string {
+	return func(key string) string { return values[key] }
+}
+
+func TestContextTriggerDerivesFromTotalBudgetAndPercent(t *testing.T) {
+	config := ConfigFromEnv(envMap(map[string]string{"CONTEXT_MAX_INPUT_TOKENS": "100000"}))
+	if config.ContextCompressionTriggerTokens != 85000 || config.ContextSummaryTriggerTokens != 85000 {
+		t.Fatalf("total change trigger/summary = %d/%d, want 85000", config.ContextCompressionTriggerTokens, config.ContextSummaryTriggerTokens)
+	}
+	config = ConfigFromEnv(envMap(map[string]string{"CONTEXT_COMPRESSION_TRIGGER_PERCENT": "50"}))
+	if config.ContextCompressionTriggerTokens != 100000 || config.ContextCompressionTriggerPercent != 50 || config.ContextSummaryTriggerTokens != 100000 {
+		t.Fatalf("percent change = %+v", config)
+	}
+	config = ConfigFromEnv(envMap(map[string]string{"CONTEXT_COMPRESSION_TRIGGER_PERCENT": "100"}))
+	if config.ContextCompressionTriggerTokens != 196000 {
+		t.Fatalf("100%% trigger = %d, want capped 196000", config.ContextCompressionTriggerTokens)
+	}
+}
+
+func TestContextTriggerInvalidPercentFallsBack(t *testing.T) {
+	for _, raw := range []string{"0", "101", "-5", "abc"} {
+		config := ConfigFromEnv(envMap(map[string]string{"CONTEXT_COMPRESSION_TRIGGER_PERCENT": raw}))
+		if config.ContextCompressionTriggerPercent != 85 || config.ContextCompressionTriggerTokens != 170000 {
+			t.Fatalf("percent %q => %d/%d, want 85/170000", raw, config.ContextCompressionTriggerPercent, config.ContextCompressionTriggerTokens)
+		}
+	}
+}
+
+func TestContextExplicitTriggerAndSummaryOverrides(t *testing.T) {
+	config := ConfigFromEnv(envMap(map[string]string{"CONTEXT_COMPRESSION_TRIGGER_TOKENS": "150000"}))
+	if config.ContextCompressionTriggerTokens != 150000 || config.ContextSummaryTriggerTokens != 150000 {
+		t.Fatalf("explicit trigger = %d summary %d", config.ContextCompressionTriggerTokens, config.ContextSummaryTriggerTokens)
+	}
+	config = ConfigFromEnv(envMap(map[string]string{"CONTEXT_COMPRESSION_TRIGGER_TOKENS": "150000", "CONTEXT_SUMMARY_TRIGGER_TOKENS": "160000"}))
+	if config.ContextSummaryTriggerTokens != 160000 {
+		t.Fatalf("explicit summary = %d, want 160000", config.ContextSummaryTriggerTokens)
+	}
+}
+
+func TestContextExplicitTriggerClampedToInputLimitAndSummaryFollows(t *testing.T) {
+	config := ConfigFromEnv(envMap(map[string]string{"CONTEXT_COMPRESSION_TRIGGER_TOKENS": "999999"}))
+	if config.ContextCompressionTriggerTokens != 196000 || config.ContextSummaryTriggerTokens != 196000 {
+		t.Fatalf("clamped trigger/summary = %d/%d, want 196000", config.ContextCompressionTriggerTokens, config.ContextSummaryTriggerTokens)
+	}
+	config = ConfigFromEnv(envMap(map[string]string{"CONTEXT_MAX_INPUT_TOKENS": "1000", "CONTEXT_RESPONSE_RESERVE_TOKENS": "2000"}))
+	if config.ContextCompressionTriggerTokens != 750 {
+		t.Fatalf("reserve>=total trigger = %d, want 750", config.ContextCompressionTriggerTokens)
+	}
+	config = ConfigFromEnv(envMap(map[string]string{"CONTEXT_MAX_INPUT_TOKENS": "0", "CONTEXT_RESPONSE_RESERVE_TOKENS": "-5"}))
+	if config.ContextCompressionTriggerTokens != 170000 {
+		t.Fatalf("total<=0 trigger = %d, want 170000", config.ContextCompressionTriggerTokens)
+	}
+}
+
+func TestContextTriggerPercentReachesRuntime(t *testing.T) {
+	config := ConfigFromEnv(envMap(map[string]string{"CONTEXT_COMPRESSION_TRIGGER_PERCENT": "60"}))
+	runtime := (Factory{Config: config, WorkspaceRoot: t.TempDir(), AgentDir: t.TempDir(), Getenv: func(string) string { return "" }}).Build(context.Background())
+	if runtime.Context.CompressionTriggerPercent != 60 || runtime.Context.CompressionTriggerTokens != 120000 || runtime.Context.SummaryTriggerTokens != 120000 {
+		t.Fatalf("runtime context = %+v", runtime.Context)
 	}
 }
 

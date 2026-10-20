@@ -19,6 +19,6 @@ func WithContextUsage(ctx context.Context, sink func(turn.ContextUsage)) context
 
 func (a *Agent) reportContextUsage(ctx context.Context, measurement requestTokenMeasurement) {
 	if sink, ok := ctx.Value(contextUsageKey{}).(func(turn.ContextUsage)); ok {
-		sink(turn.ContextUsage{Tokens: measurement.tokens, Limit: a.contextConfig.CompressionTriggerTokens, Estimated: !measurement.exact})
+		sink(turn.ContextUsage{Tokens: measurement.tokens, Limit: a.contextConfig.MaxInputTokens, Estimated: !measurement.exact})
 	}
 }

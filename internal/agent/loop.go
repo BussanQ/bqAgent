@@ -21,12 +21,13 @@ const (
 	// With auto-compaction the loop continues on a budget-bounded context, so this
 	// is a runaway safety valve, not a task limit. Override with AGENT_MAX_ITERATIONS.
 	DefaultMaxIterations                = 1000
-	DefaultContextCompressionTokens     = 200000
-	DefaultContextTargetInputTokens     = 18000 // 9% of the compression threshold.
+	DefaultContextCompressionPercent    = 85
+	DefaultContextCompressionTokens     = DefaultContextMaxInputTokens * DefaultContextCompressionPercent / 100
+	DefaultContextTargetInputTokens     = 18000 // 9% of the default total budget.
 	DefaultContextResponseReserveTokens = 4000
-	DefaultContextMaxInputTokens        = DefaultContextCompressionTokens + DefaultContextResponseReserveTokens
+	DefaultContextMaxInputTokens        = 200000
 	DefaultContextKeepLastTurns         = 6
-	DefaultExactCountTriggerPercent     = 85
+	DefaultExactCountTriggerPercent     = 100 // Count exactly when approaching the compression trigger.
 	EarlierConversationSummaryPrefix    = "Summary of earlier conversation:\n"
 	// maxParallelTools caps how many independent tool calls in one assistant turn
 	// run concurrently.
@@ -70,16 +71,17 @@ type PromptContextCheckpointRecorder interface {
 }
 
 type ContextConfig struct {
-	Enabled                  bool
-	MaxInputTokens           int
-	CompressionTriggerTokens int
-	TargetInputTokens        int
-	ResponseReserveTokens    int
-	KeepLastTurns            int
-	ExactCountTriggerPercent int
-	SummarizationEnabled     bool
-	SummaryTriggerTokens     int
-	SummaryModel             string
+	Enabled                   bool
+	MaxInputTokens            int
+	CompressionTriggerTokens  int // Optional absolute override; zero derives from the total budget.
+	CompressionTriggerPercent int
+	TargetInputTokens         int
+	ResponseReserveTokens     int
+	KeepLastTurns             int
+	ExactCountTriggerPercent  int
+	SummarizationEnabled      bool
+	SummaryTriggerTokens      int
+	SummaryModel              string
 }
 
 type promptUsageBaseline struct {

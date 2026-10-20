@@ -50,18 +50,20 @@ func TestSummarizationAdoptedIntoWorkingSet(t *testing.T) {
 	}
 	recorder := &capturingRecorder{}
 	app := NewWithOptions(client, "", Options{
-		Recorder:        recorder,
-		ToolDefinitions: []tools.Definition{},
+		DisableTurnOutcome: true,
+		Recorder:           recorder,
+		ToolDefinitions:    []tools.Definition{},
 		Functions: map[string]tools.Function{
 			"noop": func(_ context.Context, _ map[string]any) (string, error) { return "ok", nil },
 		},
 		Context: ContextConfig{
-			Enabled:              true,
-			MaxInputTokens:       240,
-			TargetInputTokens:    120,
-			KeepLastTurns:        1,
-			SummarizationEnabled: true,
-			SummaryTriggerTokens: 30,
+			Enabled:                  true,
+			MaxInputTokens:           240,
+			CompressionTriggerTokens: 120,
+			TargetInputTokens:        120,
+			KeepLastTurns:            1,
+			SummarizationEnabled:     true,
+			SummaryTriggerTokens:     30,
 		},
 	})
 
@@ -128,7 +130,8 @@ func TestNoCompactionWhenUnderBudget(t *testing.T) {
 		responses: []AssistantMessage{{Role: "assistant", Content: "hi"}},
 	}
 	app := NewWithOptions(client, "", Options{
-		ToolDefinitions: []tools.Definition{},
+		DisableTurnOutcome: true,
+		ToolDefinitions:    []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:              true,
 			MaxInputTokens:       200,

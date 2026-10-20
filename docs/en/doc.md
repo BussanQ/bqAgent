@@ -227,21 +227,22 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `GROUP_EXTERNAL_AGENT_TIMEOUT` | `10m` | Independent timeout for each external Agent call in group chat; expiry cancels and invalidates the group's ACP session. |
 | `WEBUI_WORKSPACE_ROOTS` | — | Additional server-side roots the WebUI may browse and select, separated with the OS path-list separator (`:` on Unix/macOS, `;` on Windows). The user home and startup workspace are always allowed. |
 | `CONTEXT_MANAGEMENT_ENABLED` | `true` | Enables request-time context budgeting. |
-| `CONTEXT_MAX_INPUT_TOKENS` | `204000` | Maximum estimated context budget, including the response reserve. |
-| `CONTEXT_COMPRESSION_TRIGGER_TOKENS` | `200000` | Compaction starts above this full-request input size, capped by the total budget minus the response reserve. |
-| `CONTEXT_TARGET_INPUT_TOKENS` | `18000` | Post-compaction input target (9% of the default trigger); does not trigger early compaction. |
+| `CONTEXT_MAX_INPUT_TOKENS` | `200000` | Total estimated context budget (200K), including the response reserve. |
+| `CONTEXT_COMPRESSION_TRIGGER_PERCENT` | `85` | Compaction trigger as a percentage of the total budget, range 1..100; invalid values fall back to 85. Default 200000 x 85% = 170000. |
+| `CONTEXT_COMPRESSION_TRIGGER_TOKENS` | derived | Derived by default as `min(total*percent/100, total-reserve)` (170000 by default; compaction starts when input reaches it). An explicit positive value overrides the derived one. |
+| `CONTEXT_TARGET_INPUT_TOKENS` | `18000` | Post-compaction input target (9% of the 200K total budget); does not trigger early compaction. |
 | `CONTEXT_RESPONSE_RESERVE_TOKENS` | `4000` | Tokens reserved for the model response. |
 | `CONTEXT_KEEP_LAST_TURNS` | `6` | Recent turns retained during compaction. |
-| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `85` | Attempts provider-side exact counting (OpenAI Responses and Anthropic) after the full-request local/usage estimate reaches this percentage of the compaction trigger; unsupported or failed counts fall back safely. |
+| `CONTEXT_EXACT_COUNT_TRIGGER_PERCENT` | `100` | Independent legacy setting (default 100: exact counting only at the compaction trigger). Attempts provider-side exact counting (OpenAI Responses and Anthropic) after the full-request local/usage estimate reaches this percentage of the compaction trigger; unsupported or failed counts fall back safely. |
 | `CONTEXT_SUMMARIZATION_ENABLED` | `true` | Enables summarization of older dialogue. |
-| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | `200000` | Once compaction starts, attempts summarization above this input size; falls back to pruning on failure. |
+| `CONTEXT_SUMMARY_TRIGGER_TOKENS` | follows trigger | Follows the effective compaction trigger (170000) by default; an explicit positive value overrides. Once compaction starts, attempts summarization at this input size; falls back to pruning on failure. |
 | `CONTEXT_SUMMARY_MODEL` | main model | Optional cheaper model used for summaries. |
 | `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` uses only bounded `messages.jsonl`; `full` keeps append-only audit history and a separate working snapshot. |
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | Retained tail of each `output.log`; `0` disables trimming. |
 | `RUN_TRACE_ENABLED` | `false` | Persists `.agent/runs/<run-id>/` traces and enables run feedback APIs. |
 | `ENABLE_TASK_TOOL` | `false` | Enables the `task_update` / `task_scope` persistent task record, task prompts, session restore and TUI/WebUI task progress. When off, these tools are not exposed, saved tasks are not injected, `task.json` is neither read nor written (existing files are left untouched), and `turn_outcome` is unaffected. |
 
-By default, requests above 200K tokens compact toward 18K (9%); exact counting starts around 170K. Fixed system instructions are preserved, so instructions or tool definitions exceeding the target can prevent reaching 18K. The TUI shows the latest request size relative to the compaction trigger, using the format `45%/200K`, and refreshes after compaction; values may be estimated. This differs from cumulative `in/out` usage.
+By default the total budget is 200K and the compaction trigger is derived at 85% = 170000 (reaching it triggers compaction), compacting toward 18K (9% of the total); exact counting defaults to 100, so it only runs at the compaction trigger. Fixed system instructions are preserved, so instructions or tool definitions exceeding the target can prevent reaching 18K. The TUI shows the latest request size relative to the total context budget, using the format `45%/200K`, and refreshes after compaction; values may be estimated. This differs from cumulative `in/out` usage.
 
 ### External coding agents
 

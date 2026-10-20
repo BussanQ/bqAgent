@@ -14,16 +14,16 @@ import (
 	"bqagent/internal/tools"
 )
 
-func TestDefaultContextConfigUses200KTriggerAndSmallTarget(t *testing.T) {
-	config := DefaultContextConfig()
-	if config.TargetInputTokens != 18000 || config.CompressionTriggerTokens != 200000 || config.SummaryTriggerTokens != 200000 {
-		t.Fatalf("compression thresholds = target %d summary %d, want 18000 and 200000", config.TargetInputTokens, config.SummaryTriggerTokens)
+func TestDefaultContextConfigUses200KBudgetAnd85PercentTrigger(t *testing.T) {
+	config := normalizeContextConfig(DefaultContextConfig())
+	if config.TargetInputTokens != 18000 || config.CompressionTriggerTokens != 170000 || config.SummaryTriggerTokens != 170000 || config.CompressionTriggerPercent != 85 {
+		t.Fatalf("unexpected compression thresholds: %+v", config)
 	}
-	if config.MaxInputTokens != 204000 || config.ResponseReserveTokens != 4000 {
-		t.Fatalf("context budget = max %d reserve %d, want 204000 and 4000", config.MaxInputTokens, config.ResponseReserveTokens)
+	if config.MaxInputTokens != 200000 || config.ResponseReserveTokens != 4000 {
+		t.Fatalf("context budget = max %d reserve %d, want 200000 and 4000", config.MaxInputTokens, config.ResponseReserveTokens)
 	}
-	if config.ExactCountTriggerPercent != 85 {
-		t.Fatalf("exact count trigger = %d, want 85 percent", config.ExactCountTriggerPercent)
+	if config.ExactCountTriggerPercent != 100 {
+		t.Fatalf("exact count trigger = %d, want counting at the compression threshold", config.ExactCountTriggerPercent)
 	}
 }
 
@@ -1212,14 +1212,16 @@ func TestRunContextPrunesOldMessages(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		LogWriter:       &logs,
-		ToolDefinitions: []tools.Definition{},
+		DisableTurnOutcome: true,
+		LogWriter:          &logs,
+		ToolDefinitions:    []tools.Definition{},
 		Context: ContextConfig{
-			Enabled:               true,
-			MaxInputTokens:        160,
-			TargetInputTokens:     80,
-			ResponseReserveTokens: 10,
-			KeepLastTurns:         1,
+			Enabled:                  true,
+			MaxInputTokens:           160,
+			TargetInputTokens:        80,
+			CompressionTriggerTokens: 80,
+			ResponseReserveTokens:    10,
+			KeepLastTurns:            1,
 		},
 	})
 
@@ -1307,16 +1309,18 @@ func TestRunContextSummarizesOldMessages(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		LogWriter:       &logs,
-		ToolDefinitions: []tools.Definition{},
+		DisableTurnOutcome: true,
+		LogWriter:          &logs,
+		ToolDefinitions:    []tools.Definition{},
 		Context: ContextConfig{
-			Enabled:               true,
-			MaxInputTokens:        180,
-			TargetInputTokens:     90,
-			ResponseReserveTokens: 10,
-			KeepLastTurns:         1,
-			SummarizationEnabled:  true,
-			SummaryTriggerTokens:  18,
+			Enabled:                  true,
+			MaxInputTokens:           180,
+			TargetInputTokens:        90,
+			CompressionTriggerTokens: 90,
+			ResponseReserveTokens:    10,
+			KeepLastTurns:            1,
+			SummarizationEnabled:     true,
+			SummaryTriggerTokens:     18,
 		},
 	})
 
@@ -1373,16 +1377,18 @@ func TestRunContextFallsBackWhenSummarizationFails(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		LogWriter:       &logs,
-		ToolDefinitions: []tools.Definition{},
+		DisableTurnOutcome: true,
+		LogWriter:          &logs,
+		ToolDefinitions:    []tools.Definition{},
 		Context: ContextConfig{
-			Enabled:               true,
-			MaxInputTokens:        160,
-			TargetInputTokens:     80,
-			ResponseReserveTokens: 10,
-			KeepLastTurns:         1,
-			SummarizationEnabled:  true,
-			SummaryTriggerTokens:  18,
+			Enabled:                  true,
+			MaxInputTokens:           160,
+			TargetInputTokens:        80,
+			CompressionTriggerTokens: 80,
+			ResponseReserveTokens:    10,
+			KeepLastTurns:            1,
+			SummarizationEnabled:     true,
+			SummaryTriggerTokens:     18,
 		},
 	})
 
@@ -1420,8 +1426,9 @@ func TestRunContextUsesProviderCountAsAuthority(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		LogWriter:       &logs,
-		ToolDefinitions: []tools.Definition{},
+		DisableTurnOutcome: true,
+		LogWriter:          &logs,
+		ToolDefinitions:    []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:                  true,
 			MaxInputTokens:           120,
@@ -1460,8 +1467,9 @@ func TestRunContextFallsBackWhenProviderCountFails(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		LogWriter:       &logs,
-		ToolDefinitions: []tools.Definition{},
+		DisableTurnOutcome: true,
+		LogWriter:          &logs,
+		ToolDefinitions:    []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:                  true,
 			MaxInputTokens:           120,
@@ -1500,7 +1508,8 @@ func TestRunContextCompactsWhenProviderCountExceedsBudget(t *testing.T) {
 		},
 	}
 	app := NewWithOptions(client, "", Options{
-		ToolDefinitions: []tools.Definition{},
+		DisableTurnOutcome: true,
+		ToolDefinitions:    []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:                  true,
 			MaxInputTokens:           120,

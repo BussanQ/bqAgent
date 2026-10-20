@@ -29,37 +29,38 @@ const (
 )
 
 type Config struct {
-	ProviderID                      string
-	ModelDisplayNames               modelcatalog.Names
-	APIType                         agent.APIType
-	APIKey                          string
-	BaseURL                         string
-	Model                           string
-	Models                          []string
-	StreamIdleTimeout               time.Duration
-	StreamProgressTimeout           time.Duration
-	MaxIterations                   int
-	RunTraceEnabled                 bool
-	TaskToolEnabled                 bool
-	SessionTranscriptMode           session.TranscriptMode
-	SessionOutputMaxBytes           int64
-	BashOutputMaxBytes              int64
-	BashJobs                        tools.BashJobOptions
-	ReadFileMaxBytes                int64
-	SearchProvider                  string
-	SearchAPIKey                    string
-	SearchBaseURL                   string
-	NativeWebSearch                 string
-	ContextManagementEnabled        bool
-	ContextMaxInputTokens           int
-	ContextCompressionTriggerTokens int
-	ContextTargetInputTokens        int
-	ContextResponseReserveTokens    int
-	ContextKeepLastTurns            int
-	ContextExactCountTriggerPercent int
-	ContextSummarizationEnabled     bool
-	ContextSummaryTriggerTokens     int
-	ContextSummaryModel             string
+	ProviderID                       string
+	ModelDisplayNames                modelcatalog.Names
+	APIType                          agent.APIType
+	APIKey                           string
+	BaseURL                          string
+	Model                            string
+	Models                           []string
+	StreamIdleTimeout                time.Duration
+	StreamProgressTimeout            time.Duration
+	MaxIterations                    int
+	RunTraceEnabled                  bool
+	TaskToolEnabled                  bool
+	SessionTranscriptMode            session.TranscriptMode
+	SessionOutputMaxBytes            int64
+	BashOutputMaxBytes               int64
+	BashJobs                         tools.BashJobOptions
+	ReadFileMaxBytes                 int64
+	SearchProvider                   string
+	SearchAPIKey                     string
+	SearchBaseURL                    string
+	NativeWebSearch                  string
+	ContextManagementEnabled         bool
+	ContextMaxInputTokens            int
+	ContextCompressionTriggerTokens  int
+	ContextCompressionTriggerPercent int
+	ContextTargetInputTokens         int
+	ContextResponseReserveTokens     int
+	ContextKeepLastTurns             int
+	ContextExactCountTriggerPercent  int
+	ContextSummarizationEnabled      bool
+	ContextSummaryTriggerTokens      int
+	ContextSummaryModel              string
 }
 
 type Factory struct {
@@ -117,6 +118,11 @@ func ConfigFromEnv(getenv func(string) string) Config {
 	searchProvider := searchProviderFromEnv(getenv)
 	searchAPIKey := firstNonEmpty(getenv("SEARCH_API_KEY"), getenv("FIRECRAWL_API_KEY"))
 	searchBaseURL := firstNonEmpty(getenv("SEARCH_BASE_URL"), getenv("FIRECRAWL_BASE_URL"))
+	contextMax := envInt(getenv("CONTEXT_MAX_INPUT_TOKENS"), defaults.MaxInputTokens)
+	contextReserve := envInt(getenv("CONTEXT_RESPONSE_RESERVE_TOKENS"), defaults.ResponseReserveTokens)
+	contextPercent := envPercent(getenv("CONTEXT_COMPRESSION_TRIGGER_PERCENT"), agent.DefaultContextCompressionPercent)
+	contextTrigger := contextCompressionTrigger(getenv("CONTEXT_COMPRESSION_TRIGGER_TOKENS"), contextMax, contextReserve, contextPercent)
+	contextSummaryTrigger := envPositiveInt(getenv("CONTEXT_SUMMARY_TRIGGER_TOKENS"), contextTrigger)
 	return Config{
 		APIType:               apiType,
 		APIKey:                apiKey,
@@ -136,22 +142,54 @@ func ConfigFromEnv(getenv func(string) string) Config {
 			MaxTimeout:    envNonNegativeDuration(getenv("BASH_MAX_TIMEOUT"), 0),
 			MaxConcurrent: envPositiveInt(getenv("BASH_MAX_CONCURRENT"), defaultBashMaxConcurrent),
 		},
-		ReadFileMaxBytes:                envPositiveInt64(getenv("READ_FILE_MAX_BYTES"), tools.DefaultReadFileMaxBytes),
-		SearchProvider:                  searchProvider,
-		SearchAPIKey:                    searchAPIKey,
-		SearchBaseURL:                   searchBaseURL,
-		NativeWebSearch:                 strings.TrimSpace(getenv("AGENT_NATIVE_WEB_SEARCH")),
-		ContextManagementEnabled:        envBool(getenv("CONTEXT_MANAGEMENT_ENABLED"), defaults.Enabled),
-		ContextMaxInputTokens:           envInt(getenv("CONTEXT_MAX_INPUT_TOKENS"), defaults.MaxInputTokens),
-		ContextCompressionTriggerTokens: envInt(getenv("CONTEXT_COMPRESSION_TRIGGER_TOKENS"), defaults.CompressionTriggerTokens),
-		ContextTargetInputTokens:        envInt(getenv("CONTEXT_TARGET_INPUT_TOKENS"), defaults.TargetInputTokens),
-		ContextResponseReserveTokens:    envInt(getenv("CONTEXT_RESPONSE_RESERVE_TOKENS"), defaults.ResponseReserveTokens),
-		ContextKeepLastTurns:            envInt(getenv("CONTEXT_KEEP_LAST_TURNS"), defaults.KeepLastTurns),
-		ContextExactCountTriggerPercent: envInt(getenv("CONTEXT_EXACT_COUNT_TRIGGER_PERCENT"), defaults.ExactCountTriggerPercent),
-		ContextSummarizationEnabled:     envBool(getenv("CONTEXT_SUMMARIZATION_ENABLED"), defaults.SummarizationEnabled),
-		ContextSummaryTriggerTokens:     envInt(getenv("CONTEXT_SUMMARY_TRIGGER_TOKENS"), defaults.SummaryTriggerTokens),
-		ContextSummaryModel:             getenv("CONTEXT_SUMMARY_MODEL"),
+		ReadFileMaxBytes:                 envPositiveInt64(getenv("READ_FILE_MAX_BYTES"), tools.DefaultReadFileMaxBytes),
+		SearchProvider:                   searchProvider,
+		SearchAPIKey:                     searchAPIKey,
+		SearchBaseURL:                    searchBaseURL,
+		NativeWebSearch:                  strings.TrimSpace(getenv("AGENT_NATIVE_WEB_SEARCH")),
+		ContextManagementEnabled:         envBool(getenv("CONTEXT_MANAGEMENT_ENABLED"), defaults.Enabled),
+		ContextMaxInputTokens:            contextMax,
+		ContextCompressionTriggerTokens:  contextTrigger,
+		ContextCompressionTriggerPercent: contextPercent,
+		ContextTargetInputTokens:         envInt(getenv("CONTEXT_TARGET_INPUT_TOKENS"), defaults.TargetInputTokens),
+		ContextResponseReserveTokens:     contextReserve,
+		ContextKeepLastTurns:             envInt(getenv("CONTEXT_KEEP_LAST_TURNS"), defaults.KeepLastTurns),
+		ContextExactCountTriggerPercent:  envInt(getenv("CONTEXT_EXACT_COUNT_TRIGGER_PERCENT"), defaults.ExactCountTriggerPercent),
+		ContextSummarizationEnabled:      envBool(getenv("CONTEXT_SUMMARIZATION_ENABLED"), defaults.SummarizationEnabled),
+		ContextSummaryTriggerTokens:      contextSummaryTrigger,
+		ContextSummaryModel:              getenv("CONTEXT_SUMMARY_MODEL"),
 	}
+}
+
+// envPercent parses a percentage in 1..100; invalid values fall back.
+func envPercent(raw string, fallback int) int {
+	parsed := envInt(raw, fallback)
+	if parsed < 1 || parsed > 100 {
+		return fallback
+	}
+	return parsed
+}
+
+// contextCompressionTrigger mirrors the agent's normalization: total<=0 uses
+// the default budget, reserve<0 becomes 0, reserve>=total becomes total/4. It
+// returns an explicit positive trigger override or the percentage derivation,
+// both clamped to total-reserve.
+func contextCompressionTrigger(raw string, total, reserve, percent int) int {
+	if total <= 0 {
+		total = agent.DefaultContextMaxInputTokens
+	}
+	if reserve < 0 {
+		reserve = 0
+	}
+	if reserve >= total {
+		reserve = total / 4
+	}
+	trigger := envPositiveInt(raw, 0)
+	if trigger <= 0 {
+		// Quotient/remainder form avoids int overflow on large budgets.
+		trigger = (total/100)*percent + total%100*percent/100
+	}
+	return min(trigger, total-reserve)
 }
 
 func searchProviderFromEnv(getenv func(string) string) string {
@@ -342,16 +380,17 @@ func (factory Factory) build(ctx context.Context, background bool) Runtime {
 		WorkspaceRoot: factory.WorkspaceRoot,
 		BashJobs:      factory.Config.BashJobs,
 		Context: agent.ContextConfig{
-			Enabled:                  factory.Config.ContextManagementEnabled,
-			MaxInputTokens:           factory.Config.ContextMaxInputTokens,
-			CompressionTriggerTokens: factory.Config.ContextCompressionTriggerTokens,
-			TargetInputTokens:        factory.Config.ContextTargetInputTokens,
-			ResponseReserveTokens:    factory.Config.ContextResponseReserveTokens,
-			KeepLastTurns:            factory.Config.ContextKeepLastTurns,
-			ExactCountTriggerPercent: factory.Config.ContextExactCountTriggerPercent,
-			SummarizationEnabled:     factory.Config.ContextSummarizationEnabled,
-			SummaryTriggerTokens:     factory.Config.ContextSummaryTriggerTokens,
-			SummaryModel:             factory.Config.ContextSummaryModel,
+			Enabled:                   factory.Config.ContextManagementEnabled,
+			MaxInputTokens:            factory.Config.ContextMaxInputTokens,
+			CompressionTriggerTokens:  factory.Config.ContextCompressionTriggerTokens,
+			CompressionTriggerPercent: factory.Config.ContextCompressionTriggerPercent,
+			TargetInputTokens:         factory.Config.ContextTargetInputTokens,
+			ResponseReserveTokens:     factory.Config.ContextResponseReserveTokens,
+			KeepLastTurns:             factory.Config.ContextKeepLastTurns,
+			ExactCountTriggerPercent:  factory.Config.ContextExactCountTriggerPercent,
+			SummarizationEnabled:      factory.Config.ContextSummarizationEnabled,
+			SummaryTriggerTokens:      factory.Config.ContextSummaryTriggerTokens,
+			SummaryModel:              factory.Config.ContextSummaryModel,
 		},
 		Memory:       memoryStore,
 		GlobalMemory: globalMemoryStore,

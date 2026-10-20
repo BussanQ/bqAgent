@@ -100,7 +100,7 @@ func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string
 }
 
 func shouldSummarize(estimatedTokens int, config ContextConfig) bool {
-	return config.SummarizationEnabled && estimatedTokens > config.SummaryTriggerTokens
+	return config.SummarizationEnabled && estimatedTokens >= config.SummaryTriggerTokens
 }
 
 func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any, targetTokens int) ([]map[string]any, bool) {

@@ -13,13 +13,13 @@ import (
 func TestContextWaitsForTriggerThenCompactsBelowTenPercent(t *testing.T) {
 	for _, mode := range []string{"summary", "summary failure", "prune only"} {
 		t.Run(mode, func(t *testing.T) {
-			config := DefaultContextConfig()
+			config := normalizeContextConfig(DefaultContextConfig())
 			config.SummarizationEnabled = mode != "prune only"
 			client := &stubClient{optionResponses: []AssistantMessage{{Content: "important decisions"}}}
 			if mode == "summary failure" {
 				client.optionErrors = []error{errors.New("summary unavailable")}
 			}
-			app := NewWithOptions(client, "test", Options{Context: config, ToolDefinitions: []tools.Definition{}})
+			app := NewWithOptions(client, "test", Options{DisableTurnOutcome: true, Context: config, ToolDefinitions: []tools.Definition{}})
 			var usage turn.ContextUsage
 			ctx := WithContextUsage(context.Background(), func(value turn.ContextUsage) { usage = value })
 			messages := []map[string]any{
@@ -64,27 +64,27 @@ func TestContextWaitsForTriggerThenCompactsBelowTenPercent(t *testing.T) {
 }
 
 func TestContextExactCountUsesCompressionTrigger(t *testing.T) {
-	for _, count := range []int{200000, 200001} {
-		config := DefaultContextConfig()
+	for _, count := range []int{169999, 170000, 170001} {
+		config := normalizeContextConfig(DefaultContextConfig())
 		config.SummarizationEnabled = false
 		client := &exactCountingStubClient{stubClient: &stubClient{}, counts: []InputTokenCount{{Tokens: count, Exact: true}, {Tokens: 8000, Exact: true}}}
-		app := NewWithOptions(client, "test", Options{Context: config})
+		app := NewWithOptions(client, "test", Options{DisableTurnOutcome: true, Context: config})
 		var usage turn.ContextUsage
 		ctx := WithContextUsage(context.Background(), func(value turn.ContextUsage) { usage = value })
-		// Between 80% and 85% of the trigger: no exact count yet.
+		// Below 85% of the total budget: no exact count or compaction yet.
 		app.buildRequestMessages(ctx, []map[string]any{{"role": "user", "content": strings.Repeat("a", 650000)}}, nil, ChatCompletionOptions{})
 		if len(client.countMessages) != 0 {
 			t.Fatal("exact counting used the post-compaction target")
 		}
 		_, compacted := app.buildRequestMessages(ctx, []map[string]any{{"role": "user", "content": strings.Repeat("b", 690000)}}, nil, ChatCompletionOptions{})
-		if (compacted != nil) != (count > 200000) || usage.Estimated {
+		if (compacted != nil) != (count >= 170000) || usage.Estimated {
 			t.Fatalf("provider count %d: compacted=%t usage=%+v", count, compacted != nil, usage)
 		}
 	}
 }
 
 func TestBoundWorkingMessagesUsesCompressionTrigger(t *testing.T) {
-	config := DefaultContextConfig()
+	config := normalizeContextConfig(DefaultContextConfig())
 	for _, size := range []int{80000, 850000} {
 		messages := []map[string]any{{"role": "user", "content": strings.Repeat("x", size)}}
 		bounded := BoundWorkingMessages(messages, config)
@@ -98,11 +98,37 @@ func TestBoundWorkingMessagesUsesCompressionTrigger(t *testing.T) {
 }
 
 func TestNormalizeContextTriggerRespectsResponseReserve(t *testing.T) {
-	config := DefaultContextConfig()
-	config.MaxInputTokens = 100000
-	config.TargetInputTokens = 150000
-	config = normalizeContextConfig(config)
-	if config.CompressionTriggerTokens != 96000 || config.TargetInputTokens > config.CompressionTriggerTokens {
-		t.Fatalf("invalid effective budget: %+v", config)
+	for _, reserve := range []int{4000, 20000} {
+		config := DefaultContextConfig()
+		config.MaxInputTokens = 100000
+		config.ResponseReserveTokens = reserve
+		config.TargetInputTokens = 150000
+		config = normalizeContextConfig(config)
+		if config.CompressionTriggerTokens != min(85000, 100000-reserve) || config.SummaryTriggerTokens != config.CompressionTriggerTokens || config.TargetInputTokens > config.CompressionTriggerTokens {
+			t.Fatalf("invalid effective budget: %+v", config)
+		}
+	}
+}
+
+func TestContextCompactsAt85PercentWithoutExactCounter(t *testing.T) {
+	for _, tokens := range []int{169999, 170000, 170001} {
+		config := DefaultContextConfig()
+		config.SummarizationEnabled = false
+		app := NewWithOptions(&stubClient{}, "test", Options{DisableTurnOutcome: true, Context: config})
+		messages := []map[string]any{{"role": "user", "content": strings.Repeat("x", 700000)}}
+		// Calibrate from a previous provider usage value to hit the boundary
+		// exactly, without relying on the local text-length estimator.
+		app.rememberServerPromptUsage(messages, nil, ChatCompletionOptions{}, tokens)
+		_, compacted := app.buildRequestMessages(context.Background(), messages, nil, ChatCompletionOptions{})
+		if (compacted != nil) != (tokens >= 170000) {
+			t.Fatalf("tokens=%d compacted=%t", tokens, compacted != nil)
+		}
+	}
+}
+
+func TestContextSummaryStartsAtCompressionBoundary(t *testing.T) {
+	config := normalizeContextConfig(DefaultContextConfig())
+	if shouldSummarize(169999, config) || !shouldSummarize(170000, config) {
+		t.Fatalf("summary does not follow compression boundary: %+v", config)
 	}
 }

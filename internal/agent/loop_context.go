@@ -14,15 +14,14 @@ import (
 
 func DefaultContextConfig() ContextConfig {
 	return ContextConfig{
-		Enabled:                  true,
-		MaxInputTokens:           DefaultContextMaxInputTokens,
-		ResponseReserveTokens:    DefaultContextResponseReserveTokens,
-		CompressionTriggerTokens: DefaultContextCompressionTokens,
-		TargetInputTokens:        DefaultContextTargetInputTokens,
-		KeepLastTurns:            DefaultContextKeepLastTurns,
-		ExactCountTriggerPercent: DefaultExactCountTriggerPercent,
-		SummarizationEnabled:     true,
-		SummaryTriggerTokens:     DefaultContextCompressionTokens,
+		Enabled:                   true,
+		MaxInputTokens:            DefaultContextMaxInputTokens,
+		ResponseReserveTokens:     DefaultContextResponseReserveTokens,
+		CompressionTriggerPercent: DefaultContextCompressionPercent,
+		TargetInputTokens:         DefaultContextTargetInputTokens,
+		KeepLastTurns:             DefaultContextKeepLastTurns,
+		ExactCountTriggerPercent:  DefaultExactCountTriggerPercent,
+		SummarizationEnabled:      true,
 	}
 }
 
@@ -32,7 +31,7 @@ func DefaultContextConfig() ContextConfig {
 func BoundWorkingMessages(messages []map[string]any, config ContextConfig) []map[string]any {
 	config = normalizeContextConfig(config)
 	working := repairToolHistory(duplicateMessages(messages))
-	if !config.Enabled || estimateMessagesTokens(working) <= config.CompressionTriggerTokens {
+	if !config.Enabled || estimateMessagesTokens(working) < config.CompressionTriggerTokens {
 		return working
 	}
 	working = pruneMessagesToBudget(working, config)
@@ -55,10 +54,13 @@ func normalizeContextConfig(config ContextConfig) ContextConfig {
 	if config.TargetInputTokens <= 0 {
 		config.TargetInputTokens = config.MaxInputTokens
 	}
-	// Preserve the old single-threshold behavior for programmatic callers that
-	// do not specify a compression trigger. Runtime defaults set both explicitly.
+	if config.CompressionTriggerPercent <= 0 || config.CompressionTriggerPercent > 100 {
+		config.CompressionTriggerPercent = DefaultContextCompressionPercent
+	}
 	if config.CompressionTriggerTokens <= 0 {
-		config.CompressionTriggerTokens = config.TargetInputTokens
+		// Apply the percentage to the whole context budget, not to the input
+		// budget after reserving output tokens. Avoid overflowing int.
+		config.CompressionTriggerTokens = (config.MaxInputTokens/100)*config.CompressionTriggerPercent + config.MaxInputTokens%100*config.CompressionTriggerPercent/100
 	}
 	inputLimit := config.MaxInputTokens - config.ResponseReserveTokens
 	config.CompressionTriggerTokens = min(config.CompressionTriggerTokens, inputLimit)
@@ -135,7 +137,7 @@ func (a *Agent) buildBudgetedRequestMessages(ctx context.Context, messages []map
 	}
 
 	measurement := a.measureRequestTokens(ctx, sanitized, definitions, options, false)
-	if measurement.tokens <= a.contextConfig.CompressionTriggerTokens {
+	if measurement.tokens < a.contextConfig.CompressionTriggerTokens {
 		a.logContextBudget(ctx, len(messages), len(sanitized), len(sanitized), measurement, false, false)
 		return sanitized, nil
 	}
