@@ -630,6 +630,7 @@ type bashProcess struct {
 	cmd      *exec.Cmd
 	reader   *os.File
 	copyDone chan struct{}
+	cleanup  func() error
 }
 
 func startBashProcess(ctx context.Context, root, command string, out io.Writer) (*bashProcess, error) {
@@ -647,7 +648,16 @@ func startBashProcess(ctx context.Context, root, command string, out io.Writer) 
 		"DEBIAN_FRONTEND=noninteractive",
 	)
 	cmd.WaitDelay = commandWaitDelay
-	configureProcessGroup(cmd)
+	afterStart, cleanup, err := prepareBashProcess(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("prepare command process: %w", err)
+	}
+	started := false
+	defer func() {
+		if !started {
+			_ = cleanup()
+		}
+	}()
 
 	reader, writer, err := os.Pipe()
 	if err != nil {
@@ -661,8 +671,18 @@ func startBashProcess(ctx context.Context, root, command string, out io.Writer) 
 		_ = writer.Close()
 		return nil, fmt.Errorf("command execution failed: %w", err)
 	}
+	if err := afterStart(); err != nil {
+		// Windows starts suspended: never run an uncontained process if job
+		// assignment or thread resumption fails.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = reader.Close()
+		_ = writer.Close()
+		return nil, fmt.Errorf("initialize command process: %w", err)
+	}
 	_ = writer.Close()
-	proc := &bashProcess{cmd: cmd, reader: reader, copyDone: make(chan struct{})}
+	started = true
+	proc := &bashProcess{cmd: cmd, reader: reader, copyDone: make(chan struct{}), cleanup: cleanup}
 	go func() {
 		defer close(proc.copyDone)
 		_, _ = io.Copy(out, reader)
@@ -673,7 +693,9 @@ func startBashProcess(ctx context.Context, root, command string, out io.Writer) 
 // wait reaps the shell, kills any process left in its group and drains output.
 func (p *bashProcess) wait() error {
 	err := p.cmd.Wait()
-	killProcessGroup(p.cmd)
+	if cleanupErr := p.cleanup(); cleanupErr != nil {
+		err = errors.Join(err, cleanupErr)
+	}
 	select {
 	case <-p.copyDone:
 	case <-time.After(commandWaitDelay):

@@ -242,6 +242,8 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `RUN_TRACE_ENABLED` | `false` | Persists `.agent/runs/<run-id>/` traces and enables run feedback APIs. |
 | `ENABLE_TASK_TOOL` | `false` | Enables the `task_update` / `task_scope` persistent task record, task prompts, session restore and TUI/WebUI task progress. When off, these tools are not exposed, saved tasks are not injected, `task.json` is neither read nor written (existing files are left untouched), and `turn_outcome` is unaffected. |
 
+Bash commands use a separate process group on Linux/macOS and a Job Object to manage the shell and its descendants on Windows. Windows commands start suspended and only execute after joining the Job Object; failed assignment terminates the command and returns an error. `bash_kill`, cancellation, the maximum runtime, and turn completion reclaim managed processes; normal shell exit also cleans up surviving descendants. Windows cleanup waits up to 5 seconds for the Job Object's processes to exit, with kill-on-close as a fallback when its handle is closed.
+
 By default the total budget is 200K and the compaction trigger is derived at 85% = 170000 (reaching it triggers compaction), compacting toward 18K (9% of the total); exact counting defaults to 100, so it only runs at the compaction trigger. Fixed system instructions are preserved, so instructions or tool definitions exceeding the target can prevent reaching 18K. The TUI shows the latest request size relative to the total context budget, using the format `45%/200K`, and refreshes after compaction; values may be estimated. This differs from cumulative `in/out` usage.
 
 ### External coding agents

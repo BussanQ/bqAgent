@@ -246,6 +246,8 @@ Responses 默认请求最多 3 次内置工具调用和 4096 个输出 token。�
 | `RUN_TRACE_ENABLED` | `false` | 保存 `.agent/runs/<run-id>/` Trace 并启用运行反馈接口。 |
 | `ENABLE_TASK_TOOL` | `false` | 启用 `task_update` / `task_scope` 持久化任务记录、任务提示、会话恢复与 TUI/WebUI 任务进度；关闭时不暴露这些工具、不注入已保存任务、不读写 `task.json`（已有文件原样保留），`turn_outcome` 不受影响。 |
 
+Bash 命令在 Linux/macOS 上使用独立进程组，在 Windows 上使用 Job Object 管理 Shell 及其子孙进程。Windows 命令先挂起启动，加入 Job Object 后才执行；加入失败则终止命令并报错。`bash_kill`、取消、最大运行时限和 turn 结束都会回收受管进程；Shell 正常退出后也会清理残留后代。Windows 清理会等待 Job Object 内的进程退出，最多等待 5 秒，并使用关闭 Job 句柄时终止进程作为兜底。
+
 默认总预算 200K，压缩触发自动取 85% = 170000（达到即触发），压缩到 18K（总预算的 9%）目标；精确计数默认比例 100，仅在到达压缩触发点时尝试。固定系统指令不会被裁剪，因此系统指令或工具定义本身超过目标时无法保证压到 18K。TUI 状态栏展示最近请求的上下文占比（相对于上下文总预算），以 `45%/200K` 格式显示，数值可能为估算，压缩后刷新；它不同于累计 `in/out` 用量。
 
 ### 外部编码 Agent

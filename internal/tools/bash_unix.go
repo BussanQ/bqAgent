@@ -7,6 +7,11 @@ import (
 	"syscall"
 )
 
+func prepareBashProcess(cmd *exec.Cmd) (func() error, func() error, error) {
+	configureProcessGroup(cmd)
+	return func() error { return nil }, func() error { killProcessGroup(cmd); return nil }, nil
+}
+
 // configureProcessGroup puts the command in its own session and process group and, on
 // context cancellation, kills the entire group rather than just the top-level
 // shell. Without this a shell that spawns a long-lived/daemonized grandchild
