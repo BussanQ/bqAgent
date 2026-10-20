@@ -996,6 +996,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}
 	app := agent.NewWithOptions(service.client, effectiveModel, agent.Options{
 		EnableNativeWebSearch: true,
+		DisableTurnOutcome:    mode == ChatModeAsk,
 
 		TaskStore:       taskStore,
 		Prompt:          conversation.Prompt,

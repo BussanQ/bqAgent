@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -234,5 +235,42 @@ func TestTurnOutcomeDeclarationRequiresConcreteReasonAndValidStatus(t *testing.T
 	}
 	if !app.hasSpecialToolCalls([]ToolCall{{Function: FunctionCall{Name: "turn_outcome"}}}) {
 		t.Fatal("outcome declarations must run in model order")
+	}
+}
+
+func TestDisableTurnOutcomeHidesToolAndInstructions(t *testing.T) {
+	for _, withTask := range []bool{false, true} {
+		t.Run(fmt.Sprintf("task=%t", withTask), func(t *testing.T) {
+			options := Options{DisableTurnOutcome: true, Context: ContextConfig{Enabled: false}}
+			if withTask {
+				options.TaskStore = &memoryTaskStore{}
+			}
+			client := &taskDefinitionClient{stubClient{responses: []AssistantMessage{{Content: "done"}}}}
+			app := NewWithOptions(client, "test", options)
+			if _, ok := app.functions["turn_outcome"]; ok {
+				t.Fatal("turn_outcome was installed")
+			}
+			if _, history, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "hi"}}, 3); err != nil || len(history) == 0 {
+				t.Fatalf("turn failed: history=%#v err=%v", history, err)
+			}
+			for _, definition := range client.definitions[0] {
+				if definition.Function.Name == "turn_outcome" {
+					t.Fatal("turn_outcome was exposed to the model")
+				}
+			}
+			text := app.taskContext(context.Background())
+			if strings.Contains(text, "turn_outcome") {
+				t.Fatalf("turn_outcome instructions injected: %q", text)
+			}
+			if !withTask {
+				if text != "" {
+					t.Fatalf("task context without task store = %q, want empty", text)
+				}
+				return
+			}
+			if !strings.HasPrefix(text, taskProgressInstructions) || strings.Contains(text, turnOutcomeTaskInstructions) {
+				t.Fatalf("task context = %q", text)
+			}
+		})
 	}
 }

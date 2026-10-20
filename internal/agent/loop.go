@@ -112,6 +112,7 @@ type Options struct {
 	// EnableNativeWebSearch allows adding model-backed search to an explicitly
 	// supplied toolset. Default toolsets enable it automatically.
 	EnableNativeWebSearch bool
+	DisableTurnOutcome    bool
 
 	TurnID          string
 	MessageSink     turn.Sink
@@ -239,7 +240,9 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 	if options.EnableNativeWebSearch || (options.ToolDefinitions == nil && options.Functions == nil) {
 		app.installNativeWebSearch(searchClient)
 	}
-	app.installTurnOutcomeTool()
+	if !options.DisableTurnOutcome {
+		app.installTurnOutcomeTool()
+	}
 	app.installTaskTool()
 	return app
 }

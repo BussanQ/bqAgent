@@ -205,10 +205,17 @@ func continuationContext(ctx context.Context) (context.Context, *continuationGua
 }
 
 func (a *Agent) taskContext(ctx context.Context) string {
+	_, hasTurnOutcome := a.functions["turn_outcome"]
 	if a.taskStore == nil {
+		if !hasTurnOutcome {
+			return ""
+		}
 		return turnOutcomeInstructions
 	}
-	text := taskProgressInstructions + "\n" + turnOutcomeInstructions + " " + turnOutcomeTaskInstructions
+	text := taskProgressInstructions
+	if hasTurnOutcome {
+		text += "\n" + turnOutcomeInstructions + " " + turnOutcomeTaskInstructions
+	}
 	if a.task != nil {
 		data, _ := json.Marshal(a.task)
 		if isSideQuestion(ctx) {
