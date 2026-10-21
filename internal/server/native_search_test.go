@@ -52,7 +52,7 @@ func TestServiceNativeWebSearchFollowsSessionModelAndChatMode(t *testing.T) {
 					if name == "web_search" {
 						found = true
 					}
-					if mode == ChatModeAsk && (name == "write_file" || name == "execute_bash") {
+					if mode == ChatModeAsk && (name == "write_file" || name == "bash") {
 						t.Fatal("Ask mode gained write tools")
 					}
 				}

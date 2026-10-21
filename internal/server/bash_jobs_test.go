@@ -14,11 +14,11 @@ import (
 )
 
 func TestServerBashYieldPreservesProcessAndStopRegistration(t *testing.T) {
-	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Functions: map[string]tools.Function{"execute_bash": tools.ExecuteBash}})
+	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Functions: map[string]tools.Function{"bash": tools.ExecuteBash}})
 	ctx, jobs := tools.WithBashJobs(context.Background(), tools.BashJobOptions{YieldTimeout: time.Millisecond})
 	defer jobs.Close()
 	ctx, _ = tools.WithBashResultCapture(ctx)
-	wrapped := service.functionsForTurn("peer", "session")["execute_bash"]
+	wrapped := service.functionsForTurn("peer", "session")["bash"]
 	_, err := wrapped(ctx, map[string]any{"command": "sleep 60"})
 	if err != nil {
 		t.Fatal(err)
@@ -55,12 +55,12 @@ func TestServerBashYieldPreservesEnvironmentTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
-	service := NewService(ServiceOptions{WorkspaceRoot: root, Functions: map[string]tools.Function{"execute_bash": tools.ExecuteBash}})
+	service := NewService(ServiceOptions{WorkspaceRoot: root, Functions: map[string]tools.Function{"bash": tools.ExecuteBash}})
 	service.environmentCommands = newEnvironmentCommandGuard(50 * time.Millisecond)
 	ctx, jobs := tools.WithBashJobs(context.Background(), tools.BashJobOptions{YieldTimeout: time.Millisecond})
 	defer jobs.Close()
 	ctx, _ = tools.WithBashResultCapture(ctx)
-	_, err := service.functionsForTurn("peer", "session")["execute_bash"](ctx, map[string]any{"command": "npm install"})
+	_, err := service.functionsForTurn("peer", "session")["bash"](ctx, map[string]any{"command": "npm install"})
 	if err != nil {
 		t.Fatal(err)
 	}

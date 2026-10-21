@@ -28,11 +28,11 @@ func TestRunOrdinaryAnswerDoesNotRestartAfterToolCalls(t *testing.T) {
 					const answer = "主要用 Shell/Bash 编写，Python 为辅助语言。"
 					client := &stubClient{}
 					for i := 0; i < count; i++ {
-						client.responses = append(client.responses, AssistantMessage{ToolCalls: []ToolCall{{ID: fmt.Sprint(i), Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"ls"}`}}}})
+						client.responses = append(client.responses, AssistantMessage{ToolCalls: []ToolCall{{ID: fmt.Sprint(i), Function: FunctionCall{Name: "bash", Arguments: `{"command":"ls"}`}}}})
 					}
 					client.responses = append(client.responses, AssistantMessage{Content: answer, Phase: phase}, AssistantMessage{Content: "unsolicited follow-up"})
 					store := &memoryTaskStore{}
-					app := NewWithOptions(client, "test", Options{TaskStore: store, Stream: stream, Context: ContextConfig{Enabled: false}, Functions: map[string]tools.Function{"execute_bash": func(context.Context, map[string]any) (string, error) { return "build.sh\nnetwork.py", nil }}})
+					app := NewWithOptions(client, "test", Options{TaskStore: store, Stream: stream, Context: ContextConfig{Enabled: false}, Functions: map[string]tools.Function{"bash": func(context.Context, map[string]any) (string, error) { return "build.sh\nnetwork.py", nil }}})
 					reply, history, err := app.RunConversationTurn(context.Background(), []map[string]any{{"role": "user", "content": "当前是什么编程语言写的"}}, 20)
 					if err != nil || reply != answer || len(client.messages) != count+1 || store.state != nil {
 						t.Fatalf("ordinary answer restarted: reply=%q requests=%d task=%+v err=%v", reply, len(client.messages), store.state, err)
@@ -65,15 +65,15 @@ func TestRunProductiveContinuationsCompleteInOneTurn(t *testing.T) {
 				responses = append(responses, AssistantMessage{ToolCalls: []ToolCall{{ID: fmt.Sprintf("read-%d", i), Function: FunctionCall{Name: "read_file", Arguments: fmt.Sprintf(`{"step":%d}`, i)}}}})
 			}
 			complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted verification passed"}}, Verification: []taskstate.Verification{{Command: "go test ./switch", Status: "passed", Details: "ok"}}}
-			responses = append(responses, AssistantMessage{ToolCalls: []ToolCall{{ID: "verify", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test ./switch"}`}}}}, taskUpdateMessage(complete), AssistantMessage{Content: "done", Phase: "final_answer"})
+			responses = append(responses, AssistantMessage{ToolCalls: []ToolCall{{ID: "verify", Function: FunctionCall{Name: "bash", Arguments: `{"command":"go test ./switch"}`}}}}, taskUpdateMessage(complete), AssistantMessage{Content: "done", Phase: "final_answer"})
 			expectedCalls := len(responses)
 			client := &stubClient{responses: responses}
 			var output bytes.Buffer
 			edits, checks := 0, 0
 			app := NewWithOptions(client, "test", Options{TaskStore: store, Stream: stream, TokenSink: &output, Functions: map[string]tools.Function{
-				"edit_file":    func(context.Context, map[string]any) (string, error) { edits++; return "", nil },
-				"read_file":    func(context.Context, map[string]any) (string, error) { return "source", nil },
-				"execute_bash": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
+				"edit_file": func(context.Context, map[string]any) (string, error) { edits++; return "", nil },
+				"read_file": func(context.Context, map[string]any) (string, error) { return "source", nil },
+				"bash":      func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
 			}})
 			reply, err := app.Run(context.Background(), "implement fast", 50)
 			if err != nil || reply != "done" || edits != 6 || checks != 1 || len(client.messages) != expectedCalls || store.state.Status != "completed" || strings.Contains(output.String(), "尚未确认完成") {
@@ -105,16 +105,16 @@ func TestRunRepairsFailedVerificationAfterEmptyReplies(t *testing.T) {
 			complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted test passed after repair"}}, Verification: []taskstate.Verification{{Command: "go test -run TestSwitch", Status: "passed", Details: "ok"}}}
 			client := &stubClient{responses: []AssistantMessage{
 				{Content: ""}, {Content: ""},
-				{ToolCalls: []ToolCall{{ID: "failed-test", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}},
+				{ToolCalls: []ToolCall{{ID: "failed-test", Function: FunctionCall{Name: "bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}},
 				{Content: ""}, {Content: ""}, {Content: "will fix", Phase: "commentary"}, {Content: ""},
 				{ToolCalls: []ToolCall{{ID: "fix", Function: FunctionCall{Name: "edit_file", Arguments: `{}`}}}},
-				{ToolCalls: []ToolCall{{ID: "passed-test", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}},
+				{ToolCalls: []ToolCall{{ID: "passed-test", Function: FunctionCall{Name: "bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}},
 				taskUpdateMessage(complete), {Content: "verified", Phase: "final_answer"},
 			}}
 			var output bytes.Buffer
 			fixed, checks := false, 0
 			app := NewWithOptions(client, "test", Options{TaskStore: store, Stream: stream, TokenSink: &output, Functions: map[string]tools.Function{
-				"execute_bash": func(context.Context, map[string]any) (string, error) {
+				"bash": func(context.Context, map[string]any) (string, error) {
 					checks++
 					if !fixed {
 						return "disabled: service_tier should be omitted", errors.New("test failed")
@@ -151,8 +151,8 @@ func TestContinuationProgressClassification(t *testing.T) {
 		name, result string
 		progress     bool
 	}{
-		{"execute_bash", "", true}, {"edit_file", "  \n", true},
-		{"read_file", "source", true}, {"execute_bash", "Error: command failed", false},
+		{"bash", "", true}, {"edit_file", "  \n", true},
+		{"read_file", "source", true}, {"bash", "Error: command failed", false},
 		{"grep", "No matches found.", false}, {"glob", "No files matched.", false},
 		{"task_update", "saved", false}, {"task_scope", "updated", false},
 	} {
@@ -256,8 +256,8 @@ func TestRunTaskCompletionRequiresAcceptanceAndVerification(t *testing.T) {
 	invalid := active
 	invalid.Status = "completed"
 	complete := taskstate.State{Goal: active.Goal, Status: "completed", Criteria: []taskstate.Criterion{{Description: "switch works", Done: true, Evidence: "targeted test passed"}}, Verification: []taskstate.Verification{{Command: "go test -run TestSwitch", Status: "passed", Details: "ok"}}}
-	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "will test", Phase: "commentary"}, taskUpdateMessage(invalid), {Role: "assistant", ToolCalls: []ToolCall{{ID: "test", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}}, taskUpdateMessage(complete), {Role: "assistant", Content: "done"}}}
-	app := NewWithOptions(client, "test", Options{TaskStore: store, Functions: map[string]tools.Function{"execute_bash": func(context.Context, map[string]any) (string, error) { return "ok", nil }}})
+	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "will test", Phase: "commentary"}, taskUpdateMessage(invalid), {Role: "assistant", ToolCalls: []ToolCall{{ID: "test", Function: FunctionCall{Name: "bash", Arguments: `{"command":"go test -run TestSwitch"}`}}}}, taskUpdateMessage(complete), {Role: "assistant", Content: "done"}}}
+	app := NewWithOptions(client, "test", Options{TaskStore: store, Functions: map[string]tools.Function{"bash": func(context.Context, map[string]any) (string, error) { return "ok", nil }}})
 	reply, err := app.Run(context.Background(), "改完了吗", 10)
 	if err != nil || reply != "done" || store.state.Status != "completed" {
 		t.Fatalf("reply=%q task=%+v err=%v", reply, store.state, err)

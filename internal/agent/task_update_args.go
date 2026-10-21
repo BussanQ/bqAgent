@@ -27,7 +27,7 @@ const taskUpdateParameters = `{
         }, "required": ["description"]}},
         "remaining": {"type": "array", "items": {"type": "string"}},
         "verification": {"type": "array", "items": {"type": "object", "properties": {
-          "command": {"type": "string", "description": "The exact command string execute_bash ran."},
+          "command": {"type": "string", "description": "The exact command string bash ran."},
           "tool_call_id": {"type": "string"},
           "status": {"type": "string", "enum": ["passed", "failed", "unavailable"]},
           "details": {"type": "string"}
@@ -47,7 +47,7 @@ const taskUpdateParameters = `{
         }, "required": ["index", "done"]}},
         "remaining": {"type": "array", "items": {"type": "string"}, "description": "Replaces the remaining work; [] clears it."},
         "verification": {"type": "array", "description": "Added checks; an entry replaces a saved one with the same command.", "items": {"type": "object", "properties": {
-          "command": {"type": "string", "description": "The exact command string execute_bash ran."},
+          "command": {"type": "string", "description": "The exact command string bash ran."},
           "tool_call_id": {"type": "string"},
           "status": {"type": "string", "enum": ["passed", "failed", "unavailable"]},
           "details": {"type": "string"}

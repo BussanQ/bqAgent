@@ -21,7 +21,7 @@ type execEntry struct {
 	// mutating entries may have changed the workspace: they invalidate every
 	// verification that was not entirely started after they finished.
 	mutating bool
-	// verifier marks a successful test/build/lint style execute_bash command.
+	// verifier marks a successful test/build/lint style bash command.
 	verifier bool
 	// reliable means the command's exit status reflects every step (no ||, ;,
 	// background job or un-pipefailed pipeline) and it is not merely a read.
@@ -53,7 +53,7 @@ func (l *execLedger) begin(callID, tool string, args map[string]any) *execEntry 
 	}
 	entry := &execEntry{callID: callID, tool: tool}
 	switch {
-	case tool == "execute_bash":
+	case tool == "bash":
 		command, _ := args["command"].(string)
 		entry.command = strings.TrimSpace(command)
 		kind := classifyBash(entry.command)
@@ -104,7 +104,7 @@ func (l *execLedger) barrier() uint64 {
 }
 
 // verified reports whether a passed verification is backed by a real,
-// successful execute_bash call in this turn with the same command (and the same
+// successful bash call in this turn with the same command (and the same
 // call ID when supplied) and no mutation that overlapped or followed it.
 func (l *execLedger) verified(callID, command string) bool {
 	return l.verificationIssue(callID, command) == ""
@@ -119,7 +119,7 @@ func (l *execLedger) verificationIssue(callID, command string) string {
 }
 
 // verificationIssueFor with evidenceOnly (analysis tasks) accepts any exactly
-// matching successful execute_bash call, including read-only ones such as
+// matching successful bash call, including read-only ones such as
 // go list or grep, without the test/build/lint and staleness requirements;
 // the caller has already ruled out definite writes this turn.
 func (l *execLedger) verificationIssueFor(callID, command string, evidenceOnly bool) string {
@@ -133,12 +133,12 @@ func (l *execLedger) verificationIssueFor(callID, command string, evidenceOnly b
 	exact, near := "", ""
 	for i := len(l.entries) - 1; i >= 0; i-- {
 		e := l.entries[i]
-		if e.tool != "execute_bash" || e.end == 0 || (callID != "" && e.callID != callID) {
+		if e.tool != "bash" || e.end == 0 || (callID != "" && e.callID != callID) {
 			continue
 		}
 		if e.command != command {
 			if near == "" && (callID != "" || strings.Contains(e.command, command)) {
-				near = fmt.Sprintf("the closest execute_bash call ran %q, which is not the recorded command; record the exact command string", abbreviateCommand(e.command))
+				near = fmt.Sprintf("the closest bash call ran %q, which is not the recorded command; record the exact command string", abbreviateCommand(e.command))
 				if !evidenceOnly && e.success && !e.reliable {
 					near += ", and " + unreliableReason(e.command)
 				}
@@ -148,7 +148,7 @@ func (l *execLedger) verificationIssueFor(callID, command string, evidenceOnly b
 		var issue string
 		switch {
 		case !e.success:
-			issue = "that execute_bash call failed"
+			issue = "that bash call failed"
 		case evidenceOnly:
 			issue = ""
 		case !e.reliable:
@@ -169,9 +169,9 @@ func (l *execLedger) verificationIssueFor(callID, command string, evidenceOnly b
 	case near != "":
 		return near
 	case callID != "":
-		return fmt.Sprintf("no finished execute_bash call with tool_call_id %q exists in this turn", callID)
+		return fmt.Sprintf("no finished bash call with tool_call_id %q exists in this turn", callID)
 	}
-	return "no execute_bash call in this turn ran exactly this command"
+	return "no bash call in this turn ran exactly this command"
 }
 
 // unreliableReason explains why a successful command does not prove a check passed.
@@ -191,11 +191,11 @@ func (l *execLedger) staleReason(e *execEntry) string {
 		}
 		switch {
 		case m.barrier:
-			return "new user input or a goal change came after that execute_bash call; rerun the check"
-		case m.tool == "execute_bash":
-			return fmt.Sprintf("the possibly side-effecting command %q ran during or after that execute_bash call; rerun the check after the last change", m.command)
+			return "new user input or a goal change came after that bash call; rerun the check"
+		case m.tool == "bash":
+			return fmt.Sprintf("the possibly side-effecting command %q ran during or after that bash call; rerun the check after the last change", m.command)
 		}
-		return fmt.Sprintf("a %s call changed the workspace during or after that execute_bash call; rerun the check after the last change", m.tool)
+		return fmt.Sprintf("a %s call changed the workspace during or after that bash call; rerun the check after the last change", m.tool)
 	}
 	return ""
 }

@@ -301,7 +301,7 @@ Pi 默认依旧以当前 OS 用户权限运行。
 
 主要定义在 `internal/tools/tools.go`：
 
-- execute_bash
+- bash
 - read_file
 - write_file
 - edit_file

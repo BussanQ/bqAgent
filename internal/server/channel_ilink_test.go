@@ -347,14 +347,14 @@ func TestIlinkChannelNotifiesAndConsumesFailedTurn(t *testing.T) {
 func TestIlinkChannelKeepsPollingWhilePeerTurnRuns(t *testing.T) {
 	root := t.TempDir()
 	client := &sequenceChatClient{responses: []agent.AssistantMessage{
-		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"sleep 60"}`}}}},
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "bash", Arguments: `{"command":"sleep 60"}`}}}},
 		{Content: "done"},
 	}}
 	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
 	functions := catalog.Registry()
 	toolStarted := make(chan struct{})
 	releaseTool := make(chan struct{})
-	functions["execute_bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
+	functions["bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
 		close(toolStarted)
 		select {
 		case <-releaseTool:
@@ -418,7 +418,7 @@ func TestIlinkChannelKeepsPollingWhilePeerTurnRuns(t *testing.T) {
 	select {
 	case <-toolStarted:
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for execute_bash to start")
+		t.Fatal("timed out waiting for bash to start")
 	}
 	var busy weixin.SendMessageRequest
 	for busy.Msg.ContextToken != "ctx-busy" {
@@ -437,14 +437,14 @@ func TestIlinkChannelKeepsPollingWhilePeerTurnRuns(t *testing.T) {
 func TestIlinkChannelStopCancelsRunningProcessGroup(t *testing.T) {
 	root := t.TempDir()
 	client := &sequenceChatClient{responses: []agent.AssistantMessage{
-		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"sleep 60"}`}}}},
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "bash", Arguments: `{"command":"sleep 60"}`}}}},
 		{Content: "stopped"},
 	}}
 	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
 	functions := catalog.Registry()
 	toolStarted := make(chan struct{})
 	toolCanceled := make(chan struct{})
-	functions["execute_bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
+	functions["bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
 		close(toolStarted)
 		<-ctx.Done()
 		close(toolCanceled)
@@ -511,7 +511,7 @@ func TestIlinkChannelStopCancelsRunningProcessGroup(t *testing.T) {
 	select {
 	case <-toolStarted:
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for execute_bash to start")
+		t.Fatal("timed out waiting for bash to start")
 	}
 	var stopReply *weixin.SendMessageRequest
 	deadline := time.After(3 * time.Second)

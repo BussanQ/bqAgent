@@ -13,7 +13,7 @@ import (
 
 const (
 	taskUpdateRecoveryThreshold   = 3
-	taskUpdateStallRecoveryPrompt = "Repeated task_update calls are not task progress. Progress recording is temporarily unavailable until substantive work resumes. Continue this same turn with a substantive tool such as read_file, glob, grep, edit_file or execute_bash if work remains, or give the final answer if the actual work is done. Do not rerun successful verification or report a blocker solely to repair progress metadata."
+	taskUpdateStallRecoveryPrompt = "Repeated task_update calls are not task progress. Progress recording is temporarily unavailable until substantive work resumes. Continue this same turn with a substantive tool such as read_file, glob, grep, edit_file or bash if work remains, or give the final answer if the actual work is done. Do not rerun successful verification or report a blocker solely to repair progress metadata."
 )
 
 type loopGuard struct {
@@ -69,7 +69,7 @@ func (guard *loopGuard) filterDefinitions(definitions []tools.Definition) []tool
 // of one model response. Count them once for loop detection, but still count
 // every failure and repeated requests in later batches.
 func (guard *loopGuard) observeRecoveredTool(call ToolCall, result string, successes map[string]bool) loopGuardAction {
-	if call.Function.Name == "execute_bash" && !strings.HasPrefix(strings.TrimSpace(result), "Error:") {
+	if call.Function.Name == "bash" && !strings.HasPrefix(strings.TrimSpace(result), "Error:") {
 		signature := call.Function.Name + "\x00" + strings.TrimSpace(call.Function.Arguments)
 		if successes[signature] {
 			return loopGuardAction{}

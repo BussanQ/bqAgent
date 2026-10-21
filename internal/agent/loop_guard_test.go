@@ -11,7 +11,7 @@ func guardCall(name, args string) ToolCall {
 
 func TestLoopGuardEditAllowsSameTestRerun(t *testing.T) {
 	guard := newLoopGuard(StageConfig{LoopProtection: true, DuplicateCallLimit: 3, RepeatedFailureLimit: 3})
-	test := guardCall("execute_bash", `{"command":"go test ./x"}`)
+	test := guardCall("bash", `{"command":"go test ./x"}`)
 	if a := guard.observeTool(test, "Error: FAIL"); a.checkpointReason != "" {
 		t.Fatal("unexpected checkpoint 1")
 	}
@@ -26,7 +26,7 @@ func TestLoopGuardEditAllowsSameTestRerun(t *testing.T) {
 
 func TestLoopGuardRepeatedIdenticalEditDoesNotReset(t *testing.T) {
 	guard := newLoopGuard(StageConfig{LoopProtection: true, DuplicateCallLimit: 3, RepeatedFailureLimit: 3})
-	test := guardCall("execute_bash", `{"command":"t"}`)
+	test := guardCall("bash", `{"command":"t"}`)
 	editA := guardCall("edit_file", `{"path":"a","old_string":"1","new_string":"2"}`)
 	var last loopGuardAction
 	for i := 0; i < 4 && last.checkpointReason == ""; i++ {
@@ -75,7 +75,7 @@ func TestProgressTrackerDedupAndBookkeeping(t *testing.T) {
 
 func TestLoopGuardEditThenSameTestRerunNormalEdit(t *testing.T) {
 	guard := newLoopGuard(StageConfig{LoopProtection: true, DuplicateCallLimit: 2, RepeatedFailureLimit: 5})
-	test := guardCall("execute_bash", `{"command":"go test"}`)
+	test := guardCall("bash", `{"command":"go test"}`)
 	guard.observeTool(test, "Error: FAIL")
 	guard.observeTool(guardCall("edit_file", `{"path":"a","old_string":"1","new_string":"2"}`), "ok")
 	if a := guard.observeTool(test, "ok"); a.checkpointReason != "" {
@@ -85,7 +85,7 @@ func TestLoopGuardEditThenSameTestRerunNormalEdit(t *testing.T) {
 
 func TestLoopGuardWhitespaceVariantEditDoesNotBypass(t *testing.T) {
 	guard := newLoopGuard(StageConfig{LoopProtection: true, DuplicateCallLimit: 3, RepeatedFailureLimit: 5})
-	test := guardCall("execute_bash", `{"command":"t"}`)
+	test := guardCall("bash", `{"command":"t"}`)
 	edits := []string{
 		`{"path":"a","content":"x"}`,
 		`{ "content": "x",  "path": "a" }`,

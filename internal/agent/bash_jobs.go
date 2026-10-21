@@ -48,7 +48,7 @@ func pendingBashConflict(ctx context.Context, name string, args map[string]any) 
 		return ""
 	}
 	mutating := name == "write_file" || name == "edit_file" || name == "consult_group_agent"
-	if name == "execute_bash" {
+	if name == "bash" {
 		command, _ := args["command"].(string)
 		mutating = classifyBash(command) == bashMutating
 	}

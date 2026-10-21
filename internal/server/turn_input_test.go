@@ -194,14 +194,14 @@ func (client *recordingToolClient) CreateChatCompletionStream(_ context.Context,
 func TestWebUISteeringDuringToolReachesNextModelRequestAndSSE(t *testing.T) {
 	root := t.TempDir()
 	client := &recordingToolClient{responses: []agent.AssistantMessage{
-		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"x"}`}}}},
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "bash", Arguments: `{"command":"x"}`}}}},
 		{Content: "corrected result"},
 	}}
 	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
 	functions := catalog.Registry()
 	toolStarted := make(chan struct{})
 	releaseTool := make(chan struct{})
-	functions["execute_bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
+	functions["bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
 		close(toolStarted)
 		select {
 		case <-releaseTool:

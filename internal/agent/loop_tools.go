@@ -123,7 +123,7 @@ func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall) bool {
 	for _, toolCall := range toolCalls {
 		// A possibly side-effecting shell command must not overlap other calls
 		// in its batch, including after it yields to the model.
-		if toolCall.Function.Name == "execute_bash" && len(toolCalls) > 1 {
+		if toolCall.Function.Name == "bash" && len(toolCalls) > 1 {
 			var arguments struct {
 				Command string `json:"command"`
 			}

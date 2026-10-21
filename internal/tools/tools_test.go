@@ -24,9 +24,9 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		description string
 		required    []string
 	}{
-		{index: 0, name: "execute_bash", description: "Execute a bash command when it verifies or produces information needed for the task. Captured combined stdout/stderr is byte-capped; when over budget the head and tail are kept with a truncation note in between. If the command is still running after the yield timeout (30s by default), it keeps running in the background and a JSON result with status \"running\" and a job_id is returned; that is not a success. Use bash_wait to wait for it and bash_kill to stop it. Jobs do not survive the current turn.", required: []string{"command"}},
-		{index: 1, name: "bash_wait", description: "Wait for a running execute_bash job (identified by job_id) to finish and return its status and output. Returns status \"running\" again if it is still running after wait_seconds; a running job is not a success. Jobs only exist within the current turn.", required: []string{"job_id"}},
-		{index: 2, name: "bash_kill", description: "Kill a running execute_bash job (identified by job_id) and return its final status and output. Jobs are never killed automatically for lack of progress; kill one only when it is no longer needed.", required: []string{"job_id"}},
+		{index: 0, name: "bash", description: "Execute a bash command when it verifies or produces information needed for the task. Captured combined stdout/stderr is byte-capped; when over budget the head and tail are kept with a truncation note in between. If the command is still running after the yield timeout (30s by default), it keeps running in the background and a JSON result with status \"running\" and a job_id is returned; that is not a success. Use bash_wait to wait for it and bash_kill to stop it. Jobs do not survive the current turn.", required: []string{"command"}},
+		{index: 1, name: "bash_wait", description: "Wait for a running bash job (identified by job_id) to finish and return its status and output. Returns status \"running\" again if it is still running after wait_seconds; a running job is not a success. Jobs only exist within the current turn.", required: []string{"job_id"}},
+		{index: 2, name: "bash_kill", description: "Kill a running bash job (identified by job_id) and return its final status and output. Jobs are never killed automatically for lack of progress; kill one only when it is no longer needed.", required: []string{"job_id"}},
 		{index: 3, name: "read_file", description: "Read a workspace file using a workspace-relative path, preferably copied from glob output. Absolute paths are accepted only when they are inside the workspace. Optionally pass offset and limit. Returned content is byte-capped and ends with a truncation marker when over budget.", required: []string{"path"}},
 		{index: 4, name: "write_file", description: "Write a workspace file using a workspace-relative path (overwrites the whole file). Absolute paths outside the workspace are rejected. Prefer edit_file for partial changes.", required: []string{"path", "content"}},
 		{index: 5, name: "edit_file", description: "Replace an exact string in a workspace file using a workspace-relative path. old_string must match exactly once unless replace_all is true.", required: []string{"path", "old_string", "new_string"}},
@@ -51,7 +51,7 @@ func TestDefinitionsMatchCurrentAgentPyContract(t *testing.T) {
 		t.Fatalf("bash_wait wait_seconds type = %q, want integer", got)
 	}
 	if got := definitions[0].Function.Parameters.Properties; len(got) != 1 || got["command"].Type != "string" {
-		t.Fatalf("execute_bash properties = %#v, want only command", got)
+		t.Fatalf("bash properties = %#v, want only command", got)
 	}
 
 	for _, testCase := range tests {
@@ -205,12 +205,12 @@ func TestCatalogInjectsToolOutputLimits(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		command = "set /p unused=abcdef<nul&exit /b 0"
 	}
-	output, err := registry["execute_bash"](context.Background(), map[string]any{"command": command})
+	output, err := registry["bash"](context.Background(), map[string]any{"command": command})
 	if err != nil {
-		t.Fatalf("catalog execute_bash error: %v", err)
+		t.Fatalf("catalog bash error: %v", err)
 	}
 	if want := "abc" + truncatedOutputMarker; output != want {
-		t.Fatalf("catalog execute_bash = %q, want %q", output, want)
+		t.Fatalf("catalog bash = %q, want %q", output, want)
 	}
 }
 

@@ -23,7 +23,7 @@ func (c *bashWiringClient) CreateChatCompletion(ctx context.Context, model strin
 	defer c.mu.Unlock()
 	c.calls++
 	if c.calls == 1 {
-		return agent.AssistantMessage{Role: "assistant", ToolCalls: []agent.ToolCall{{ID: "call_1", Type: "function", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"sleep 5"}`}}}}, nil
+		return agent.AssistantMessage{Role: "assistant", ToolCalls: []agent.ToolCall{{ID: "call_1", Type: "function", Function: agent.FunctionCall{Name: "bash", Arguments: `{"command":"sleep 5"}`}}}}, nil
 	}
 	for _, message := range messages {
 		if message["role"] == "tool" {
@@ -62,6 +62,6 @@ func TestBashYieldTimeoutEnvReachesRuntimeAgentExecuteBash(t *testing.T) {
 		JobID  string `json:"job_id"`
 	}
 	if err := json.Unmarshal([]byte(client.toolText), &result); err != nil || result.Status != "running" || strings.TrimSpace(result.JobID) == "" {
-		t.Fatalf("execute_bash result = %q (err %v), want running with job_id", client.toolText, err)
+		t.Fatalf("bash result = %q (err %v), want running with job_id", client.toolText, err)
 	}
 }

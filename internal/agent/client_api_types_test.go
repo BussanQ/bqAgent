@@ -69,7 +69,7 @@ func TestOpenAIResponseClientConvertsRequestAndResponse(t *testing.T) {
 	}
 	requestTools, _ := requestBody["tools"].([]any)
 	firstTool, _ := requestTools[0].(map[string]any)
-	if firstTool["name"] != "execute_bash" || firstTool["function"] != nil {
+	if firstTool["name"] != "bash" || firstTool["function"] != nil {
 		t.Fatalf("responses tool = %#v, want flat function tool", firstTool)
 	}
 	textOptions, _ := requestBody["text"].(map[string]any)
@@ -297,7 +297,7 @@ func TestAnthropicClientConvertsRequestAndResponse(t *testing.T) {
 	}
 	requestTools, _ := requestBody["tools"].([]any)
 	firstTool, _ := requestTools[0].(map[string]any)
-	if firstTool["name"] != "execute_bash" || firstTool["input_schema"] == nil {
+	if firstTool["name"] != "bash" || firstTool["input_schema"] == nil {
 		t.Fatalf("anthropic tool = %#v", firstTool)
 	}
 	if message.FinalContent() != "checking" || len(message.ToolCalls) != 1 {

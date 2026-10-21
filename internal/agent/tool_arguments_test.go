@@ -47,12 +47,12 @@ func TestParseArgumentsConcatenatedObjects(t *testing.T) {
 }
 
 func TestRunRecoversConcatenatedToolArguments(t *testing.T) {
-	for _, name := range []string{"grep", "read_file", "write_file", "custom_tool", "execute_bash"} {
+	for _, name := range []string{"grep", "read_file", "write_file", "custom_tool", "bash"} {
 		t.Run(name, func(t *testing.T) {
 			arguments := []string{`{"pattern":"foo","path":"internal"}`, `{"pattern":"bar","path":"internal"}`}
 			key := "pattern"
 			want := []string{"foo", "bar"}
-			if name == "execute_bash" {
+			if name == "bash" {
 				arguments = []string{`{"command":"echo first"}`, `{"command":"echo second"}`}
 				key = "command"
 				want = []string{"echo first", "echo second"}
@@ -101,7 +101,7 @@ func TestRunRecoversConcatenatedToolArguments(t *testing.T) {
 }
 
 func TestRunRejectsAmbiguousConcatenatedToolArguments(t *testing.T) {
-	for _, name := range []string{"grep", "write_file", "execute_bash"} {
+	for _, name := range []string{"grep", "write_file", "bash"} {
 		invalid := []string{
 			`{"command":"echo first"}{"command":`,
 			`{"command":"echo first"}{"command":"echo second"}junk`,
@@ -110,7 +110,7 @@ func TestRunRejectsAmbiguousConcatenatedToolArguments(t *testing.T) {
 			`[]{"command":"echo second"}`, `null`, `[]`,
 			strings.Repeat(`{"command":"echo first"}`, maxRecoveredToolCalls+1),
 		}
-		if name == "execute_bash" {
+		if name == "bash" {
 			for _, object := range []string{
 				`{}`, `{"command":null}`, `{"command":" "}`, `{"command":1}`,
 				`{"command":"echo second","timeout":1}`,

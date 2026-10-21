@@ -1385,14 +1385,14 @@ func TestChannelTurnRunnerUsesChannelMaxIterations(t *testing.T) {
 func TestChannelTurnRunnerStopCancelsRunningProcessGroup(t *testing.T) {
 	root := t.TempDir()
 	client := &sequenceChatClient{responses: []agent.AssistantMessage{
-		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"sleep 60"}`}}}},
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "bash", Arguments: `{"command":"sleep 60"}`}}}},
 		{Content: "should not be used"},
 	}}
 	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
 	functions := catalog.Registry()
 	toolStarted := make(chan struct{})
 	toolCanceled := make(chan struct{})
-	functions["execute_bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
+	functions["bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
 		close(toolStarted)
 		<-ctx.Done()
 		close(toolCanceled)
@@ -1437,7 +1437,7 @@ func TestChannelTurnRunnerStopCancelsRunningProcessGroup(t *testing.T) {
 	select {
 	case <-toolStarted:
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for execute_bash to start")
+		t.Fatal("timed out waiting for bash to start")
 	}
 
 	var stopReplies []string
@@ -1465,7 +1465,7 @@ func TestChannelTurnRunnerStopCancelsRunningProcessGroup(t *testing.T) {
 	select {
 	case <-toolCanceled:
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for execute_bash context cancellation")
+		t.Fatal("timed out waiting for bash context cancellation")
 	}
 	select {
 	case err := <-firstDone:
@@ -1480,12 +1480,12 @@ func TestChannelTurnRunnerStopCancelsRunningProcessGroup(t *testing.T) {
 func TestChannelTurnRunnerReleasesPeerLockAfterToolTimeout(t *testing.T) {
 	root := t.TempDir()
 	client := &sequenceChatClient{responses: []agent.AssistantMessage{
-		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "execute_bash", Arguments: `{"command":"ignored"}`}}}},
+		{ToolCalls: []agent.ToolCall{{ID: "tool-1", Function: agent.FunctionCall{Name: "bash", Arguments: `{"command":"ignored"}`}}}},
 		{Content: "second reply"},
 	}}
 	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root})
 	functions := catalog.Registry()
-	functions["execute_bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
+	functions["bash"] = func(ctx context.Context, _ map[string]any) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	}

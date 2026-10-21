@@ -16,7 +16,7 @@ func TestResponsesStreamFinalToolArguments(t *testing.T) {
 	const first = `{"command":"sed -n '120,190p' /tmp/service.log"}`
 	const second = `{"command":"sed -n '804,942p' /tmp/service.log"}`
 	item := func(id, args string) map[string]any {
-		return map[string]any{"type": "function_call", "id": "fc_" + id, "call_id": id, "name": "execute_bash", "arguments": args}
+		return map[string]any{"type": "function_call", "id": "fc_" + id, "call_id": id, "name": "bash", "arguments": args}
 	}
 	itemEvent := func(kind string, index int, id, args string) map[string]any {
 		return map[string]any{"type": "response.output_item." + kind, "output_index": index, "item": item(id, args)}
@@ -38,7 +38,7 @@ func TestResponsesStreamFinalToolArguments(t *testing.T) {
 		return map[string]any{"type": "response." + kind, "response": response}
 	}
 	call := func(id, args string) ToolCall {
-		return ToolCall{ID: id, Type: "function", Function: FunctionCall{Name: "execute_bash", Arguments: args}}
+		return ToolCall{ID: id, Type: "function", Function: FunctionCall{Name: "bash", Arguments: args}}
 	}
 	tests := []struct {
 		name      string

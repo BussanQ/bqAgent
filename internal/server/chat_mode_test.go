@@ -115,7 +115,7 @@ func TestAskModeExposesOnlyReadOnlyToolsAndSkipsMemoryWrite(t *testing.T) {
 			t.Errorf("read-only tool %q was not exposed: %#v", name, gotNames)
 		}
 	}
-	for _, name := range []string{"execute_bash", "bash_wait", "bash_kill", "write_file", "edit_file", "todo_write", "install_skill", "mem_save", "turn_outcome", "task_update", "task_scope"} {
+	for _, name := range []string{"bash", "bash_wait", "bash_kill", "write_file", "edit_file", "todo_write", "install_skill", "mem_save", "turn_outcome", "task_update", "task_scope"} {
 		if gotNames[name] {
 			t.Errorf("mutating tool %q was exposed in ask mode", name)
 		}
@@ -124,7 +124,7 @@ func TestAskModeExposesOnlyReadOnlyToolsAndSkipsMemoryWrite(t *testing.T) {
 		t.Fatalf("exposed tools in ask mode = %#v, want only read-only tools", gotNames)
 	}
 	_, filteredFunctions := toolsetForChatMode(ChatModeAsk, catalog.Definitions(), catalog.Registry())
-	for _, name := range []string{"execute_bash", "bash_wait", "bash_kill", "write_file", "edit_file"} {
+	for _, name := range []string{"bash", "bash_wait", "bash_kill", "write_file", "edit_file"} {
 		if _, ok := filteredFunctions[name]; ok {
 			t.Errorf("mutating function %q remained executable in ask mode", name)
 		}
@@ -160,7 +160,7 @@ func TestRunModeRemainsDefaultWithFullTools(t *testing.T) {
 	for _, definition := range client.definitions[0] {
 		gotNames[definition.Function.Name] = true
 	}
-	for _, name := range []string{"execute_bash", "bash_wait", "bash_kill", "write_file", "edit_file", "task_update"} {
+	for _, name := range []string{"bash", "bash_wait", "bash_kill", "write_file", "edit_file", "task_update"} {
 		if !gotNames[name] {
 			t.Errorf("full run tool %q was not exposed", name)
 		}

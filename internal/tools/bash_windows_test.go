@@ -200,7 +200,7 @@ func winCleanupJob(t *testing.T, cleanup func() error) {
 }
 
 // winProcessTree is a parent -> child -> leaf helper chain started through
-// execute_bash. Handles are opened as soon as the chain is ready so that pid
+// bash. Handles are opened as soon as the chain is ready so that pid
 // reuse cannot confuse liveness checks, and every process is force-terminated at
 // test cleanup so failures never leave stragglers behind.
 type winProcessTree struct {

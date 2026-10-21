@@ -213,8 +213,8 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | Variable | Default | Description |
 |---|---|---|
 | `AGENT_MAX_ITERATIONS` | `1000` | Global loop runaway safety limit. |
-| `BASH_OUTPUT_MAX_BYTES` | `1048576` | Maximum combined stdout/stderr bytes retained by `execute_bash`; excess output is drained and discarded, then the result ends with a truncation marker. Non-positive or invalid values use the default. |
-| `BASH_YIELD_TIMEOUT` | `30s` | How long `execute_bash` waits for a command; after that it keeps running in the background and returns `status=running` with a `job_id` (not a success). Use `bash_wait`/`bash_kill`. Must be a positive duration; invalid values use the default. Jobs do not survive the turn and are reclaimed when it ends. |
+| `BASH_OUTPUT_MAX_BYTES` | `1048576` | Maximum combined stdout/stderr bytes retained by `bash`; excess output is drained and discarded, then the result ends with a truncation marker. Non-positive or invalid values use the default. |
+| `BASH_YIELD_TIMEOUT` | `30s` | How long `bash` waits for a command; after that it keeps running in the background and returns `status=running` with a `job_id` (not a success). Use `bash_wait`/`bash_kill`. Must be a positive duration; invalid values use the default. Jobs do not survive the turn and are reclaimed when it ends. |
 | `BASH_MAX_TIMEOUT` | `0` | Hard lifetime cap per bash job; `0` disables it. Must not be negative; invalid values use the default. Jobs are never killed for lack of progress. |
 | `BASH_MAX_CONCURRENT` | `3` | Maximum concurrently running background bash jobs per turn. Non-positive or invalid values use the default. |
 | `READ_FILE_MAX_BYTES` | `1048576` | Maximum file-content bytes returned by `read_file`; excess content is drained and discarded, then the result ends with a truncation marker. Non-positive or invalid values use the default. |
@@ -413,7 +413,7 @@ The system prompt is assembled in this order. Everything listed here is stable a
 1. Built-in core instructions: priorities (user request > repository rules > global defaults), effort matching, change scope and git safety, verification and final-answer rules, prompt-injection guidance; plus the built-in memory policy
 2. Global `~/.agent/` `AGENT.md`, `SOUL.md`, `USER.md` (HTML comments are stripped; templates with only headings are skipped) and global rules
 3. `AGENTS.md` at the workspace root (falling back to `CLAUDE.md`), truncated at 32 KiB; its project rules override the global defaults
-4. Environment: OS/architecture, the shell used by `execute_bash`, and whether the workspace is a git repository
+4. Environment: OS/architecture, the shell used by `bash`, and whether the workspace is a git repository
 5. Workspace path index (legacy `workspace/` and `agent_memory.md` are listed only when present), workspace `.agent/` context, and the skills index
 
 Parts are ordered from the most to the least widely shared (built-in, user, workspace), so the first two parts form a cacheable prefix reused across all workspaces of the same user.
@@ -468,7 +468,7 @@ The session start date and the memory snapshot live in the per-session context, 
 
 Default built-in tools:
 
-- `execute_bash`
+- `bash`
 - `read_file`
 - `write_file`
 
@@ -478,7 +478,7 @@ Behavior notes:
 - malformed JSON tool arguments stop the current run with an error
 - file read/write failures also stop the current run with an error
 - relative `read_file` / `write_file` paths are resolved from the workspace root
-- `execute_bash` also runs from the workspace root
+- `bash` also runs from the workspace root
 - `--server` and the interactive TUI now share the same built-in local tool set, including shell, file, web search, and memory tools
 
 Workspace skills use progressive disclosure. A recommended skill starts with metadata such as:

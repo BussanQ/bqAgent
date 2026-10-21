@@ -34,7 +34,7 @@ func TestParseCompletedToolActivityExtractsCallsAndResults(t *testing.T) {
 
 func TestParseCompletedToolActivityMarksFailedResults(t *testing.T) {
 	content := CompletedToolActivityLead + "\n" +
-		`Calls: [{"id":"bash-1","function":{"name":"execute_bash","arguments":"{\"command\":\"false\"}"}}]` + "\n" +
+		`Calls: [{"id":"bash-1","function":{"name":"bash","arguments":"{\"command\":\"false\"}"}}]` + "\n" +
 		"Result bash-1:\n" +
 		"Error: exit status 1"
 

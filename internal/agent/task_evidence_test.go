@@ -20,7 +20,7 @@ func evidenceRun() (context.Context, *runState) {
 
 func bashCall(id, command string) ToolCall {
 	arguments, _ := json.Marshal(map[string]string{"command": command})
-	return ToolCall{ID: id, Function: FunctionCall{Name: "execute_bash", Arguments: string(arguments)}}
+	return ToolCall{ID: id, Function: FunctionCall{Name: "bash", Arguments: string(arguments)}}
 }
 
 func editCall(id string) ToolCall {
@@ -36,7 +36,7 @@ func evidenceApp(t *testing.T, failCommands ...string) (*Agent, *memoryTaskStore
 	active := activeTestTask()
 	store := &memoryTaskStore{state: &active}
 	app := NewWithOptions(&stubClient{}, "test", Options{TaskStore: store, Functions: map[string]tools.Function{
-		"execute_bash": func(_ context.Context, args map[string]any) (string, error) {
+		"bash": func(_ context.Context, args map[string]any) (string, error) {
 			command, _ := args["command"].(string)
 			for _, failing := range failCommands {
 				if command == failing {
@@ -195,7 +195,7 @@ func TestTaskEvidenceConcurrentCallsDoNotShareEvidence(t *testing.T) {
 		}
 	}
 	// A mutation that overlaps a verification (still running) invalidates it.
-	entry := run.ledger.begin("slow", "execute_bash", map[string]any{"command": "./slow.sh"})
+	entry := run.ledger.begin("slow", "bash", map[string]any{"command": "./slow.sh"})
 	if run.ledger.verified("ok-0", "go test ./pkg0") {
 		t.Fatal("evidence stayed valid while a mutation is running")
 	}
@@ -263,7 +263,7 @@ func TestHasSpecialToolCallsSerializesSideEffectingShell(t *testing.T) {
 	if !app.hasSpecialToolCalls([]ToolCall{bashCall("a", "go test ./a"), bashCall("b", "./gen.sh")}) {
 		t.Fatal("side-effecting shell must run in model order")
 	}
-	if !app.hasSpecialToolCalls([]ToolCall{bashCall("a", "go test ./a"), {ID: "bad", Function: FunctionCall{Name: "execute_bash", Arguments: `{`}}}) {
+	if !app.hasSpecialToolCalls([]ToolCall{bashCall("a", "go test ./a"), {ID: "bad", Function: FunctionCall{Name: "bash", Arguments: `{`}}}) {
 		t.Fatal("unparseable shell arguments must be treated as side-effecting")
 	}
 	if app.hasSpecialToolCalls([]ToolCall{bashCall("a", "./gen.sh")}) {
@@ -430,8 +430,8 @@ func TestComplexTurnWithoutTaskRecordCanFinish(t *testing.T) {
 	}
 	functions := func() map[string]tools.Function {
 		return map[string]tools.Function{
-			"execute_bash": func(context.Context, map[string]any) (string, error) { return "ok", nil },
-			"edit_file":    func(context.Context, map[string]any) (string, error) { return "edited", nil },
+			"bash":      func(context.Context, map[string]any) (string, error) { return "ok", nil },
+			"edit_file": func(context.Context, map[string]any) (string, error) { return "edited", nil },
 		}
 	}
 	complete := completedWith(taskstate.Verification{Command: "go test ./x", Status: "passed", Details: "ok"})
@@ -514,8 +514,8 @@ func TestCompletionRecordReopenedWhenChangedAfterwards(t *testing.T) {
 		return message
 	}
 	functions := map[string]tools.Function{
-		"execute_bash": func(context.Context, map[string]any) (string, error) { return "ok", nil },
-		"edit_file":    func(context.Context, map[string]any) (string, error) { return "edited", nil },
+		"bash":      func(context.Context, map[string]any) (string, error) { return "ok", nil },
+		"edit_file": func(context.Context, map[string]any) (string, error) { return "edited", nil },
 	}
 	t.Run("edit after completion without reverification", func(t *testing.T) {
 		active := activeTestTask()
@@ -594,13 +594,13 @@ func TestVerificationIssueNamesConcreteCause(t *testing.T) {
 		app.runRegularToolCall(ctx, call)
 	}
 	for _, tc := range []struct{ command, id, want string }{
-		{"go test ./x -count=1", "", "closest execute_bash call ran"},
+		{"go test ./x -count=1", "", "closest bash call ran"},
 		{"go test ./x -count=1", "", "set -o pipefail"},
 		{piped, "", "| tail"},
 		{"go test ./bad", "", "call failed"},
 		{"go test ./z", "", "edit_file call changed the workspace"},
 		{"cat a.go", "", "read-only"},
-		{"go test ./never", "", "no execute_bash call in this turn ran exactly this command"},
+		{"go test ./never", "", "no bash call in this turn ran exactly this command"},
 		{"go test ./never", "missing", `tool_call_id "missing"`},
 	} {
 		if issue := run.ledger.verificationIssue(tc.id, tc.command); !strings.Contains(issue, tc.want) {
@@ -620,12 +620,12 @@ func TestCompletionRejectionLeadsWithCauseAndAbbreviatesCommand(t *testing.T) {
 	app, _ := evidenceApp(t, "")
 	ctx, _ := evidenceRun()
 	long := "set -o pipefail && echo " + strings.Repeat("统计-", 200) + " && go test ./never"
-	err := submitCompletion(app, ctx, completedWith(taskstate.Verification{Command: long, ToolCallID: "execute_bash-7", Status: "passed", Details: "ok"}))
+	err := submitCompletion(app, ctx, completedWith(taskstate.Verification{Command: long, ToolCallID: "bash-7", Status: "passed", Details: "ok"}))
 	if err == nil {
 		t.Fatal("unbacked completion accepted")
 	}
 	message := err.Error()
-	cause := strings.Index(message, `no finished execute_bash call with tool_call_id "execute_bash-7"`)
+	cause := strings.Index(message, `no finished bash call with tool_call_id "bash-7"`)
 	command := strings.Index(message, "Recorded command:")
 	if !strings.HasPrefix(message, "task_update rejected: verification[0]") || cause < 0 || command < cause {
 		t.Fatalf("cause must come before the command: %s", message)

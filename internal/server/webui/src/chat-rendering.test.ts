@@ -88,7 +88,7 @@ describe("历史工具摘要解析", () => {
     const grouped = groupHistoryMessages([
       { role: "user", content: "写入全局记忆，我在北京" },
       { role: "assistant", content: "", tools: [{ id: "a", name: "memory", result: "saved" }] },
-      { role: "assistant", content: "", tools: [{ id: "b", name: "execute_bash", result: "ok" }] },
+      { role: "assistant", content: "", tools: [{ id: "b", name: "bash", result: "ok" }] },
       { role: "assistant", content: "已经写入全局记忆。" },
     ]);
     expect(grouped).toHaveLength(2);
@@ -106,7 +106,7 @@ describe("历史工具摘要解析", () => {
     const grouped = normalizeHistoryMessages([
       { role: "user", content: "分析当前项目" },
       { role: "assistant", content: toolOnly },
-      { role: "assistant", content: toolOnly.replaceAll("memory", "execute_bash").replaceAll("call-1", "call-2") },
+      { role: "assistant", content: toolOnly.replaceAll("memory", "bash").replaceAll("call-1", "call-2") },
       { role: "assistant", content: "已经看完项目结构。" },
     ]);
     expect(grouped).toHaveLength(2);

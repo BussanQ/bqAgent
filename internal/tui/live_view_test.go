@@ -194,10 +194,10 @@ func TestToolNumbersFollowCallOrderNotEventSeq(t *testing.T) {
 	seq := uint64(100)
 	next := func() uint64 { seq++; return seq }
 	start := func(id string) ToolEvent {
-		return ToolEvent{Kind: "tool_start", Seq: next(), ID: id, Name: "execute_bash"}
+		return ToolEvent{Kind: "tool_start", Seq: next(), ID: id, Name: "bash"}
 	}
 	result := func(id string) ToolEvent {
-		return ToolEvent{Kind: "tool_result", Seq: next(), ID: id, Name: "execute_bash", Status: "succeeded", Preview: "out-" + id}
+		return ToolEvent{Kind: "tool_result", Seq: next(), ID: id, Name: "bash", Status: "succeeded", Preview: "out-" + id}
 	}
 	var group toolGroup
 	for _, id := range []string{"a", "b"} {
@@ -220,7 +220,7 @@ func TestToolNumbersFollowCallOrderNotEventSeq(t *testing.T) {
 		if item.start.ID != id {
 			t.Fatalf("item %d = %q, want %q", number, item.start.ID, id)
 		}
-		label := fmt.Sprintf("#%d execute_bash", number+1)
+		label := fmt.Sprintf("#%d bash", number+1)
 		if !strings.Contains(rendered, label) || !strings.Contains(item.inspectorSummary(styles, 120), label) || !strings.HasPrefix(item.detailLines(120)[0], label) {
 			t.Fatalf("missing %s in summary, inspector or detail:\n%s", label, rendered)
 		}

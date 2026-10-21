@@ -95,9 +95,9 @@ func (w *Workspace) loadRepositoryInstructions() (string, error) {
 func (w *Workspace) environmentSection() string {
 	lines := []string{"# Environment", "OS: " + operatingSystemName(runtimeGOOS) + " (" + runtimeGOOS + "/" + runtimeGOARCH + ")"}
 	if runtimeGOOS == "windows" {
-		lines = append(lines, "execute_bash runs commands with cmd /C; use Windows command syntax.")
+		lines = append(lines, "bash runs commands with cmd /C; use Windows command syntax.")
 	} else {
-		shell := "execute_bash runs commands with sh -c (POSIX shell)"
+		shell := "bash runs commands with sh -c (POSIX shell)"
 		if login := filepath.Base(getenv("SHELL")); login != "." && login != "" && login != string(filepath.Separator) {
 			shell += "; the user's login shell is " + login
 		}

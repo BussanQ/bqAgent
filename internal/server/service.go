@@ -410,12 +410,12 @@ func (service *Service) functionsForTurn(peerKey string, sessionID string) map[s
 	for name, function := range service.subagentFunctions(sessionID) {
 		functions[name] = function
 	}
-	original, ok := functions["execute_bash"]
+	original, ok := functions["bash"]
 	keys := stopKeys(peerKey, sessionID)
 	if !ok || len(keys) == 0 || service.processGroupStops == nil {
 		return functions
 	}
-	functions["execute_bash"] = func(ctx context.Context, args map[string]any) (string, error) {
+	functions["bash"] = func(ctx context.Context, args map[string]any) (string, error) {
 		command := commandFromArgs(args)
 		if message, blocked := service.environmentCommands.BlockedMessage(keys, command); blocked {
 			return message, fmt.Errorf("environment install/repair command blocked after previous failure")

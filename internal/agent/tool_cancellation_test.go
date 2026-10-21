@@ -12,13 +12,13 @@ func TestCancelledToolBatchSkipsLaterMutations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", ToolCalls: []ToolCall{
-		{ID: "slow", Type: "function", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"slow"}`}},
+		{ID: "slow", Type: "function", Function: FunctionCall{Name: "bash", Arguments: `{"command":"slow"}`}},
 		{ID: "write", Type: "function", Function: FunctionCall{Name: "write_file", Arguments: `{"path":"file","content":"bad"}`}},
 	}}}}
 	writes := 0
 	app := NewWithOptions(client, "test", Options{Functions: map[string]tools.Function{
-		"execute_bash": func(context.Context, map[string]any) (string, error) { cancel(); return "", context.Canceled },
-		"write_file":   func(context.Context, map[string]any) (string, error) { writes++; return "written", nil },
+		"bash":       func(context.Context, map[string]any) (string, error) { cancel(); return "", context.Canceled },
+		"write_file": func(context.Context, map[string]any) (string, error) { writes++; return "written", nil },
 	}})
 	result, err := app.RunTurn(ctx, []map[string]any{{"role": "user", "content": "test"}}, 1)
 	if !errors.Is(err, context.Canceled) || result.Outcome.Status != turn.Interrupted {

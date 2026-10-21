@@ -48,7 +48,7 @@ func TestFactoryBuildBackgroundDoesNotWaitForMCP(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("background discovery did not start")
 	}
-	if runtime.Catalog.Registry()["execute_bash"] == nil || runtime.MCP.Status()[0].State != "connecting" {
+	if runtime.Catalog.Registry()["bash"] == nil || runtime.MCP.Status()[0].State != "connecting" {
 		t.Fatal("builtins or connection status unavailable during discovery")
 	}
 	cancel()

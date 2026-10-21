@@ -40,7 +40,7 @@ func TestRecoverConcatenatedBashCalls(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			original := ToolCall{ID: "tool_original", Type: "function", Function: FunctionCall{Name: "execute_bash", Arguments: test.raw}}
+			original := ToolCall{ID: "tool_original", Type: "function", Function: FunctionCall{Name: "bash", Arguments: test.raw}}
 			input := []ToolCall{original}
 			calls, changed := recoverConcatenatedToolCalls(input)
 			if input[0] != original {
@@ -57,7 +57,7 @@ func TestRecoverConcatenatedBashCalls(t *testing.T) {
 			}
 			ids := map[string]bool{}
 			for i, call := range calls {
-				if call.Function.Arguments != test.want[i] || call.Function.Name != "execute_bash" || call.Type != "function" || call.ID == "" || len(call.ID) > 64 || ids[call.ID] {
+				if call.Function.Arguments != test.want[i] || call.Function.Name != "bash" || call.Type != "function" || call.ID == "" || len(call.ID) > 64 || ids[call.ID] {
 					t.Fatalf("invalid recovered call: %#v", call)
 				}
 				ids[call.ID] = true
@@ -162,8 +162,8 @@ func TestRunRecoversToolArgumentsAcrossProviders(t *testing.T) {
 		key    string
 		values []string
 	}{
-		{name: "execute_bash", key: "command", values: []string{"echo first", "echo second"}},
-		{name: "execute_bash", key: "command", values: slices.Repeat([]string{"ls"}, 10)},
+		{name: "bash", key: "command", values: []string{"echo first", "echo second"}},
+		{name: "bash", key: "command", values: slices.Repeat([]string{"ls"}, 10)},
 		{name: "grep", key: "pattern", values: []string{"foo", "bar"}},
 	} {
 		commands := batch.values
@@ -262,7 +262,7 @@ func TestRunRecoversToolArgumentsAcrossProviders(t *testing.T) {
 }
 
 func TestRecoveredBashLoopProtection(t *testing.T) {
-	call := ToolCall{ID: "original", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"ls"}`}}
+	call := ToolCall{ID: "original", Function: FunctionCall{Name: "bash", Arguments: `{"command":"ls"}`}}
 	for _, test := range []struct {
 		name     string
 		result   string
@@ -297,7 +297,7 @@ func TestRecoveredBashLoopProtection(t *testing.T) {
 }
 
 func TestRunDoesNotRecoverTruncatedToolBatch(t *testing.T) {
-	for _, name := range []string{"execute_bash", "grep"} {
+	for _, name := range []string{"bash", "grep"} {
 		t.Run(name, func(t *testing.T) {
 			client := &stubClient{responses: []AssistantMessage{
 				{Completion: CompletionState{OutputTruncated: true}, ToolCalls: []ToolCall{{ID: "truncated", Function: FunctionCall{
@@ -335,7 +335,7 @@ func TestRunRecoversTenIdenticalBashCalls(t *testing.T) {
 		t.Run(fmt.Sprintf("loop_protection=%t", protection), func(t *testing.T) {
 			const args = `{"command": "ls"}`
 			client := &stubClient{responses: []AssistantMessage{
-				{ToolCalls: []ToolCall{{ID: "original", Type: "function", Function: FunctionCall{Name: "execute_bash", Arguments: strings.Repeat(args, 10)}}}},
+				{ToolCalls: []ToolCall{{ID: "original", Type: "function", Function: FunctionCall{Name: "bash", Arguments: strings.Repeat(args, 10)}}}},
 				{Content: "done"},
 			}}
 			executions := 0
@@ -343,7 +343,7 @@ func TestRunRecoversTenIdenticalBashCalls(t *testing.T) {
 			app := NewWithOptions(client, "", Options{
 				Context: ContextConfig{Enabled: false}, Recorder: recorder,
 				Stage: StageConfig{LoopProtection: protection},
-				Functions: map[string]tools.Function{"execute_bash": func(_ context.Context, arguments map[string]any) (string, error) {
+				Functions: map[string]tools.Function{"bash": func(_ context.Context, arguments map[string]any) (string, error) {
 					if arguments["command"] != "ls" {
 						t.Fatalf("unexpected arguments: %#v", arguments)
 					}
@@ -409,7 +409,7 @@ func TestRunCompletesRecoveredBatchBeforeLoopCheckpoint(t *testing.T) {
 }
 
 func TestRunStopsRepeatedInvalidArgumentsWithoutStageProtection(t *testing.T) {
-	for _, name := range []string{"execute_bash", "write_file"} {
+	for _, name := range []string{"bash", "write_file"} {
 		for _, raw := range []string{`{"command":`, `{"command":"echo repeated"}null`, `[]`} {
 			t.Run(name+raw, func(t *testing.T) {
 				client := &stubClient{}

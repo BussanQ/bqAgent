@@ -14,14 +14,14 @@ func TestResponsesStreamToolCallIdentity(t *testing.T) {
 	const a = `{"command":"a"}`
 	const b = `{"command":"b"}`
 	added := func(idx, id, call string) string {
-		return `{"type":"response.output_item.added",` + idx + `"item":{"type":"function_call","id":"` + id + `","call_id":"` + call + `","name":"execute_bash"}}`
+		return `{"type":"response.output_item.added",` + idx + `"item":{"type":"function_call","id":"` + id + `","call_id":"` + call + `","name":"bash"}}`
 	}
 	delta := func(idx, itemID, d string) string {
 		return `{"type":"response.function_call_arguments.delta",` + idx + `"item_id":"` + itemID + `","delta":` + quoteJSON(d) + `}`
 	}
 	done := `{"type":"response.completed","response":{"status":"completed"}}`
 	call := func(id, args string) ToolCall {
-		return ToolCall{ID: id, Type: "function", Function: FunctionCall{Name: "execute_bash", Arguments: args}}
+		return ToolCall{ID: id, Type: "function", Function: FunctionCall{Name: "bash", Arguments: args}}
 	}
 	tests := []struct {
 		name    string
@@ -36,9 +36,9 @@ func TestResponsesStreamToolCallIdentity(t *testing.T) {
 		{"negative index rejected", []string{added(`"output_index":-1,`, "fc_1", "c1"), done}, nil, "negative output_index"},
 		{"arguments.done item_id conflict rejected", []string{added(`"output_index":0,`, "fc_1", "c1"), `{"type":"response.function_call_arguments.done","output_index":0,"item_id":"fc_9","arguments":"{}"}`, done}, nil, "identity conflict"},
 		{"arguments.done locates by item_id", []string{added(`"output_index":0,`, "fc_1", "c1"), added(`"output_index":1,`, "fc_2", "c2"), `{"type":"response.function_call_arguments.done","item_id":"fc_2","arguments":` + quoteJSON(b) + `}`, done}, []ToolCall{call("c1", ""), call("c2", b)}, ""},
-		{"item.done conflicting call_id rejected", []string{added(`"output_index":0,`, "fc_1", "c1"), `{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"c9","name":"execute_bash","arguments":"{}"}}`, done}, nil, "identity conflict"},
+		{"item.done conflicting call_id rejected", []string{added(`"output_index":0,`, "fc_1", "c1"), `{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"c9","name":"bash","arguments":"{}"}}`, done}, nil, "identity conflict"},
 		{"item.done tool name change rejected", []string{added(`"output_index":0,`, "fc_1", "c1"), `{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"c1","name":"other","arguments":"{}"}}`, done}, nil, "tool name changed"},
-		{"item.id and item_id mismatch rejected", []string{`{"type":"response.output_item.added","output_index":0,"item_id":"fc_2","item":{"type":"function_call","id":"fc_1","call_id":"c1","name":"execute_bash"}}`, done}, nil, "differs from item_id"},
+		{"item.id and item_id mismatch rejected", []string{`{"type":"response.output_item.added","output_index":0,"item_id":"fc_2","item":{"type":"function_call","id":"fc_1","call_id":"c1","name":"bash"}}`, done}, nil, "differs from item_id"},
 		{"identity ending in colon routes correctly", []string{added(`"output_index":0,`, "fc_1:", "c1"), delta("", "fc_1:", a), done}, []ToolCall{call("c1", a)}, ""},
 		{"null index routes by item_id", []string{added(`"output_index":0,`, "fc_1", "c1"), added(`"output_index":1,`, "fc_2", "c2"), delta(`"output_index":null,`, "fc_2", b), done}, []ToolCall{call("c1", ""), call("c2", b)}, ""},
 		{"missing index unknown item rejected", []string{added(`"output_index":0,`, "fc_1", "c1"), delta("", "fc_x", a), done}, nil, "missing output_index"},

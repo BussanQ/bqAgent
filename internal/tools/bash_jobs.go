@@ -36,7 +36,7 @@ const (
 
 // BashJobOptions configures the per-turn background job manager.
 type BashJobOptions struct {
-	// YieldTimeout is how long execute_bash waits before returning a running
+	// YieldTimeout is how long bash waits before returning a running
 	// job handle. Zero means 30s.
 	YieldTimeout time.Duration
 	// MaxTimeout is a hard cap on a job's lifetime. Zero disables it.
@@ -61,7 +61,7 @@ type BashJobStatus struct {
 }
 
 // BashResultCapture records the trusted structured result of the most recent
-// execute_bash / bash_wait / bash_kill call made with its context.
+// bash / bash_wait / bash_kill call made with its context.
 type BashResultCapture struct {
 	mu     sync.Mutex
 	Result *BashJobStatus

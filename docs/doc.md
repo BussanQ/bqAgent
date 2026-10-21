@@ -217,8 +217,8 @@ Responses 默认请求最多 3 次内置工具调用和 4096 个输出 token。�
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `AGENT_MAX_ITERATIONS` | `1000` | 全局循环失控保险上限。 |
-| `BASH_OUTPUT_MAX_BYTES` | `1048576` | `execute_bash` 保留的 stdout/stderr 合并输出字节上限；超额输出仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
-| `BASH_YIELD_TIMEOUT` | `30s` | `execute_bash` 等待命令的时长；超时后命令转入后台，返回 `status=running` 与 `job_id`（不代表成功），可用 `bash_wait`/`bash_kill` 处理。必须为正 duration，非法值使用默认值。后台任务不跨 turn，turn 结束时回收。 |
+| `BASH_OUTPUT_MAX_BYTES` | `1048576` | `bash` 保留的 stdout/stderr 合并输出字节上限；超额输出仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
+| `BASH_YIELD_TIMEOUT` | `30s` | `bash` 等待命令的时长；超时后命令转入后台，返回 `status=running` 与 `job_id`（不代表成功），可用 `bash_wait`/`bash_kill` 处理。必须为正 duration，非法值使用默认值。后台任务不跨 turn，turn 结束时回收。 |
 | `BASH_MAX_TIMEOUT` | `0` | 单个 bash 任务的最长存活时间；`0` 表示禁用。不得为负，非法值使用默认值。无进展不会自动 kill。 |
 | `BASH_MAX_CONCURRENT` | `3` | 单 turn 内同时运行的后台 bash 任务上限。非正数或非法值使用默认值。 |
 | `READ_FILE_MAX_BYTES` | `1048576` | `read_file` 返回的文件内容字节上限；超额内容仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
@@ -419,7 +419,7 @@ system prompt 按以下顺序装配，前面的部分不随会话变化，可被
 1. 内置核心指令：优先级（用户请求 > 仓库规则 > 全局默认）、按需投入、改动范围与 git 安全、校验与最终回复规范、提示注入防护；以及内置 Memory 策略
 2. 全局 `~/.agent/` 的 `AGENT.md`、`SOUL.md`、`USER.md`（HTML 注释会被去除，只剩标题的模板文件不加载）和全局 Rules
 3. 工作区根目录的 `AGENTS.md`（不存在时读取 `CLAUDE.md`），超过 32 KiB 截断；其中的项目规则优先于全局默认
-4. 运行环境：操作系统/架构、`execute_bash` 使用的 shell、是否为 git 仓库
+4. 运行环境：操作系统/架构、`bash` 使用的 shell、是否为 git 仓库
 5. 工作区路径索引（旧版 `workspace/`、`agent_memory.md` 仅在存在时列出）、工作区 `.agent/` 上下文和 Skills 索引
 
 各部分按共享范围从大到小排列（内置 → 用户级 → 工作区级），同一用户在不同工作区之间可复用前两部分的前缀缓存。
@@ -473,7 +473,7 @@ system prompt 按以下顺序装配，前面的部分不随会话变化，可被
 
 默认内建工具：
 
-- `execute_bash`
+- `bash`
 - `read_file`
 - `write_file`
 
@@ -483,7 +483,7 @@ system prompt 按以下顺序装配，前面的部分不随会话变化，可被
 - 非法 JSON 工具参数会直接让当前运行失败
 - 文件读写失败也会直接让当前运行失败
 - 相对路径的 `read_file` / `write_file` 会按 workspace root 解析
-- `execute_bash` 也会在 workspace root 下运行
+- `bash` 也会在 workspace root 下运行
 - `--server` 和交互 TUI 现在共用同一套内置本地工具，包括 shell、文件、网页搜索和 memory 工具
 
 Workspace Skill 使用渐进式披露。推荐在 Skill 顶部声明元数据：

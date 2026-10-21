@@ -111,7 +111,7 @@ func RegistryWithOptions(options Options) map[string]Function {
 		skillRoot = filepath.Dir(options.AgentDir)
 	}
 	registry := map[string]Function{
-		"execute_bash":  ExecuteBashInDirWithMaxOutput(options.WorkspaceRoot, options.BashOutputMaxBytes),
+		"bash":          ExecuteBashInDirWithMaxOutput(options.WorkspaceRoot, options.BashOutputMaxBytes),
 		"bash_wait":     BashWait,
 		"bash_kill":     BashKill,
 		"read_file":     ReadFileFromWorkspaceAndAgent(options.WorkspaceRoot, options.AgentDir, options.ReadFileMaxBytes),
@@ -214,7 +214,7 @@ func builtinDefinitions() []Definition {
 		{
 			Type: "function",
 			Function: FunctionDefinition{
-				Name:        "execute_bash",
+				Name:        "bash",
 				Description: "Execute a bash command when it verifies or produces information needed for the task. Captured combined stdout/stderr is byte-capped; when over budget the head and tail are kept with a truncation note in between. If the command is still running after the yield timeout (30s by default), it keeps running in the background and a JSON result with status \"running\" and a job_id is returned; that is not a success. Use bash_wait to wait for it and bash_kill to stop it. Jobs do not survive the current turn.",
 				Parameters: JSONSchema{
 					Type: "object",
@@ -229,11 +229,11 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "bash_wait",
-				Description: "Wait for a running execute_bash job (identified by job_id) to finish and return its status and output. Returns status \"running\" again if it is still running after wait_seconds; a running job is not a success. Jobs only exist within the current turn.",
+				Description: "Wait for a running bash job (identified by job_id) to finish and return its status and output. Returns status \"running\" again if it is still running after wait_seconds; a running job is not a success. Jobs only exist within the current turn.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
-						"job_id":       {Type: "string", Description: "The job_id returned by execute_bash"},
+						"job_id":       {Type: "string", Description: "The job_id returned by bash"},
 						"wait_seconds": {Type: "integer", Description: "Optional seconds to wait, 0 to 300; defaults to 30. 0 checks the status without waiting."},
 					},
 					Required: []string{"job_id"},
@@ -244,11 +244,11 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "bash_kill",
-				Description: "Kill a running execute_bash job (identified by job_id) and return its final status and output. Jobs are never killed automatically for lack of progress; kill one only when it is no longer needed.",
+				Description: "Kill a running bash job (identified by job_id) and return its final status and output. Jobs are never killed automatically for lack of progress; kill one only when it is no longer needed.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
-						"job_id": {Type: "string", Description: "The job_id returned by execute_bash"},
+						"job_id": {Type: "string", Description: "The job_id returned by bash"},
 					},
 					Required: []string{"job_id"},
 				},

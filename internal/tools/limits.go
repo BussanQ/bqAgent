@@ -7,7 +7,7 @@ import (
 
 const (
 	// DefaultBashOutputMaxBytes bounds captured combined stdout/stderr from a
-	// single execute_bash invocation.
+	// single bash invocation.
 	DefaultBashOutputMaxBytes int64 = 1 << 20
 	// DefaultReadFileMaxBytes bounds content returned by one read_file call.
 	DefaultReadFileMaxBytes int64 = 1 << 20

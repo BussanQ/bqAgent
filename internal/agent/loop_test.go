@@ -707,17 +707,17 @@ func TestRunReturnsUnknownToolErrorToLoop(t *testing.T) {
 func TestRunRegularToolErrorPreservesOutput(t *testing.T) {
 	client := &stubClient{
 		responses: []AssistantMessage{
-			{ToolCalls: []ToolCall{{ID: "tc-1", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"rustup install stable"}`}}}},
+			{ToolCalls: []ToolCall{{ID: "tc-1", Function: FunctionCall{Name: "bash", Arguments: `{"command":"rustup install stable"}`}}}},
 			{Content: "fallback"},
 		},
 	}
 	app := NewWithOptions(client, "", Options{
 		Functions: map[string]tools.Function{
-			"execute_bash": func(context.Context, map[string]any) (string, error) {
+			"bash": func(context.Context, map[string]any) (string, error) {
 				return "stdout before timeout\nstderr detail", context.DeadlineExceeded
 			},
 		},
-		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "execute_bash"}}},
+		ToolDefinitions: []tools.Definition{{Type: "function", Function: tools.FunctionDefinition{Name: "bash"}}},
 	})
 
 	result, err := app.Run(context.Background(), "run", 2)

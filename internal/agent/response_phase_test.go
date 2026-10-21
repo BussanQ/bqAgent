@@ -117,11 +117,11 @@ func TestNativeResponseHistoryPrunesWholeToolGroups(t *testing.T) {
 
 func TestNativeResponseHistoryReplaysRecoveredCalls(t *testing.T) {
 	var response openAIResponseEnvelope
-	if err := json.Unmarshal([]byte(`{"output":[{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"work"}]},{"type":"function_call","id":"fc1","call_id":"a","name":"execute_bash","arguments":"{}"},{"type":"function_call","id":"fc2","call_id":"b","name":"read_file","arguments":"{}"}]}`), &response); err != nil {
+	if err := json.Unmarshal([]byte(`{"output":[{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"work"}]},{"type":"function_call","id":"fc1","call_id":"a","name":"bash","arguments":"{}"},{"type":"function_call","id":"fc2","call_id":"b","name":"read_file","arguments":"{}"}]}`), &response); err != nil {
 		t.Fatal(err)
 	}
 	message := assistantFromOpenAIResponse(response)
-	message.ToolCalls = []ToolCall{{ID: "a", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"one"}`}}, {ID: "split", Function: FunctionCall{Name: "execute_bash", Arguments: `{"command":"two"}`}}, {ID: "b", Function: FunctionCall{Name: "read_file", Arguments: `{}`}}}
+	message.ToolCalls = []ToolCall{{ID: "a", Function: FunctionCall{Name: "bash", Arguments: `{"command":"one"}`}}, {ID: "split", Function: FunctionCall{Name: "bash", Arguments: `{"command":"two"}`}}, {ID: "b", Function: FunctionCall{Name: "read_file", Arguments: `{}`}}}
 	items := responseItemsFromMessage(message.RequestMessage())
 	if len(items) != 4 {
 		t.Fatalf("items=%s", items)

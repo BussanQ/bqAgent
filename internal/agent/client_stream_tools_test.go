@@ -22,14 +22,14 @@ func TestChatStreamToolCallIdentity(t *testing.T) {
 		{
 			name: "missing indexes with distinct IDs",
 			deltas: []string{
-				`[{"id":"call-1","type":"function","function":{"name":"execute_bash","arguments":"{\"command\":\"echo first\"}"}},{"id":"call-2","type":"function","function":{"name":"execute_bash","arguments":"{\"command\":\"echo second\"}"}}]`,
+				`[{"id":"call-1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo first\"}"}},{"id":"call-2","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo second\"}"}}]`,
 			},
 			want: []string{first, second},
 		},
 		{
 			name: "interleaved fragments identified by ID",
 			deltas: []string{
-				`[{"id":"call-1","function":{"name":"execute_bash","arguments":"{\"command\":"}},{"id":"call-2","function":{"name":"execute_bash","arguments":"{\"command\":"}}]`,
+				`[{"id":"call-1","function":{"name":"bash","arguments":"{\"command\":"}},{"id":"call-2","function":{"name":"bash","arguments":"{\"command\":"}}]`,
 				`[{"id":"call-2","function":{"arguments":"\"echo second\"}"}},{"id":"call-1","function":{"arguments":"\"echo first\"}"}}]`,
 			},
 			want: []string{first, second},
@@ -37,7 +37,7 @@ func TestChatStreamToolCallIdentity(t *testing.T) {
 		{
 			name: "indexed fragments retain index order",
 			deltas: []string{
-				`[{"index":1,"id":"call-2","function":{"name":"execute_bash","arguments":"{\"command\":"}},{"index":0,"id":"call-1","function":{"name":"execute_bash","arguments":"{\"command\":"}}]`,
+				`[{"index":1,"id":"call-2","function":{"name":"bash","arguments":"{\"command\":"}},{"index":0,"id":"call-1","function":{"name":"bash","arguments":"{\"command\":"}}]`,
 				`[{"index":0,"function":{"arguments":"\"echo first\"}"}},{"index":1,"function":{"arguments":"\"echo second\"}"}}]`,
 			},
 			want: []string{first, second},
@@ -45,7 +45,7 @@ func TestChatStreamToolCallIdentity(t *testing.T) {
 		{
 			name: "single call without continuation identity",
 			deltas: []string{
-				`[{"id":"call-1","function":{"name":"execute_bash","arguments":"{\"command\":"}}]`,
+				`[{"id":"call-1","function":{"name":"bash","arguments":"{\"command\":"}}]`,
 				`[{"function":{"arguments":"\"echo first\"}"}}]`,
 			},
 			want: []string{first},
@@ -53,7 +53,7 @@ func TestChatStreamToolCallIdentity(t *testing.T) {
 		{
 			name: "index supplied after ID",
 			deltas: []string{
-				`[{"id":"call-1","function":{"name":"execute_bash","arguments":"{\"command\":"}}]`,
+				`[{"id":"call-1","function":{"name":"bash","arguments":"{\"command\":"}}]`,
 				`[{"index":0,"id":"call-1","function":{"arguments":"\"echo "}}]`,
 				`[{"index":0,"function":{"arguments":"first\"}"}}]`,
 			},
@@ -62,7 +62,7 @@ func TestChatStreamToolCallIdentity(t *testing.T) {
 		{
 			name: "ID supplied after index",
 			deltas: []string{
-				`[{"index":0,"function":{"name":"execute_bash","arguments":"{\"command\":"}}]`,
+				`[{"index":0,"function":{"name":"bash","arguments":"{\"command\":"}}]`,
 				`[{"index":0,"id":"call-1","function":{"arguments":"\"echo "}}]`,
 				`[{"id":"call-1","function":{"arguments":"first\"}"}}]`,
 			},
@@ -71,7 +71,7 @@ func TestChatStreamToolCallIdentity(t *testing.T) {
 		{
 			name: "same ID changing index is rejected",
 			deltas: []string{
-				`[{"index":0,"id":"call-1","function":{"name":"execute_bash","arguments":"{\"command\":"}}]`,
+				`[{"index":0,"id":"call-1","function":{"name":"bash","arguments":"{\"command\":"}}]`,
 				`[{"index":1,"id":"call-1","function":{"arguments":"\"echo first\"}"}}]`,
 			},
 			wantErr: true,
@@ -79,7 +79,7 @@ func TestChatStreamToolCallIdentity(t *testing.T) {
 		{
 			name: "index and ID pointing to different calls is rejected",
 			deltas: []string{
-				`[{"index":0,"id":"call-1","function":{"name":"execute_bash","arguments":"{\"command\":"}},{"index":1,"id":"call-2","function":{"name":"execute_bash","arguments":"{\"command\":"}}]`,
+				`[{"index":0,"id":"call-1","function":{"name":"bash","arguments":"{\"command\":"}},{"index":1,"id":"call-2","function":{"name":"bash","arguments":"{\"command\":"}}]`,
 				`[{"index":0,"id":"call-2","function":{"arguments":"\"echo first\"}"}}]`,
 			},
 			wantErr: true,
@@ -87,7 +87,7 @@ func TestChatStreamToolCallIdentity(t *testing.T) {
 		{
 			name: "ambiguous continuation is rejected",
 			deltas: []string{
-				`[{"index":0,"id":"call-1","function":{"name":"execute_bash","arguments":"{\"command\":"}},{"index":1,"id":"call-2","function":{"name":"execute_bash","arguments":"{\"command\":"}}]`,
+				`[{"index":0,"id":"call-1","function":{"name":"bash","arguments":"{\"command\":"}},{"index":1,"id":"call-2","function":{"name":"bash","arguments":"{\"command\":"}}]`,
 				`[{"function":{"arguments":"\"echo first\"}"}}]`,
 			},
 			wantErr: true,
@@ -95,8 +95,8 @@ func TestChatStreamToolCallIdentity(t *testing.T) {
 		{
 			name: "conflicting index is rejected",
 			deltas: []string{
-				`[{"index":0,"id":"call-1","function":{"name":"execute_bash","arguments":"{\"command\":\"echo first\"}"}}]`,
-				`[{"index":0,"id":"call-2","function":{"name":"execute_bash","arguments":"{\"command\":\"echo second\"}"}}]`,
+				`[{"index":0,"id":"call-1","function":{"name":"bash","arguments":"{\"command\":\"echo first\"}"}}]`,
+				`[{"index":0,"id":"call-2","function":{"name":"bash","arguments":"{\"command\":\"echo second\"}"}}]`,
 			},
 			wantErr: true,
 		},
@@ -135,7 +135,7 @@ func TestChatStreamToolCallIdentity(t *testing.T) {
 				t.Fatalf("got %d tool calls, want %d: %#v", len(message.ToolCalls), len(test.want), message.ToolCalls)
 			}
 			for i, call := range message.ToolCalls {
-				if call.ID != fmt.Sprintf("call-%d", i+1) || call.Function.Name != "execute_bash" || call.Function.Arguments != test.want[i] {
+				if call.ID != fmt.Sprintf("call-%d", i+1) || call.Function.Name != "bash" || call.Function.Arguments != test.want[i] {
 					t.Fatalf("tool call %d = %#v, want arguments %q with original identity", i, call, test.want[i])
 				}
 				if _, err := parseArguments(call.Function.Arguments); err != nil {

@@ -34,7 +34,7 @@ func TestBashJobLedgerWaitsForFinalResult(t *testing.T) {
 	state := &runState{}
 	ctx = context.WithValue(ctx, runStateKey{}, state)
 	app := NewWithOptions(&stubClient{}, "", Options{})
-	_, result := app.runRegularToolCall(ctx, bashTestCall("verify", "execute_bash", map[string]any{"command": "go test -run TestTarget"}))
+	_, result := app.runRegularToolCall(ctx, bashTestCall("verify", "bash", map[string]any{"command": "go test -run TestTarget"}))
 	status, ok := bashWaitStatus(result)
 	if !ok || status.Status != "running" {
 		t.Fatalf("did not yield: %s", result)
@@ -58,11 +58,11 @@ func TestBashJobMutationBlocksDependentToolsUntilObserved(t *testing.T) {
 	ctx = context.WithValue(ctx, runStateKey{}, state)
 	reads := 0
 	app := NewWithOptions(&stubClient{}, "", Options{Functions: map[string]tools.Function{
-		"execute_bash": tools.ExecuteBash,
-		"bash_kill":    tools.BashKill,
-		"read_file":    func(context.Context, map[string]any) (string, error) { reads++; return "read", nil },
+		"bash":      tools.ExecuteBash,
+		"bash_kill": tools.BashKill,
+		"read_file": func(context.Context, map[string]any) (string, error) { reads++; return "read", nil },
 	}})
-	_, output := app.runRegularToolCall(ctx, bashTestCall("start", "execute_bash", map[string]any{"command": "sleep 60"}))
+	_, output := app.runRegularToolCall(ctx, bashTestCall("start", "bash", map[string]any{"command": "sleep 60"}))
 	status, ok := bashWaitStatus(output)
 	if !ok {
 		t.Fatalf("missing job: %s", output)
@@ -103,7 +103,7 @@ func TestBashJobTurnDefersFinalAnswerUntilJobResolved(t *testing.T) {
 	client := &bashTurnClient{run: func(_ context.Context, messages []map[string]any, step int) (AssistantMessage, error) {
 		switch step {
 		case 1:
-			return AssistantMessage{ToolCalls: []ToolCall{bashTestCall("start", "execute_bash", map[string]any{"command": "sleep 60"})}}, nil
+			return AssistantMessage{ToolCalls: []ToolCall{bashTestCall("start", "bash", map[string]any{"command": "sleep 60"})}}, nil
 		case 2:
 			results := extractToolMessages(messages)
 			status, ok := bashWaitStatus(fmt.Sprint(results[0]["content"]))
@@ -147,7 +147,7 @@ func TestBashJobTurnCleansUpOnErrorCancellationAndBudget(t *testing.T) {
 			client := &bashTurnClient{run: func(ctx context.Context, _ []map[string]any, step int) (AssistantMessage, error) {
 				jobs = tools.BashJobsFromContext(ctx)
 				if step == 1 {
-					return AssistantMessage{ToolCalls: []ToolCall{bashTestCall("start", "execute_bash", map[string]any{"command": "sleep 60"})}}, nil
+					return AssistantMessage{ToolCalls: []ToolCall{bashTestCall("start", "bash", map[string]any{"command": "sleep 60"})}}, nil
 				}
 				if mode == "cancel" {
 					cancel()

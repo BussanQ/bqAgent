@@ -27,7 +27,7 @@ func recoverConcatenatedToolCalls(calls []ToolCall) ([]ToolCall, bool) {
 		var objects []json.RawMessage
 		if strings.TrimSpace(call.Function.Name) != "" && !json.Valid([]byte(call.Function.Arguments)) {
 			objects = concatenatedToolArgumentObjects(call.Function.Arguments, maxRecoveredToolCalls)
-			if call.Function.Name == "execute_bash" {
+			if call.Function.Name == "bash" {
 				for _, object := range objects {
 					if !isCommandOnlyObject(object) {
 						objects = nil

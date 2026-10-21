@@ -37,7 +37,7 @@ const (
 	truncatedToolBatchError             = "Error: Tool batch was not executed because the model output reached its token limit. No side effects occurred. Resend the complete tool-call batch with complete JSON arguments."
 	truncatedToolRecoveryStoppedMessage = "Tool-call recovery stopped after repeated output-token truncation. Increase the model output-token limit or request a smaller tool-call batch; no tools from the truncated batches were executed."
 	emptyFinalRecoveryPrompt            = "The previous assistant response contained no usable final content. Continue the task from the existing conversation and completed tool results. If additional work or verification is needed, call the required tools now. Otherwise provide a concise final answer stating what was completed and any verification limitations. Do not return an empty response."
-	emptySearchRecoveryPrompt           = "The same search returned no results again. Repeating it cannot advance the task. Continue this same turn with different search arguments or another exploration tool such as read_file or execute_bash."
+	emptySearchRecoveryPrompt           = "The same search returned no results again. Repeating it cannot advance the task. Continue this same turn with different search arguments or another exploration tool such as read_file or bash."
 )
 
 var errEmptyFinalResponse = errors.New("model returned an empty final response")

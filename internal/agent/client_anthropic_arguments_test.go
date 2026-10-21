@@ -16,7 +16,7 @@ func TestAnthropicStreamToolArguments(t *testing.T) {
 	const first = `{"command":"echo first"}`
 	const second = `{"command":"echo second"}`
 	start := func(index any, id string, input any) map[string]any {
-		return map[string]any{"type": "content_block_start", "index": index, "content_block": map[string]any{"type": "tool_use", "id": id, "name": "execute_bash", "input": input}}
+		return map[string]any{"type": "content_block_start", "index": index, "content_block": map[string]any{"type": "tool_use", "id": id, "name": "bash", "input": input}}
 	}
 	delta := func(index any, args string) map[string]any {
 		return map[string]any{"type": "content_block_delta", "index": index, "delta": map[string]any{"type": "input_json_delta", "partial_json": args}}
@@ -25,7 +25,7 @@ func TestAnthropicStreamToolArguments(t *testing.T) {
 		return map[string]any{"type": "content_block_stop", "index": index}
 	}
 	call := func(id, args string) ToolCall {
-		return ToolCall{ID: id, Type: "function", Function: FunctionCall{Name: "execute_bash", Arguments: args}}
+		return ToolCall{ID: id, Type: "function", Function: FunctionCall{Name: "bash", Arguments: args}}
 	}
 	empty := map[string]any{}
 	tests := []struct {
@@ -96,7 +96,7 @@ func TestAnthropicMalformedArgumentsReplay(t *testing.T) {
 		t.Run(raw, func(t *testing.T) {
 			messages := []map[string]any{
 				{"role": "assistant", "tool_calls": []ToolCall{
-					{ID: "bad", Function: FunctionCall{Name: "execute_bash", Arguments: raw}},
+					{ID: "bad", Function: FunctionCall{Name: "bash", Arguments: raw}},
 					{ID: "good", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"README.md"}`}},
 				}},
 				{"role": "tool", "tool_call_id": "bad", "content": "Error: Invalid tool arguments. Reissue separate tool calls."},
@@ -133,7 +133,7 @@ func TestAnthropicMalformedArgumentsReplay(t *testing.T) {
 func TestAnthropicNonStreamingToolInputs(t *testing.T) {
 	for _, input := range []string{`{}`, `{"command":"echo '{\"a\":1}{\"b\":2}'"}`} {
 		t.Run(input, func(t *testing.T) {
-			payload := fmt.Sprintf(`{"content":[{"type":"tool_use","id":"tool_1","name":"execute_bash","input":%s},{"type":"tool_use","id":"tool_2","name":"execute_bash","input":{"command":"echo second"}}],"stop_reason":"tool_use"}`, input)
+			payload := fmt.Sprintf(`{"content":[{"type":"tool_use","id":"tool_1","name":"bash","input":%s},{"type":"tool_use","id":"tool_2","name":"bash","input":{"command":"echo second"}}],"stop_reason":"tool_use"}`, input)
 			httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(payload))}, nil
 			})}

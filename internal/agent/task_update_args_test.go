@@ -208,7 +208,7 @@ func TestAnalysisVerificationMayBeRealReadOnlyExecution(t *testing.T) {
 	if err := with("go list ./..."); err != nil {
 		t.Fatalf("real read-only run must be accepted for analysis: %v", err)
 	}
-	if err := with("go list"); err == nil || !strings.Contains(err.Error(), "closest execute_bash") || strings.Contains(err.Error(), "not a test/build/lint") {
+	if err := with("go list"); err == nil || !strings.Contains(err.Error(), "closest bash") || strings.Contains(err.Error(), "not a test/build/lint") {
 		t.Fatalf("analysis command mismatch should request the exact command without requiring tests: %v", err)
 	}
 	for _, command := range []string{"go list ./never-ran", "go list ./bad"} {

@@ -47,9 +47,9 @@ func TestTaskRecordingFailureDoesNotBlockActualWork(t *testing.T) {
 				app := NewWithOptions(client, "test", Options{TaskStore: store, Stream: stream,
 					Stage: StageConfig{LoopProtection: true, RepeatedFailureLimit: 2, DuplicateCallLimit: 2},
 					Functions: map[string]tools.Function{
-						"edit_file":    func(context.Context, map[string]any) (string, error) { edits++; return "edited", nil },
-						"execute_bash": func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
-						"read_file":    func(context.Context, map[string]any) (string, error) { reads++; return "source", nil },
+						"edit_file": func(context.Context, map[string]any) (string, error) { edits++; return "edited", nil },
+						"bash":      func(context.Context, map[string]any) (string, error) { checks++; return "ok", nil },
+						"read_file": func(context.Context, map[string]any) (string, error) { reads++; return "source", nil },
 					}})
 				result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": active.Goal}}, 12)
 				if err != nil || result.Outcome.Status != turn.Completed || result.Outcome.Reason != "" || edits != 1 || checks != 1 || reads != 1 || len(client.messages) != 7 || !strings.Contains(result.Reply, "修改及验证已完成") {
@@ -123,8 +123,8 @@ func TestRunTurnMarksUnfinishedTaskRecordStale(t *testing.T) {
 			app := NewWithOptions(client, "test", Options{TurnID: "turn", TaskStore: &memoryTaskStore{state: &active},
 				MessageSink: func(e turn.Event) { events = append(events, e) },
 				Functions: map[string]tools.Function{
-					"edit_file":    func(context.Context, map[string]any) (string, error) { return "edited", nil },
-					"execute_bash": func(context.Context, map[string]any) (string, error) { return "ok", nil },
+					"edit_file": func(context.Context, map[string]any) (string, error) { return "edited", nil },
+					"bash":      func(context.Context, map[string]any) (string, error) { return "ok", nil },
 				}})
 			result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": active.Goal}}, 8)
 			if err != nil || result.Outcome.Status != turn.Completed {

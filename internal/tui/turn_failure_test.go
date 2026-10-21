@@ -39,7 +39,7 @@ func TestRecoverableToolFailureDoesNotMarkTurnFailed(t *testing.T) {
 	model.sequence = 1
 	model.active = &activeTurn{sequence: 1, events: make(chan turnEvent), cancel: func() {}}
 	model.handleTurnEvent(turnEvent{sequence: 1, kind: "tool", tool: ToolEvent{
-		Kind: "tool_result", ID: "failed-call", Name: "execute_bash", Status: "failed",
+		Kind: "tool_result", ID: "failed-call", Name: "bash", Status: "failed",
 		Preview: strings.Repeat("recoverable error\n", 40) + "hidden-tail",
 	}})
 	model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: "已修复并完成"}})
