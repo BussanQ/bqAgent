@@ -42,7 +42,15 @@ func newPromptInput(noColor ...bool) promptInput {
 		area.SetStyles(styles)
 	}
 	area.Placeholder = "输入消息，/ 查看命令"
-	area.Prompt = "❯ "
+	area.SetPromptFunc(2, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
+			return "❯ "
+		}
+		return "  "
+	})
+	area.DynamicHeight = true
+	area.MinHeight = 1
+	area.MaxHeight = 6
 	area.CharLimit = 0
 	area.SetHeight(1)
 	area.ShowLineNumbers = false
@@ -240,8 +248,9 @@ func (input *promptInput) reset() {
 }
 
 func (input *promptInput) resize(width, height int) {
+	input.area.MaxHeight = max(1, min(6, height))
+	// SetWidth also recalculates dynamic height and clamps the scroll offset.
 	input.area.SetWidth(max(10, width))
-	input.area.SetHeight(max(1, min(6, height)))
 }
 
 func (input *promptInput) removeOrphanChips() {

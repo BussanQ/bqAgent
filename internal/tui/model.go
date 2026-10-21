@@ -1605,9 +1605,8 @@ func (model Model) phaseLabel() string {
 }
 
 func (model *Model) resizeInput() {
-	lines := model.input.area.LineCount()
 	maxHeight := min(6, max(1, model.height-5))
-	model.input.resize(model.contentWidth(), min(maxHeight, max(1, lines)))
+	model.input.resize(model.contentWidth(), maxHeight)
 	if model.provider != nil {
 		model.provider.resize(model.contentWidth())
 	}
