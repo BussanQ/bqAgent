@@ -556,6 +556,7 @@ func (model *Model) requestQuit() []tea.Cmd {
 }
 
 func (model *Model) cancelActiveTurn() {
+	model.freezeLiveSpeed(time.Now())
 	model.active.cancelled = true
 	model.active.cancel()
 	model.phase = phaseCancelling
@@ -891,6 +892,9 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 	if !model.startedAt.IsZero() {
 		model.turnElapsed = max(0, time.Since(model.startedAt))
 	}
+	// A cancelled turn ignores the collector's closing usage snapshot, so stop
+	// the in-flight interval here or the idle speed would keep decaying.
+	model.freezeLiveSpeed(time.Now())
 	model.active = nil
 	// Release native scrollback even when a short turn leaves tools unarchived.
 	model.toolMouse = false
@@ -1484,7 +1488,7 @@ func (model Model) renderStatus(width int) string {
 		right = model.inputNotice
 	} else if model.phase != phaseIdle {
 		elapsed := formatTurnElapsed(time.Since(model.startedAt))
-		right = fmt.Sprintf("%s· %s %s· 耗时 %s", model.tokenUsageStatus(), model.spinner.View(), model.phaseLabel(), elapsed)
+		right = fmt.Sprintf("%s· %s· %s %s· 耗时 %s", model.tokenUsageStatus(), model.speedLabel(time.Now()), model.spinner.View(), model.phaseLabel(), elapsed)
 	} else if model.metrics != nil || model.usage != nil || model.turnElapsed > 0 {
 		parts := []string{}
 		if model.metrics != nil || model.usage != nil {
@@ -1493,15 +1497,7 @@ func (model Model) renderStatus(width int) string {
 		if model.turnElapsed > 0 {
 			parts = append(parts, "耗时 "+formatTurnElapsed(model.turnElapsed))
 		}
-		speedLabel := "TPS —"
-		if model.metrics != nil {
-			if speed := model.metrics.TokensPerSecond; speed > 0 && !math.IsNaN(speed) && !math.IsInf(speed, 0) {
-				// Reliability is checked against stream samples by the agent.
-				// A high rate alone is not evidence of buffered delivery.
-				speedLabel = fmt.Sprintf("%.1f tok/s", speed)
-			}
-		}
-		parts = append(parts, speedLabel)
+		parts = append(parts, model.speedLabel(time.Now()))
 		if model.metrics != nil {
 			parts = append(parts, fmt.Sprintf("首字 %.2fs", float64(model.metrics.FirstTokenLatencyMS)/1000))
 			if model.metrics.CacheMetrics != nil && model.metrics.CacheMetrics.Available && model.metrics.CacheMetrics.InputTokens > 0 {
@@ -1554,6 +1550,50 @@ func formatTurnElapsed(elapsed time.Duration) string {
 		return elapsed.Round(time.Second).String()
 	}
 	return elapsed.Round(100 * time.Millisecond).String()
+}
+
+// speedLabel follows ccstatusline: whole-turn output tokens divided by the
+// time model requests were in flight (tool execution excluded, the running
+// request counted up to now), so a value is shown from the first output token
+// instead of only after a strictly sampled final stream.
+func (model Model) speedLabel(now time.Time) string {
+	if usage := model.usage; usage != nil && usage.OutputTokens > 0 {
+		active := usage.GenerationDuration
+		if !usage.ActiveSince.IsZero() {
+			active += max(0, now.Sub(usage.ActiveSince))
+		}
+		if active > 0 {
+			if label, ok := formatSpeed(float64(usage.OutputTokens) / active.Seconds()); ok {
+				return label
+			}
+		}
+	}
+	if model.metrics != nil {
+		if label, ok := formatSpeed(model.metrics.TokensPerSecond); ok {
+			return label
+		}
+	}
+	return "TPS —"
+}
+
+// freezeLiveSpeed folds the in-flight request interval into the finished
+// duration so the speed stops changing once the turn can no longer stream.
+func (model *Model) freezeLiveSpeed(now time.Time) {
+	usage := model.usage
+	if usage == nil || usage.ActiveSince.IsZero() {
+		return
+	}
+	frozen := *usage
+	frozen.GenerationDuration += max(0, now.Sub(frozen.ActiveSince))
+	frozen.ActiveSince = time.Time{}
+	model.usage = &frozen
+}
+
+func formatSpeed(speed float64) (string, bool) {
+	if speed <= 0 || math.IsNaN(speed) || math.IsInf(speed, 0) {
+		return "", false
+	}
+	return fmt.Sprintf("%.1f tok/s", speed), true
 }
 
 func (model Model) tokenUsageStatus() string {

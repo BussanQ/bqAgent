@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTokenUsageStatusSurvivesToolsAndCompletion(t *testing.T) {
@@ -91,5 +92,59 @@ func TestLaunchTurnForwardsLiveUsage(t *testing.T) {
 	}
 	if done := <-events; done.kind != "done" {
 		t.Fatalf("last event = %+v", done)
+	}
+}
+
+func TestSpeedLabelUsesLiveActiveTime(t *testing.T) {
+	now := time.Unix(1000, 0)
+	for _, test := range []struct {
+		name  string
+		model Model
+		want  string
+	}{
+		{"no usage", Model{}, "TPS —"},
+		{"no output yet", Model{usage: &TokenUsage{InputTokens: 100, ActiveSince: now.Add(-time.Second)}}, "TPS —"},
+		{"streaming", Model{usage: &TokenUsage{OutputTokens: 50, ActiveSince: now.Add(-2 * time.Second)}}, "25.0 tok/s"},
+		{"between requests", Model{usage: &TokenUsage{OutputTokens: 90, GenerationDuration: 3 * time.Second}}, "30.0 tok/s"},
+		{"finished plus running", Model{usage: &TokenUsage{OutputTokens: 120, GenerationDuration: 3 * time.Second, ActiveSince: now.Add(-time.Second)}}, "30.0 tok/s"},
+		{"metrics fallback", Model{usage: &TokenUsage{OutputTokens: 17}, metrics: &GenerationMetrics{TokensPerSecond: 42}}, "42.0 tok/s"},
+	} {
+		if got := test.model.speedLabel(now); got != test.want {
+			t.Errorf("%s: speedLabel = %q, want %q", test.name, got, test.want)
+		}
+	}
+}
+
+func TestRunningStatusShowsLiveSpeed(t *testing.T) {
+	model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+	model.submit("search")
+	defer model.active.cancel()
+	model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "usage", usage: TokenUsage{OutputTokens: 40, GenerationDuration: 2 * time.Second}})
+	if got := model.renderStatus(200); !strings.Contains(got, "20.0 tok/s") {
+		t.Fatalf("running status = %q", got)
+	}
+}
+
+func TestSpeedFreezesAfterCancel(t *testing.T) {
+	for _, viaCancel := range []bool{true, false} {
+		model := NewModel(&fakeBackend{}, Config{Context: context.Background(), Workspace: t.TempDir(), AgentDir: t.TempDir(), NoColor: true})
+		model.submit("search")
+		model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "usage", usage: TokenUsage{OutputTokens: 50, ActiveSince: time.Now().Add(-2 * time.Second)}})
+		if viaCancel {
+			model.cancelActiveTurn()
+		} else {
+			model.active.cancelled = true
+			model.active.cancel()
+		}
+		// The collector's closing snapshot is dropped after cancellation.
+		model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "usage", usage: TokenUsage{OutputTokens: 50, GenerationDuration: 2 * time.Second}})
+		model.handleTurnEvent(turnEvent{sequence: model.sequence, kind: "done", err: context.Canceled})
+		if model.usage == nil || !model.usage.ActiveSince.IsZero() {
+			t.Fatalf("viaCancel=%v: in-flight interval not frozen: %+v", viaCancel, model.usage)
+		}
+		first := model.speedLabel(time.Now())
+		if later := model.speedLabel(time.Now().Add(time.Hour)); later != first || first == "TPS —" {
+			t.Fatalf("viaCancel=%v: speed kept changing after cancel: %q -> %q", viaCancel, first, later)
+		}
 	}
 }

@@ -104,6 +104,7 @@ func (backend *tuiBackend) RunTurnWithAttachments(ctx context.Context, sessionID
 			events.Usage(apptui.TokenUsage{
 				InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
 				InputEstimated: usage.InputEstimated, OutputEstimated: usage.OutputEstimated, Calls: usage.Calls,
+				GenerationDuration: usage.GenerationDuration, ActiveSince: usage.ActiveSince,
 			})
 		})
 	}

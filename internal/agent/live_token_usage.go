@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"sync"
+	"time"
 
 	"bqagent/internal/tools"
 )
@@ -16,6 +17,11 @@ type LiveTokenUsage struct {
 	InputEstimated  bool
 	OutputEstimated bool
 	Calls           int
+	// GenerationDuration is the union of finished model-request intervals and
+	// ActiveSince the start of the in-flight one, so consumers can compute
+	// output speed at any moment (ccstatusline-style output / active time).
+	GenerationDuration time.Duration
+	ActiveSince        time.Time
 }
 
 type liveUsageKey struct{}
@@ -24,8 +30,14 @@ type liveCallKey struct{}
 type liveUsageCollector struct {
 	mu    sync.Mutex
 	sink  func(LiveTokenUsage)
+	now   func() time.Time
 	calls []*liveUsageCall
 	last  LiveTokenUsage
+	// Overlapping requests are merged: activeStart opens when the first
+	// request starts and closes into finished when the last one ends.
+	active      int
+	activeStart time.Time
+	finished    time.Duration
 }
 
 type liveUsageCall struct {
@@ -43,7 +55,7 @@ func WithLiveTokenUsage(ctx context.Context, sink func(LiveTokenUsage)) context.
 	if sink == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, liveUsageKey{}, &liveUsageCollector{sink: sink})
+	return context.WithValue(ctx, liveUsageKey{}, &liveUsageCollector{sink: sink, now: time.Now})
 }
 
 func beginLiveTokenCall(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (context.Context, func(AssistantMessage)) {
@@ -54,29 +66,45 @@ func beginLiveTokenCall(ctx context.Context, messages []map[string]any, definiti
 	call := &liveUsageCall{collector: collector, usage: LiveTokenUsage{
 		InputTokens: estimateVisibleRequestTokens(messages, definitions, options), InputEstimated: true, OutputEstimated: true,
 	}}
-	call.change(func() { collector.calls = append(collector.calls, call) })
+	call.change(func() {
+		collector.calls = append(collector.calls, call)
+		if collector.active == 0 {
+			collector.activeStart = collector.now()
+		}
+		collector.active++
+	})
 	ctx = context.WithValue(ctx, liveCallKey{}, call)
+	var once sync.Once
 	return ctx, func(message AssistantMessage) {
-		call.change(func() {
-			// Native stream events already supplied the freshest snapshots.
-			// Do not replace them with stale/partial usage at stream completion.
-			usage := message.Usage
-			if call.inputReported {
-				usage.PromptTokens, usage.PromptTokensAvailable = 0, false
-			}
-			if call.outputReported {
-				usage.CompletionTokens, usage.CompletionTokensAvailable = 0, false
-			}
-			call.applyUsage(usage)
-			if call.usage.OutputEstimated {
-				units := tokenEstimateUnits(message.FinalContent())
-				for _, tool := range message.ToolCalls {
-					units += tokenEstimateUnits(tool.Function.Arguments)
-				}
-				call.usage.OutputTokens = max(call.usage.OutputTokens, (units+3)/4)
-			}
-		})
+		once.Do(func() { call.finish(message) })
 	}
+}
+
+func (call *liveUsageCall) finish(message AssistantMessage) {
+	collector := call.collector
+	call.change(func() {
+		if collector.active--; collector.active == 0 {
+			collector.finished += collector.now().Sub(collector.activeStart)
+			collector.activeStart = time.Time{}
+		}
+		// Native stream events already supplied the freshest snapshots.
+		// Do not replace them with stale/partial usage at stream completion.
+		usage := message.Usage
+		if call.inputReported {
+			usage.PromptTokens, usage.PromptTokensAvailable = 0, false
+		}
+		if call.outputReported {
+			usage.CompletionTokens, usage.CompletionTokensAvailable = 0, false
+		}
+		call.applyUsage(usage)
+		if call.usage.OutputEstimated {
+			units := tokenEstimateUnits(message.FinalContent())
+			for _, tool := range message.ToolCalls {
+				units += tokenEstimateUnits(tool.Function.Arguments)
+			}
+			call.usage.OutputTokens = max(call.usage.OutputTokens, (units+3)/4)
+		}
+	})
 }
 
 func reportLiveTokenDelta(ctx context.Context, text string) {
@@ -119,7 +147,7 @@ func (call *liveUsageCall) change(update func()) {
 	collector.mu.Lock()
 	defer collector.mu.Unlock()
 	update()
-	snapshot := LiveTokenUsage{Calls: len(collector.calls)}
+	snapshot := LiveTokenUsage{Calls: len(collector.calls), GenerationDuration: collector.finished, ActiveSince: collector.activeStart}
 	for _, item := range collector.calls {
 		snapshot.InputTokens += item.usage.InputTokens
 		snapshot.OutputTokens += item.usage.OutputTokens

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"io"
+	"time"
 
 	"bqagent/internal/chatcommand"
 	"bqagent/internal/modelcatalog"
@@ -66,6 +67,10 @@ type TokenUsage struct {
 	InputEstimated  bool
 	OutputEstimated bool
 	Calls           int
+	// GenerationDuration covers finished model requests; ActiveSince is the
+	// start of the in-flight request (zero when none is running).
+	GenerationDuration time.Duration
+	ActiveSince        time.Time
 }
 
 type ToolEvent struct {
