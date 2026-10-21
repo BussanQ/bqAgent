@@ -19,8 +19,8 @@ export function formatFirstTokenLatency(value: number | undefined): string {
 
 export function formatGenerationSpeed(value: number | undefined): string {
   const tokensPerSecond = Number(value);
-  // 上游缓冲后集中发送可能放大观测速率；1000 是展示过滤阈值。
-  if (!Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0 || tokensPerSecond > 1000) return "";
+  // 缓冲集中发送由服务端按流式采样过滤；与 TUI/API 一致，不再按数值设上限。
+  if (!Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0) return "";
   return "约 " + tokensPerSecond.toFixed(1).replace(/\.0$/, "") + " token/s";
 }
 

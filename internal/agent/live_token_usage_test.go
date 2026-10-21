@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"bqagent/internal/tools"
 )
@@ -24,7 +23,7 @@ func TestLiveTokenUsageAccumulatesToolRounds(t *testing.T) {
 	}
 	app := NewWithOptions(stub, testModel, Options{Stream: true, Functions: map[string]tools.Function{
 		"lookup": func(context.Context, map[string]any) (string, error) {
-			if liveTokenCounts(latest) != (LiveTokenUsage{InputTokens: 100, OutputTokens: 50, Calls: 1}) {
+			if latest != (LiveTokenUsage{InputTokens: 100, OutputTokens: 50, Calls: 1}) {
 				t.Errorf("usage before tool execution = %+v", latest)
 			}
 			return "found", nil
@@ -34,7 +33,7 @@ func TestLiveTokenUsageAccumulatesToolRounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if liveTokenCounts(latest) != (LiveTokenUsage{InputTokens: 220, OutputTokens: 58, Calls: 2}) {
+	if latest != (LiveTokenUsage{InputTokens: 220, OutputTokens: 58, Calls: 2}) {
 		t.Fatalf("whole-turn usage = %+v", latest)
 	}
 }
@@ -48,7 +47,7 @@ func TestLiveTokenUsagePartialSnapshotsAndMissingUsage(t *testing.T) {
 	}
 	start := TokenUsage{PromptTokens: 100, PromptTokensAvailable: true, CompletionTokensAvailable: true}
 	reportLiveTokenUsage(ctx, start)
-	if liveTokenCounts(latest) != (LiveTokenUsage{InputTokens: 100, Calls: 1}) {
+	if latest != (LiveTokenUsage{InputTokens: 100, Calls: 1}) {
 		t.Fatalf("explicit zero = %+v", latest)
 	}
 	for _, text := range []string{"a", "b", "c", "d", "中", "文"} {
@@ -61,7 +60,7 @@ func TestLiveTokenUsagePartialSnapshotsAndMissingUsage(t *testing.T) {
 	}
 	reportLiveTokenUsage(ctx, TokenUsage{CompletionTokens: 12})
 	reportLiveTokenUsage(ctx, TokenUsage{CompletionTokens: 12})
-	if liveTokenCounts(latest) != (LiveTokenUsage{InputTokens: 100, OutputTokens: 12, Calls: 1}) {
+	if latest != (LiveTokenUsage{InputTokens: 100, OutputTokens: 12, Calls: 1}) {
 		t.Fatalf("cumulative snapshots must replace, not add: %+v", latest)
 	}
 	reportLiveTokenDelta(ctx, "next")
@@ -149,7 +148,7 @@ func TestLiveTokenUsageProviderStreamsUpdateBeforeCompletion(t *testing.T) {
 			var latest LiveTokenUsage
 			ctx := WithLiveTokenUsage(context.Background(), func(usage LiveTokenUsage) { latest = usage })
 			reader := &liveUsageEventReader{events: test.events, check: func(index int) {
-				if index == 1 && liveTokenCounts(latest) != (LiveTokenUsage{InputTokens: 100, Calls: 1}) {
+				if index == 1 && latest != (LiveTokenUsage{InputTokens: 100, Calls: 1}) {
 					t.Fatalf("input must be available at start, including cache exactly once: %+v", latest)
 				}
 				if index == 2 && (latest.OutputTokens != 2 || !latest.OutputEstimated) {
@@ -162,7 +161,7 @@ func TestLiveTokenUsageProviderStreamsUpdateBeforeCompletion(t *testing.T) {
 				if index == textEnd && (latest.OutputTokens != 4 || !latest.OutputEstimated) {
 					t.Fatalf("reasoning + arguments + text should be counted once: %+v", latest)
 				}
-				if index == len(test.events) && liveTokenCounts(latest) != (LiveTokenUsage{InputTokens: 100, OutputTokens: 12, Calls: 1}) {
+				if index == len(test.events) && latest != (LiveTokenUsage{InputTokens: 100, OutputTokens: 12, Calls: 1}) {
 					t.Fatalf("final usage must arrive before EOF: %+v", latest)
 				}
 			}}
@@ -174,7 +173,7 @@ func TestLiveTokenUsageProviderStreamsUpdateBeforeCompletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if message.Content != "answer" || liveTokenCounts(latest) != (LiveTokenUsage{InputTokens: 100, OutputTokens: 12, Calls: 1}) {
+			if message.Content != "answer" || latest != (LiveTokenUsage{InputTokens: 100, OutputTokens: 12, Calls: 1}) {
 				t.Fatalf("message = %+v, usage = %+v", message, latest)
 			}
 		})
@@ -223,7 +222,7 @@ func TestLiveTokenUsageStreamsWithoutFinalUsage(t *testing.T) {
 				if (err != nil) != truncated {
 					t.Fatalf("truncated=%v, err=%v", truncated, err)
 				}
-				if liveTokenCounts(latest) != (LiveTokenUsage{InputTokens: 100, OutputTokens: 4, OutputEstimated: true, Calls: 1}) {
+				if latest != (LiveTokenUsage{InputTokens: 100, OutputTokens: 4, OutputEstimated: true, Calls: 1}) {
 					t.Fatalf("missing final usage must retain streamed counts: %+v", latest)
 				}
 			})
@@ -275,45 +274,4 @@ func TestLiveTokenUsageNestedStreamingCountsDeltasOnce(t *testing.T) {
 	if latest.OutputTokens != 4 || !latest.OutputEstimated || latest.Calls != 1 {
 		t.Fatalf("nested streaming usage = %+v", latest)
 	}
-}
-
-func TestLiveTokenUsageTracksActiveGenerationTime(t *testing.T) {
-	var latest LiveTokenUsage
-	ctx := WithLiveTokenUsage(context.Background(), func(usage LiveTokenUsage) { latest = usage })
-	collector := ctx.Value(liveUsageKey{}).(*liveUsageCollector)
-	clock := time.Unix(100, 0)
-	collector.now = func() time.Time { return clock }
-
-	callCtx, finish := beginLiveTokenCall(ctx, nil, nil, ChatCompletionOptions{})
-	if !latest.ActiveSince.Equal(clock) || latest.GenerationDuration != 0 {
-		t.Fatalf("in-flight call = %+v", latest)
-	}
-	clock = clock.Add(2 * time.Second)
-	reportLiveTokenDelta(callCtx, "abcd")
-	if !latest.ActiveSince.Equal(time.Unix(100, 0)) || latest.OutputTokens != 1 {
-		t.Fatalf("streaming snapshot = %+v", latest)
-	}
-	finish(AssistantMessage{Content: "abcd"})
-	finish(AssistantMessage{Content: "abcd"})
-	if !latest.ActiveSince.IsZero() || latest.GenerationDuration != 2*time.Second {
-		t.Fatalf("finished call = %+v", latest)
-	}
-
-	// Tool execution between requests is not generation time.
-	clock = clock.Add(10 * time.Second)
-	_, finish = beginLiveTokenCall(ctx, nil, nil, ChatCompletionOptions{})
-	if !latest.ActiveSince.Equal(clock) || latest.GenerationDuration != 2*time.Second {
-		t.Fatalf("second call = %+v", latest)
-	}
-	clock = clock.Add(time.Second)
-	finish(AssistantMessage{})
-	if !latest.ActiveSince.IsZero() || latest.GenerationDuration != 3*time.Second || latest.Calls != 2 {
-		t.Fatalf("whole turn = %+v", latest)
-	}
-}
-
-// liveTokenCounts drops wall-clock timing so token assertions stay exact.
-func liveTokenCounts(usage LiveTokenUsage) LiveTokenUsage {
-	usage.GenerationDuration, usage.ActiveSince = 0, time.Time{}
-	return usage
 }

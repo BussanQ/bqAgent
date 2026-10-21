@@ -765,8 +765,9 @@ func TestWebUIStreamChat(t *testing.T) {
 	if first.done.Generation.FirstTokenLatencyMS <= 0 || first.done.Generation.GenerationDurationMS <= 0 {
 		t.Fatalf("generation timing = %#v, want positive values", first.done.Generation)
 	}
-	// This fixture emits only two text chunks, insufficient for a reliable TPS.
-	if first.done.Generation.CompletionTokens != 6 || first.done.Generation.ReasoningTokens != 1 || first.done.Generation.TokensPerSecond != 0 {
+	// TPS is covered by TestWebUIStreamChatEmitsSpeedMatchingDone; these 1ms
+	// chunks sit on the buffering threshold, so the rate is not asserted here.
+	if first.done.Generation.CompletionTokens != 6 || first.done.Generation.ReasoningTokens != 1 {
 		t.Fatalf("generation metrics = %#v", first.done.Generation)
 	}
 	if !first.done.Generation.CacheUsageAvailable || first.done.Generation.PromptTokens != 4 || first.done.Generation.CachedPromptTokens != 3 {
@@ -1490,4 +1491,45 @@ func streamDeltaJSON(content string) string {
 		},
 	})
 	return string(encoded)
+}
+
+func TestWebUIStreamChatEmitsSpeedMatchingDone(t *testing.T) {
+	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := writer.(http.Flusher)
+		// Paced deltas produce live samples before the final rate.
+		for index := 0; index < 8; index++ {
+			fmt.Fprintf(writer, "data: %s\n\n", streamDeltaJSON("word "))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			time.Sleep(40 * time.Millisecond)
+		}
+		fmt.Fprintln(writer, `data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":40,"total_tokens":44}}`)
+		fmt.Fprint(writer, "data: [DONE]\n\n")
+	}))
+	defer llmServer.Close()
+
+	service := newTestService(t.TempDir(), llmServer.URL)
+	apiServer := httptest.NewServer(NewHandler(HandlerOptions{Service: service, Channels: []Channel{NewWebUIChannel(service, true)}}))
+	defer apiServer.Close()
+
+	result := postWebUIChat(t, apiServer.URL, `{"message":"hi"}`)
+	if result.done.Generation == nil || result.done.Generation.TokensPerSecond <= 0 {
+		t.Fatalf("done generation = %#v, want a reliable rate", result.done.Generation)
+	}
+	last := strings.LastIndex(result.raw, "event: speed\ndata: ")
+	if last < 0 || last > strings.Index(result.raw, "event: done") {
+		t.Fatalf("stream missing speed event before done:\n%s", result.raw)
+	}
+	line := strings.SplitN(result.raw[last+len("event: speed\ndata: "):], "\n", 2)[0]
+	var speed struct {
+		TokensPerSecond float64 `json:"tokens_per_second"`
+	}
+	if err := json.Unmarshal([]byte(line), &speed); err != nil {
+		t.Fatal(err)
+	}
+	if speed.TokensPerSecond != result.done.Generation.TokensPerSecond {
+		t.Fatalf("last live speed %v != done %v", speed.TokensPerSecond, result.done.Generation.TokensPerSecond)
+	}
 }

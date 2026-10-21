@@ -31,8 +31,11 @@ describe("生成速率展示", () => {
     expect(formatGenerationSpeed(value)).toBe(expected);
   });
 
-  it.each([1000.01, 1001, 1000000, Number.MAX_VALUE])("隐藏超过阈值的速率 %s", (value) => {
-    expect(formatGenerationSpeed(value)).toBe("");
+  it.each([
+    [1001, "约 1001 token/s"],
+    [20000, "约 20000 token/s"],
+  ])("与 TUI/API 一致不设展示上限 %s", (value, expected) => {
+    expect(formatGenerationSpeed(value)).toBe(expected);
   });
 
   it.each([undefined, 0, -1, NaN, Infinity, -Infinity])("隐藏无效速率 %s", (value) => {

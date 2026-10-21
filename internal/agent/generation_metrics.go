@@ -43,23 +43,18 @@ type generationCandidate struct {
 	reasoningTokens     int
 	generationDuration  time.Duration
 	streamUpdates       int
-	streamSpan          time.Duration
-	streamStalls        time.Duration
 }
 
-// Only borrow pi-tps's sampling checks, not its TPS ceiling, stall-adjusted
-// speed or full-request fallback. The first text update measures TTFT; the
-// subsequent updates provide independent evidence of paced streaming.
+// The first text update measures TTFT; any later update gives a measurable
+// window, so speed is available from the second delta. Only same-tick
+// delivery (a buffered dump with sub-millisecond spacing) is rejected, since
+// its window does not reflect generation. Pauses stay in the denominator.
 func (candidate generationCandidate) reliableStream() bool {
-	const minUpdates = 5
 	const minAverageGap = time.Millisecond
-	const minActiveSpan = 200 * time.Millisecond
-	if candidate.streamUpdates < minUpdates || candidate.streamSpan <= 0 {
+	if candidate.streamUpdates < 1 || candidate.generationDuration <= 0 {
 		return false
 	}
-	averageGap := candidate.streamSpan / time.Duration(candidate.streamUpdates-1)
-	activeSpan := candidate.streamSpan - candidate.streamStalls
-	return averageGap >= minAverageGap && activeSpan >= minActiveSpan && candidate.streamStalls < activeSpan
+	return candidate.generationDuration/time.Duration(candidate.streamUpdates) >= minAverageGap
 }
 
 type turnGenerationCollector struct {
@@ -67,6 +62,24 @@ type turnGenerationCollector struct {
 	candidate generationCandidate
 	hasValue  bool
 	cache     TurnCacheMetrics
+	// lastSpeed is the latest reliable per-call speed, including tool-call
+	// rounds, used when the final text call itself has no reliable sample.
+	lastSpeed float64
+}
+
+// recordSpeed keeps a measurable call rate and returns the rate the turn
+// metrics will report if this call ends the turn, so live consumers can
+// converge on the final value (0 when no call has been measurable).
+func (collector *turnGenerationCollector) recordSpeed(speed float64) float64 {
+	if collector == nil {
+		return speed
+	}
+	collector.mu.Lock()
+	defer collector.mu.Unlock()
+	if speed > 0 {
+		collector.lastSpeed = speed
+	}
+	return collector.lastSpeed
 }
 
 func (collector *turnGenerationCollector) recordUsage(usage TokenUsage) {
@@ -99,6 +112,7 @@ func (collector *turnGenerationCollector) metricsFor(result string) TurnGenerati
 	collector.mu.Lock()
 	candidate, ok := collector.candidate, collector.hasValue
 	cache := collector.cache
+	lastSpeed := collector.lastSpeed
 	collector.mu.Unlock()
 	cache.UncachedInputTokens = cache.InputTokens - cache.CacheReadTokens - cache.CacheWriteTokens
 	if cache.UncachedInputTokens < 0 {
@@ -108,7 +122,7 @@ func (collector *turnGenerationCollector) metricsFor(result string) TurnGenerati
 		cache.HitRate = float64(cache.CacheReadTokens) / float64(cache.InputTokens)
 	}
 	if !ok || candidate.content != result {
-		return TurnGenerationMetrics{CacheMetrics: cache}
+		return TurnGenerationMetrics{CacheMetrics: cache, TokensPerSecond: lastSpeed}
 	}
 
 	metrics := TurnGenerationMetrics{
@@ -125,6 +139,8 @@ func (collector *turnGenerationCollector) metricsFor(result string) TurnGenerati
 	visibleTokens := candidate.completionTokens - candidate.reasoningTokens
 	if visibleTokens > 1 && candidate.generationDuration > 0 && candidate.reliableStream() {
 		metrics.TokensPerSecond = float64(visibleTokens-1) / candidate.generationDuration.Seconds()
+	} else {
+		metrics.TokensPerSecond = lastSpeed
 	}
 	return metrics
 }
@@ -190,26 +206,16 @@ func (client *generationMetricsClient) CreateChatCompletionStreamWithOptions(ctx
 	// separately report reasoning, tool arguments, and authoritative usage.
 	countsLiveDeltas := ctx.Value(liveCallKey{}) == nil
 	ctx, finishUsage := beginLiveTokenCall(ctx, messages, definitions, options)
-	startedAt := client.now()
-	var firstChunkAt, lastChunkAt, firstStreamUpdateAt time.Time
-	var streamUpdates int
-	var streamStalls time.Duration
+	sampler := &streamSampler{startedAt: client.now()}
+	live := beginLiveSpeed(ctx)
+	if live != nil {
+		ctx = context.WithValue(ctx, liveSpeedKey{}, live)
+	}
 	wrappedOnChunk := func(chunk string) {
 		if chunk != "" {
-			chunkAt := client.now()
-			if firstChunkAt.IsZero() {
-				firstChunkAt = chunkAt
-			} else {
-				streamUpdates++
-				if firstStreamUpdateAt.IsZero() {
-					firstStreamUpdateAt = chunkAt
-				} else if gap := chunkAt.Sub(lastChunkAt); gap >= 500*time.Millisecond {
-					// Use stalls only to detect pause-then-burst delivery. They
-					// remain part of generationDuration and therefore of TPS.
-					streamStalls += gap
-				}
-			}
-			lastChunkAt = chunkAt
+			at := client.now()
+			sampler.add(chunk, at)
+			live.report(sampler.estimatedSpeed(), at)
 		}
 		if countsLiveDeltas {
 			reportLiveTokenDelta(ctx, chunk)
@@ -230,25 +236,67 @@ func (client *generationMetricsClient) CreateChatCompletionStreamWithOptions(ctx
 	}
 	turnGenerationCollectorFromContext(ctx).recordUsage(message.Usage)
 	finishUsage(message)
-	if err != nil || firstChunkAt.IsZero() || len(message.ToolCalls) > 0 || message.FinalContent() == "" {
+	if err != nil || sampler.firstChunkAt.IsZero() {
 		return message, err
 	}
-	var streamSpan time.Duration
-	if !firstStreamUpdateAt.IsZero() {
-		streamSpan = lastChunkAt.Sub(firstStreamUpdateAt)
+	candidate := sampler.candidate(message)
+	speed := sampler.estimatedSpeed()
+	if len(message.ToolCalls) == 0 {
+		// Final usage replaces the text estimate, as in the turn metrics.
+		if visible := candidate.completionTokens - candidate.reasoningTokens; visible > 1 && candidate.generationDuration > 0 && candidate.reliableStream() {
+			speed = float64(visible-1) / candidate.generationDuration.Seconds()
+		}
 	}
-	turnGenerationCollectorFromContext(ctx).record(generationCandidate{
+	// Replace (or retract) live samples with the value the API will report,
+	// e.g. when later deltas arrive as a buffered dump and fail the check.
+	live.flush(turnGenerationCollectorFromContext(ctx).recordSpeed(speed))
+	if len(message.ToolCalls) > 0 || message.FinalContent() == "" {
+		return message, nil
+	}
+	turnGenerationCollectorFromContext(ctx).record(candidate)
+	return message, nil
+}
+
+// streamSampler records visible text deltas of one streamed call. The first
+// delta marks TTFT and is excluded from speed, so both the live estimate and
+// the final rate cover only first-to-last-delta generation time.
+type streamSampler struct {
+	startedAt, firstChunkAt, lastChunkAt time.Time
+	streamUpdates                        int
+	// units accumulate tokenEstimateUnits after the first delta.
+	units int
+}
+
+func (sampler *streamSampler) add(chunk string, at time.Time) {
+	if sampler.firstChunkAt.IsZero() {
+		sampler.firstChunkAt = at
+	} else {
+		sampler.streamUpdates++
+		sampler.units += tokenEstimateUnits(chunk)
+	}
+	sampler.lastChunkAt = at
+}
+
+func (sampler *streamSampler) candidate(message AssistantMessage) generationCandidate {
+	return generationCandidate{
 		content:             message.FinalContent(),
-		firstTokenLatency:   firstChunkAt.Sub(startedAt),
+		firstTokenLatency:   sampler.firstChunkAt.Sub(sampler.startedAt),
 		promptTokens:        message.Usage.PromptTokens,
 		cachedPromptTokens:  message.Usage.CachedPromptTokens,
 		cacheUsageAvailable: message.Usage.CacheUsageAvailable,
 		completionTokens:    message.Usage.CompletionTokens,
 		reasoningTokens:     message.Usage.ReasoningTokens,
-		generationDuration:  lastChunkAt.Sub(firstChunkAt),
-		streamUpdates:       streamUpdates,
-		streamSpan:          streamSpan,
-		streamStalls:        streamStalls,
-	})
-	return message, nil
+		generationDuration:  sampler.lastChunkAt.Sub(sampler.firstChunkAt),
+		streamUpdates:       sampler.streamUpdates,
+	}
+}
+
+// estimatedSpeed applies the same check as the final rate to the text-based
+// token estimate, so it is available from the second delta, before usage.
+func (sampler *streamSampler) estimatedSpeed() float64 {
+	candidate := sampler.candidate(AssistantMessage{})
+	if sampler.units <= 0 || candidate.generationDuration <= 0 || !candidate.reliableStream() {
+		return 0
+	}
+	return float64(sampler.units) / 4 / candidate.generationDuration.Seconds()
 }

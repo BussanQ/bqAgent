@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -203,7 +204,11 @@ func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *Generation
 		generation.CacheUsageAvailable = metrics.CacheUsageAvailable
 		generation.CompletionTokens = metrics.CompletionTokens
 		generation.ReasoningTokens = metrics.ReasoningTokens
-		generation.TokensPerSecond = metrics.TokensPerSecond
+	}
+	// The rate may come from an earlier call when the final one has no
+	// reliable sample, so it does not depend on final-call availability.
+	if speed := metrics.TokensPerSecond; speed > 0 && !math.IsInf(speed, 0) {
+		generation.TokensPerSecond = speed
 	}
 	if metrics.GenerationDuration > 0 {
 		generation.GenerationDurationMS = metrics.GenerationDuration.Milliseconds()

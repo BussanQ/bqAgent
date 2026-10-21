@@ -104,10 +104,10 @@ func (backend *tuiBackend) RunTurnWithAttachments(ctx context.Context, sessionID
 			events.Usage(apptui.TokenUsage{
 				InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
 				InputEstimated: usage.InputEstimated, OutputEstimated: usage.OutputEstimated, Calls: usage.Calls,
-				GenerationDuration: usage.GenerationDuration, ActiveSince: usage.ActiveSince,
 			})
 		})
 	}
+	ctx = agent.WithLiveSpeed(ctx, events.Speed)
 	ctx = agent.WithContextUsage(ctx, events.Context)
 	response, err := backend.service.HandleTurnWithOptions(ctx, appserver.TurnRequest{
 		SessionID:       sessionID,

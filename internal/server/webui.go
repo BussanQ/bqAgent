@@ -498,9 +498,14 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	flusher.Flush()
 
 	stream := &sseStream{writer: writer, flusher: flusher}
+	ctx := agent.WithLiveSpeed(request.Context(), func(speed float64) {
+		stream.mu.Lock()
+		defer stream.mu.Unlock()
+		writeSSEEvent(writer, flusher, "speed", map[string]float64{"tokens_per_second": speed})
+	})
 	// WebUI follows the browser request lifetime and the service-wide runaway
 	// valve; the tighter channel budgets are reserved for message delivery paths.
-	response, err := service.HandleTurnWithOptions(request.Context(), TurnRequest{
+	response, err := service.HandleTurnWithOptions(ctx, TurnRequest{
 		SessionID:        turnRequest.SessionID,
 		Message:          turnRequest.Message,
 		TurnID:           turnRequest.TurnID,

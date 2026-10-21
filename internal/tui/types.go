@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"io"
-	"time"
 
 	"bqagent/internal/chatcommand"
 	"bqagent/internal/modelcatalog"
@@ -58,7 +57,10 @@ type TurnEvents struct {
 	Progress func(string)
 	Tool     func(ToolEvent)
 	Usage    func(TokenUsage)
-	Context  func(turn.ContextUsage)
+	// Speed reports the visible-output tokens/s of the current model call,
+	// throttled by the agent; the final value matches TurnResult metrics.
+	Speed   func(float64)
+	Context func(turn.ContextUsage)
 }
 
 type TokenUsage struct {
@@ -67,10 +69,6 @@ type TokenUsage struct {
 	InputEstimated  bool
 	OutputEstimated bool
 	Calls           int
-	// GenerationDuration covers finished model requests; ActiveSince is the
-	// start of the in-flight request (zero when none is running).
-	GenerationDuration time.Duration
-	ActiveSince        time.Time
 }
 
 type ToolEvent struct {
