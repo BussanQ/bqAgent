@@ -263,6 +263,9 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				onChunk(event.Delta)
 			}
 		case "response.output_item.added":
+			if event.Item.Type == "reasoning" {
+				reportHiddenReasoning(ctx)
+			}
 			if event.Item.Type != "function_call" {
 				messageItems[messageIndex] = event.Item
 			}
@@ -294,7 +297,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 				continue
 			}
 			call.arguments.WriteString(event.Delta)
-			reportLiveTokenDelta(ctx, event.Delta)
+			reportOutputDelta(ctx, event.Delta)
 		case "response.function_call_arguments.done":
 			if event.Arguments != nil {
 				state.semanticOutput = true
@@ -346,7 +349,13 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 		}
 		if strings.Contains(event.Type, "reasoning") && strings.HasSuffix(event.Type, ".delta") && event.Delta != "" {
 			state.markSemantic(ctx)
-			reportLiveTokenDelta(ctx, event.Delta)
+			// Only raw reasoning text means the reasoning tokens were generated
+			// in the stream; a summary is written after hidden reasoning.
+			if strings.Contains(event.Type, "summary") {
+				reportReasoningSummaryDelta(ctx, event.Delta)
+			} else {
+				reportReasoningDelta(ctx, event.Delta)
+			}
 		}
 		reportLiveTokenUsage(ctx, tokenUsageFromOpenAIResponse(event.Response.Usage))
 		if sawTerminal {

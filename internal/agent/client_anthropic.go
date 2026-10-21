@@ -192,6 +192,9 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 			usage = event.Message.Usage.tokenUsage()
 			reportLiveTokenUsage(ctx, usage)
 		case "content_block_start":
+			if event.ContentBlock.Type == "redacted_thinking" {
+				reportHiddenReasoning(ctx)
+			}
 			if event.ContentBlock.Type == "tool_use" {
 				state.markSemantic(ctx)
 				if event.Index == nil || *event.Index < 0 {
@@ -232,9 +235,9 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 					return AssistantMessage{}, providerProtocolError("anthropic tool argument delta has no active tool block", nil)
 				}
 				call.arguments.WriteString(event.Delta.PartialJSON)
-				reportLiveTokenDelta(ctx, event.Delta.PartialJSON)
+				reportOutputDelta(ctx, event.Delta.PartialJSON)
 			case "thinking_delta", "signature_delta":
-				reportLiveTokenDelta(ctx, event.Delta.Thinking)
+				reportReasoningDelta(ctx, event.Delta.Thinking)
 				if event.Delta.Thinking != "" || event.Delta.Signature != "" || event.Delta.Text != "" {
 					state.markSemantic(ctx)
 				}

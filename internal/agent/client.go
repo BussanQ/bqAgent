@@ -574,7 +574,7 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 		}
 		if delta.ReasoningContent != "" || delta.Reasoning != "" {
 			state.markSemantic(ctx)
-			reportLiveTokenDelta(ctx, firstNonBlank(delta.ReasoningContent, delta.Reasoning))
+			reportReasoningDelta(ctx, firstNonBlank(delta.ReasoningContent, delta.Reasoning))
 		}
 		if len(delta.ToolCalls) > 0 {
 			state.semanticOutput = true
@@ -627,7 +627,7 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 			}
 			if tc.Function.Arguments != "" {
 				ptc.arguments.WriteString(tc.Function.Arguments)
-				reportLiveTokenDelta(ctx, tc.Function.Arguments)
+				reportOutputDelta(ctx, tc.Function.Arguments)
 			}
 		}
 		reportLiveTokenUsage(ctx, chunk.Usage.tokenUsage())

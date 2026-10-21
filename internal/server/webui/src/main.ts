@@ -1634,7 +1634,7 @@ import { createDoctorController } from "./doctor-controller";
             statusEl.classList.remove("busy");
             statusEl.classList.add("error");
           } else if (evt.event === "speed") {
-            // 服务端从第二个可见 delta 起推送当前调用速率（约每 3 秒一次），调用结束时推送
+            // 服务端在生成满 1 秒后推送当前调用速率（约每 3 秒一次），调用结束时推送
             // 与 done 一致的值；0 表示撤销此前的实时值。
             var liveSpeed = formatGenerationSpeed(parseJSONEvent<{ tokens_per_second?: number }>(evt.data).tokens_per_second);
             if (busy) statusEl.textContent = liveSpeed ? "处理中 · " + liveSpeed : "处理中";

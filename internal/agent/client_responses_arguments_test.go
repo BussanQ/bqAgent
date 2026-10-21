@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestResponsesStreamFinalToolArguments(t *testing.T) {
@@ -127,6 +128,81 @@ func TestResponsesStreamFinalToolArguments(t *testing.T) {
 			}
 			if chunks.String() != "checking" || message.FinalContent() != wantContent || message.Usage.TotalTokens != 5 || message.Completion.OutputTruncated != test.truncated {
 				t.Fatalf("stream content, usage or completion lost: chunks=%q message=%#v", chunks.String(), message)
+			}
+		})
+	}
+}
+
+func TestResponsesStreamMarksHiddenReasoning(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		item     string
+		delta    string
+		hidden   bool
+		streamed bool
+	}{
+		{name: "encrypted reasoning item", item: "reasoning", hidden: true},
+		{name: "message item", item: "message"},
+		// A summary is written after hidden reasoning, not the reasoning itself.
+		{name: "reasoning summary", item: "message", delta: "response.reasoning_summary_text.delta", hidden: true},
+		{name: "raw reasoning text", item: "message", delta: "response.reasoning_text.delta", streamed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stream := fmt.Sprintf("data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":%q,\"id\":\"item_1\"}}\n\n", test.item)
+			if test.delta != "" {
+				stream += fmt.Sprintf("data: {\"type\":%q,\"delta\":\"think\"}\n\n", test.delta)
+			}
+			stream +=
+				"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n" +
+					"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n"
+			httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(stream))}, nil
+			})}
+			client := newTestResilientClient(APITypeOpenAIResponse, "https://stream.test", httpClient, 0)
+			sampler := &streamSampler{now: time.Now}
+			ctx := context.WithValue(context.Background(), outputSamplerKey{}, sampler)
+			if _, err := client.CreateChatCompletionStream(ctx, "test-model", nil, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			if sampler.hiddenReasoning != test.hidden || sampler.sawReasoning != test.streamed {
+				t.Fatalf("hidden = %v, streamed = %v; want %v, %v", sampler.hiddenReasoning, sampler.sawReasoning, test.hidden, test.streamed)
+			}
+		})
+	}
+}
+
+func TestAnthropicStreamMarksHiddenReasoning(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		block    string
+		hidden   bool
+		streamed bool
+	}{
+		{name: "redacted thinking", block: `{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking"}}`, hidden: true},
+		{name: "thinking delta", block: `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"think"}}`, streamed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stream := ""
+			for _, event := range []string{
+				`{"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":0}}}`,
+				test.block,
+				`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ok"}}`,
+				`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}`,
+				`{"type":"message_stop"}`,
+			} {
+				stream += "data: " + event + "\n\n"
+			}
+			httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(stream))}, nil
+			})}
+			client := newTestResilientClient(APITypeAnthropic, "https://stream.test", httpClient, 0)
+			sampler := &streamSampler{now: time.Now}
+			ctx := context.WithValue(context.Background(), outputSamplerKey{}, sampler)
+			if _, err := client.CreateChatCompletionStream(ctx, "test-model", nil, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			if sampler.hiddenReasoning != test.hidden || sampler.sawReasoning != test.streamed {
+				t.Fatalf("hidden = %v, streamed = %v; want %v, %v", sampler.hiddenReasoning, sampler.sawReasoning, test.hidden, test.streamed)
 			}
 		})
 	}

@@ -1497,13 +1497,14 @@ func TestWebUIStreamChatEmitsSpeedMatchingDone(t *testing.T) {
 	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := writer.(http.Flusher)
-		// Paced deltas produce live samples before the final rate.
-		for index := 0; index < 8; index++ {
+		// Paced deltas spanning more than minSpeedWindow produce a live
+		// sample before the final rate.
+		for index := 0; index < 6; index++ {
 			fmt.Fprintf(writer, "data: %s\n\n", streamDeltaJSON("word "))
 			if flusher != nil {
 				flusher.Flush()
 			}
-			time.Sleep(40 * time.Millisecond)
+			time.Sleep(250 * time.Millisecond)
 		}
 		fmt.Fprintln(writer, `data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":40,"total_tokens":44}}`)
 		fmt.Fprint(writer, "data: [DONE]\n\n")

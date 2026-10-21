@@ -7,7 +7,8 @@ import (
 )
 
 // LiveSpeedInterval throttles in-flight speed updates to keep the value
-// readable. The first measurable sample is reported immediately.
+// readable. Each call's first measurable sample (after minSpeedWindow of
+// generation) is reported immediately.
 const LiveSpeedInterval = 3 * time.Second
 
 type liveSpeedKey struct{}
@@ -48,6 +49,17 @@ func beginLiveSpeed(ctx context.Context) *liveSpeedCall {
 	return &liveSpeedCall{shared: shared}
 }
 
+// due reports whether a sample at would pass the throttle, so callers can
+// skip computing the estimate for most deltas.
+func (call *liveSpeedCall) due(at time.Time) bool {
+	if call == nil {
+		return false
+	}
+	call.shared.mu.Lock()
+	defer call.shared.mu.Unlock()
+	return call.shared.reported.IsZero() || at.Sub(call.shared.reported) >= LiveSpeedInterval
+}
+
 func (call *liveSpeedCall) report(speed float64, at time.Time) {
 	if call == nil || speed <= 0 {
 		return
@@ -68,6 +80,9 @@ func (call *liveSpeedCall) flush(speed float64) {
 	}
 	call.shared.mu.Lock()
 	defer call.shared.mu.Unlock()
+	// The next call (e.g. after a tool round) reports its first sample
+	// without waiting out this call's throttle.
+	call.shared.reported = time.Time{}
 	call.shared.emit(speed)
 }
 

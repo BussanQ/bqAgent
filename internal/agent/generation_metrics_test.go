@@ -80,8 +80,8 @@ func TestRunConversationTurnWithGenerationMetrics(t *testing.T) {
 	if !metrics.CacheUsageAvailable || metrics.PromptTokens != 100 || metrics.CachedPromptTokens != 75 {
 		t.Fatalf("cache metrics = %#v", metrics)
 	}
-	if metrics.GenerationDuration <= 0 || metrics.TokensPerSecond <= 0 {
-		t.Fatalf("generation metrics = %#v, want a rate from two updates", metrics)
+	if metrics.GenerationDuration <= 0 || metrics.TokensPerSecond != 0 {
+		t.Fatalf("generation metrics = %#v, want no rate for a sub-second window", metrics)
 	}
 }
 
@@ -136,26 +136,37 @@ func TestRunConversationTurnWithGenerationMetricsUsesFinalTextCall(t *testing.T)
 	}
 }
 
-func TestGenerationMetricsRateExcludesReasoningTokens(t *testing.T) {
-	collector := &turnGenerationCollector{}
-	collector.record(generationCandidate{
-		content:            "answer",
-		firstTokenLatency:  250 * time.Millisecond,
-		completionTokens:   12,
-		reasoningTokens:    2,
-		generationDuration: time.Second,
-		streamUpdates:      5,
-	})
-
-	metrics := collector.metricsFor("answer")
-	if !metrics.Available {
-		t.Fatal("metrics are unavailable")
-	}
-	if math.Abs(metrics.TokensPerSecond-9) > 0.0001 {
-		t.Fatalf("tokens per second = %v, want 9", metrics.TokensPerSecond)
-	}
-	if mismatched := collector.metricsFor("different answer"); mismatched.Available {
-		t.Fatalf("mismatched metrics = %#v, want unavailable", mismatched)
+func TestGenerationMetricsRateCountsOnlyStreamedReasoning(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		streamed bool
+		want     float64
+	}{
+		// Hidden reasoning was generated before the window opened.
+		{name: "hidden", want: 9},
+		// Streamed reasoning was generated inside it (ccstatusline counts it).
+		{name: "streamed", streamed: true, want: 11},
+	} {
+		collector := &turnGenerationCollector{}
+		collector.record(generationCandidate{
+			content:            "answer",
+			firstTokenLatency:  250 * time.Millisecond,
+			completionTokens:   12,
+			reasoningTokens:    2,
+			generationDuration: time.Second,
+			streamUpdates:      5,
+			reasoningStreamed:  test.streamed,
+		})
+		metrics := collector.metricsFor("answer")
+		if !metrics.Available {
+			t.Fatalf("%s: metrics are unavailable", test.name)
+		}
+		if math.Abs(metrics.TokensPerSecond-test.want) > 0.0001 {
+			t.Fatalf("%s: tokens per second = %v, want %v", test.name, metrics.TokensPerSecond, test.want)
+		}
+		if mismatched := collector.metricsFor("different answer"); mismatched.Available {
+			t.Fatalf("%s: mismatched metrics = %#v, want unavailable", test.name, mismatched)
+		}
 	}
 }
 
