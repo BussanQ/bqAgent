@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -24,6 +27,7 @@ func runTUI(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, gete
 		fmt.Fprintln(stderr, tuiTerminalRequired)
 		return 1
 	}
+	defer redirectStandardLog(filepath.Join(ws.AgentDir(), "tui", "tui.log"))()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	herdrReporter := newHerdrReporter(getenv, options)
@@ -47,6 +51,29 @@ func runTUI(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, gete
 		return 1
 	}
 	return 0
+}
+
+// redirectStandardLog keeps background log.Printf output (session upkeep,
+// memory append) off the terminal while the TUI owns it: stray writes break the
+// inline renderer's line accounting and leave duplicated lines in scrollback.
+// The returned func restores the previous output.
+func redirectStandardLog(path string) func() {
+	previous := log.Writer()
+	var file *os.File
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
+		file, _ = os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	}
+	if file != nil {
+		log.SetOutput(file)
+	} else {
+		log.SetOutput(io.Discard)
+	}
+	return func() {
+		log.SetOutput(previous)
+		if file != nil {
+			_ = file.Close()
+		}
+	}
 }
 
 func interactiveTerminal(stdin io.Reader, stdout io.Writer, getenv func(string) string) bool {

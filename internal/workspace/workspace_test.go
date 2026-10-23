@@ -589,37 +589,6 @@ func TestBuildSystemPromptPrefersDotAgentOverLegacyWorkspace(t *testing.T) {
 	}
 }
 
-func TestAppendMemoryPrefersWorkspaceDailyMemoryFile(t *testing.T) {
-	root := t.TempDir()
-	ws := &Workspace{Root: root}
-	if err := os.MkdirAll(filepath.Join(root, ".agent"), 0o755); err != nil {
-		t.Fatalf("failed to create .agent directory: %v", err)
-	}
-
-	originalNowFunc := nowFunc
-	nowFunc = func() time.Time { return time.Date(2026, 3, 21, 11, 30, 0, 0, time.Local) }
-	defer func() { nowFunc = originalNowFunc }()
-
-	if err := ws.AppendMemory("inspect repo", "done"); err != nil {
-		t.Fatalf("AppendMemory returned error: %v", err)
-	}
-
-	content, err := os.ReadFile(filepath.Join(root, ".agent", "memory", "2026-03-21.md"))
-	if err != nil {
-		t.Fatalf("failed to read .agent daily memory file: %v", err)
-	}
-	text := string(content)
-	if !strings.Contains(text, "**Task:** inspect repo") {
-		t.Fatalf("memory content = %q, want task entry", text)
-	}
-	if fileExists(filepath.Join(root, ".agent", "memory", "MEMORY.md")) {
-		t.Fatalf("long-term memory file should not receive automatic daily entries")
-	}
-	if fileExists(filepath.Join(root, "agent_memory.md")) {
-		t.Fatalf("legacy memory file should not be created when .agent/ exists")
-	}
-}
-
 func TestMemoryEnabledSupportsLegacyWorkspaceMemory(t *testing.T) {
 	root := t.TempDir()
 	ws := &Workspace{Root: root}

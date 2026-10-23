@@ -907,46 +907,6 @@ func TestServiceHandleTurnHotReloadsSkillSectionForExistingSession(t *testing.T)
 	}
 }
 
-func TestServiceHandleTurnAppendsMemory(t *testing.T) {
-	llmServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"memory reply"}}]}`))
-	}))
-	defer llmServer.Close()
-
-	root := t.TempDir()
-	var (
-		task   string
-		result string
-	)
-	service := NewService(ServiceOptions{
-		WorkspaceRoot:   root,
-		Client:          agent.NewClient("", llmServer.URL, nil),
-		SystemPrompt:    "You are a helpful assistant. Be concise.",
-		ToolDefinitions: tools.NewCatalog(tools.Options{WorkspaceRoot: root}).Definitions(),
-		Functions:       tools.NewCatalog(tools.Options{WorkspaceRoot: root}).Registry(),
-		MemoryAppend: func(savedTask, savedResult string) error {
-			task = savedTask
-			result = savedResult
-			return nil
-		},
-	})
-
-	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "remember this"})
-	if err != nil {
-		t.Fatalf("HandleTurn returned error: %v", err)
-	}
-	if response.Reply != "memory reply" {
-		t.Fatalf("reply = %q, want %q", response.Reply, "memory reply")
-	}
-	if task != "remember this" {
-		t.Fatalf("memory task = %q, want %q", task, "remember this")
-	}
-	if result != "memory reply" {
-		t.Fatalf("memory result = %q, want %q", result, "memory reply")
-	}
-}
-
 type failingChatClient struct{}
 
 func (failingChatClient) CreateChatCompletion(context.Context, string, []map[string]any, []tools.Definition) (agent.AssistantMessage, error) {

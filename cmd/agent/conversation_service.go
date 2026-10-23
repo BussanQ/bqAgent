@@ -11,7 +11,6 @@ import (
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
 	"bqagent/internal/globalconfig"
-	appmemory "bqagent/internal/memory"
 	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
 	"bqagent/internal/subagent"
@@ -46,17 +45,6 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		}
 	})
 	subagentManager := subagent.NewManager(ws.Root, externalBroker, runtime.RunTraceEnabled)
-	var memoryAppend func(task, result string) error
-	if ws.MemoryEnabled() {
-		memoryAppend = func(task, result string) error {
-			content := "Task: " + task + "\nResult: " + result
-			if len(content) > appmemory.MaxContentSize {
-				content = content[:appmemory.MaxContentSize]
-			}
-			_, err := runtime.Memory.Add(appmemory.KindLesson, content, "", .6, "normal", nil)
-			return err
-		}
-	}
 
 	service := appserver.NewService(appserver.ServiceOptions{
 		ProviderID:        runtimeConfig.ProviderID,
@@ -79,7 +67,6 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 		Functions:                 runtime.Catalog.Registry(),
 		ExternalBroker:            externalBroker,
 		GroupExternalAgentTimeout: groupExternalAgentTimeoutFromEnv(getenv),
-		MemoryAppend:              memoryAppend,
 		Context:                   runtime.Context,
 		BashJobs:                  runtime.BashJobs,
 		RunTraceEnabled:           runtime.RunTraceEnabled,

@@ -53,7 +53,6 @@ type ServiceOptions struct {
 	DefaultMaxTurns           int
 	ExternalBroker            *extagent.Broker
 	GroupExternalAgentTimeout time.Duration
-	MemoryAppend              func(task, result string) error
 	Context                   agent.ContextConfig
 	BashJobs                  tools.BashJobOptions
 	RunTraceEnabled           bool
@@ -93,7 +92,6 @@ type Service struct {
 	locker                    *KeyedLocker
 	externalBroker            *extagent.Broker
 	groupExternalAgentTimeout time.Duration
-	memoryAppend              func(task, result string) error
 	context                   agent.ContextConfig
 	bashJobOptions            tools.BashJobOptions
 	processGroupStops         *processGroupStopRegistry
@@ -298,7 +296,6 @@ func NewService(options ServiceOptions) *Service {
 		externalBroker:            options.ExternalBroker,
 		doctor:                    options.Doctor,
 		groupExternalAgentTimeout: groupExternalAgentTimeout,
-		memoryAppend:              options.MemoryAppend,
 		context:                   options.Context,
 		bashJobOptions:            options.BashJobs,
 		processGroupStops:         newProcessGroupStopRegistry(),
@@ -1006,7 +1003,6 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 				writeTurnError(turnErrorWriter, err)
 				return TurnResponse{}, err
 			}
-			service.appendMemory(message, result.Reply)
 			writeTurnReply(logWriter, result.Reply, false)
 			if runRecorder != nil {
 				_ = runRecorder.Event("external_agent", map[string]any{"agent": routedAgent, "transport": result.State.Transport, "external_session_id": result.State.ExternalSessionID})
@@ -1082,9 +1078,6 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		writeTurnError(turnErrorWriter, err)
 		markConversationFailed(conversation, err)
 		return response, err
-	}
-	if mode == ChatModeRun {
-		service.appendMemory(effectiveText, result)
 	}
 	writeTurnReply(logWriter, result, options.Stream)
 
@@ -1638,15 +1631,6 @@ func cloneFunctions(functions map[string]tools.Function) map[string]tools.Functi
 func markConversationFailed(conversation *appruntime.Conversation, err error) {
 	if markErr := conversation.MarkFailed(err); markErr != nil {
 		log.Printf("session mark-failed failed: %v", markErr)
-	}
-}
-
-func (service *Service) appendMemory(task, result string) {
-	if service == nil || service.memoryAppend == nil {
-		return
-	}
-	if err := service.memoryAppend(task, result); err != nil {
-		log.Printf("memory append failed: %v", err)
 	}
 }
 

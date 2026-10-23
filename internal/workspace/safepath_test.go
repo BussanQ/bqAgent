@@ -69,19 +69,6 @@ func TestRootFileOperationsRejectEscapingDirectorySymlink(t *testing.T) {
 	}
 }
 
-func TestAppendMemoryRejectsEscapingMemorySymlink(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agent"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	symlinkOrSkip(t, outside, filepath.Join(root, ".agent", "memory"))
-
-	if err := (&Workspace{Root: root}).AppendMemory("task", "result"); err == nil {
-		t.Fatal("AppendMemory accepted an escaping memory symlink")
-	}
-}
-
 func TestReadFileRejectsSymlinkSwappedAfterRootOpen(t *testing.T) {
 	root := t.TempDir()
 	inside := filepath.Join(root, "inside")

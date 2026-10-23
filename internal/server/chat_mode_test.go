@@ -75,11 +75,10 @@ func TestAskAndRunCommandsSelectAndPersistSessionMode(t *testing.T) {
 	}
 }
 
-func TestAskModeExposesOnlyReadOnlyToolsAndSkipsMemoryWrite(t *testing.T) {
+func TestAskModeExposesOnlyReadOnlyTools(t *testing.T) {
 	root := t.TempDir()
 	catalog := tools.NewCatalog(tools.Options{WorkspaceRoot: root, SearchAPIKey: "test-search-key"})
 	client := &chatModeRecordingClient{}
-	memoryWrites := 0
 	service := NewService(ServiceOptions{
 		WorkspaceRoot:   root,
 		Client:          client,
@@ -87,10 +86,6 @@ func TestAskModeExposesOnlyReadOnlyToolsAndSkipsMemoryWrite(t *testing.T) {
 		SystemPrompt:    "base prompt",
 		ToolDefinitions: catalog.Definitions(),
 		Functions:       catalog.Registry(),
-		MemoryAppend: func(_, _ string) error {
-			memoryWrites++
-			return nil
-		},
 	})
 
 	response, err := service.HandleTurn(context.Background(), TurnRequest{Message: "分析这个项目", Mode: ChatModeAsk})
@@ -99,9 +94,6 @@ func TestAskModeExposesOnlyReadOnlyToolsAndSkipsMemoryWrite(t *testing.T) {
 	}
 	if response.Mode != ChatModeAsk {
 		t.Fatalf("mode = %q, want ask", response.Mode)
-	}
-	if memoryWrites != 0 {
-		t.Fatalf("memory writes = %d, want 0", memoryWrites)
 	}
 	if len(client.definitions) != 1 {
 		t.Fatalf("model calls = %d, want 1", len(client.definitions))

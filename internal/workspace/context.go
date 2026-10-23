@@ -171,46 +171,6 @@ func promptHash(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (w *Workspace) AppendMemory(task, result string) error {
-	if primary := w.primaryConfigLayer(); primary.Root != w.Root {
-		return primary.AppendMemory(task, result)
-	}
-	task = strings.TrimSpace(task)
-	result = strings.TrimSpace(result)
-	if task == "" && result == "" {
-		return nil
-	}
-
-	root, err := w.openRoot()
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-
-	now := nowFunc()
-	memoryPath := w.MemoryPath()
-	if w.UsesWorkspaceContext() {
-		memoryPath = w.DailyMemoryPath(now.Format("2006-01-02"))
-	}
-	memoryPath, err = w.pathInsideRoot(memoryPath)
-	if err != nil {
-		return err
-	}
-	if err := root.MkdirAll(filepath.Dir(memoryPath), 0o755); err != nil {
-		return err
-	}
-
-	entry := fmt.Sprintf("\n## %s\n**Task:** %s\n**Result:** %s\n", now.Format("2006-01-02 15:04:05"), task, result)
-	file, err := root.OpenFile(memoryPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	_, err = file.WriteString(entry)
-	return err
-}
-
 // workspaceSection lists only the locations the model may need to act on.
 // Legacy locations are mentioned only when they exist in this workspace.
 func (w *Workspace) workspaceSection() string {
