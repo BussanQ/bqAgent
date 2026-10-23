@@ -169,3 +169,39 @@ func (s *runState) hasMutationSinceInput() bool {
 	s.mu.Unlock()
 	return s.ledger.hasMutation(since)
 }
+
+// outcomeDeclaration is the current request's obstacle recorded by a
+// successful task_update (blocked/awaiting_input/cancelled).
+type outcomeDeclaration struct {
+	status turn.Status
+	reason string
+}
+
+func (s *runState) declareOutcome(status turn.Status, reason string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.declaration = &outcomeDeclaration{status: status, reason: reason}
+	s.mu.Unlock()
+}
+
+func (s *runState) canAcceptFollowUp() bool {
+	if s == nil {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.outcome.Status == turn.Completed && (s.declaration == nil || s.declaration.status == turn.Completed)
+}
+
+func (s *runState) applyDeclaredOutcome() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.declaration != nil && s.outcome.Status == turn.Completed {
+		s.outcome.Set(s.declaration.status, s.declaration.reason)
+	}
+}

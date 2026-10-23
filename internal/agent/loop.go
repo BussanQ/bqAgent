@@ -114,7 +114,6 @@ type Options struct {
 	// EnableNativeWebSearch allows adding model-backed search to an explicitly
 	// supplied toolset. Default toolsets enable it automatically.
 	EnableNativeWebSearch bool
-	DisableTurnOutcome    bool
 
 	TurnID          string
 	MessageSink     turn.Sink
@@ -245,9 +244,6 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 	if options.EnableNativeWebSearch || (options.ToolDefinitions == nil && options.Functions == nil) {
 		app.installNativeWebSearch(searchClient)
 	}
-	if !options.DisableTurnOutcome {
-		app.installTurnOutcomeTool()
-	}
 	app.installTaskTool()
 	return app
 }
@@ -335,7 +331,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			return a.finishStageCheckpoint(ctx, updatedMessages, reason, actualIterations)
 		}
 		if inputs != nil {
-			messages, err = a.appendTurnInputs(ctx, messages, inputs.TakeSteering())
+			messages, err = a.appendTurnInputs(ctx, messages, inputs.TakeSteering(), false)
 			updatedMessages = messages
 			if err != nil {
 				return "", updatedMessages, err
@@ -348,14 +344,15 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		definitions := loopGuard.filterDefinitions(a.toolDefinitionsForRun())
 		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort, ServiceTier: a.serviceTier}
 		completionOptions.PromptCache = buildPromptCacheOptions(a.apiType, a.model, a.prompt, definitions, completionOptions)
-		requestMessages, compacted, budgetErr := a.buildRequestMessagesChecked(explorationCtx, messages, definitions, completionOptions)
+		requestMessages, _, budgetErr := a.buildRequestMessagesChecked(explorationCtx, messages, definitions, completionOptions)
 		if budgetErr != nil {
 			return "", updatedMessages, budgetErr
 		}
-		if compacted != nil {
-			messages = compacted
-			updatedMessages = compacted
+		if recordErr := a.recordRequestTaskContext(messages, requestMessages); recordErr != nil {
+			return "", updatedMessages, recordErr
 		}
+		messages = requestMessages
+		updatedMessages = requestMessages
 		var (
 			message    AssistantMessage
 			requestErr error
@@ -492,7 +489,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			if inputs != nil && canContinue {
 				if pending := inputs.TakeSteering(); len(pending) > 0 {
 					state.emit(itemID, "message.completed", "commentary", contentText(message.Content))
-					updatedMessages, err = a.appendTurnInputs(ctx, updatedMessages, pending)
+					updatedMessages, err = a.appendTurnInputs(ctx, updatedMessages, pending, true)
 					messages = updatedMessages
 					if err != nil {
 						return "", updatedMessages, err
@@ -519,7 +516,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				if inputs != nil && canContinue && state.canAcceptFollowUp() {
 					if pending := inputs.Finish(); len(pending) > 0 {
 						state.emit(itemID, "message.completed", "commentary", finalContent)
-						updatedMessages, err = a.appendTurnInputs(ctx, updatedMessages, pending)
+						updatedMessages, err = a.appendTurnInputs(ctx, updatedMessages, pending, true)
 						messages = updatedMessages
 						if err != nil {
 							return "", updatedMessages, err

@@ -132,7 +132,7 @@ func (a *Agent) hasSpecialToolCalls(toolCalls []ToolCall) bool {
 			}
 		}
 		switch toolCall.Function.Name {
-		case "bash_wait", "bash_kill", "write_file", "edit_file", "task_update", "task_scope", "turn_outcome":
+		case "bash_wait", "bash_kill", "write_file", "edit_file", "task_update", "task_scope":
 			return true
 		case "consult_group_agent":
 			return true

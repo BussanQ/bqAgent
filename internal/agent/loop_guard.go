@@ -210,7 +210,7 @@ func (t *progressTracker) observe(call ToolCall, result string) bool {
 		return fresh
 	}
 	switch call.Function.Name {
-	case "task_scope", "task_update", "turn_outcome":
+	case "task_scope", "task_update":
 		return false
 	}
 	if !toolResultMadeProgress(call, result) {

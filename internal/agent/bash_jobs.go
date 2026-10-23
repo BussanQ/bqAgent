@@ -44,7 +44,7 @@ func pendingBashConflict(ctx context.Context, name string, args map[string]any) 
 		return ""
 	}
 	switch name {
-	case "bash_wait", "bash_kill", "task_update", "task_scope", "turn_outcome", "web_search", "web_fetch":
+	case "bash_wait", "bash_kill", "task_update", "task_scope", "web_search", "web_fetch":
 		return ""
 	}
 	mutating := name == "write_file" || name == "edit_file" || name == "consult_group_agent"

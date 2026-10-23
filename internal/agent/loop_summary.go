@@ -66,13 +66,15 @@ func (a *Agent) finishStageCheckpoint(ctx context.Context, messages []map[string
 		"role":    "developer",
 		"content": fmt.Sprintf("The current interactive analysis stage must stop now because %s. Based only on the work and tool results above, provide a concise checkpoint with exactly these sections: 已发现, 未完成, 建议下一步. State that the user can reply ‘继续’ to resume from this session. Do not call tools.", reason),
 	}
-	request, compacted, budgetErr := a.buildRequestMessagesWithTail(ctx, messages, nil, ChatCompletionOptions{}, []map[string]any{stopInstruction})
+	request, _, budgetErr := a.buildRequestMessagesWithTail(ctx, messages, nil, ChatCompletionOptions{}, []map[string]any{stopInstruction})
 	if budgetErr != nil {
 		return "", messages, budgetErr
 	}
-	if compacted != nil {
-		messages = compacted
+	if recordErr := a.recordRequestTaskContext(messages, request); recordErr != nil {
+		return "", messages, recordErr
 	}
+	// The stop instruction applies only to this checkpoint request.
+	messages = request[:len(request)-1]
 	if err := ctx.Err(); err != nil {
 		return "", messages, err
 	}

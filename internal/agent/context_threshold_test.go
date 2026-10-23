@@ -19,7 +19,7 @@ func TestContextWaitsForTriggerThenCompactsBelowTenPercent(t *testing.T) {
 			if mode == "summary failure" {
 				client.optionErrors = []error{errors.New("summary unavailable")}
 			}
-			app := NewWithOptions(client, "test", Options{DisableTurnOutcome: true, Context: config, ToolDefinitions: []tools.Definition{}})
+			app := NewWithOptions(client, "test", Options{Context: config, ToolDefinitions: []tools.Definition{}})
 			var usage turn.ContextUsage
 			ctx := WithContextUsage(context.Background(), func(value turn.ContextUsage) { usage = value })
 			messages := []map[string]any{
@@ -68,7 +68,7 @@ func TestContextExactCountUsesCompressionTrigger(t *testing.T) {
 		config := normalizeContextConfig(DefaultContextConfig())
 		config.SummarizationEnabled = false
 		client := &exactCountingStubClient{stubClient: &stubClient{}, counts: []InputTokenCount{{Tokens: count, Exact: true}, {Tokens: 8000, Exact: true}}}
-		app := NewWithOptions(client, "test", Options{DisableTurnOutcome: true, Context: config})
+		app := NewWithOptions(client, "test", Options{Context: config})
 		var usage turn.ContextUsage
 		ctx := WithContextUsage(context.Background(), func(value turn.ContextUsage) { usage = value })
 		// Below 85% of the total budget: no exact count or compaction yet.
@@ -114,7 +114,7 @@ func TestContextCompactsAt85PercentWithoutExactCounter(t *testing.T) {
 	for _, tokens := range []int{169999, 170000, 170001} {
 		config := DefaultContextConfig()
 		config.SummarizationEnabled = false
-		app := NewWithOptions(&stubClient{}, "test", Options{DisableTurnOutcome: true, Context: config})
+		app := NewWithOptions(&stubClient{}, "test", Options{Context: config})
 		messages := []map[string]any{{"role": "user", "content": strings.Repeat("x", 700000)}}
 		// Calibrate from a previous provider usage value to hit the boundary
 		// exactly, without relying on the local text-length estimator.

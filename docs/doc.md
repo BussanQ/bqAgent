@@ -244,7 +244,7 @@ Responses 默认请求最多 3 次内置工具调用和 4096 个输出 token。�
 | `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` 仅使用有界的 `messages.jsonl`；`full` 保留 append-only 审计历史和独立工作快照。 |
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | 每个 `output.log` 保留的尾部大小；`0` 禁用裁剪。 |
 | `RUN_TRACE_ENABLED` | `false` | 保存 `.agent/runs/<run-id>/` Trace 并启用运行反馈接口。 |
-| `ENABLE_TASK_TOOL` | `false` | 启用 `task_update` / `task_scope` 持久化任务记录、任务提示、会话恢复与 TUI/WebUI 任务进度；关闭时不暴露这些工具、不注入已保存任务、不读写 `task.json`（已有文件原样保留），`turn_outcome` 不受影响。 |
+| `ENABLE_TASK_TOOL` | `false` | 启用 `task_update` / `task_scope` 持久化任务记录、任务提示、会话恢复与 TUI/WebUI 任务进度；关闭时不暴露这些工具、不注入已保存任务、不读写 `task.json`（已有文件原样保留）。 |
 
 Bash 命令在 Linux/macOS 上使用独立进程组，在 Windows 上使用 Job Object 管理 Shell 及其子孙进程。Windows 命令先挂起启动，加入 Job Object 后才执行；加入失败则终止命令并报错。`bash_kill`、取消、最大运行时限和 turn 结束都会回收受管进程；Shell 正常退出后也会清理残留后代。Windows 清理会等待 Job Object 内的进程退出，最多等待 5 秒，并使用关闭 Job 句柄时终止进程作为兜底。
 

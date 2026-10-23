@@ -464,7 +464,7 @@ func (runtime Runtime) NewAgent(logWriter io.Writer, systemPrompt string, record
 
 func (runtime Runtime) NewAgentWithProgress(logWriter io.Writer, progressWriter io.Writer, systemPrompt string, recorder agent.MessageRecorder, stream bool) *agent.Agent {
 	// A nil TaskStore disables task_update, task_scope, task prompts and
-	// history-based continuation; turn_outcome is independent of it.
+	// history-based continuation.
 	var taskStore taskstate.Store
 	if runtime.TaskToolEnabled {
 		taskStore, _ = recorder.(taskstate.Store)

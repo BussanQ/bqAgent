@@ -59,13 +59,16 @@ func TestRunTurnPreservesInterruptedReply(t *testing.T) {
 			if !errors.Is(err, wantErr) || result.Outcome.Status != wantStatus || result.Reply != "" {
 				t.Fatalf("result=%+v error=%v", result, err)
 			}
+			if len(recorder.recorded) == 0 || !isTaskContextMessage(recorder.recorded[0]) || len(result.Messages) < 3 || !isTaskContextMessage(result.Messages[2]) {
+				t.Fatal("sent task context must survive an interrupted request")
+			}
 			if strings.TrimSpace(strings.Join(tc.chunks, "")) == "" {
-				if len(recorder.recorded) != 0 || len(result.Messages) != 2 {
+				if len(recorder.recorded) != 1 || len(result.Messages) != 3 {
 					t.Fatalf("empty draft saved: %+v", result.Messages)
 				}
 				return
 			}
-			if len(result.Messages) != 3 || len(recorder.recorded) != 1 {
+			if len(result.Messages) != 4 || len(recorder.recorded) != 2 {
 				t.Fatalf("history=%+v recorded=%+v", result.Messages, recorder.recorded)
 			}
 			draft := result.Messages[len(result.Messages)-1]
@@ -85,7 +88,7 @@ func TestRunTurnPreservesInterruptedReply(t *testing.T) {
 
 func TestRunTurnReportsInterruptedReplySaveFailure(t *testing.T) {
 	providerErr := errors.New("connection lost")
-	app := NewWithOptions(&interruptedReplyClient{chunks: []string{"partial"}, err: providerErr}, "test", Options{Stream: true, Recorder: &failingRecorder{}})
+	app := NewWithOptions(&interruptedReplyClient{chunks: []string{"partial"}, err: providerErr}, "test", Options{Stream: true, Recorder: &failingRecorder{failAfter: 1}})
 	result, err := app.RunTurn(context.Background(), nil, 1)
 	if !errors.Is(err, providerErr) || !strings.Contains(err.Error(), "save interrupted reply") || result.Outcome.Status != turn.Failed {
 		t.Fatalf("result=%+v error=%v", result, err)

@@ -87,21 +87,55 @@ func protectedMessages(ctx context.Context) []map[string]any {
 	return messages
 }
 
-// buildRequestMessagesChecked builds the budgeted request. The complete current
-// task snapshot is a protected, never-clipped final message: its tokens are
-// reserved as fixed overhead (counted by every measurement) and only the other
-// conversation is pruned or summarized. If fixed prompt, tools and snapshot
-// alone exceed the provider input limit, it returns an error instead of
-// sending an oversized request or silently dropping acceptance criteria.
+// buildRequestMessagesChecked keeps previously sent task context in history so
+// the request prefix stays stable. Unchanged context stays at its original
+// position; a task state change appends a state-only update and an instruction
+// change appends a full snapshot. Compaction drops them all and protects the
+// complete current snapshot as the final message, never clipped. If fixed
+// prompt, tools and snapshot alone exceed the provider input limit, it returns
+// an error instead of sending an oversized request.
 func (a *Agent) buildRequestMessagesChecked(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (request []map[string]any, compacted []map[string]any, err error) {
 	return a.buildRequestMessagesWithTail(ctx, messages, definitions, options, nil)
 }
 
 // buildRequestMessagesWithTail additionally reserves budget for tail messages
-// (e.g. the checkpoint instruction) and appends them after the task snapshot.
+// (e.g. the checkpoint instruction) and always appends them last, after any
+// task context.
 func (a *Agent) buildRequestMessagesWithTail(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, tail []map[string]any) (request []map[string]any, compacted []map[string]any, err error) {
 	var protected []map[string]any
-	if text := a.taskContext(ctx); text != "" {
+	if header, state := a.taskContextParts(ctx); header != "" {
+		text := header + state
+		if pending, found := pendingTaskContext(messages, header, state); found {
+			sanitized := repairToolHistory(duplicateMessages(messages))
+			candidate := append([]map[string]any{}, sanitized...)
+			if pending != nil {
+				candidate = append(candidate, pending)
+			}
+			candidate = append(candidate, tail...)
+			if !a.contextConfig.Enabled {
+				return candidate, nil, nil
+			}
+			measurement := a.measureRequestTokens(ctx, candidate, definitions, options, false)
+			limit := a.contextConfig.MaxInputTokens - a.contextConfig.ResponseReserveTokens
+			if measurement.tokens < a.contextConfig.CompressionTriggerTokens && measurement.tokens <= limit {
+				a.logContextBudget(ctx, len(messages), len(candidate), len(candidate), measurement, false, false)
+				return candidate, nil, nil
+			}
+			// Compaction already changes the prefix. Drop earlier snapshots and
+			// updates, and reserve the complete current snapshot below, outside
+			// the prunable history.
+			messages = make([]map[string]any, 0, len(sanitized))
+			for _, message := range sanitized {
+				if !isTaskContextMessage(message) {
+					messages = append(messages, message)
+				}
+			}
+			defer func() {
+				if err == nil && compacted == nil {
+					compacted = messages
+				}
+			}()
+		}
 		protected = append(protected, map[string]any{"role": "developer", "content": text})
 	}
 	protected = append(protected, tail...)

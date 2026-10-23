@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -45,36 +44,6 @@ func TestServicePersistsTurnOutcomeIndependentOfTaskProgress(t *testing.T) {
 			}
 			if string(saved.Meta().Status) != string(want) || saved.Meta().LastTurnOutcome == nil || saved.Meta().LastTurnOutcome.Status != want {
 				t.Fatalf("meta=%+v", saved.Meta())
-			}
-		})
-	}
-}
-
-func TestServicePersistsIndependentOutcomeWithoutTaskRecord(t *testing.T) {
-	for _, status := range []turn.Status{turn.Blocked, turn.AwaitingInput} {
-		t.Run(string(status), func(t *testing.T) {
-			client := &taskScriptClient{responses: []agent.AssistantMessage{
-				{ToolCalls: []agent.ToolCall{{ID: "outcome", Function: agent.FunctionCall{Name: "turn_outcome", Arguments: fmt.Sprintf(`{"status":%q,"reason":"address required"}`, status)}}}},
-				{Content: "请补充地址。"},
-			}}
-			service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Client: client, Model: "test", SystemPrompt: "test"})
-			result, err := service.HandleTurn(context.Background(), TurnRequest{Message: "deploy"})
-			if err != nil || result.Outcome.Status != status || result.Outcome.Reason != "address required" {
-				t.Fatalf("result=%+v err=%v", result, err)
-			}
-			saved, err := service.store.Open(result.SessionID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			task, err := saved.LoadTaskState()
-			if err != nil || task != nil || saved.Meta().LastTurnOutcome == nil || saved.Meta().LastTurnOutcome.Status != status || string(saved.Meta().Status) != string(status) {
-				t.Fatalf("task=%+v meta=%+v err=%v", task, saved.Meta(), err)
-			}
-			// A new request must not inherit the previous declaration.
-			client.responses = []agent.AssistantMessage{{Content: "独立问题的回答。"}}
-			next, err := service.HandleTurn(context.Background(), TurnRequest{SessionID: result.SessionID, Message: "explain this term"})
-			if err != nil || next.Outcome.Status != turn.Completed || next.Outcome.Reason != "" {
-				t.Fatalf("previous declaration leaked: result=%+v err=%v", next, err)
 			}
 		})
 	}

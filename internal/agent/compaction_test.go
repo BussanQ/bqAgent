@@ -50,9 +50,8 @@ func TestSummarizationAdoptedIntoWorkingSet(t *testing.T) {
 	}
 	recorder := &capturingRecorder{}
 	app := NewWithOptions(client, "", Options{
-		DisableTurnOutcome: true,
-		Recorder:           recorder,
-		ToolDefinitions:    []tools.Definition{},
+		Recorder:        recorder,
+		ToolDefinitions: []tools.Definition{},
 		Functions: map[string]tools.Function{
 			"noop": func(_ context.Context, _ map[string]any) (string, error) { return "ok", nil },
 		},
@@ -130,8 +129,7 @@ func TestNoCompactionWhenUnderBudget(t *testing.T) {
 		responses: []AssistantMessage{{Role: "assistant", Content: "hi"}},
 	}
 	app := NewWithOptions(client, "", Options{
-		DisableTurnOutcome: true,
-		ToolDefinitions:    []tools.Definition{},
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:              true,
 			MaxInputTokens:       200,

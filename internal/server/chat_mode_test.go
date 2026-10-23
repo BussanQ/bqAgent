@@ -115,7 +115,7 @@ func TestAskModeExposesOnlyReadOnlyToolsAndSkipsMemoryWrite(t *testing.T) {
 			t.Errorf("read-only tool %q was not exposed: %#v", name, gotNames)
 		}
 	}
-	for _, name := range []string{"bash", "bash_wait", "bash_kill", "write_file", "edit_file", "todo_write", "install_skill", "mem_save", "turn_outcome", "task_update", "task_scope"} {
+	for _, name := range []string{"bash", "bash_wait", "bash_kill", "write_file", "edit_file", "todo_write", "install_skill", "mem_save", "task_update", "task_scope"} {
 		if gotNames[name] {
 			t.Errorf("mutating tool %q was exposed in ask mode", name)
 		}
@@ -131,11 +131,6 @@ func TestAskModeExposesOnlyReadOnlyToolsAndSkipsMemoryWrite(t *testing.T) {
 	}
 	if len(client.messages) != 1 || len(client.messages[0]) == 0 || !strings.Contains(messageText(client.messages[0][0]), "The current conversation is in Ask mode") {
 		t.Fatalf("ask system prompt = %#v", client.messages)
-	}
-	for _, msg := range client.messages[0] {
-		if strings.Contains(messageText(msg), "turn_outcome") {
-			t.Fatalf("ask mode injected turn_outcome instructions: %#v", msg)
-		}
 	}
 }
 

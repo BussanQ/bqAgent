@@ -1212,9 +1212,8 @@ func TestRunContextPrunesOldMessages(t *testing.T) {
 	client := &stubClient{responses: []AssistantMessage{{Role: "assistant", Content: "reply"}}}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		DisableTurnOutcome: true,
-		LogWriter:          &logs,
-		ToolDefinitions:    []tools.Definition{},
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:                  true,
 			MaxInputTokens:           160,
@@ -1309,9 +1308,8 @@ func TestRunContextSummarizesOldMessages(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		DisableTurnOutcome: true,
-		LogWriter:          &logs,
-		ToolDefinitions:    []tools.Definition{},
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:                  true,
 			MaxInputTokens:           180,
@@ -1377,9 +1375,8 @@ func TestRunContextFallsBackWhenSummarizationFails(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		DisableTurnOutcome: true,
-		LogWriter:          &logs,
-		ToolDefinitions:    []tools.Definition{},
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:                  true,
 			MaxInputTokens:           160,
@@ -1426,9 +1423,8 @@ func TestRunContextUsesProviderCountAsAuthority(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		DisableTurnOutcome: true,
-		LogWriter:          &logs,
-		ToolDefinitions:    []tools.Definition{},
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:                  true,
 			MaxInputTokens:           120,
@@ -1467,9 +1463,8 @@ func TestRunContextFallsBackWhenProviderCountFails(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	app := NewWithOptions(client, "", Options{
-		DisableTurnOutcome: true,
-		LogWriter:          &logs,
-		ToolDefinitions:    []tools.Definition{},
+		LogWriter:       &logs,
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:                  true,
 			MaxInputTokens:           120,
@@ -1508,8 +1503,7 @@ func TestRunContextCompactsWhenProviderCountExceedsBudget(t *testing.T) {
 		},
 	}
 	app := NewWithOptions(client, "", Options{
-		DisableTurnOutcome: true,
-		ToolDefinitions:    []tools.Definition{},
+		ToolDefinitions: []tools.Definition{},
 		Context: ContextConfig{
 			Enabled:                  true,
 			MaxInputTokens:           120,

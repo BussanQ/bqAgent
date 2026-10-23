@@ -54,6 +54,37 @@ func TestTurnSteeringAppliesAfterToolsBeforeFollowUp(t *testing.T) {
 	}
 }
 
+func TestInputsQueuedBeforeReplyDoNotConfirmIt(t *testing.T) {
+	q := &turn.InputQueue{}
+	_ = q.Add(turn.Input{ID: "later", Kind: turn.FollowUp, Text: "also update the docs"})
+	client := &stubClient{responses: []AssistantMessage{
+		{ToolCalls: []ToolCall{{ID: "read", Function: FunctionCall{Name: "read_file", Arguments: `{}`}}}},
+		{Content: "Changes are ready. Should I run git commit?"},
+		{Content: "Docs updated; still waiting for commit confirmation."},
+	}}
+	app := NewWithOptions(client, "test", Options{Functions: map[string]tools.Function{
+		"read_file": func(context.Context, map[string]any) (string, error) {
+			return "source", q.Add(turn.Input{ID: "correction", Kind: turn.Steering, Text: "only analyze"})
+		},
+	}})
+	if _, err := app.RunTurn(turn.WithInputQueue(context.Background(), q), []map[string]any{{"role": "user", "content": "fix it"}}, 5); err != nil || len(client.messages) != 3 {
+		t.Fatalf("requests=%d err=%v", len(client.messages), err)
+	}
+	notes := func(request []map[string]any) int {
+		n := 0
+		for _, message := range request {
+			n += strings.Count(contentText(message["content"]), queuedBeforeReplyNote)
+		}
+		return n
+	}
+	if notes(client.messages[1]) != 0 {
+		t.Fatal("steering merged after tool results was marked as queued before a reply")
+	}
+	if notes(client.messages[2]) != 1 {
+		t.Fatal("input merged after a reply must not be treated as confirming it")
+	}
+}
+
 type inputDuringResponseClient struct {
 	stubClient
 	queue *turn.InputQueue
@@ -95,9 +126,10 @@ func TestBlockedTurnLeavesFollowUpUnconsumed(t *testing.T) {
 	q := &turn.InputQueue{}
 	_ = q.Add(turn.Input{Kind: turn.FollowUp, Text: "next task"})
 	task := activeTestTask()
-	task.Status, task.Reason = "awaiting_input", "missing address"
+	awaiting := task
+	awaiting.Status, awaiting.Reason = "awaiting_input", "missing address"
 	client := &stubClient{responses: []AssistantMessage{
-		turnOutcomeMessage(turn.AwaitingInput, "missing address"),
+		taskUpdateMessage(awaiting),
 		{Content: "missing address"},
 	}}
 	app := NewWithOptions(client, "test", Options{TaskStore: &memoryTaskStore{state: &task}})
@@ -124,7 +156,7 @@ func TestTurnInputPersistenceFailureRestoresAcceptedInput(t *testing.T) {
 	_ = q.Add(turn.Input{ID: "second", Kind: turn.Steering, Text: "second correction"})
 	app := NewWithOptions(&stubClient{}, "test", Options{Recorder: &failingRecorder{failAfter: 1}})
 	ctx := turn.WithInputQueue(context.Background(), q)
-	history, err := app.appendTurnInputs(ctx, nil, q.TakeSteering())
+	history, err := app.appendTurnInputs(ctx, nil, q.TakeSteering(), false)
 	pending := q.Close()
 	if err == nil || len(history) != 1 || len(pending) != 1 || pending[0].ID != "second" {
 		t.Fatalf("history=%+v pending=%+v err=%v", history, pending, err)

@@ -240,7 +240,7 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `SESSION_TRANSCRIPT_MODE` | `compact` | `compact` uses only bounded `messages.jsonl`; `full` keeps append-only audit history and a separate working snapshot. |
 | `SESSION_OUTPUT_MAX_BYTES` | `1048576` | Retained tail of each `output.log`; `0` disables trimming. |
 | `RUN_TRACE_ENABLED` | `false` | Persists `.agent/runs/<run-id>/` traces and enables run feedback APIs. |
-| `ENABLE_TASK_TOOL` | `false` | Enables the `task_update` / `task_scope` persistent task record, task prompts, session restore and TUI/WebUI task progress. When off, these tools are not exposed, saved tasks are not injected, `task.json` is neither read nor written (existing files are left untouched), and `turn_outcome` is unaffected. |
+| `ENABLE_TASK_TOOL` | `false` | Enables the `task_update` / `task_scope` persistent task record, task prompts, session restore and TUI/WebUI task progress. When off, these tools are not exposed, saved tasks are not injected, `task.json` is neither read nor written (existing files are left untouched). |
 
 Bash commands use a separate process group on Linux/macOS and a Job Object to manage the shell and its descendants on Windows. Windows commands start suspended and only execute after joining the Job Object; failed assignment terminates the command and returns an error. `bash_kill`, cancellation, the maximum runtime, and turn completion reclaim managed processes; normal shell exit also cleans up surviving descendants. Windows cleanup waits up to 5 seconds for the Job Object's processes to exit, with kill-on-close as a fallback when its handle is closed.
 

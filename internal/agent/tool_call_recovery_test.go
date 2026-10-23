@@ -241,11 +241,11 @@ func TestRunRecoversToolArgumentsAcrossProviders(t *testing.T) {
 						t.Fatalf("invalid recovery history: %#v, %#v", call, results[i])
 					}
 				}
-				if recorded := messageToolCalls(recorder.recorded[0]); !slices.Equal(recorded, calls) {
+				if recorded := messageToolCalls(recorder.recorded[1]); !slices.Equal(recorded, calls) {
 					t.Fatalf("persisted calls differ from executed calls: %#v", recorded)
 				}
 				if apiType == APITypeOpenAIResponse {
-					items := responseItemsFromMessage(recorder.recorded[0])
+					items := responseItemsFromMessage(recorder.recorded[1])
 					if len(items) != len(calls) {
 						t.Fatalf("raw response history was not split: %#v", items)
 					}
@@ -355,7 +355,7 @@ func TestRunRecoversTenIdenticalBashCalls(t *testing.T) {
 			if err != nil || result != "done" || executions != 10 || len(client.messages) != 2 {
 				t.Fatalf("Run = %q, %v; executions=%d, requests=%d", result, err, executions, len(client.messages))
 			}
-			calls := messageToolCalls(recorder.recorded[0])
+			calls := messageToolCalls(recorder.recorded[1])
 			results := extractToolMessages(history)
 			if len(calls) != 10 || len(results) != 10 || len(extractToolMessages(client.messages[1])) != 10 {
 				t.Fatalf("recovered calls/results lost: calls=%d, results=%d", len(calls), len(results))
@@ -392,7 +392,7 @@ func TestRunCompletesRecoveredBatchBeforeLoopCheckpoint(t *testing.T) {
 			if err != nil || executions != 6 || len(client.messages) != 2 || len(client.definitions[1]) != 0 {
 				t.Fatalf("batch did not finish before checkpoint: executions=%d, requests=%d, err=%v", executions, len(client.messages), err)
 			}
-			calls := messageToolCalls(recorder.recorded[0])
+			calls := messageToolCalls(recorder.recorded[1])
 			for _, messages := range [][]map[string]any{history, recorder.recorded, client.messages[1]} {
 				results := extractToolMessages(messages)
 				if len(calls) != 6 || len(results) != 6 {
