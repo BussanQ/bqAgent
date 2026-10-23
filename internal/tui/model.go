@@ -1291,7 +1291,11 @@ func (model *Model) refreshSuggestions() {
 				continue
 			}
 			for _, argument := range command.Arguments {
-				if strings.HasPrefix(strings.ToLower(argument.Value), strings.ToLower(prefix)) || (argument.Label != "" && strings.Contains(strings.ToLower(argument.Label), strings.ToLower(prefix))) {
+				matches := strings.HasPrefix(strings.ToLower(argument.Value), strings.ToLower(prefix)) || (argument.Label != "" && strings.Contains(strings.ToLower(argument.Label), strings.ToLower(prefix)))
+				if strings.EqualFold(command.Name, "/skill") {
+					matches = isSubsequence(strings.ToLower(argument.Value), strings.ToLower(prefix)) || (argument.Label != "" && isSubsequence(strings.ToLower(argument.Label), strings.ToLower(prefix)))
+				}
+				if matches {
 					label := ""
 					if argument.Label != "" {
 						label = command.Name + " " + argument.Label
