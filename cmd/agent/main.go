@@ -450,7 +450,12 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		}
 	}
 
+	var turnUsage agent.LiveTokenUsage
+	ctx = agent.WithLiveTokenUsage(ctx, func(usage agent.LiveTokenUsage) {
+		turnUsage = usage
+	})
 	result, updatedMessages, err := app.RunConversationTurn(ctx, conversation.Messages, runtime.MaxIterations)
+	writeTurnTokenUsage(outputWriter, turnUsage)
 	if len(updatedMessages) > 0 {
 		conversation.Messages = agent.BoundWorkingMessages(updatedMessages, runtime.Context)
 		if saveErr := conversation.SaveWorkingContext(); saveErr != nil {

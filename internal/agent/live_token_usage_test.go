@@ -16,14 +16,14 @@ func TestLiveTokenUsageAccumulatesToolRounds(t *testing.T) {
 	ctx := WithLiveTokenUsage(context.Background(), func(usage LiveTokenUsage) { latest = usage })
 	stub := &generationMetricsStub{
 		responses: []AssistantMessage{
-			{Role: "assistant", ToolCalls: []ToolCall{{ID: "lookup-1", Type: "function", Function: FunctionCall{Name: "lookup", Arguments: `{}`}}}, Usage: TokenUsage{PromptTokens: 100, CompletionTokens: 50}},
-			{Role: "assistant", Content: "answer", Usage: TokenUsage{PromptTokens: 120, CompletionTokens: 8}},
+			{Role: "assistant", ToolCalls: []ToolCall{{ID: "lookup-1", Type: "function", Function: FunctionCall{Name: "lookup", Arguments: `{}`}}}, Usage: TokenUsage{PromptTokens: 100, CompletionTokens: 50, CachedPromptTokens: 40, CacheWritePromptTokens: 10, ReasoningTokens: 30}},
+			{Role: "assistant", Content: "answer", Usage: TokenUsage{PromptTokens: 120, CompletionTokens: 8, CachedPromptTokens: 40, CacheWritePromptTokens: 10}},
 		},
 		chunks: [][]string{nil, {"answer"}},
 	}
 	app := NewWithOptions(stub, testModel, Options{Stream: true, Functions: map[string]tools.Function{
 		"lookup": func(context.Context, map[string]any) (string, error) {
-			if latest != (LiveTokenUsage{InputTokens: 100, OutputTokens: 50, Calls: 1}) {
+			if latest != (LiveTokenUsage{InputTokens: 100, OutputTokens: 50, Calls: 1, CachedInputTokens: 40, CacheWriteTokens: 10, CacheUsageAvailable: true, ReasoningTokens: 30}) {
 				t.Errorf("usage before tool execution = %+v", latest)
 			}
 			return "found", nil
@@ -33,8 +33,33 @@ func TestLiveTokenUsageAccumulatesToolRounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest != (LiveTokenUsage{InputTokens: 220, OutputTokens: 58, Calls: 2}) {
+	if latest != (LiveTokenUsage{InputTokens: 220, OutputTokens: 58, Calls: 2, CachedInputTokens: 80, CacheWriteTokens: 20, CacheUsageAvailable: true, ReasoningTokens: 30}) {
 		t.Fatalf("whole-turn usage = %+v", latest)
+	}
+}
+
+func TestLiveTokenUsageCacheAndReasoningSnapshots(t *testing.T) {
+	var latest LiveTokenUsage
+	ctx := WithLiveTokenUsage(context.Background(), func(usage LiveTokenUsage) { latest = usage })
+	ctx, finish := beginLiveTokenCall(ctx, nil, nil, ChatCompletionOptions{})
+	reportLiveTokenUsage(ctx, TokenUsage{PromptTokens: 100, CompletionTokens: 50})
+	// Breakdown fields may arrive only on the final message.
+	finish(AssistantMessage{Usage: TokenUsage{CachedPromptTokens: 40, CacheWritePromptTokens: 10, ReasoningTokens: 20}})
+	if latest.CachedInputTokens != 40 || latest.CacheWriteTokens != 10 || latest.ReasoningTokens != 20 || !latest.CacheUsageAvailable {
+		t.Fatalf("final breakdown = %+v", latest)
+	}
+	// Cumulative snapshots replace earlier values; absent fields preserve them.
+	for range 2 {
+		reportLiveTokenUsage(ctx, TokenUsage{CachedPromptTokens: 60, CacheWritePromptTokens: 15, ReasoningTokens: 30})
+	}
+	reportLiveTokenUsage(ctx, TokenUsage{})
+	finish(AssistantMessage{Usage: TokenUsage{CachedPromptTokens: 40, CacheWritePromptTokens: 10, ReasoningTokens: 20}})
+	if latest.CachedInputTokens != 60 || latest.CacheWriteTokens != 15 || latest.ReasoningTokens != 30 {
+		t.Fatalf("latest breakdown = %+v", latest)
+	}
+	reportLiveTokenUsage(ctx, TokenUsage{CacheUsageAvailable: true})
+	if latest.CachedInputTokens != 0 || latest.CacheWriteTokens != 0 || !latest.CacheUsageAvailable {
+		t.Fatalf("explicit cache zero = %+v", latest)
 	}
 }
 
@@ -146,9 +171,17 @@ func TestLiveTokenUsageProviderStreamsUpdateBeforeCompletion(t *testing.T) {
 	} {
 		t.Run(string(test.apiType), func(t *testing.T) {
 			var latest LiveTokenUsage
+			wantStart := LiveTokenUsage{InputTokens: 100, Calls: 1}
+			if test.apiType == APITypeAnthropic {
+				wantStart.CachedInputTokens = 20
+				wantStart.CacheWriteTokens = 10
+				wantStart.CacheUsageAvailable = true
+			}
+			wantFinal := wantStart
+			wantFinal.OutputTokens = 12
 			ctx := WithLiveTokenUsage(context.Background(), func(usage LiveTokenUsage) { latest = usage })
 			reader := &liveUsageEventReader{events: test.events, check: func(index int) {
-				if index == 1 && latest != (LiveTokenUsage{InputTokens: 100, Calls: 1}) {
+				if index == 1 && latest != wantStart {
 					t.Fatalf("input must be available at start, including cache exactly once: %+v", latest)
 				}
 				if index == 2 && (latest.OutputTokens != 2 || !latest.OutputEstimated) {
@@ -161,7 +194,7 @@ func TestLiveTokenUsageProviderStreamsUpdateBeforeCompletion(t *testing.T) {
 				if index == textEnd && (latest.OutputTokens != 4 || !latest.OutputEstimated) {
 					t.Fatalf("reasoning + arguments + text should be counted once: %+v", latest)
 				}
-				if index == len(test.events) && latest != (LiveTokenUsage{InputTokens: 100, OutputTokens: 12, Calls: 1}) {
+				if index == len(test.events) && latest != wantFinal {
 					t.Fatalf("final usage must arrive before EOF: %+v", latest)
 				}
 			}}
@@ -173,7 +206,7 @@ func TestLiveTokenUsageProviderStreamsUpdateBeforeCompletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if message.Content != "answer" || latest != (LiveTokenUsage{InputTokens: 100, OutputTokens: 12, Calls: 1}) {
+			if message.Content != "answer" || latest != wantFinal {
 				t.Fatalf("message = %+v, usage = %+v", message, latest)
 			}
 		})

@@ -11,11 +11,15 @@ import (
 // tool-call rounds. Input includes cached input; output includes reasoning when
 // the provider includes it in usage. Estimates are never presented as exact.
 type LiveTokenUsage struct {
-	InputTokens     int
-	OutputTokens    int
-	InputEstimated  bool
-	OutputEstimated bool
-	Calls           int
+	InputTokens         int
+	OutputTokens        int
+	InputEstimated      bool
+	OutputEstimated     bool
+	Calls               int
+	CachedInputTokens   int
+	CacheWriteTokens    int
+	CacheUsageAvailable bool
+	ReasoningTokens     int
 }
 
 type liveUsageKey struct{}
@@ -29,12 +33,14 @@ type liveUsageCollector struct {
 }
 
 type liveUsageCall struct {
-	collector      *liveUsageCollector
-	usage          LiveTokenUsage
-	outputBase     int
-	outputUnits    int
-	inputReported  bool
-	outputReported bool
+	collector         *liveUsageCollector
+	usage             LiveTokenUsage
+	outputBase        int
+	outputUnits       int
+	inputReported     bool
+	outputReported    bool
+	cacheReported     bool
+	reasoningReported bool
 }
 
 // WithLiveTokenUsage reports changes as soon as provider usage or streamed
@@ -64,8 +70,14 @@ func beginLiveTokenCall(ctx context.Context, messages []map[string]any, definiti
 			if call.inputReported {
 				usage.PromptTokens, usage.PromptTokensAvailable = 0, false
 			}
+			if call.cacheReported {
+				usage.CachedPromptTokens, usage.CacheWritePromptTokens, usage.CacheUsageAvailable = 0, 0, false
+			}
 			if call.outputReported {
 				usage.CompletionTokens, usage.CompletionTokensAvailable = 0, false
+			}
+			if call.reasoningReported {
+				usage.ReasoningTokens = 0
 			}
 			call.applyUsage(usage)
 			if call.usage.OutputEstimated {
@@ -100,6 +112,16 @@ func reportLiveTokenUsage(ctx context.Context, usage TokenUsage) {
 }
 
 func (call *liveUsageCall) applyUsage(usage TokenUsage) {
+	if usage.CacheUsageAvailable || usage.CachedPromptTokens > 0 || usage.CacheWritePromptTokens > 0 {
+		call.cacheReported = true
+		call.usage.CacheUsageAvailable = true
+		call.usage.CachedInputTokens = max(0, usage.CachedPromptTokens)
+		call.usage.CacheWriteTokens = max(0, usage.CacheWritePromptTokens)
+	}
+	if usage.ReasoningTokens > 0 {
+		call.reasoningReported = true
+		call.usage.ReasoningTokens = usage.ReasoningTokens
+	}
 	if usage.PromptTokensAvailable || usage.PromptTokens > 0 {
 		call.inputReported = true
 		call.usage.InputTokens = max(0, usage.PromptTokens)
@@ -123,6 +145,10 @@ func (call *liveUsageCall) change(update func()) {
 	for _, item := range collector.calls {
 		snapshot.InputTokens += item.usage.InputTokens
 		snapshot.OutputTokens += item.usage.OutputTokens
+		snapshot.CachedInputTokens += item.usage.CachedInputTokens
+		snapshot.CacheWriteTokens += item.usage.CacheWriteTokens
+		snapshot.CacheUsageAvailable = snapshot.CacheUsageAvailable || item.usage.CacheUsageAvailable
+		snapshot.ReasoningTokens += item.usage.ReasoningTokens
 		snapshot.InputEstimated = snapshot.InputEstimated || item.usage.InputEstimated
 		snapshot.OutputEstimated = snapshot.OutputEstimated || item.usage.OutputEstimated
 	}
