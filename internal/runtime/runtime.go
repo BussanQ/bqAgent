@@ -330,7 +330,13 @@ func (factory Factory) build(ctx context.Context, background bool) Runtime {
 	model := agent.EffectiveModel(factory.Config.Model)
 	clientOptions := agent.ClientOptions{StreamIdleTimeout: factory.Config.StreamIdleTimeout, StreamProgressTimeout: factory.Config.StreamProgressTimeout, ProviderID: factory.Config.ProviderID, NativeWebSearch: factory.Config.NativeWebSearch}
 	client := agent.NewClientWithOptions(factory.Config.APIKey, factory.Config.BaseURL, apiType, nil, clientOptions)
-	factory.logf("[Runtime] api_type=%s model=%s\n", apiType, model)
+	// The effective configuration goes to the run log so a background session
+	// can be diagnosed from output.log alone, without RunTrace.
+	contextConfig := fmt.Sprintf("context=%t", factory.Config.ContextManagementEnabled)
+	if factory.Config.ContextManagementEnabled {
+		contextConfig += fmt.Sprintf(" max_input_tokens=%d compression_trigger_percent=%d target_input_tokens=%d summarization=%t", factory.Config.ContextMaxInputTokens, factory.Config.ContextCompressionTriggerPercent, factory.Config.ContextTargetInputTokens, factory.Config.ContextSummarizationEnabled)
+	}
+	factory.logf("[Runtime] api_type=%s model=%s provider=%s workspace=%s max_iterations=%d task_tool=%t run_trace=%t %s\n", apiType, model, firstNonEmpty(factory.Config.ProviderID, "env"), factory.WorkspaceRoot, factory.Config.MaxIterations, factory.Config.TaskToolEnabled, factory.Config.RunTraceEnabled, contextConfig)
 
 	var mcpDefinitions []tools.Definition
 	var mcpFunctions map[string]tools.Function

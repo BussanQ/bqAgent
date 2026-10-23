@@ -418,6 +418,11 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	}
 	systemPrompt = conversation.Prompt.Combined()
 	herdrReporter.Report("working", conversation.Session.ID())
+	mode := "foreground"
+	if options.sessionRun {
+		mode = "background"
+	}
+	fmt.Fprintf(errorWriter, "[Session] id=%s mode=%s\n", conversation.Session.ID(), mode)
 
 	runtime := appruntime.Factory{
 		Config:          llmConfig,
@@ -427,7 +432,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		GlobalMemoryDir: ws.GlobalMemoryDir(),
 		Getenv:          getenv,
 		MCPConfigPaths:  ws.MCPConfigPaths(),
-		LogWriter:       stderr,
+		LogWriter:       errorWriter,
 	}.Build(ctx)
 	var runRecorder *apptrace.Recorder
 	if runtime.RunTraceEnabled {
@@ -479,16 +484,6 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 
 	if markErr := conversation.MarkCompleted(); markErr != nil {
 		fmt.Fprintf(errorWriter, "mark session completed: %v\n", markErr)
-	}
-	if ws.MemoryEnabled() && strings.TrimSpace(task) != "" {
-		content := "Task: " + task + "\nResult: " + result
-		if len(content) > 2000 {
-			content = content[:2000]
-		}
-		if _, memoryErr := runtime.Memory.Add("lesson", content, apptrace.RunIDFromContext(ctx), .6, "normal", nil); memoryErr != nil {
-			// Automatic task journaling is best-effort: duplicate/capacity memory
-			// errors must not turn a successfully completed task into a failure.
-		}
 	}
 	if runRecorder != nil {
 		_ = runRecorder.Finish(result, nil)
