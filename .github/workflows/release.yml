@@ -2,8 +2,9 @@ name: Release
 
 on:
   schedule:
-    # UTC 01:00 = Beijing 09:00. GitHub schedules may be delayed.
-    - cron: '0 1 * * *'
+    # Every 3 days within each month (1, 4, 7, ...), at UTC 01:00 = Beijing 09:00.
+    # The day interval resets each month. GitHub schedules may be delayed.
+    - cron: '0 1 */3 * *'
   workflow_dispatch:
     inputs:
       prerelease:
