@@ -39,6 +39,7 @@ type Config struct {
 	StreamIdleTimeout                time.Duration
 	StreamProgressTimeout            time.Duration
 	MaxIterations                    int
+	InvestigationRoundLimit          int
 	RunTraceEnabled                  bool
 	TaskToolEnabled                  bool
 	SessionTranscriptMode            session.TranscriptMode
@@ -85,22 +86,23 @@ type Factory struct {
 }
 
 type Runtime struct {
-	MCP             *mcp.Discovery
-	Client          agent.ChatCompletionClient
-	ClientOptions   agent.ClientOptions
-	Catalog         tools.Catalog
-	APIType         agent.APIType
-	Model           string
-	Models          []string
-	MaxIterations   int
-	RunTraceEnabled bool
-	TaskToolEnabled bool
-	SessionOptions  session.Options
-	WorkspaceRoot   string
-	Context         agent.ContextConfig
-	BashJobs        tools.BashJobOptions
-	Memory          *appmemory.Store
-	GlobalMemory    *appmemory.Store
+	MCP                     *mcp.Discovery
+	Client                  agent.ChatCompletionClient
+	ClientOptions           agent.ClientOptions
+	Catalog                 tools.Catalog
+	APIType                 agent.APIType
+	Model                   string
+	Models                  []string
+	MaxIterations           int
+	InvestigationRoundLimit int
+	RunTraceEnabled         bool
+	TaskToolEnabled         bool
+	SessionOptions          session.Options
+	WorkspaceRoot           string
+	Context                 agent.ContextConfig
+	BashJobs                tools.BashJobOptions
+	Memory                  *appmemory.Store
+	GlobalMemory            *appmemory.Store
 }
 
 func ConfigFromEnv(getenv func(string) string) Config {
@@ -124,19 +126,20 @@ func ConfigFromEnv(getenv func(string) string) Config {
 	contextTrigger := contextCompressionTrigger(getenv("CONTEXT_COMPRESSION_TRIGGER_TOKENS"), contextMax, contextReserve, contextPercent)
 	contextSummaryTrigger := envPositiveInt(getenv("CONTEXT_SUMMARY_TRIGGER_TOKENS"), contextTrigger)
 	return Config{
-		APIType:               apiType,
-		APIKey:                apiKey,
-		BaseURL:               baseURL,
-		Model:                 model,
-		Models:                splitEnvList(getenv("LLM_MODELS")),
-		StreamIdleTimeout:     envDurationAllowZero(getenv("LLM_STREAM_IDLE_TIMEOUT"), agent.DefaultStreamIdleTimeout),
-		StreamProgressTimeout: envDurationAllowZero(getenv("LLM_STREAM_PROGRESS_TIMEOUT"), agent.DefaultStreamProgressTimeout),
-		MaxIterations:         envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
-		RunTraceEnabled:       envBool(getenv("RUN_TRACE_ENABLED"), false),
-		TaskToolEnabled:       envBool(getenv("ENABLE_TASK_TOOL"), false),
-		SessionTranscriptMode: session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
-		SessionOutputMaxBytes: envInt64(getenv("SESSION_OUTPUT_MAX_BYTES"), session.DefaultOutputMaxBytes),
-		BashOutputMaxBytes:    envPositiveInt64(getenv("BASH_OUTPUT_MAX_BYTES"), tools.DefaultBashOutputMaxBytes),
+		APIType:                 apiType,
+		APIKey:                  apiKey,
+		BaseURL:                 baseURL,
+		Model:                   model,
+		Models:                  splitEnvList(getenv("LLM_MODELS")),
+		StreamIdleTimeout:       envDurationAllowZero(getenv("LLM_STREAM_IDLE_TIMEOUT"), agent.DefaultStreamIdleTimeout),
+		StreamProgressTimeout:   envDurationAllowZero(getenv("LLM_STREAM_PROGRESS_TIMEOUT"), agent.DefaultStreamProgressTimeout),
+		MaxIterations:           envInt(getenv("AGENT_MAX_ITERATIONS"), agent.DefaultMaxIterations),
+		InvestigationRoundLimit: investigationRoundLimitFromEnv(getenv("AGENT_INVESTIGATION_ROUND_LIMIT")),
+		RunTraceEnabled:         envBool(getenv("RUN_TRACE_ENABLED"), false),
+		TaskToolEnabled:         envBool(getenv("ENABLE_TASK_TOOL"), false),
+		SessionTranscriptMode:   session.NormalizeTranscriptMode(getenv("SESSION_TRANSCRIPT_MODE")),
+		SessionOutputMaxBytes:   envInt64(getenv("SESSION_OUTPUT_MAX_BYTES"), session.DefaultOutputMaxBytes),
+		BashOutputMaxBytes:      envPositiveInt64(getenv("BASH_OUTPUT_MAX_BYTES"), tools.DefaultBashOutputMaxBytes),
 		BashJobs: tools.BashJobOptions{
 			YieldTimeout:  envPositiveDuration(getenv("BASH_YIELD_TIMEOUT"), defaultBashYieldTimeout),
 			MaxTimeout:    envNonNegativeDuration(getenv("BASH_MAX_TIMEOUT"), 0),
@@ -158,6 +161,21 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		ContextSummarizationEnabled:      envBool(getenv("CONTEXT_SUMMARIZATION_ENABLED"), defaults.SummarizationEnabled),
 		ContextSummaryTriggerTokens:      contextSummaryTrigger,
 		ContextSummaryModel:              getenv("CONTEXT_SUMMARY_MODEL"),
+	}
+}
+
+// investigationRoundLimitFromEnv returns the agent option value: 0 in the
+// environment disables the reminder (a negative option), and unset or invalid
+// values select the default.
+func investigationRoundLimitFromEnv(raw string) int {
+	parsed := envInt(raw, agent.DefaultInvestigationRoundLimit)
+	switch {
+	case parsed == 0:
+		return -1
+	case parsed < 0:
+		return agent.DefaultInvestigationRoundLimit
+	default:
+		return parsed
 	}
 }
 
@@ -336,7 +354,7 @@ func (factory Factory) build(ctx context.Context, background bool) Runtime {
 	if factory.Config.ContextManagementEnabled {
 		contextConfig += fmt.Sprintf(" max_input_tokens=%d compression_trigger_percent=%d target_input_tokens=%d summarization=%t", factory.Config.ContextMaxInputTokens, factory.Config.ContextCompressionTriggerPercent, factory.Config.ContextTargetInputTokens, factory.Config.ContextSummarizationEnabled)
 	}
-	factory.logf("[Runtime] api_type=%s model=%s provider=%s workspace=%s max_iterations=%d task_tool=%t run_trace=%t %s\n", apiType, model, firstNonEmpty(factory.Config.ProviderID, "env"), factory.WorkspaceRoot, factory.Config.MaxIterations, factory.Config.TaskToolEnabled, factory.Config.RunTraceEnabled, contextConfig)
+	factory.logf("[Runtime] api_type=%s model=%s provider=%s workspace=%s max_iterations=%d investigation_round_limit=%d task_tool=%t run_trace=%t %s\n", apiType, model, firstNonEmpty(factory.Config.ProviderID, "env"), factory.WorkspaceRoot, factory.Config.MaxIterations, max(factory.Config.InvestigationRoundLimit, 0), factory.Config.TaskToolEnabled, factory.Config.RunTraceEnabled, contextConfig)
 
 	var mcpDefinitions []tools.Definition
 	var mcpFunctions map[string]tools.Function
@@ -368,16 +386,17 @@ func (factory Factory) build(ctx context.Context, background bool) Runtime {
 	})
 
 	return Runtime{
-		MCP:             discovery,
-		Client:          client,
-		ClientOptions:   clientOptions,
-		Catalog:         catalog,
-		APIType:         apiType,
-		Model:           model,
-		Models:          append([]string(nil), factory.Config.Models...),
-		MaxIterations:   factory.Config.MaxIterations,
-		RunTraceEnabled: factory.Config.RunTraceEnabled,
-		TaskToolEnabled: factory.Config.TaskToolEnabled,
+		MCP:                     discovery,
+		Client:                  client,
+		ClientOptions:           clientOptions,
+		Catalog:                 catalog,
+		APIType:                 apiType,
+		Model:                   model,
+		Models:                  append([]string(nil), factory.Config.Models...),
+		MaxIterations:           factory.Config.MaxIterations,
+		InvestigationRoundLimit: factory.Config.InvestigationRoundLimit,
+		RunTraceEnabled:         factory.Config.RunTraceEnabled,
+		TaskToolEnabled:         factory.Config.TaskToolEnabled,
 		SessionOptions: session.Options{
 			TranscriptMode: factory.Config.SessionTranscriptMode,
 			OutputMaxBytes: factory.Config.SessionOutputMaxBytes,
@@ -478,17 +497,18 @@ func (runtime Runtime) NewAgentWithProgress(logWriter io.Writer, progressWriter 
 	return agent.NewWithOptions(runtime.Client, runtime.Model, agent.Options{
 		EnableNativeWebSearch: true,
 
-		TaskStore:       taskStore,
-		SystemPrompt:    systemPrompt,
-		APIType:         runtime.APIType,
-		LogWriter:       logWriter,
-		ProgressWriter:  progressWriter,
-		ToolDefinitions: runtime.Catalog.Definitions(),
-		Functions:       runtime.Catalog.Registry(),
-		Recorder:        recorder,
-		Stream:          stream,
-		WorkspaceRoot:   runtime.WorkspaceRoot,
-		Context:         runtime.Context,
-		BashJobs:        runtime.BashJobs,
+		TaskStore:               taskStore,
+		SystemPrompt:            systemPrompt,
+		APIType:                 runtime.APIType,
+		LogWriter:               logWriter,
+		ProgressWriter:          progressWriter,
+		ToolDefinitions:         runtime.Catalog.Definitions(),
+		Functions:               runtime.Catalog.Registry(),
+		Recorder:                recorder,
+		Stream:                  stream,
+		WorkspaceRoot:           runtime.WorkspaceRoot,
+		Context:                 runtime.Context,
+		BashJobs:                runtime.BashJobs,
+		InvestigationRoundLimit: runtime.InvestigationRoundLimit,
 	})
 }

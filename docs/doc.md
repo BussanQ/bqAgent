@@ -217,6 +217,7 @@ Responses 默认请求最多 3 次内置工具调用和 4096 个输出 token。�
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `AGENT_MAX_ITERATIONS` | `1000` | 全局循环失控保险上限。 |
+| `AGENT_INVESTIGATION_ROUND_LIMIT` | `12` | 连续多少个只读调查轮次（没有新的成功文件修改或可靠验证）后提醒模型收敛；`0` 关闭提醒，负数或非法值使用默认值。只是软提醒，不会中止任务。 |
 | `BASH_OUTPUT_MAX_BYTES` | `1048576` | `bash` 保留的 stdout/stderr 合并输出字节上限；超额输出仍会被消费并丢弃，结果末尾会附加截断标记。非正数或非法值使用默认值。 |
 | `BASH_YIELD_TIMEOUT` | `30s` | `bash` 等待命令的时长；超时后命令转入后台，返回 `status=running` 与 `job_id`（不代表成功），可用 `bash_wait`/`bash_kill` 处理。必须为正 duration，非法值使用默认值。后台任务不跨 turn，turn 结束时回收。 |
 | `BASH_MAX_TIMEOUT` | `0` | 单个 bash 任务的最长存活时间；`0` 表示禁用。不得为负，非法值使用默认值。无进展不会自动 kill。 |

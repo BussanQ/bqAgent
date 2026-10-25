@@ -55,6 +55,7 @@ type ServiceOptions struct {
 	GroupExternalAgentTimeout time.Duration
 	Context                   agent.ContextConfig
 	BashJobs                  tools.BashJobOptions
+	InvestigationRoundLimit   int
 	RunTraceEnabled           bool
 	TaskToolEnabled           bool
 	SessionOptions            *session.Options
@@ -94,6 +95,7 @@ type Service struct {
 	groupExternalAgentTimeout time.Duration
 	context                   agent.ContextConfig
 	bashJobOptions            tools.BashJobOptions
+	investigationRoundLimit   int
 	processGroupStops         *processGroupStopRegistry
 	environmentCommands       *environmentCommandGuard
 	traceStore                *apptrace.Store
@@ -298,6 +300,7 @@ func NewService(options ServiceOptions) *Service {
 		groupExternalAgentTimeout: groupExternalAgentTimeout,
 		context:                   options.Context,
 		bashJobOptions:            options.BashJobs,
+		investigationRoundLimit:   options.InvestigationRoundLimit,
 		processGroupStops:         newProcessGroupStopRegistry(),
 		environmentCommands:       newEnvironmentCommandGuard(0),
 		subagents:                 options.Subagents,
@@ -1032,27 +1035,28 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	app := agent.NewWithOptions(service.client, effectiveModel, agent.Options{
 		EnableNativeWebSearch: true,
 
-		TaskStore:       taskStore,
-		Prompt:          conversation.Prompt,
-		APIType:         service.apiType,
-		LogWriter:       logWriter,
-		ToolDefinitions: toolDefinitions,
-		Functions:       functions,
-		Recorder:        conversation.Recorder(),
-		Stream:          options.Stream,
-		WorkspaceRoot:   service.workspaceRoot,
-		ProgressWriter:  progressWriter,
-		TokenSink:       options.TokenSink,
-		TurnID:          turnID,
-		MessageSink:     options.MessageSink,
-		TaskRelation:    request.TaskRelation,
-		ToolEventSink:   options.ToolEventSink,
-		Context:         service.context,
-		BashJobs:        service.bashJobOptions,
-		Stage:           options.Stage,
-		ReasoningEffort: request.ReasoningEffort,
-		ServiceTier:     service.sessionServiceTier(conversation.Session),
-		Trace:           runRecorder,
+		TaskStore:               taskStore,
+		Prompt:                  conversation.Prompt,
+		APIType:                 service.apiType,
+		LogWriter:               logWriter,
+		ToolDefinitions:         toolDefinitions,
+		Functions:               functions,
+		Recorder:                conversation.Recorder(),
+		Stream:                  options.Stream,
+		WorkspaceRoot:           service.workspaceRoot,
+		ProgressWriter:          progressWriter,
+		TokenSink:               options.TokenSink,
+		TurnID:                  turnID,
+		MessageSink:             options.MessageSink,
+		TaskRelation:            request.TaskRelation,
+		ToolEventSink:           options.ToolEventSink,
+		Context:                 service.context,
+		BashJobs:                service.bashJobOptions,
+		InvestigationRoundLimit: service.investigationRoundLimit,
+		Stage:                   options.Stage,
+		ReasoningEffort:         request.ReasoningEffort,
+		ServiceTier:             service.sessionServiceTier(conversation.Session),
+		Trace:                   runRecorder,
 	})
 
 	maxTurns := service.maxTurns

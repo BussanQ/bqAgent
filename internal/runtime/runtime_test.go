@@ -366,6 +366,26 @@ func TestContextTriggerPercentReachesRuntime(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnvInvestigationRoundLimit(t *testing.T) {
+	for raw, want := range map[string]int{
+		"":    agent.DefaultInvestigationRoundLimit,
+		"20":  20,
+		"0":   -1, // disabled
+		"-3":  agent.DefaultInvestigationRoundLimit,
+		"abc": agent.DefaultInvestigationRoundLimit,
+	} {
+		config := ConfigFromEnv(func(key string) string {
+			if key == "AGENT_INVESTIGATION_ROUND_LIMIT" {
+				return raw
+			}
+			return ""
+		})
+		if config.InvestigationRoundLimit != want {
+			t.Fatalf("AGENT_INVESTIGATION_ROUND_LIMIT=%q -> %d, want %d", raw, config.InvestigationRoundLimit, want)
+		}
+	}
+}
+
 func TestConfigFromEnvUsesAgentMaxIterations(t *testing.T) {
 	config := ConfigFromEnv(func(key string) string {
 		if key == "AGENT_MAX_ITERATIONS" {

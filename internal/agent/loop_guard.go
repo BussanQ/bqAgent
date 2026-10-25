@@ -26,6 +26,7 @@ type loopGuard struct {
 	lastEmptySearch  string
 	emptySearchCount int
 	progress         *progressTracker
+	investigation    investigationGuard
 	seenEdits        map[string]bool
 }
 
@@ -45,7 +46,7 @@ func (action loopGuardAction) merge(next loopGuardAction) loopGuardAction {
 }
 
 func newLoopGuard(config StageConfig) *loopGuard {
-	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, argumentFailures: map[string]int{}, pathFailures: map[string]int{}, progress: newProgressTracker(), seenEdits: map[string]bool{}}
+	return &loopGuard{config: config, callCounts: map[string]int{}, failureCounts: map[string]int{}, argumentFailures: map[string]int{}, pathFailures: map[string]int{}, progress: newProgressTracker(), seenEdits: map[string]bool{}, investigation: investigationGuard{limit: DefaultInvestigationRoundLimit}}
 }
 
 func (guard *loopGuard) taskUpdateSuspended() bool {
@@ -86,6 +87,7 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 	if call.Function.Name == "bash_wait" {
 		if status, ok := bashWaitStatus(result); ok {
 			fresh := guard.progress.observe(call, result)
+			guard.investigation.observe(call, result, fresh)
 			key := "bash_wait\x00" + status.JobID
 			if fresh || status.Status != "running" {
 				guard.callCounts[key] = 0
@@ -120,6 +122,7 @@ func (guard *loopGuard) observeTool(call ToolCall, result string) loopGuardActio
 		}
 	}
 	fresh := guard.progress.observe(call, result)
+	guard.investigation.observe(call, result, fresh)
 	if guard.progress.edited {
 		// A real edit lets previously counted calls (e.g. the same test) run
 		// again. This also clears unrelated failure counts; acceptable since

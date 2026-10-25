@@ -45,7 +45,7 @@ func TestBackgroundSessionLogsRunConfigWithoutAutoMemory(t *testing.T) {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
 	log := stderr.String()
-	for _, want := range []string{"[Session] id=", "mode=background", "[Runtime] api_type=openai model=test-model provider=env workspace=", "max_iterations=", "task_tool=", "run_trace=false", "context="} {
+	for _, want := range []string{"[Session] id=", "mode=background", "[Runtime] api_type=openai model=test-model provider=env workspace=", "max_iterations=", "investigation_round_limit=12", "task_tool=", "run_trace=false", "context="} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("run log missing %q:\n%s", want, log)
 		}

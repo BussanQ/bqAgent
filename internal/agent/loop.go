@@ -133,44 +133,48 @@ type Options struct {
 	ToolEventSink   ToolEventSink
 	Context         ContextConfig
 	Stage           StageConfig
-	BashJobs        tools.BashJobOptions
-	ReasoningEffort ReasoningEffort
-	ServiceTier     string
-	Trace           *apptrace.Recorder
+	// InvestigationRoundLimit is the number of read-only investigation rounds
+	// before a convergence reminder: 0 selects the default, negative disables.
+	InvestigationRoundLimit int
+	BashJobs                tools.BashJobOptions
+	ReasoningEffort         ReasoningEffort
+	ServiceTier             string
+	Trace                   *apptrace.Recorder
 }
 
 type Agent struct {
 	webSearchAvailable func() bool
 
-	turnID          string
-	messageSink     turn.Sink
-	taskRelation    turn.Relation
-	taskStore       taskstate.Store
-	task            *taskstate.State
-	client          ChatCompletionClient
-	model           string
-	apiType         APIType
-	logWriter       io.Writer
-	systemPrompt    string
-	prompt          PromptSnapshot
-	toolDefinitions []tools.Definition
-	functions       map[string]tools.Function
-	recorder        MessageRecorder
-	checkpointSaver ContextCheckpointRecorder
-	stream          bool
-	workspaceRoot   string
-	progressWriter  io.Writer
-	tokenSink       io.Writer
-	toolEventSink   ToolEventSink
-	toolEventSeq    atomic.Uint64
-	contextConfig   ContextConfig
-	contextUsageMu  sync.Mutex
-	promptUsage     promptUsageBaseline
-	stageConfig     StageConfig
-	bashJobOptions  tools.BashJobOptions
-	reasoningEffort ReasoningEffort
-	serviceTier     string
-	trace           *apptrace.Recorder
+	turnID                  string
+	messageSink             turn.Sink
+	taskRelation            turn.Relation
+	taskStore               taskstate.Store
+	task                    *taskstate.State
+	client                  ChatCompletionClient
+	model                   string
+	apiType                 APIType
+	logWriter               io.Writer
+	systemPrompt            string
+	prompt                  PromptSnapshot
+	toolDefinitions         []tools.Definition
+	functions               map[string]tools.Function
+	recorder                MessageRecorder
+	checkpointSaver         ContextCheckpointRecorder
+	stream                  bool
+	workspaceRoot           string
+	progressWriter          io.Writer
+	tokenSink               io.Writer
+	toolEventSink           ToolEventSink
+	toolEventSeq            atomic.Uint64
+	contextConfig           ContextConfig
+	contextUsageMu          sync.Mutex
+	promptUsage             promptUsageBaseline
+	stageConfig             StageConfig
+	investigationRoundLimit int
+	bashJobOptions          tools.BashJobOptions
+	reasoningEffort         ReasoningEffort
+	serviceTier             string
+	trace                   *apptrace.Recorder
 }
 
 func New(client ChatCompletionClient, model string, logWriter io.Writer) *Agent {
@@ -218,28 +222,29 @@ func NewWithOptions(client ChatCompletionClient, model string, options Options) 
 
 	app := &Agent{
 		turnID: options.TurnID, messageSink: options.MessageSink, taskRelation: options.TaskRelation,
-		taskStore:       options.TaskStore,
-		client:          client,
-		model:           model,
-		apiType:         NormalizeAPIType(string(options.APIType)),
-		logWriter:       logWriter,
-		progressWriter:  progressWriter,
-		systemPrompt:    systemPrompt,
-		prompt:          prompt,
-		toolDefinitions: definitions,
-		functions:       functions,
-		recorder:        options.Recorder,
-		checkpointSaver: checkpointSaver,
-		stream:          options.Stream,
-		workspaceRoot:   options.WorkspaceRoot,
-		tokenSink:       tokenSink,
-		toolEventSink:   options.ToolEventSink,
-		contextConfig:   contextConfig,
-		stageConfig:     normalizeStageConfig(options.Stage),
-		bashJobOptions:  options.BashJobs,
-		reasoningEffort: options.ReasoningEffort,
-		serviceTier:     options.ServiceTier,
-		trace:           options.Trace,
+		taskStore:               options.TaskStore,
+		client:                  client,
+		model:                   model,
+		apiType:                 NormalizeAPIType(string(options.APIType)),
+		logWriter:               logWriter,
+		progressWriter:          progressWriter,
+		systemPrompt:            systemPrompt,
+		prompt:                  prompt,
+		toolDefinitions:         definitions,
+		functions:               functions,
+		recorder:                options.Recorder,
+		checkpointSaver:         checkpointSaver,
+		stream:                  options.Stream,
+		workspaceRoot:           options.WorkspaceRoot,
+		tokenSink:               tokenSink,
+		toolEventSink:           options.ToolEventSink,
+		contextConfig:           contextConfig,
+		stageConfig:             normalizeStageConfig(options.Stage),
+		investigationRoundLimit: investigationRoundLimit(options.InvestigationRoundLimit),
+		bashJobOptions:          options.BashJobs,
+		reasoningEffort:         options.ReasoningEffort,
+		serviceTier:             options.ServiceTier,
+		trace:                   options.Trace,
 	}
 	if options.EnableNativeWebSearch || (options.ToolDefinitions == nil && options.Functions == nil) {
 		app.installNativeWebSearch(searchClient)
@@ -314,6 +319,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 	}
 	defer cancelExploration()
 	loopGuard := newLoopGuard(a.stageConfig)
+	loopGuard.investigation.limit = a.investigationRoundLimit
 	truncatedToolRecoveries := 0
 	emptyFinalRecoveries := 0
 	defer func() {
@@ -331,7 +337,11 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			return a.finishStageCheckpoint(ctx, updatedMessages, reason, actualIterations)
 		}
 		if inputs != nil {
-			messages, err = a.appendTurnInputs(ctx, messages, inputs.TakeSteering(), false)
+			pending := inputs.TakeSteering()
+			if len(pending) > 0 {
+				loopGuard.investigation.reset()
+			}
+			messages, err = a.appendTurnInputs(ctx, messages, pending, false)
 			updatedMessages = messages
 			if err != nil {
 				return "", updatedMessages, err
@@ -489,6 +499,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			if inputs != nil && canContinue {
 				if pending := inputs.TakeSteering(); len(pending) > 0 {
 					state.emit(itemID, "message.completed", "commentary", contentText(message.Content))
+					loopGuard.investigation.reset()
 					updatedMessages, err = a.appendTurnInputs(ctx, updatedMessages, pending, true)
 					messages = updatedMessages
 					if err != nil {
@@ -516,6 +527,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				if inputs != nil && canContinue && state.canAcceptFollowUp() {
 					if pending := inputs.Finish(); len(pending) > 0 {
 						state.emit(itemID, "message.completed", "commentary", finalContent)
+						loopGuard.investigation.reset()
 						updatedMessages, err = a.appendTurnInputs(ctx, updatedMessages, pending, true)
 						messages = updatedMessages
 						if err != nil {
@@ -557,6 +569,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		// a turn containing them runs sequentially. A turn of only independent tools
 		// runs concurrently and appends results in the original order.
 		guardAction := loopGuardAction{}
+		loopGuard.investigation.beginRound()
 		var batchImages []tools.ToolImage
 		if recoveredToolCalls || a.hasSpecialToolCalls(message.ToolCalls) {
 			recoveredSuccesses := map[string]bool{}
@@ -669,6 +682,14 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if guardAction.checkpointReason != "" {
 			setTurnStop(ctx, turn.Blocked, guardAction.checkpointReason)
 			return a.finishStageCheckpoint(ctx, updatedMessages, guardAction.checkpointReason, actualIterations)
+		}
+		if prompt := loopGuard.investigation.finishRound(); prompt != "" {
+			updatedMessages, err = a.appendContinuation(updatedMessages, prompt)
+			messages = updatedMessages
+			if err != nil {
+				return "", updatedMessages, err
+			}
+			a.writeStageProgress("调查已持续多轮，已提示模型收敛并推进下一步。")
 		}
 		if guardAction.recoveryPrompt != "" && loopGuard.taskUpdateStall >= taskUpdateRecoveryThreshold {
 			a.writeStageProgress("Recovering from a no-progress tool loop")
