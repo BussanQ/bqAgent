@@ -359,7 +359,7 @@ func hardPruneMessagesToBudget(messages []map[string]any, targetTokens int) []ma
 	remaining := targetTokens
 	latestUserIndex := -1
 	for index := len(messages) - 1; index >= 0; index-- {
-		if role, _ := messages[index]["role"].(string); role == "user" {
+		if isUserInputMessage(messages[index]) {
 			latestUserIndex = index
 			break
 		}
@@ -453,6 +453,10 @@ func messageTailGroups(messages []map[string]any, start int) []messageGroup {
 				if nextRole != "tool" {
 					break
 				}
+				end++
+			}
+			// Images read by the batch belong to it; keep them together.
+			if end < len(messages) && IsToolImagesMessage(messages[end]) {
 				end++
 			}
 		}

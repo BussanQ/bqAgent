@@ -312,6 +312,9 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 				continue
 			}
 		}
+		if agent.IsToolImagesMessage(message) {
+			continue
+		}
 		if (role == "user" || role == "assistant") && strings.TrimSpace(content) != "" {
 			filtered = append(filtered, ConversationHistoryMessage{Role: role, Sender: groupHistorySender(conversationType, role), Content: content})
 		}

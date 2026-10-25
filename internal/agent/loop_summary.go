@@ -231,8 +231,7 @@ func buildSummaryInput(messages []map[string]any) string {
 func safeTailStart(messages []map[string]any, keepLastTurns int) int {
 	turns := 0
 	for i := len(messages) - 1; i >= 0; i-- {
-		role, _ := messages[i]["role"].(string)
-		if role == "user" {
+		if isUserInputMessage(messages[i]) {
 			turns++
 			if turns >= keepLastTurns {
 				return i

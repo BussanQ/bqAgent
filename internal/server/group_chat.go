@@ -478,6 +478,9 @@ func sharedGroupContext(messages []map[string]any, replies []groupVisibleReply) 
 		lines = append(lines, prefix+": "+text)
 	}
 	for _, message := range messages {
+		if agent.IsToolImagesMessage(message) {
+			continue
+		}
 		role, _ := message["role"].(string)
 		content := conversationMessageText(message["content"])
 		if role == "assistant" {

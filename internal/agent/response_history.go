@@ -76,6 +76,7 @@ func chatMessagesWithoutResponseMetadata(messages []map[string]any) []map[string
 	for _, message := range result {
 		delete(message, "response_items")
 		delete(message, "phase")
+		delete(message, ToolImagesMessageKey)
 	}
 	return result
 }

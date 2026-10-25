@@ -223,3 +223,40 @@ func TestConversationHistoryRestoresStructuredToolBatches(t *testing.T) {
 		t.Fatalf("reply = %#v", history.Messages[2])
 	}
 }
+
+func TestConversationHistoryHidesToolImagesMessage(t *testing.T) {
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir})
+	saved, err := service.store.Create(session.CreateOptions{Task: "tool-images", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saved.RecordMessages(
+		map[string]any{"role": "user", "content": "看截图"},
+		map[string]any{"role": "assistant", "content": nil, "tool_calls": []agent.ToolCall{
+			{ID: "img", Function: agent.FunctionCall{Name: "read_file", Arguments: `{"path":"shot.png"}`}},
+		}},
+		map[string]any{"role": "tool", "tool_call_id": "img", "content": "Image loaded: shot.png"},
+		map[string]any{"role": "user", agent.ToolImagesMessageKey: true, "content": []any{
+			map[string]any{"type": "text", "text": "Image from read_file: shot.png"},
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,AAAA"}},
+		}},
+		map[string]any{"role": "assistant", "content": "截图正常"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	history, err := service.ConversationHistory(saved.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roles []string
+	for _, message := range history.Messages {
+		if message.Role == "user" && message.Content != "看截图" {
+			t.Fatalf("tool images message shown as user input: %#v", message)
+		}
+		roles = append(roles, message.Role)
+	}
+	if strings.Join(roles, ",") != "user,assistant,assistant" {
+		t.Fatalf("roles = %v, want user, tool batch, reply", roles)
+	}
+}

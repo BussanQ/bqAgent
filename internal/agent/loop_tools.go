@@ -356,9 +356,27 @@ func (a *Agent) appendToolImages(messages []map[string]any, images []tools.ToolI
 			}},
 		)
 	}
-	message := map[string]any{"role": "user", "content": parts}
+	message := map[string]any{"role": "user", "content": parts, ToolImagesMessageKey: true}
 	messages = append(messages, message)
 	return messages, a.recordMessages(message)
+}
+
+// ToolImagesMessageKey marks the user message appendToolImages adds. It is not
+// user input: history views hide it, context pruning keeps it with its tool
+// batch, and it is stripped before requests are sent.
+const ToolImagesMessageKey = "tool_images"
+
+// IsToolImagesMessage reports whether message carries tool-read images rather
+// than user input.
+func IsToolImagesMessage(message map[string]any) bool {
+	marked, _ := message[ToolImagesMessageKey].(bool)
+	return marked
+}
+
+// isUserInputMessage reports whether message is a real user turn.
+func isUserInputMessage(message map[string]any) bool {
+	role, _ := message["role"].(string)
+	return role == "user" && !IsToolImagesMessage(message)
 }
 
 // writeProgress surfaces a message to the progress writer (chat/channel/webui),

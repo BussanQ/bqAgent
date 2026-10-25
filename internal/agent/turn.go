@@ -121,7 +121,7 @@ func (a *Agent) RunTurn(ctx context.Context, messages []map[string]any, maxItera
 		return TurnResult{}, fmt.Errorf("invalid task relation %q", a.taskRelation)
 	}
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i]["role"] == "user" {
+		if isUserInputMessage(messages[i]) {
 			state.latestUser = contentText(messages[i]["content"])
 			break
 		}
