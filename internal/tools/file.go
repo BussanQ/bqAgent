@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -85,8 +86,14 @@ func readFileFromRootWithSkillLinks(root string, maxBytes int64, allowSkillLinks
 			defer rootFS.Close()
 		}
 
-		output := newBoundedOutput(maxBytes, DefaultReadFileMaxBytes)
 		reader := bufio.NewReader(file)
+		if head, _ := reader.Peek(512); len(head) > 0 {
+			if mimeType := toolImageMIMEType(head); mimeType != "" {
+				return readImageFile(ctx, reader, path, mimeType)
+			}
+		}
+
+		output := newBoundedOutput(maxBytes, DefaultReadFileMaxBytes)
 		startLine := offset
 		if startLine == 0 {
 			startLine = 1
@@ -129,6 +136,38 @@ func readFileFromRootWithSkillLinks(root string, maxBytes int64, allowSkillLinks
 			}
 		}
 	}
+}
+
+// toolImageMIMEType reports the image MIME type sniffed from content, or "" for
+// anything that is not a PNG, JPEG, GIF or WebP image.
+func toolImageMIMEType(head []byte) string {
+	switch mimeType := http.DetectContentType(head); mimeType {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return mimeType
+	default:
+		return ""
+	}
+}
+
+// readImageFile attaches an image to the call's ImageCapture so the agent loop
+// can show it to the model, and returns a short text description as the result.
+func readImageFile(ctx context.Context, reader io.Reader, path, mimeType string) (string, error) {
+	capture := imageCaptureFromContext(ctx)
+	if capture == nil {
+		return "", fmt.Errorf("%q is an image (%s); viewing images is not supported in this context", path, mimeType)
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, MaxToolImageBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("failed to read %q: %w", path, err)
+	}
+	if len(data) > MaxToolImageBytes {
+		return "", fmt.Errorf("image %q exceeds %d bytes; resize or crop it before reading", path, MaxToolImageBytes)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	capture.add(ToolImage{Path: path, MIMEType: mimeType, Data: data})
+	return fmt.Sprintf("Image loaded: %s (%s, %d bytes). The image is attached in the next user message.", path, mimeType, len(data)), nil
 }
 
 // ReadFileFromWorkspaceAndAgent keeps normal paths scoped to the workspace,

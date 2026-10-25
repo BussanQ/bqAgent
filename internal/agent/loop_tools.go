@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -223,6 +224,23 @@ func boundToolEventValue(value any, depth int) any {
 }
 
 func (a *Agent) runRegularToolCall(ctx context.Context, toolCall ToolCall) (string, string) {
+	id, result, _ := a.runRegularToolCallWithImages(ctx, toolCall)
+	return id, result
+}
+
+// runRegularToolCallWithImages is runRegularToolCall that also returns images
+// the tool attached (read_file on an image file). The caller shows them to the
+// model in a user message after the batch's tool results.
+func (a *Agent) runRegularToolCallWithImages(ctx context.Context, toolCall ToolCall) (string, string, []tools.ToolImage) {
+	ctx, images := tools.WithImageCapture(ctx)
+	id, result := a.runRegularToolCallInner(ctx, toolCall)
+	if strings.HasPrefix(strings.TrimSpace(result), "Error:") {
+		return id, result, nil
+	}
+	return id, result, images.Images()
+}
+
+func (a *Agent) runRegularToolCallInner(ctx context.Context, toolCall ToolCall) (string, string) {
 	if err := ctx.Err(); err != nil {
 		result := formatToolError(err, "")
 		a.emitToolResult(toolCall, result, 0, true)
@@ -320,6 +338,27 @@ func formatToolError(err error, output string) string {
 		output = "... [truncated]\n" + output
 	}
 	return fmt.Sprintf("Error: %v\n\nOutput before failure:\n%s", err, output)
+}
+
+// appendToolImages adds one user message carrying the images read by the
+// preceding tool batch. It must follow every tool result of the batch, because
+// Chat Completions forbids other messages between tool_calls and their results.
+func (a *Agent) appendToolImages(messages []map[string]any, images []tools.ToolImage) ([]map[string]any, error) {
+	if len(images) == 0 {
+		return messages, nil
+	}
+	parts := make([]any, 0, len(images)*2)
+	for _, image := range images {
+		parts = append(parts,
+			map[string]any{"type": "text", "text": "Image from read_file: " + image.Path},
+			map[string]any{"type": "image_url", "image_url": map[string]any{
+				"url": "data:" + image.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(image.Data),
+			}},
+		)
+	}
+	message := map[string]any{"role": "user", "content": parts}
+	messages = append(messages, message)
+	return messages, a.recordMessages(message)
 }
 
 // writeProgress surfaces a message to the progress writer (chat/channel/webui),

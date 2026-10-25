@@ -557,6 +557,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		// a turn containing them runs sequentially. A turn of only independent tools
 		// runs concurrently and appends results in the original order.
 		guardAction := loopGuardAction{}
+		var batchImages []tools.ToolImage
 		if recoveredToolCalls || a.hasSpecialToolCalls(message.ToolCalls) {
 			recoveredSuccesses := map[string]bool{}
 			for _, toolCall := range message.ToolCalls {
@@ -589,7 +590,8 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					continue
 				}
 
-				_, toolResult := a.runRegularToolCall(explorationCtx, toolCall)
+				_, toolResult, images := a.runRegularToolCallWithImages(explorationCtx, toolCall)
+				batchImages = append(batchImages, images...)
 				continuations.observe(toolCall, toolResult)
 				var action loopGuardAction
 				if recoveredToolCalls {
@@ -614,6 +616,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				// Finish a recovered batch before checkpointing so no split call
 				// is silently dropped or left without its result in history.
 				if action.checkpointReason != "" && !recoveredToolCalls {
+					if updatedMessages, recordErr = a.appendToolImages(updatedMessages, batchImages); recordErr != nil {
+						return "", updatedMessages, recordErr
+					}
 					setTurnStop(ctx, turn.Blocked, action.checkpointReason)
 					return a.finishStageCheckpoint(ctx, updatedMessages, action.checkpointReason, actualIterations)
 				}
@@ -621,6 +626,7 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			}
 		} else {
 			results := make([]string, len(message.ToolCalls))
+			resultImages := make([][]tools.ToolImage, len(message.ToolCalls))
 			semaphore := make(chan struct{}, maxParallelTools)
 			var waitGroup sync.WaitGroup
 			for index, toolCall := range message.ToolCalls {
@@ -629,8 +635,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					defer waitGroup.Done()
 					semaphore <- struct{}{}
 					defer func() { <-semaphore }()
-					_, content := a.runRegularToolCall(explorationCtx, toolCall)
+					_, content, images := a.runRegularToolCallWithImages(explorationCtx, toolCall)
 					results[index] = content
+					resultImages[index] = images
 				}(index, toolCall)
 			}
 			waitGroup.Wait()
@@ -648,7 +655,13 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					return "", updatedMessages, recordErr
 				}
 				guardAction = guardAction.merge(action)
+				batchImages = append(batchImages, resultImages[index]...)
 			}
+		}
+		updatedMessages, err = a.appendToolImages(updatedMessages, batchImages)
+		messages = updatedMessages
+		if err != nil {
+			return "", updatedMessages, err
 		}
 		if err := ctx.Err(); err != nil {
 			return "", updatedMessages, err

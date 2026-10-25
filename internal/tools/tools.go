@@ -258,7 +258,7 @@ func builtinDefinitions() []Definition {
 			Type: "function",
 			Function: FunctionDefinition{
 				Name:        "read_file",
-				Description: "Read a workspace file using a workspace-relative path, preferably copied from glob output. Absolute paths are accepted only when they are inside the workspace. Optionally pass offset and limit. Returned content is byte-capped and ends with a truncation marker when over budget.",
+				Description: "Read a workspace file using a workspace-relative path, preferably copied from glob output. Absolute paths are accepted only when they are inside the workspace. Optionally pass offset and limit. Returned content is byte-capped and ends with a truncation marker when over budget. PNG, JPEG, GIF and WebP files (up to 5 MB) are attached as images in the next user message so you can inspect them.",
 				Parameters: JSONSchema{
 					Type: "object",
 					Properties: map[string]JSONSchemaProperty{
