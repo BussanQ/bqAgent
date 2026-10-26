@@ -386,10 +386,24 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 					_, _ = io.WriteString(sink, chunk)
 				}
 			}
+			streamCtx := withStreamRetryObserver(explorationCtx, func() {
+				hadText := streamedText.Len() > 0
+				streamedText.Reset()
+				state.emit(itemID, "message.updated", "draft", "")
+				if a.messageSink == nil && hadText {
+					sink := a.tokenSink
+					if sink == nil {
+						sink = a.logWriter
+					}
+					if sink != nil {
+						_, _ = io.WriteString(sink, "\n\n[上游请求中断，正在重试；以下为重新生成的回复]\n\n")
+					}
+				}
+			})
 			if client, ok := a.client.(chatCompletionStreamOptionsClient); ok {
-				message, requestErr = client.CreateChatCompletionStreamWithOptions(explorationCtx, a.model, requestMessages, definitions, completionOptions, onChunk)
+				message, requestErr = client.CreateChatCompletionStreamWithOptions(streamCtx, a.model, requestMessages, definitions, completionOptions, onChunk)
 			} else {
-				message, requestErr = a.client.CreateChatCompletionStream(explorationCtx, a.model, requestMessages, definitions, onChunk)
+				message, requestErr = a.client.CreateChatCompletionStream(streamCtx, a.model, requestMessages, definitions, onChunk)
 			}
 		} else if client, ok := a.client.(chatCompletionOptionsClient); ok {
 			message, requestErr = client.CreateChatCompletionWithOptions(explorationCtx, a.model, requestMessages, definitions, completionOptions)

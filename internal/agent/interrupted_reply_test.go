@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -83,6 +85,80 @@ func TestRunTurnPreservesInterruptedReply(t *testing.T) {
 				t.Fatal("input history mutated")
 			}
 		})
+	}
+}
+
+func TestRunTurnReplacesDraftOnProviderRetry(t *testing.T) {
+	for _, failRetry := range []bool{false, true} {
+		for _, useMessageSink := range []bool{false, true} {
+			name := "success"
+			if failRetry {
+				name = "interrupted"
+			}
+			if useMessageSink {
+				name += "/message_sink"
+			} else {
+				name += "/token_sink"
+			}
+			t.Run(name, func(t *testing.T) {
+				calls := 0
+				httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					calls++
+					body := providerStreamSuccess(APITypeOpenAI, "new answer")
+					failure := "\ndata: {\"error\":{\"type\":\"server_error\",\"message\":\"connection closed\"}}\n"
+					if calls == 1 {
+						body = "data: {\"choices\":[{\"delta\":{\"content\":\"old draft\",\"tool_calls\":[{\"index\":0,\"id\":\"old_call\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{\"}}]}}]}\n" + failure
+					} else if failRetry {
+						body = "data: {\"choices\":[{\"delta\":{\"content\":\"new answer\"}}]}\n" + failure
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+				})}
+				client := newTestResilientClient(APITypeOpenAI, "https://stream.test", httpClient, 0)
+				var projection turn.Messages
+				var tokens strings.Builder
+				var drafts []string
+				toolExecutions := 0
+				options := Options{
+					Stream: true, TokenSink: &tokens, Context: ContextConfig{Enabled: false},
+					Functions: map[string]tools.Function{"write_file": func(context.Context, map[string]any) (string, error) {
+						toolExecutions++
+						return "written", nil
+					}},
+				}
+				if useMessageSink {
+					options.MessageSink = func(event turn.Event) {
+						projection.Apply(event)
+						if projection.Latest.Kind == "message.updated" && projection.Latest.Phase == "draft" {
+							drafts = append(drafts, projection.Latest.Text)
+						}
+					}
+				}
+				app := NewWithOptions(client, "test", options)
+				result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "hi"}}, 1)
+				if failRetry {
+					if err == nil || result.Outcome.Status != turn.Failed {
+						t.Fatalf("result=%+v err=%v", result, err)
+					}
+				} else if err != nil || result.Reply != "new answer" {
+					t.Fatalf("result=%+v err=%v", result, err)
+				}
+				if calls != 2 || toolExecutions != 0 {
+					t.Fatalf("calls=%d toolExecutions=%d", calls, toolExecutions)
+				}
+				last := result.Messages[len(result.Messages)-1]
+				text := contentText(last["content"])
+				if strings.Contains(text, "old draft") || !strings.HasSuffix(text, "new answer") || last["tool_calls"] != nil {
+					t.Fatalf("last message=%#v", last)
+				}
+				if useMessageSink {
+					if strings.Join(drafts, "|") != "old draft||new answer" || projection.Latest.Text != text {
+						t.Fatalf("drafts=%q projection=%+v", drafts, projection)
+					}
+				} else if !strings.Contains(tokens.String(), "old draft\n\n[上游请求中断，正在重试；以下为重新生成的回复]\n\nnew answer") {
+					t.Fatalf("tokens=%q", tokens.String())
+				}
+			})
+		}
 	}
 }
 

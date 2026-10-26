@@ -163,17 +163,15 @@ func TestProviderRetriesOnlyTransientNetworkErrors(t *testing.T) {
 	})
 }
 
-func TestProviderStreamRetryBoundaryUsesSemanticOutput(t *testing.T) {
+func TestProviderStreamsRetryAfterSemanticOutput(t *testing.T) {
 	tests := []struct {
 		name       string
 		firstEvent string
-		wantCalls  int32
-		wantError  bool
 	}{
-		{name: "text", firstEvent: `data: {"choices":[{"delta":{"content":"partial"}}]}` + "\n", wantCalls: 1, wantError: true},
-		{name: "reasoning", firstEvent: `data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}` + "\n", wantCalls: 1, wantError: true},
-		{name: "tool_call", firstEvent: `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read_file","arguments":"{"}}]}}]}` + "\n", wantCalls: 1, wantError: true},
-		{name: "metadata", firstEvent: `data: {"choices":[{"delta":{"role":"assistant"}}]}` + "\n", wantCalls: 2},
+		{name: "text", firstEvent: `data: {"choices":[{"delta":{"content":"partial"}}]}` + "\n"},
+		{name: "reasoning", firstEvent: `data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}` + "\n"},
+		{name: "tool_call", firstEvent: `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read_file","arguments":"{"}}]}}]}` + "\n"},
+		{name: "metadata", firstEvent: `data: {"choices":[{"delta":{"role":"assistant"}}]}` + "\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -188,16 +186,94 @@ func TestProviderStreamRetryBoundaryUsesSemanticOutput(t *testing.T) {
 			})}
 			client := newTestResilientClient(APITypeOpenAI, "https://stream.test", httpClient, 0)
 			message, err := client.CreateChatCompletionStream(context.Background(), "model", []map[string]any{{"role": "user", "content": "hi"}}, nil, nil)
-			if test.wantError && err == nil {
-				t.Fatal("CreateChatCompletionStream returned nil error")
-			}
-			if !test.wantError && (err != nil || message.FinalContent() != "done") {
+			if err != nil || message.FinalContent() != "done" || len(message.ToolCalls) != 0 || message.Request.RetryCount != 1 {
 				t.Fatalf("message=%#v err=%v", message, err)
 			}
-			if calls.Load() != test.wantCalls {
-				t.Fatalf("calls=%d want=%d", calls.Load(), test.wantCalls)
+			if calls.Load() != 2 {
+				t.Fatalf("calls=%d want=2", calls.Load())
 			}
 		})
+	}
+}
+
+func TestProviderStreamsRetryUpstreamErrorsAfterOutput(t *testing.T) {
+	for _, protocol := range []struct {
+		apiType APIType
+		partial string
+		failure string
+	}{
+		{APITypeOpenAI, `data: {"choices":[{"delta":{"content":"partial"}}]}`, `data: {"error":{"type":"server_error","message":"fetch() connection closed"}}`},
+		{APITypeOpenAIResponse, `data: {"type":"response.output_text.delta","delta":"partial"}`, `data: {"type":"response.failed","response":{"error":{"code":"server_error","message":"fetch() connection closed"}}}`},
+		{APITypeAnthropic, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`, `data: {"type":"error","error":{"type":"overloaded_error","message":"fetch() connection closed"}}`},
+	} {
+		for _, scenario := range []string{"success", "exhausted", "protocol_error", "cancelled", "cancelled_during_backoff"} {
+			t.Run(string(protocol.apiType)+"/"+scenario, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				var calls, resets int
+				var visible strings.Builder
+				ctx = withStreamRetryObserver(ctx, func() {
+					resets++
+					visible.Reset()
+				})
+				httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					calls++
+					body := providerStreamSuccess(protocol.apiType, "done")
+					if calls == 1 || scenario == "exhausted" {
+						failure := protocol.failure
+						if scenario == "protocol_error" {
+							failure = "data: invalid JSON"
+						}
+						body = protocol.partial + "\n\n" + failure + "\n\n"
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+				})}
+				client := newTestResilientClient(protocol.apiType, "https://stream.test", httpClient, 0)
+				if scenario == "cancelled_during_backoff" {
+					client.retrySleep = func(context.Context, time.Duration) error {
+						cancel()
+						return ctx.Err()
+					}
+				}
+				message, err := client.CreateChatCompletionStream(ctx, "model", nil, nil, func(chunk string) {
+					visible.WriteString(chunk)
+					if scenario == "cancelled" {
+						cancel()
+					}
+				})
+				if scenario == "success" {
+					if err != nil || message.FinalContent() != "done" || visible.String() != "done" || message.Request.RetryCount != 1 {
+						t.Fatalf("message=%#v visible=%q err=%v", message, visible.String(), err)
+					}
+					if len(message.Request.Recoveries) != 1 || message.Request.Recoveries[0].Category != ProviderErrorServer {
+						t.Fatalf("recoveries=%#v", message.Request.Recoveries)
+					}
+				} else {
+					if err == nil || visible.String() != "partial" {
+						t.Fatalf("visible=%q err=%v", visible.String(), err)
+					}
+					metadata := ProviderRequestMetadataFromError(err)
+					if scenario == "exhausted" {
+						var providerErr *ProviderError
+						if !errors.As(err, &providerErr) || providerErr.Category != ProviderErrorServer || metadata.RetryCount != 1 {
+							t.Fatalf("err=%#v metadata=%#v", err, metadata)
+						}
+					} else if metadata.RetryCount != 0 {
+						t.Fatalf("metadata=%#v", metadata)
+					}
+					if strings.HasPrefix(scenario, "cancelled") && !errors.Is(err, context.Canceled) {
+						t.Fatalf("err=%v, want cancellation", err)
+					}
+				}
+				wantCalls, wantResets := 2, 1
+				if scenario != "success" && scenario != "exhausted" {
+					wantCalls, wantResets = 1, 0
+				}
+				if calls != wantCalls || resets != wantResets {
+					t.Fatalf("calls=%d resets=%d, want %d/%d", calls, resets, wantCalls, wantResets)
+				}
+			})
+		}
 	}
 }
 

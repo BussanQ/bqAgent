@@ -147,6 +147,18 @@ type streamAttemptState struct {
 	semanticOutput bool
 }
 
+type streamRetryObserverKey struct{}
+
+func withStreamRetryObserver(ctx context.Context, observer func()) context.Context {
+	previous, _ := ctx.Value(streamRetryObserverKey{}).(func())
+	return context.WithValue(ctx, streamRetryObserverKey{}, func() {
+		if previous != nil {
+			previous()
+		}
+		observer()
+	})
+}
+
 func (state *streamAttemptState) markSemantic(ctx context.Context) {
 	if state != nil {
 		state.semanticOutput = true
@@ -200,7 +212,7 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 			return AssistantMessage{}, &providerRequestError{cause: ctxErr, request: metadata}
 		}
 		providerErr := normalizeProviderError(ctx, err)
-		if stream && state.semanticOutput {
+		if stream && state.semanticOutput && (!providerErr.Transient || transientRetryUsed) {
 			providerErr.Request = cloneProviderRequestMetadata(metadata)
 			return AssistantMessage{}, providerErr
 		}
@@ -242,6 +254,12 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 				Category: providerErr.Category, StatusCode: providerErr.StatusCode, Delay: delay,
 			})
 			transientRetryUsed = true
+			if stream && state.semanticOutput {
+				// The next attempt starts a fresh response; discard its predecessor's draft.
+				if observer, _ := ctx.Value(streamRetryObserverKey{}).(func()); observer != nil {
+					observer()
+				}
+			}
 			continue
 		}
 
