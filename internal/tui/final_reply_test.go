@@ -367,8 +367,20 @@ func TestFinalReplyMarkerAppearsOnceBeforeAnswer(t *testing.T) {
 				}
 				answer := "answer-start\n\n" + strings.Repeat("answer-body\n\n", paragraphs) + "answer-end"
 				model.handleTurnEvent(turnEvent{sequence: 1, kind: "done", result: TurnResult{Reply: answer}})
+				// Ctrl+O flushes queued history into native scrollback; keep what
+				// was already printed so the check covers the whole terminal.
+				printed := ""
 				for i := 0; i < 4; i++ {
-					text := ansi.Strip(strings.Join(model.printQueue, "\n") + "\n" + model.View().Content)
+					if view := model.View(); view.AltScreen {
+						// Completed-turn tools open on a separate screen without the answer.
+						if strings.Contains(view.Content, "●") || strings.Contains(view.Content, "answer-start") {
+							t.Fatal("tool inspector must not repeat the marker or answer")
+						}
+						updated, _ := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+						model = updated.(Model)
+						continue
+					}
+					text := ansi.Strip(printed + strings.Join(model.printQueue, "\n") + "\n" + model.View().Content)
 					tools, marker, start := strings.Index(text, "工具活动"), strings.Index(text, "●"), strings.Index(text, "answer-start")
 					if strings.Count(text, "●") != 1 || tools < 0 || marker <= tools || start <= marker {
 						t.Fatal("final marker must appear once between tools and the answer")
@@ -377,11 +389,19 @@ func TestFinalReplyMarkerAppearsOnceBeforeAnswer(t *testing.T) {
 						t.Fatal("marker must share the first answer line without a conclusion label")
 					}
 					// Redrawing and inspecting tools must not prepend another marker.
-					model.toggleToolGroup()
+					if len(model.printQueue) > 0 {
+						printed += strings.Join(model.printQueue, "\n") + "\n"
+					}
+					updated, _ := model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+					model = updated.(Model)
+				}
+				if len(model.printQueue) > 0 {
+					printed += strings.Join(model.printQueue, "\n") + "\n"
+					model.printQueue = nil
 				}
 				model.commitTurn()
 				model.commitTurn()
-				text := ansi.Strip(strings.Join(model.printQueue, "\n"))
+				text := ansi.Strip(printed + strings.Join(model.printQueue, "\n"))
 				if strings.Count(text, "●") != 1 || strings.Count(text, "answer-start") != 1 || strings.Count(text, "answer-end") != 1 {
 					t.Fatal("history commit lost or duplicated the marker or answer")
 				}
