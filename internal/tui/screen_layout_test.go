@@ -6,7 +6,47 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
+
+func TestWorkspacePathStaysAtBottom(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		model := NewModel(&fakeBackend{}, Config{Workspace: "/项目/workspace/bqAgent", AgentDir: t.TempDir(), NoColor: noColor})
+		updated, _ := model.Update(startupMsg{})
+		model = updated.(Model)
+		for _, size := range [][2]int{{100, 40}, {18, 9}, {8, 5}, {100, 40}} {
+			updated, _ := model.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			model = updated.(Model)
+			for _, state := range []string{"idle", "streaming", "completed"} {
+				model.stream, model.reply = "", ""
+				switch state {
+				case "streaming":
+					model.stream = strings.Repeat("response line\n", 80)
+				case "completed":
+					model.reply = "completed response"
+				}
+				view := model.View()
+				rows := strings.Split(ansi.Strip(view.Content), "\n")
+				want := "工作区  " + model.config.Workspace
+				if size[0] == 18 {
+					want = "工作区  /项目/w…"
+				} else if size[0] == 8 {
+					want = "工作…"
+				}
+				if got := rows[len(rows)-1]; got != want {
+					t.Fatalf("size=%v state=%s: bottom row = %q, want %q", size, state, got, want)
+				}
+				if strings.Contains(strings.Join(rows[:len(rows)-1], "\n"), "工作区  ") {
+					t.Fatal("workspace duplicated above footer")
+				}
+				if len(rows) != model.frameLimit() {
+					t.Fatalf("frame height = %d, want %d", len(rows), model.frameLimit())
+				}
+				assertLiveFrameFits(t, model)
+			}
+		}
+	}
+}
 
 func TestChatFrameKeepsInputAtBottom(t *testing.T) {
 	model := toolDrawerModel(t, 0)
@@ -316,15 +356,29 @@ func TestTranscriptPaddingKeepsToolSummaryClickable(t *testing.T) {
 	model.enqueuePrint("recent-question")
 	updated, _ := model.Update(nil)
 	model = updated.(Model)
-	rows := strings.Split(model.View().Content, "\n")
+	collapsed := model.View()
+	// Collapsed tools leave the mouse to native scrollback; expand by keyboard first.
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	model = updated.(Model)
+	view := model.View()
+	if !model.tools.expanded || view.MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("Ctrl+O must expand tools and enable mouse interaction")
+	}
+	rows := strings.Split(view.Content, "\n")
 	for row, text := range rows {
 		if !strings.Contains(text, "工具活动") {
 			continue
 		}
+		if row != 1 || rows[0] != "recent-question" {
+			t.Fatal("tool summary must follow the retained transcript")
+		}
 		updated, command := model.Update(tea.MouseClickMsg{X: 1, Y: model.height - len(rows) + row, Button: tea.MouseLeft})
 		model = updated.(Model)
-		if command != nil || !model.tools.expanded || !strings.Contains(model.View().Content, "recent-question") {
-			t.Fatal("retained transcript or padding broke the tool summary click")
+		if command != nil || model.tools.expanded || model.toolMouse || model.View().MouseMode != tea.MouseModeNone {
+			t.Fatal("tool summary click must collapse tools and restore native scrolling")
+		}
+		if model.View().Content != collapsed.Content {
+			t.Fatal("tool summary click did not restore retained transcript and padding")
 		}
 		return
 	}

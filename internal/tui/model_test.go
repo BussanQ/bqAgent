@@ -468,8 +468,8 @@ func TestStartupOmitsDynamicModelAndModeLines(t *testing.T) {
 	if strings.Contains(startup, "模型    ") || strings.Contains(startup, "模式    ") {
 		t.Fatalf("startup contains stale dynamic lines: %q", startup)
 	}
-	if !strings.Contains(startup, "工作区  "+model.config.Workspace) {
-		t.Fatalf("startup omits workspace: %q", startup)
+	if strings.Contains(startup, "工作区  ") || strings.Contains(startup, model.config.Workspace) {
+		t.Fatalf("startup duplicates footer workspace: %q", startup)
 	}
 }
 

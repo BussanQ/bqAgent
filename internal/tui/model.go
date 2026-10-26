@@ -1642,7 +1642,6 @@ func (model Model) startupLines() []string {
 	return []string{
 		model.styles.accent.Render("bqAgent") + "  Harness",
 		model.styles.dim.Render(notice),
-		fmt.Sprintf("工作区  %s", model.config.Workspace),
 	}
 }
 

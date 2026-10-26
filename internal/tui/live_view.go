@@ -56,6 +56,7 @@ func (model Model) footerLines() []string {
 	lines := []string{model.styles.dim.Render(strings.Repeat("─", width))}
 	lines = append(lines, strings.Split(model.input.area.View(), "\n")...)
 	lines = append(lines, strings.Split(model.renderStatus(width), "\n")...)
+	lines = append(lines, model.styles.dim.Render(ansi.Truncate("工作区  "+model.config.Workspace, width, "…")))
 	// Status labels and textarea decorations must not create implicit wraps.
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], width, "")
