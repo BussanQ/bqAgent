@@ -4,9 +4,59 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestPromptInheritsTerminalColors(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		input := newPromptInput(noColor)
+		styles := input.area.Styles()
+		for _, state := range []textarea.StyleState{styles.Focused, styles.Blurred} {
+			for _, style := range []lipgloss.Style{state.Base, state.Text, state.CursorLine, state.Prompt, state.Placeholder, state.Selection, state.EndOfBuffer} {
+				if _, ok := style.GetForeground().(lipgloss.NoColor); !ok {
+					t.Fatalf("noColor=%t: input overrides terminal foreground", noColor)
+				}
+				if _, ok := style.GetBackground().(lipgloss.NoColor); !ok {
+					t.Fatalf("noColor=%t: input overrides terminal background", noColor)
+				}
+			}
+			if state.Selection.GetReverse() != !noColor {
+				t.Fatalf("noColor=%t: selection must reverse terminal colors only in styled mode", noColor)
+			}
+		}
+		input.resize(40, 6)
+		for _, value := range []string{"", "输入文字 hello", "第一行\n第二行"} {
+			input.setValue(value)
+			for _, focused := range []bool{false, true} {
+				if focused {
+					input.area.Focus()
+				} else {
+					input.area.Blur()
+				}
+				view := input.area.View()
+				want := value
+				if want == "" {
+					want = input.area.Placeholder
+				}
+				for _, line := range strings.Split(want, "\n") {
+					if !strings.Contains(ansi.Strip(view), line) {
+						t.Fatalf("input text missing: %q", view)
+					}
+				}
+				if noColor && strings.Contains(view, "\x1b[") {
+					t.Fatalf("NoColor input contains styling: %q", view)
+				}
+			}
+		}
+		input.area.Focus()
+		if cursor := input.area.Cursor(); cursor == nil || cursor.Color != nil {
+			t.Fatalf("cursor must use terminal default color: %#v", cursor)
+		}
+	}
+}
 
 func TestPromptNewlineKeepsFirstLineAndCursor(t *testing.T) {
 	model := toolDrawerModel(t, 0)

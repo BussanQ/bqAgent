@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 const (
@@ -34,13 +35,21 @@ type promptInput struct {
 
 func newPromptInput(noColor ...bool) promptInput {
 	area := textarea.New()
+	// Inherit the terminal's foreground/background as a pair. The textarea's
+	// default dark cursor-line background hides dark text in light terminals.
+	styles := area.Styles()
+	styles.Focused = textarea.StyleState{}
+	styles.Blurred = textarea.StyleState{}
+	styles.Cursor.Color = nil
 	if len(noColor) > 0 && noColor[0] {
-		styles := area.Styles()
-		styles.Focused = textarea.StyleState{}
-		styles.Blurred = textarea.StyleState{}
 		styles.Cursor = textarea.CursorStyle{}
-		area.SetStyles(styles)
+	} else {
+		styles.Focused.Placeholder = lipgloss.NewStyle().Italic(true)
+		styles.Blurred.Placeholder = styles.Focused.Placeholder
+		styles.Focused.Selection = lipgloss.NewStyle().Reverse(true)
+		styles.Blurred.Selection = styles.Focused.Selection
 	}
+	area.SetStyles(styles)
 	area.Placeholder = "输入消息，/ 查看命令"
 	area.SetPromptFunc(2, func(info textarea.PromptInfo) string {
 		if info.LineNumber == 0 {
