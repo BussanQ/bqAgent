@@ -139,12 +139,8 @@ func (a *Agent) buildRequestMessagesWithTail(ctx context.Context, messages []map
 		protected = append(protected, map[string]any{"role": "developer", "content": text})
 	}
 	protected = append(protected, tail...)
-	if len(protected) == 0 {
-		request, compacted = a.buildBudgetedRequestMessages(ctx, messages, definitions, options)
-		return request, compacted, nil
-	}
 	if !a.contextConfig.Enabled {
-		request, compacted = a.buildBudgetedRequestMessages(ctx, messages, definitions, options)
+		request, compacted, _ = a.buildBudgetedRequestMessages(ctx, messages, definitions, options)
 		return append(append([]map[string]any{}, request...), protected...), compacted, nil
 	}
 	limit := a.contextConfig.MaxInputTokens - a.contextConfig.ResponseReserveTokens
@@ -154,74 +150,83 @@ func (a *Agent) buildRequestMessagesWithTail(ctx context.Context, messages []map
 	// The limit check uses the same measurement authority as compaction (the
 	// provider's count once the estimate nears the trigger, else the local
 	// estimate), so it adds no extra network count for small requests.
-	if m := a.measureRequestTokens(protectedCtx, fixed, definitions, options, false); m.tokens > limit {
-		return nil, nil, fmt.Errorf("context budget too small: fixed prompt, tools and protected messages need about %d tokens (%s), above the %d-token request limit; raise the context limit or shorten the task record", m.tokens, m.source, limit)
+	if len(protected) > 0 {
+		if m := a.measureRequestTokens(protectedCtx, fixed, definitions, options, false); m.tokens > limit {
+			return nil, nil, fmt.Errorf("context budget too small: fixed prompt, tools and protected messages need about %d tokens (%s), above the %d-token request limit; raise the context limit or shorten the task record", m.tokens, m.source, limit)
+		}
 	}
-	request, compacted = a.buildBudgetedRequestMessages(protectedCtx, messages, definitions, options)
-	if m := a.measureRequestTokens(protectedCtx, request, definitions, options, false); m.tokens > limit {
-		return nil, nil, fmt.Errorf("context budget too small: request still needs about %d tokens (%s) after compaction, above the %d-token request limit; protected messages and latest input cannot be reduced further", m.tokens, m.source, limit)
+	var measurement requestTokenMeasurement
+	request, compacted, measurement = a.buildBudgetedRequestMessages(protectedCtx, messages, definitions, options)
+	if latestUserMessageIndex(sanitized) >= 0 && latestUserMessageIndex(request) < 0 {
+		return nil, nil, fmt.Errorf("context compaction lost the latest user request; refusing to send a prompt-only request")
+	}
+	if measurement.tokens > limit {
+		return nil, nil, fmt.Errorf("context budget too small: request still needs about %d tokens (%s) after compaction, above the %d-token request limit; protected messages and latest input cannot be reduced further", measurement.tokens, measurement.source, limit)
+	}
+	if compacted != nil {
+		a.saveContextCheckpoint(compacted)
 	}
 	return append(append([]map[string]any{}, request...), protected...), compacted, nil
 }
 
-func (a *Agent) buildBudgetedRequestMessages(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (request []map[string]any, compacted []map[string]any) {
+func (a *Agent) buildBudgetedRequestMessages(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (request []map[string]any, compacted []map[string]any, measurement requestTokenMeasurement) {
 	sanitized := repairToolHistory(duplicateMessages(messages))
 	if !a.contextConfig.Enabled {
-		return sanitized, nil
+		return sanitized, nil, requestTokenMeasurement{}
 	}
 
-	measurement := a.measureRequestTokens(ctx, sanitized, definitions, options, false)
+	measurement = a.measureRequestTokens(ctx, sanitized, definitions, options, false)
 	if measurement.tokens < a.contextConfig.CompressionTriggerTokens {
 		a.logContextBudget(ctx, len(messages), len(sanitized), len(sanitized), measurement, false, false)
-		return sanitized, nil
+		return sanitized, nil, measurement
 	}
 
-	messageTarget := messageBudgetForRequest(sanitized, measurement.tokens, a.contextConfig.TargetInputTokens)
+	// Pruning uses local message estimates, so subtract only overhead measured
+	// with that same estimator. Provider usage differences are not fixed overhead.
+	messageTarget := messageBudgetForRequest(protectedMessages(ctx), definitions, options, a.contextConfig.TargetInputTokens)
 	pruned := pruneMessagesToBudget(sanitized, a.contextConfig)
 	pruned = hardPruneMessagesToBudget(pruned, messageTarget)
 	if !a.contextConfig.SummarizationEnabled || !shouldSummarize(measurement.tokens, a.contextConfig) {
 		pruned, prunedMeasurement := a.finalizeRequestBudget(ctx, pruned, definitions, options, measurement.exact)
 		a.logContextBudget(ctx, len(messages), len(sanitized), len(pruned), prunedMeasurement, true, false)
-		return pruned, pruned
+		return pruned, pruned, prunedMeasurement
 	}
 
 	summarized, ok := a.summarizeMessages(ctx, sanitized, messageTarget)
 	if !ok {
 		pruned, prunedMeasurement := a.finalizeRequestBudget(ctx, pruned, definitions, options, measurement.exact)
 		a.logContextBudget(ctx, len(messages), len(sanitized), len(pruned), prunedMeasurement, true, false)
-		return pruned, pruned
+		return pruned, pruned, prunedMeasurement
 	}
 	summarized, summaryMeasurement := a.finalizeRequestBudget(ctx, summarized, definitions, options, measurement.exact)
 	a.logContextBudget(ctx, len(messages), len(sanitized), len(summarized), summaryMeasurement, true, true)
-	return summarized, summarized
+	return summarized, summarized, summaryMeasurement
 }
 
 func (a *Agent) finalizeRequestBudget(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, forceExact bool) ([]map[string]any, requestTokenMeasurement) {
 	measurement := a.measureRequestTokens(ctx, messages, definitions, options, forceExact)
-	if measurement.tokens <= a.contextConfig.TargetInputTokens {
-		return messages, measurement
+	for range 3 {
+		if measurement.tokens <= a.contextConfig.TargetInputTokens {
+			break
+		}
+		// Convert the whole request target to the local estimator's scale rather
+		// than subtracting provider-token overage from locally estimated tokens.
+		visible := estimateVisibleRequestTokens(messages, definitions, options) + estimateMessagesTokens(protectedMessages(ctx))
+		localTarget := int(float64(visible) * float64(a.contextConfig.TargetInputTokens) / float64(measurement.tokens))
+		localTarget -= maxInt(1, localTarget/100)
+		messageTarget := messageBudgetForRequest(protectedMessages(ctx), definitions, options, localTarget)
+		adjusted := hardPruneMessagesToBudget(messages, messageTarget)
+		if estimateMessagesTokens(adjusted) >= estimateMessagesTokens(messages) {
+			break
+		}
+		messages = adjusted
+		measurement = a.measureRequestTokens(ctx, messages, definitions, options, forceExact || measurement.exact)
 	}
-
-	messageTokens := estimateMessagesTokens(messages)
-	overage := measurement.tokens - a.contextConfig.TargetInputTokens
-	// Leave a small guard because removing one locally estimated token does not
-	// always remove exactly one provider token after request framing.
-	guard := maxInt(1, a.contextConfig.TargetInputTokens/100)
-	messageTarget := maxInt(1, messageTokens-overage-guard)
-	adjusted := hardPruneMessagesToBudget(messages, messageTarget)
-	removedEstimate := messageTokens - estimateMessagesTokens(adjusted)
-	measurement.tokens = maxInt(0, measurement.tokens-removedEstimate)
-	measurement.source += "+adjusted"
-	measurement.exact = false
-	return adjusted, measurement
+	return messages, measurement
 }
 
-func messageBudgetForRequest(messages []map[string]any, requestTokens int, targetTokens int) int {
-	staticAndFramingTokens := requestTokens - estimateMessagesTokens(messages)
-	if staticAndFramingTokens < 0 {
-		staticAndFramingTokens = 0
-	}
-	return maxInt(1, targetTokens-staticAndFramingTokens)
+func messageBudgetForRequest(protected []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, targetTokens int) int {
+	return maxInt(1, targetTokens-estimateVisibleRequestTokens(protected, definitions, options))
 }
 
 func (a *Agent) measureRequestTokens(ctx context.Context, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, forceExact bool) requestTokenMeasurement {
@@ -243,7 +248,8 @@ func (a *Agent) measureRequestTokens(ctx context.Context, messages []map[string]
 	}
 	count, err := counter.CountInputTokens(ctx, a.model, messages, definitions, options)
 	if err != nil {
-		if !errors.Is(err, ErrInputTokenCountUnsupported) {
+		var disabled errTokenCountEndpointDisabled
+		if errors.As(err, &disabled) || !errors.Is(err, ErrInputTokenCountUnsupported) {
 			a.logf("[Context] exact token count failed; using %s: %v\n", source, err)
 		}
 		return measurement
@@ -345,10 +351,18 @@ func pruneMessagesToBudget(messages []map[string]any, config ContextConfig) []ma
 	return pruned
 }
 
-// hardPruneMessagesToBudget is the final request-size guard. Turn-based pruning
-// can still exceed the token target when one recent turn contains many or very
-// large tool results. This keeps a contiguous, valid tail and truncates the
-// newest group only when that group alone would exceed the remaining budget.
+func latestUserMessageIndex(messages []map[string]any) int {
+	for index := len(messages) - 1; index >= 0; index-- {
+		if isUserInputMessage(messages[index]) {
+			return index
+		}
+	}
+	return -1
+}
+
+// hardPruneMessagesToBudget keeps the prompt and latest input even when they
+// exceed the soft target. The checked request builder enforces the hard limit.
+// Tool calls and their results are kept or dropped together.
 func hardPruneMessagesToBudget(messages []map[string]any, targetTokens int) []map[string]any {
 	if targetTokens <= 0 || len(messages) == 0 || estimateMessagesTokens(messages) <= targetTokens {
 		return messages
@@ -357,13 +371,7 @@ func hardPruneMessagesToBudget(messages []map[string]any, targetTokens int) []ma
 	protectedEnd := 0
 	result := make([]map[string]any, 0, len(messages))
 	remaining := targetTokens
-	latestUserIndex := -1
-	for index := len(messages) - 1; index >= 0; index-- {
-		if isUserInputMessage(messages[index]) {
-			latestUserIndex = index
-			break
-		}
-	}
+	latestUserIndex := latestUserMessageIndex(messages)
 	var reservedUser []map[string]any
 	reservedUserTokens := 0
 	if latestUserIndex >= 0 {
@@ -372,6 +380,11 @@ func hardPruneMessagesToBudget(messages []map[string]any, targetTokens int) []ma
 			userBudget = 1
 		}
 		reservedUser = truncateMessageGroupToBudget(messages[latestUserIndex:latestUserIndex+1], userBudget)
+		if len(reservedUser) == 0 {
+			// A tiny target must never erase the task. Let the caller reject an
+			// impossible hard limit instead of silently sending only instructions.
+			reservedUser = duplicateMessages(messages[latestUserIndex : latestUserIndex+1])
+		}
 		reservedUserTokens = estimateMessagesTokens(reservedUser)
 	}
 	protectedEnd = leadingPromptMessageCount(messages)
@@ -390,8 +403,8 @@ func hardPruneMessagesToBudget(messages []map[string]any, targetTokens int) []ma
 			protectedEnd++
 		}
 	}
-	if remaining <= 0 || protectedEnd >= len(messages) {
-		return result
+	if remaining < reservedUserTokens || remaining <= 0 || protectedEnd >= len(messages) {
+		return append(result, reservedUser...)
 	}
 
 	groups := messageTailGroups(messages, protectedEnd)

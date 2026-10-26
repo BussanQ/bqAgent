@@ -3,10 +3,30 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
+	"time"
 
 	"bqagent/internal/tools"
 )
+
+// tokenCountCapabilityTTL bounds how long a 404/405/501 count endpoint stays
+// disabled, so a temporary gateway routing error does not disable exact
+// counting for the rest of the process.
+const tokenCountCapabilityTTL = 30 * time.Minute
+
+// errTokenCountEndpointDisabled reports the request that disabled the count
+// endpoint. It matches ErrInputTokenCountUnsupported for fallback, but is
+// logged once, unlike later silent cache hits.
+type errTokenCountEndpointDisabled struct{ status int }
+
+func (err errTokenCountEndpointDisabled) Error() string {
+	return fmt.Sprintf("%s: HTTP %d; disabled for %s", ErrInputTokenCountUnsupported, err.status, tokenCountCapabilityTTL)
+}
+
+func (errTokenCountEndpointDisabled) Unwrap() error { return ErrInputTokenCountUnsupported }
 
 type openAIInputTokenCountResponse struct {
 	InputTokens int `json:"input_tokens"`
@@ -25,6 +45,18 @@ type anthropicInputTokenCountResponse struct {
 	InputTokens int `json:"input_tokens"`
 }
 
+func tokenCountEndpointUnsupportedStatus(err error) (int, bool) {
+	var providerErr *ProviderError
+	if !errors.As(err, &providerErr) {
+		return 0, false
+	}
+	switch providerErr.StatusCode {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return providerErr.StatusCode, true
+	}
+	return 0, false
+}
+
 // CountInputTokens dispatches to a provider-specific implementation. Keeping
 // this capability separate from generation lets additional providers add their
 // own exact count endpoint without changing the agent loop.
@@ -35,10 +67,23 @@ func (c *Client) CountInputTokens(ctx context.Context, model string, messages []
 		}
 	}
 	switch c.apiType {
-	case APITypeOpenAIResponse:
-		return c.countOpenAIResponseInputTokens(ctx, model, messages, definitions, options)
-	case APITypeAnthropic:
-		return c.countAnthropicInputTokens(ctx, model, messages, definitions, options)
+	case APITypeOpenAIResponse, APITypeAnthropic:
+		key := strings.TrimSpace(model)
+		if expiry, unsupported := c.tokenCountUnsupported.Load(key); unsupported && time.Now().Before(expiry.(time.Time)) {
+			return InputTokenCount{}, ErrInputTokenCountUnsupported
+		}
+		var count InputTokenCount
+		var err error
+		if c.apiType == APITypeOpenAIResponse {
+			count, err = c.countOpenAIResponseInputTokens(ctx, model, messages, definitions, options)
+		} else {
+			count, err = c.countAnthropicInputTokens(ctx, model, messages, definitions, options)
+		}
+		if status, ok := tokenCountEndpointUnsupportedStatus(err); ok {
+			c.tokenCountUnsupported.Store(key, time.Now().Add(tokenCountCapabilityTTL))
+			return InputTokenCount{}, errTokenCountEndpointDisabled{status: status}
+		}
+		return count, err
 	case APITypeOpenAI:
 		return InputTokenCount{}, ErrInputTokenCountUnsupported
 	default:

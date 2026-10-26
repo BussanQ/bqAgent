@@ -107,15 +107,38 @@ func shouldSummarize(estimatedTokens int, config ContextConfig) bool {
 
 func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any, targetTokens int) ([]map[string]any, bool) {
 	prefix, tail, ok := splitMessagesForSummary(messages, a.contextConfig.KeepLastTurns)
-	if !ok {
-		return nil, false
+	singleTurn := !ok
+	if singleTurn {
+		latest := latestUserMessageIndex(messages)
+		if latest < 0 || latest+1 >= len(messages) {
+			return nil, false
+		}
+		prefix, tail = messages[:latest], messages[latest:]
 	}
-	summary, err := a.generateSummary(ctx, prefix)
+	promptMessageCount := leadingPromptMessageCount(prefix)
+	// The retained tail is sent verbatim, so summarizing it again only costs
+	// tokens. Include it only when it will be cut to fit the target (or is the
+	// single active turn): then the summary must carry what pruning drops.
+	tailCut := estimateMessagesTokens(prefix[:promptMessageCount])+estimateMessagesTokens(tail) > targetTokens
+	summaryInput := prefix
+	if singleTurn || tailCut {
+		summaryInput = messages
+		inputLimit := a.contextConfig.MaxInputTokens - a.contextConfig.ResponseReserveTokens
+		summaryBudget := max(1, inputLimit-max(1, inputLimit/100))
+		if estimateMessagesTokens(messages) > summaryBudget {
+			// Reserve space for both earlier decisions and current execution state.
+			// Budgeting the entire history backwards would discard the earlier goals.
+			prefixBudget := summaryBudget - min(estimateMessagesTokens(tail), summaryBudget/5)
+			boundedPrefix := hardPruneMessagesToBudget(prefix, prefixBudget)
+			boundedTail := hardPruneMessagesToBudget(tail, max(1, summaryBudget-estimateMessagesTokens(boundedPrefix)))
+			summaryInput = append(append([]map[string]any{}, boundedPrefix...), boundedTail...)
+		}
+	}
+	summary, err := a.generateSummary(ctx, summaryInput)
 	if err != nil || strings.TrimSpace(summary) == "" {
 		return nil, false
 	}
 
-	promptMessageCount := leadingPromptMessageCount(prefix)
 	summarized := make([]map[string]any, 0, len(tail)+promptMessageCount+1)
 	if promptMessageCount > 0 {
 		summarized = append(summarized, prefix[:promptMessageCount]...)
@@ -126,28 +149,36 @@ func (a *Agent) summarizeMessages(ctx context.Context, messages []map[string]any
 	})
 	summarized = append(summarized, tail...)
 	summarized = hardPruneMessagesToBudget(summarized, targetTokens)
-	if a.checkpointSaver != nil {
-		checkpointTail := summarized
-		storedPromptCount := leadingPromptMessageCount(checkpointTail)
-		if storedPromptCount > 0 {
-			checkpointTail = checkpointTail[storedPromptCount:]
-		}
-		if len(checkpointTail) > 0 {
-			if content, _ := checkpointTail[0]["content"].(string); strings.HasPrefix(content, EarlierConversationSummaryPrefix) {
-				checkpointTail = checkpointTail[1:]
-			}
-		}
-		var err error
-		if saver, ok := a.checkpointSaver.(PromptContextCheckpointRecorder); ok {
-			err = saver.SaveCheckpointSummaryWithPrompt(summary, checkpointTail, a.systemPrompt, a.prompt.StableHash, storedPromptCount)
-		} else {
-			err = a.checkpointSaver.SaveCheckpointSummary(summary, checkpointTail, a.systemPrompt)
-		}
-		if err != nil {
-			a.logf("[Context] checkpoint save failed: %v\n", err)
-		}
-	}
 	return summarized, true
+}
+
+func (a *Agent) saveContextCheckpoint(messages []map[string]any) {
+	if a.checkpointSaver == nil {
+		return
+	}
+	storedPromptCount := leadingPromptMessageCount(messages)
+	checkpointTail := messages[storedPromptCount:]
+	if len(checkpointTail) == 0 {
+		return
+	}
+	content := contentText(checkpointTail[0]["content"])
+	if !strings.HasPrefix(content, EarlierConversationSummaryPrefix) {
+		return
+	}
+	summary := strings.TrimPrefix(content, EarlierConversationSummaryPrefix)
+	checkpointTail = checkpointTail[1:]
+	if latestUserMessageIndex(checkpointTail) < 0 {
+		return
+	}
+	var err error
+	if saver, ok := a.checkpointSaver.(PromptContextCheckpointRecorder); ok {
+		err = saver.SaveCheckpointSummaryWithPrompt(summary, checkpointTail, a.systemPrompt, a.prompt.StableHash, storedPromptCount)
+	} else {
+		err = a.checkpointSaver.SaveCheckpointSummary(summary, checkpointTail, a.systemPrompt)
+	}
+	if err != nil {
+		a.logf("[Context] checkpoint save failed: %v\n", err)
+	}
 }
 
 func splitMessagesForSummary(messages []map[string]any, keepLastTurns int) ([]map[string]any, []map[string]any, bool) {
@@ -193,7 +224,7 @@ func (a *Agent) generateSummary(ctx context.Context, messages []map[string]any) 
 	inputLimit := a.contextConfig.MaxInputTokens - a.contextConfig.ResponseReserveTokens
 	messages = hardPruneMessagesToBudget(messages, max(1, inputLimit-max(1, inputLimit/100)))
 	promptMessages := []map[string]any{
-		{"role": "system", "content": "Summarize the earlier conversation for future continuation. Preserve goals, constraints, decisions, unresolved questions, and important factual context. Be concise."},
+		{"role": "system", "content": "Summarize the earlier conversation for future continuation. Preserve the current user task, constraints, decisions, completed operations, unresolved work, and the next action. Recent execution records and the latest user request take precedence over stale summaries. Do not treat earlier statements about task completion or inactivity as the current state when later requests or tool activity show unfinished work. Be concise."},
 		{"role": "user", "content": buildSummaryInput(messages)},
 	}
 	response, err := client.CreateChatCompletionWithOptions(ctx, model, promptMessages, nil, ChatCompletionOptions{})

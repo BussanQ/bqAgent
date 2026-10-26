@@ -126,6 +126,7 @@ type Client struct {
 	streamProgressTimeout time.Duration
 	nativeWebSearch       string
 	searchUnsupported     sync.Map // model -> expiry; scoped to this endpoint and credential
+	tokenCountUnsupported sync.Map // model -> expiry; scoped to this endpoint and credential
 	retrySleep            func(context.Context, time.Duration) error
 	retryJitter           func(time.Duration) time.Duration
 
