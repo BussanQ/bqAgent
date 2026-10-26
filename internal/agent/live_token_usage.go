@@ -103,6 +103,19 @@ func reportLiveTokenDelta(ctx context.Context, text string) {
 	})
 }
 
+// resetLiveTokenOutput discards output counted for a failed stream attempt
+// before its retry. Input stays: the retry resends the same request.
+func resetLiveTokenOutput(ctx context.Context) {
+	call, _ := ctx.Value(liveCallKey{}).(*liveUsageCall)
+	if call == nil {
+		return
+	}
+	call.change(func() {
+		call.outputBase, call.outputUnits, call.outputReported, call.reasoningReported = 0, 0, false, false
+		call.usage.OutputTokens, call.usage.OutputEstimated, call.usage.ReasoningTokens = 0, true, 0
+	})
+}
+
 func reportLiveTokenUsage(ctx context.Context, usage TokenUsage) {
 	call, _ := ctx.Value(liveCallKey{}).(*liveUsageCall)
 	if call == nil {

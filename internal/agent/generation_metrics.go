@@ -259,6 +259,20 @@ func (client *generationMetricsClient) CreateChatCompletionStreamWithOptions(ctx
 		ownsSampler = false
 	}
 	live := sampler.live
+	if ownsSampler || countsLiveDeltas {
+		// A provider retry after streamed output starts a fresh response; drop
+		// the failed attempt's samples and output estimate instead of adding
+		// the new response to them.
+		resetSampler, resetUsage := ownsSampler, countsLiveDeltas
+		ctx = withStreamRetryObserver(ctx, func() {
+			if resetSampler {
+				sampler.restart()
+			}
+			if resetUsage {
+				resetLiveTokenOutput(ctx)
+			}
+		})
+	}
 	wrappedOnChunk := func(chunk string) {
 		if chunk != "" && ownsSampler {
 			sampler.text(chunk)
@@ -366,6 +380,17 @@ func reportSampledDelta(ctx context.Context, text string, kind outputKind) {
 
 func (sampler *streamSampler) text(chunk string) {
 	sampler.record(chunk, outputText)
+}
+
+// restart begins a fresh sample window at the retry, keeping the live sink.
+func (sampler *streamSampler) restart() {
+	sampler.mu.Lock()
+	defer sampler.mu.Unlock()
+	sampler.startedAt = sampler.now()
+	sampler.firstChunkAt, sampler.lastChunkAt, sampler.firstTextAt = time.Time{}, time.Time{}, time.Time{}
+	sampler.streamUpdates, sampler.units = 0, 0
+	sampler.sawReasoning, sampler.hiddenReasoning = false, false
+	sampler.live.restart()
 }
 
 func (sampler *streamSampler) record(chunk string, kind outputKind) {

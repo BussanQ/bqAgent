@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"bqagent/internal/tools"
 )
@@ -306,5 +307,61 @@ func TestLiveTokenUsageNestedStreamingCountsDeltasOnce(t *testing.T) {
 	}
 	if latest.OutputTokens != 4 || !latest.OutputEstimated || latest.Calls != 1 {
 		t.Fatalf("nested streaming usage = %+v", latest)
+	}
+}
+
+// retryingStreamStub streams a failed attempt, signals a provider retry the
+// way executeWithResilience does, then streams the replacement response.
+type retryingStreamStub struct {
+	before, after []string
+	tick          func()
+}
+
+func (stub *retryingStreamStub) CreateChatCompletion(context.Context, string, []map[string]any, []tools.Definition) (AssistantMessage, error) {
+	return AssistantMessage{}, nil
+}
+
+func (stub *retryingStreamStub) CreateChatCompletionStream(ctx context.Context, _ string, _ []map[string]any, _ []tools.Definition, onChunk func(string)) (AssistantMessage, error) {
+	for _, chunk := range stub.before {
+		stub.tick()
+		onChunk(chunk)
+	}
+	if observer, _ := ctx.Value(streamRetryObserverKey{}).(func()); observer != nil {
+		observer()
+	}
+	for _, chunk := range stub.after {
+		stub.tick()
+		onChunk(chunk)
+	}
+	return AssistantMessage{Content: strings.Join(stub.after, "")}, nil
+}
+
+func TestLiveMetricsDiscardFailedStreamAttempt(t *testing.T) {
+	var latest LiveTokenUsage
+	var speeds []float64
+	ctx := WithLiveTokenUsage(context.Background(), func(usage LiveTokenUsage) { latest = usage })
+	ctx = WithLiveSpeed(ctx, func(speed float64) { speeds = append(speeds, speed) })
+	ctx, collector := withTurnGenerationCollector(ctx)
+	clock := time.Unix(0, 0)
+	stub := &retryingStreamStub{
+		before: []string{"old ", "draft ", "text ", "here"},
+		after:  []string{"new"},
+	}
+	stub.tick = func() { clock = clock.Add(time.Second) }
+	client := &generationMetricsClient{inner: stub, now: func() time.Time { return clock }}
+	if _, err := client.CreateChatCompletionStream(ctx, testModel, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Only the retried response ("new" = 3 ASCII units -> 1 token) is counted.
+	if latest.OutputTokens != 1 || latest.Calls != 1 {
+		t.Fatalf("usage = %+v", latest)
+	}
+	// The retry retracts the failed attempt's live speed.
+	if len(speeds) == 0 || speeds[len(speeds)-1] != 0 {
+		t.Fatalf("speeds = %v", speeds)
+	}
+	// TTFT is measured from the retry, not from the failed attempt.
+	if metrics := collector.metricsFor("new"); !metrics.Available || metrics.FirstTokenLatency != time.Second {
+		t.Fatalf("metrics = %+v", metrics)
 	}
 }

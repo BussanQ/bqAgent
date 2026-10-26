@@ -387,10 +387,12 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 			}
 			streamCtx := withStreamRetryObserver(explorationCtx, func() {
-				hadText := streamedText.Len() > 0
+				if streamedText.Len() == 0 {
+					return // Nothing visible to retract.
+				}
 				streamedText.Reset()
 				state.emit(itemID, "message.updated", "draft", "")
-				if a.messageSink == nil && hadText {
+				if a.messageSink == nil {
 					sink := a.tokenSink
 					if sink == nil {
 						sink = a.logWriter

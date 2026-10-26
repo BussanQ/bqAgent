@@ -55,3 +55,17 @@ func TestTurnOutcomeNoticeComesFromBackend(t *testing.T) {
 		t.Fatalf("missing backend stop notice: %s", model.View().Content)
 	}
 }
+
+func TestMessageSnapshotRetryResetCountsOnlyVisibleText(t *testing.T) {
+	model := toolDrawerModel(t, 0)
+	model.sequence = 1
+	model.active = &activeTurn{sequence: 1, cancel: func() {}}
+	// A provider retry replaces the draft with an empty snapshot, then streams
+	// the new reply into the same item.
+	for i, text := range []string{"旧草稿内容", "", "新回复"} {
+		model.handleTurnEvent(turnEvent{sequence: 1, kind: "message", message: turn.Event{TurnID: "t", ItemID: "a", Seq: uint64(i + 1), Kind: "message.updated", Phase: "draft", Text: text}})
+	}
+	if model.liveRunes != 3 || model.stream != "新回复" {
+		t.Fatalf("liveRunes=%d stream=%q", model.liveRunes, model.stream)
+	}
+}

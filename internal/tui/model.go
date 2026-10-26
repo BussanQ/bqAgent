@@ -840,7 +840,9 @@ func (model *Model) handleTurnEvent(event turnEvent) []tea.Cmd {
 					model.commitToolGroup()
 					model.flushStream()
 				}
-				model.liveRunes += max(0, utf8.RuneCountInString(event.message.Text)-before)
+				// Snapshots replace text; a retry can shrink the item, so apply the
+				// signed difference instead of only growth.
+				model.liveRunes = max(0, model.liveRunes+utf8.RuneCountInString(event.message.Text)-before)
 				model.liveTokens = estimateTokensFromRunes(model.liveRunes)
 				model.phase = phaseStreaming
 				model.progress = "正在生成"

@@ -74,6 +74,18 @@ func (call *liveSpeedCall) report(speed float64, at time.Time) {
 	shared.emit(speed)
 }
 
+// restart retracts a failed attempt's in-flight sample and lets the retried
+// response report its first sample without waiting out the throttle.
+func (call *liveSpeedCall) restart() {
+	if call == nil {
+		return
+	}
+	call.shared.mu.Lock()
+	defer call.shared.mu.Unlock()
+	call.shared.reported = time.Time{}
+	call.shared.emit(0)
+}
+
 func (call *liveSpeedCall) flush(speed float64) {
 	if call == nil || speed < 0 {
 		return

@@ -51,7 +51,7 @@ func TestRunTurnPreservesInterruptedReply(t *testing.T) {
 			}
 			recorder := &capturingRecorder{}
 			var projection turn.Messages
-			app := NewWithOptions(client, "test", Options{Stream: true, Recorder: recorder, MessageSink: func(e turn.Event) { projection.Apply(e) }, Context: ContextConfig{Enabled: false}})
+			app := NewWithOptions(client, "test", Options{Stream: true, TaskStore: &memoryTaskStore{}, Recorder: recorder, MessageSink: func(e turn.Event) { projection.Apply(e) }, Context: ContextConfig{Enabled: false}})
 			history := []map[string]any{{"role": "user", "content": "天空为什么蓝色"}}
 			result, err := app.RunTurn(ctx, history, 1)
 			wantErr, wantStatus := tc.err, turn.Failed
@@ -168,5 +168,37 @@ func TestRunTurnReportsInterruptedReplySaveFailure(t *testing.T) {
 	result, err := app.RunTurn(context.Background(), nil, 1)
 	if !errors.Is(err, providerErr) || !strings.Contains(err.Error(), "save interrupted reply") || result.Outcome.Status != turn.Failed {
 		t.Fatalf("result=%+v error=%v", result, err)
+	}
+}
+
+func TestRunTurnRetryWithoutVisibleTextKeepsDraftUntouched(t *testing.T) {
+	calls := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		body := providerStreamSuccess(APITypeOpenAI, "answer")
+		if calls == 1 {
+			// Only reasoning arrived before the failure: nothing visible to retract.
+			body = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\ndata: {\"error\":{\"type\":\"server_error\",\"message\":\"connection closed\"}}\n"
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	client := newTestResilientClient(APITypeOpenAI, "https://stream.test", httpClient, 0)
+	var events []turn.Event
+	var tokens strings.Builder
+	app := NewWithOptions(client, "test", Options{
+		Stream: true, TokenSink: &tokens, Context: ContextConfig{Enabled: false},
+		MessageSink: func(event turn.Event) { events = append(events, event) },
+	})
+	result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "hi"}}, 1)
+	if err != nil || result.Reply != "answer" || calls != 2 {
+		t.Fatalf("result=%+v err=%v calls=%d", result, err, calls)
+	}
+	for _, event := range events {
+		if event.Kind == "message.updated" && event.Text == "" {
+			t.Fatalf("empty draft emitted without visible text: %+v", events)
+		}
+	}
+	if strings.Contains(tokens.String(), "正在重试") {
+		t.Fatalf("tokens=%q", tokens.String())
 	}
 }
