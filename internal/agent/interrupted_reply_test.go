@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"bqagent/internal/tools"
 	"bqagent/internal/turn"
@@ -159,6 +161,60 @@ func TestRunTurnReplacesDraftOnProviderRetry(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestRunTurnProgressTimeoutPreservesCompletedTools(t *testing.T) {
+	for _, failRetry := range []bool{false, true} {
+		t.Run(stringBool(failRetry), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				calls, executions := 0, 0
+				var requests []string
+				client := NewClientWithOptions("", "https://test.invalid", APITypeOpenAI, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					calls++
+					payload, _ := io.ReadAll(req.Body)
+					requests = append(requests, string(payload))
+					body := providerStreamSuccess(APITypeOpenAI, "new answer")
+					if calls == 1 {
+						body = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"completed\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n"
+					}
+					if calls == 2 || failRetry && calls == 3 {
+						text := "old draft"
+						if calls == 3 {
+							text = "new answer"
+						}
+						partial := "data: {\"choices\":[{\"delta\":{\"content\":\"" + text + "\",\"tool_calls\":[{\"index\":0,\"id\":\"unfinished\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{\"}}]}}]}\n\n"
+						return &http.Response{StatusCode: 200, Header: make(http.Header), Body: &nativeSearchTimedBody{ctx: req.Context(), steps: []nativeSearchStreamStep{{data: partial}, {2 * time.Minute, ""}}}}, nil
+					}
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+				})}, ClientOptions{StreamProgressTimeout: time.Minute})
+				client.retryJitter = func(time.Duration) time.Duration { return 0 }
+				var projection turn.Messages
+				app := NewWithOptions(client, "test", Options{
+					Stream: true, Context: ContextConfig{Enabled: false},
+					MessageSink: func(event turn.Event) { projection.Apply(event) },
+					Functions: map[string]tools.Function{"write_file": func(context.Context, map[string]any) (string, error) {
+						executions++
+						return "already written", nil
+					}},
+				})
+				result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "write and explain"}}, 2)
+				if failRetry {
+					if err == nil || result.Outcome.Status != turn.Failed || !strings.Contains(projection.Latest.Text, "未完成的回复") {
+						t.Fatalf("result=%+v err=%v projection=%+v", result, err, projection)
+					}
+				} else if err != nil || result.Reply != "new answer" {
+					t.Fatalf("result=%+v err=%v", result, err)
+				}
+				if calls != 3 || executions != 1 || requests[1] != requests[2] || !strings.Contains(requests[2], "already written") {
+					t.Fatalf("calls=%d executions=%d requests=%q", calls, executions, requests)
+				}
+				last := result.Messages[len(result.Messages)-1]
+				if strings.Contains(projection.Latest.Text, "old draft") || !strings.HasSuffix(projection.Latest.Text, "new answer") || last["tool_calls"] != nil {
+					t.Fatalf("last=%+v projection=%+v", last, projection)
+				}
+			})
+		})
 	}
 }
 

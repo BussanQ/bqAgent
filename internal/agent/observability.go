@@ -96,13 +96,22 @@ func (c *instrumentedClient) CreateChatCompletionStream(ctx context.Context, mod
 
 func (c *instrumentedClient) CreateChatCompletionStreamWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (message AssistantMessage, err error) {
 	startedAt := time.Now()
-	reporter := startModelProgressReporter(ctx, c.progressWriter, true)
+	progressWriter := c.progressWriter
+	if progressWriter == nil {
+		progressWriter = c.logWriter
+	}
+	reporter := startModelProgressReporter(ctx, progressWriter, true)
 	defer func() {
 		reporter.stop()
 		c.logModelRequest("chat", model, true, startedAt, message, err)
 	}()
 	if reporter != nil {
+		reporter.mu.Lock()
+		reporter.diagnosticWriter = c.logWriter
+		reporter.mu.Unlock()
 		ctx = withModelProgressObserver(ctx, reporter.markActivity)
+		ctx = context.WithValue(ctx, streamActivityObserverKey{}, reporter.markTransportActivity)
+		ctx = context.WithValue(ctx, providerRetryObserverKey{}, reporter.markRetry)
 	}
 
 	wrappedOnChunk := func(chunk string) {
@@ -178,15 +187,19 @@ func (t *realModelProgressTicker) Stop() {
 }
 
 type modelProgressReporter struct {
-	cancel       context.CancelFunc
-	done         chan struct{}
-	logWriter    io.Writer
-	stream       bool
-	interval     time.Duration
-	lastActivity time.Time
-	stalled      bool
-	stopped      bool
-	mu           sync.Mutex
+	cancel           context.CancelFunc
+	done             chan struct{}
+	logWriter        io.Writer
+	stream           bool
+	interval         time.Duration
+	lastActivity     time.Time
+	lastTransport    time.Time
+	lastHeartbeat    time.Time
+	lastEvent        string
+	diagnosticWriter io.Writer
+	stalled          bool
+	stopped          bool
+	mu               sync.Mutex
 }
 
 var modelProgressInterval = 10 * time.Second
@@ -266,9 +279,50 @@ func (r *modelProgressReporter) emit() {
 	if modelProgressStallThreshold > 0 && idle >= modelProgressStallThreshold {
 		r.stalled = true
 		fmt.Fprintf(r.logWriter, "距上次有效进展已 %s，%s，仍在等待\n", formatWaitDuration(idle), modelProgressStallMarker)
+		if r.diagnosticWriter != nil {
+			fmt.Fprintf(r.diagnosticWriter, "[ModelWait] progress_idle=%s transport_idle=%s heartbeat_idle=%s last_event=%q\n",
+				formatWaitDuration(idle), activityAge(r.lastTransport), activityAge(r.lastHeartbeat), sanitizeLogValue(r.lastEvent))
+		}
 		return
 	}
 	fmt.Fprintf(r.logWriter, "%s\n", selectModelProgressMessage(modelProgressMessages))
+}
+
+func activityAge(last time.Time) string {
+	if last.IsZero() {
+		return "none"
+	}
+	return formatWaitDuration(modelProgressNow().Sub(last))
+}
+
+func (r *modelProgressReporter) markTransportActivity(kind string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped {
+		return
+	}
+	r.lastTransport = modelProgressNow()
+	if kind == "heartbeat" {
+		r.lastHeartbeat = r.lastTransport
+	}
+	if strings.HasPrefix(kind, "event:") {
+		r.lastEvent = strings.TrimPrefix(kind, "event:")
+	}
+}
+
+func (r *modelProgressReporter) markRetry(delay time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped {
+		return
+	}
+	fmt.Fprintf(r.logWriter, "上游请求中断，将在 %s 后自动重试一次\n", formatWaitDuration(delay))
+	// Waiting for a new attempt is not evidence that model output recovered.
+	r.lastActivity = modelProgressNow().Add(delay)
+	r.lastTransport = time.Time{}
+	r.lastHeartbeat = time.Time{}
+	r.lastEvent = ""
+	r.stalled = false
 }
 
 func formatWaitDuration(d time.Duration) string {

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -25,18 +26,127 @@ func TestStreamProgressTimeoutIgnoresHeartbeats(t *testing.T) {
 					body = &nativeSearchTimedBody{ctx: req.Context(), steps: steps}
 					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: body}, nil
 				})}, ClientOptions{StreamIdleTimeout: time.Minute, StreamProgressTimeout: 2 * time.Minute})
+				client.retryJitter = func(time.Duration) time.Duration { return 0 }
 				start := time.Now()
 				_, err := client.CreateChatCompletionStream(context.Background(), "test", nil, nil, nil)
 				var providerErr *ProviderError
 				if !errors.As(err, &providerErr) || providerErr.Category != ProviderErrorTimeout || !strings.Contains(err.Error(), "无有效进展") || errors.Is(err, context.Canceled) {
 					t.Fatalf("error=%v", err)
 				}
-				if calls != 1 || time.Since(start) != 2*time.Minute || !body.closed {
+				if calls != 2 || time.Since(start) != 4*time.Minute+client.providerRetryDelay(providerErr) || !body.closed || providerErr.Request.RetryCount != 1 {
 					t.Fatalf("calls=%d elapsed=%s closed=%v", calls, time.Since(start), body.closed)
 				}
 			})
 		})
 	}
+}
+
+func TestStreamProgressTimeoutRetriesWithFreshAttempt(t *testing.T) {
+	for _, api := range []APIType{APITypeOpenAI, APITypeOpenAIResponse, APITypeAnthropic} {
+		t.Run(string(api), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx := context.Background()
+				calls := 0
+				var bodies []*nativeSearchTimedBody
+				var requests []string
+				client := NewClientWithOptions("", "https://test.invalid", api, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					calls++
+					payload, _ := io.ReadAll(req.Body)
+					requests = append(requests, string(payload))
+					steps := []nativeSearchStreamStep{{30 * time.Second, providerStreamSuccess(api, "done")}}
+					if calls == 1 {
+						initial := `data: {"type":"response.in_progress"}`
+						if api == APITypeAnthropic {
+							initial = `data: {"type":"ping"}`
+						} else if api == APITypeOpenAI {
+							initial = `data: {"choices":[]}`
+						}
+						steps = []nativeSearchStreamStep{{data: initial + "\n\n"}}
+						for range 10 {
+							steps = append(steps, nativeSearchStreamStep{10 * time.Second, ": heartbeat\n\n"})
+						}
+					}
+					body := &nativeSearchTimedBody{ctx: req.Context(), steps: steps}
+					bodies = append(bodies, body)
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: body}, nil
+				})}, ClientOptions{StreamIdleTimeout: 45 * time.Second, StreamProgressTimeout: time.Minute})
+				client.retryJitter = func(time.Duration) time.Duration { return 0 }
+				var logs, progress strings.Builder
+				wrapped := instrumentChatCompletionClient(client, &logs, &progress)
+				message, err := wrapped.(chatCompletionStreamOptionsClient).CreateChatCompletionStreamWithOptions(ctx, "test", []map[string]any{{"role": "user", "content": "hi"}}, nil, ChatCompletionOptions{}, nil)
+				if err != nil || calls != 2 || message.FinalContent() != "done" || message.Request.RetryCount != 1 || ctx.Err() != nil {
+					t.Fatalf("message=%+v err=%v calls=%d", message, err, calls)
+				}
+				if requests[0] != requests[1] || !bodies[0].closed || !bodies[1].closed {
+					t.Fatal("retry changed the request or leaked a response body")
+				}
+				if !strings.Contains(logs.String(), `last_event="`+map[APIType]string{APITypeOpenAI: "chat.completion.chunk", APITypeOpenAIResponse: "response.in_progress", APITypeAnthropic: "ping"}[api]+`"`) {
+					t.Fatalf("stream activity not recorded: %s", logs.String())
+				}
+				if !strings.Contains(progress.String(), "自动重试一次") || !strings.Contains(logs.String(), "[ModelWait]") || !strings.Contains(logs.String(), "category=model_timeout") {
+					t.Fatalf("progress=%s logs=%s", progress.String(), logs.String())
+				}
+			})
+		})
+	}
+}
+
+func TestStreamProgressTimeoutSharesRetryBudget(t *testing.T) {
+	for _, timeoutFirst := range []bool{false, true} {
+		t.Run(stringBool(timeoutFirst), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				calls := 0
+				client := NewClientWithOptions("", "https://test.invalid", APITypeOpenAIResponse, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					calls++
+					if (calls == 1) == timeoutFirst {
+						return &http.Response{StatusCode: 200, Header: make(http.Header), Body: &nativeSearchTimedBody{ctx: req.Context(), steps: []nativeSearchStreamStep{{2 * time.Minute, ""}}}}, nil
+					}
+					return &http.Response{StatusCode: 503, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("unavailable"))}, nil
+				})}, ClientOptions{StreamProgressTimeout: time.Minute})
+				client.retryJitter = func(time.Duration) time.Duration { return 0 }
+				_, err := client.CreateChatCompletionStream(context.Background(), "test", nil, nil, nil)
+				if err == nil || calls != 2 || ProviderRequestMetadataFromError(err).RetryCount != 1 {
+					t.Fatalf("calls=%d err=%v", calls, err)
+				}
+			})
+		})
+	}
+}
+
+func TestStreamProgressTimeoutCancellationDuringBackoff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		calls := 0
+		client := NewClientWithOptions("", "https://test.invalid", APITypeOpenAIResponse, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: &nativeSearchTimedBody{ctx: req.Context(), steps: []nativeSearchStreamStep{{2 * time.Minute, ""}}}}, nil
+		})}, ClientOptions{StreamProgressTimeout: time.Minute})
+		client.retrySleep = func(ctx context.Context, _ time.Duration) error {
+			cancel()
+			return ctx.Err()
+		}
+		_, err := client.CreateChatCompletionStream(ctx, "test", nil, nil, nil)
+		if !errors.Is(err, context.Canceled) || calls != 1 {
+			t.Fatalf("calls=%d err=%v", calls, err)
+		}
+	})
+}
+
+func TestStreamProgressTimeoutHonorsCallerDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		calls := 0
+		client := NewClientWithOptions("", "https://test.invalid", APITypeOpenAIResponse, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: &nativeSearchTimedBody{ctx: req.Context(), steps: []nativeSearchStreamStep{{2 * time.Minute, ""}}}}, nil
+		})}, ClientOptions{StreamProgressTimeout: time.Minute})
+		_, err := client.CreateChatCompletionStream(ctx, "test", nil, nil, nil)
+		if !errors.Is(err, context.DeadlineExceeded) || calls != 1 || ProviderRequestMetadataFromError(err).RetryCount != 0 {
+			t.Fatalf("calls=%d err=%v", calls, err)
+		}
+	})
 }
 
 func TestStreamProgressTimeoutRenewsOnModelOutput(t *testing.T) {

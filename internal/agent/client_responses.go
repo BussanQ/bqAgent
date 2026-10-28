@@ -219,6 +219,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
+		reportStreamLine(ctx, line)
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
@@ -240,6 +241,7 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			return AssistantMessage{}, providerProtocolError("invalid responses stream event", err)
 		}
+		reportStreamEvent(ctx, event.Type)
 		eventCounts[event.Type]++
 		messageIndex := 0
 		if event.OutputIndex != nil {

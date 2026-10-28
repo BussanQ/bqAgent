@@ -245,6 +245,9 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 
 		if !transientRetryUsed && providerErr.Transient {
 			delay := c.providerRetryDelay(providerErr)
+			if observer, _ := ctx.Value(providerRetryObserverKey{}).(func(time.Duration)); observer != nil {
+				observer(delay)
+			}
 			if waitErr := c.waitForProviderRetry(ctx, delay); waitErr != nil {
 				return AssistantMessage{}, &providerRequestError{cause: waitErr, request: metadata}
 			}
@@ -601,14 +604,16 @@ func (watchdog *streamWatchdog) stop() {
 type watchdogResponseBody struct {
 	inner    io.ReadCloser
 	watchdog *streamWatchdog
+	ctx      context.Context
 }
 
 func (body *watchdogResponseBody) Read(buffer []byte) (int, error) {
 	n, err := body.inner.Read(buffer)
 	if n > 0 {
 		body.watchdog.touch()
+		reportStreamActivity(body.ctx, "bytes")
 	}
-	if err != nil && body.watchdog.timedOut.Load() {
+	if err != nil && body.watchdog != nil && body.watchdog.timedOut.Load() {
 		return n, &streamIdleTimeoutError{Timeout: body.watchdog.timeout}
 	}
 	return n, err

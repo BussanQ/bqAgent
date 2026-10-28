@@ -333,7 +333,12 @@ func (c *Client) doStreamingRequest(request *http.Request) (*http.Response, erro
 	streamingClient := *c.httpClient
 	streamingClient.Timeout = 0
 	if c.streamIdleTimeout <= 0 {
-		return streamingClient.Do(request)
+		response, err := streamingClient.Do(request)
+		if err == nil {
+			reportStreamActivity(request.Context(), "headers")
+			response.Body = &watchdogResponseBody{inner: response.Body, ctx: request.Context()}
+		}
+		return response, err
 	}
 	watchdogContext, watchdog := newStreamWatchdog(request.Context(), c.streamIdleTimeout)
 	response, err := streamingClient.Do(request.Clone(watchdogContext))
@@ -348,7 +353,8 @@ func (c *Client) doStreamingRequest(request *http.Request) (*http.Response, erro
 		return nil, err
 	}
 	watchdog.touch()
-	response.Body = &watchdogResponseBody{inner: response.Body, watchdog: watchdog}
+	reportStreamActivity(request.Context(), "headers")
+	response.Body = &watchdogResponseBody{inner: response.Body, watchdog: watchdog, ctx: request.Context()}
 	return response, nil
 }
 
@@ -455,8 +461,8 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, model string, m
 }
 
 func (c *Client) CreateChatCompletionStreamWithOptions(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, onChunk func(string)) (AssistantMessage, error) {
-	return c.withStreamProgressTimeout(ctx, func(ctx context.Context) (AssistantMessage, error) {
-		return c.executeWithResilience(ctx, model, options, true, func(attemptOptions ChatCompletionOptions, state *streamAttemptState) (AssistantMessage, error) {
+	return c.executeWithResilience(ctx, model, options, true, func(attemptOptions ChatCompletionOptions, state *streamAttemptState) (AssistantMessage, error) {
+		return c.withStreamProgressTimeout(ctx, func(ctx context.Context) (AssistantMessage, error) {
 			switch c.apiType {
 			case APITypeOpenAIResponse:
 				return c.createOpenAIResponseStream(ctx, model, messages, definitions, attemptOptions, state, onChunk)
@@ -533,6 +539,7 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
+		reportStreamLine(ctx, line)
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
@@ -548,6 +555,7 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			return AssistantMessage{}, providerProtocolError("invalid chat completions stream event", err)
 		}
+		reportStreamEvent(ctx, "chat.completion.chunk")
 		if chunk.Error.Message != "" || chunk.Error.Type != "" || chunk.Error.Code != "" {
 			return AssistantMessage{}, providerStreamEventError(chunk.Error.Message, firstNonBlank(chunk.Error.Code, chunk.Error.Type))
 		}

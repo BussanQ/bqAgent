@@ -36,6 +36,37 @@ func TestModelProgressReporterStallAndRecovery(t *testing.T) {
 	}
 }
 
+func TestModelProgressReporterDistinguishesTransportAndContent(t *testing.T) {
+	_, clock := installModelProgressTestHooks(t)
+	progress, logs := &stallTestBuffer{}, &stallTestBuffer{}
+	reporter := startModelProgressReporter(context.Background(), progress, true)
+	defer reporter.stop()
+	reporter.mu.Lock()
+	reporter.diagnosticWriter = logs
+	reporter.mu.Unlock()
+	ctx := context.WithValue(context.Background(), streamActivityObserverKey{}, reporter.markTransportActivity)
+	clock.Advance(40 * time.Second)
+	reportStreamActivity(ctx, "bytes")
+	reportStreamLine(ctx, ": keepalive")
+	reportStreamEvent(ctx, "response.in_progress")
+	clock.Advance(5 * time.Second)
+	reporter.emit()
+	for _, want := range []string{"progress_idle=45s", "transport_idle=5s", "heartbeat_idle=5s", `last_event="response.in_progress"`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("logs=%q want=%q", logs.String(), want)
+		}
+	}
+	reporter.markRetry(time.Second)
+	if strings.Contains(progress.String(), modelProgressRecoveredMessage) || !strings.Contains(progress.String(), "自动重试一次") {
+		t.Fatalf("progress=%q", progress.String())
+	}
+	clock.Advance(46 * time.Second)
+	reporter.emit()
+	if !strings.Contains(logs.String(), `transport_idle=none heartbeat_idle=none last_event=""`) {
+		t.Fatalf("stale activity leaked into retry: %s", logs.String())
+	}
+}
+
 // stallTestBuffer guards reads and writes with one lock for race-safe assertions.
 type stallTestBuffer struct {
 	mu  sync.Mutex

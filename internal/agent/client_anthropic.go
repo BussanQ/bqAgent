@@ -148,6 +148,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
+		reportStreamLine(ctx, line)
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
@@ -180,6 +181,7 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			return AssistantMessage{}, providerProtocolError("invalid anthropic stream event", err)
 		}
+		reportStreamEvent(ctx, event.Type)
 		if event.Type == "error" {
 			message := strings.TrimSpace(event.Error.Message)
 			if message == "" {
