@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 	"testing"
 
@@ -526,5 +527,23 @@ func TestCommentaryIsCommittedWhenNextMessageStartsWithoutToolEvent(t *testing.T
 	text := strings.Join(model.printQueue, "\n")
 	if strings.Count(text, "被拦截前的说明") != 1 || model.stream != "下一轮草稿" || strings.Contains(text, "迟到的旧消息") {
 		t.Fatalf("print=%q stream=%q", text, model.stream)
+	}
+}
+
+func TestFinalReplyUsesLightPaletteOnLightBackground(t *testing.T) {
+	model := toolDrawerModel(t, 0)
+	model.config.NoColor = false
+	answer := "可以，已改为从 `version.json` 读取。"
+	if dark := model.renderFinalReply(answer, model.contentWidth()); !strings.Contains(dark, "38;5;252") {
+		t.Fatalf("dark background should keep the light-gray body text: %q", dark)
+	}
+	updated, _ := model.Update(tea.BackgroundColorMsg{Color: color.White})
+	model = updated.(Model)
+	light := model.renderFinalReply(answer, model.contentWidth())
+	if strings.Contains(light, "38;5;252") || !strings.Contains(light, "38;5;234") || !strings.Contains(light, "48;5;254") {
+		t.Fatalf("white background should use dark body text and light code background: %q", light)
+	}
+	if got := renderMarkdown(answer, 40, model.markdownStyle()); strings.Contains(got, "38;5;252") || !strings.Contains(got, "38;5;234") {
+		t.Fatalf("history markdown should follow the light palette: %q", got)
 	}
 }

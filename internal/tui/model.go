@@ -128,7 +128,9 @@ type Model struct {
 	inspectorPending bool
 	inspection       toolInspection
 	liveCache        *streamViewCache
-	provider         *providerWizard
+	// lightBackground is set from the terminal's reported background color.
+	lightBackground bool
+	provider        *providerWizard
 
 	startup       []string
 	initialTask   string
@@ -219,7 +221,11 @@ func NewModel(backend Backend, config Config) Model {
 }
 
 func (model Model) Init() tea.Cmd {
-	return tea.Batch(model.input.area.Focus(), tickCommand(), func() tea.Msg { return startupMsg{} })
+	return tea.Batch(model.input.area.Focus(), tickCommand(), tea.RequestBackgroundColor, func() tea.Msg { return startupMsg{} })
+}
+
+func (model Model) markdownStyle() string {
+	return markdownStyleName(model.config.NoColor, model.lightBackground)
 }
 
 func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -233,6 +239,11 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if model.initialTask != "" && !model.initialSent {
 			model.initialSent = true
 			commands = append(commands, model.submit(model.initialTask))
+		}
+	case tea.BackgroundColorMsg:
+		if light := !message.IsDark(); light != model.lightBackground {
+			model.lightBackground = light
+			model.liveCache = &streamViewCache{}
 		}
 	case tea.WindowSizeMsg:
 		model.width = message.Width
@@ -289,7 +300,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.err != nil {
 			model.enqueuePrint(model.styles.error.Render("停止命令失败：" + message.err.Error()))
 		} else if strings.TrimSpace(message.result.Reply) != "" {
-			model.enqueuePrint(renderMarkdown(message.result.Reply, model.contentWidth(), model.config.NoColor))
+			model.enqueuePrint(renderMarkdown(message.result.Reply, model.contentWidth(), model.markdownStyle()))
 		}
 	case spinner.TickMsg:
 		if model.active != nil {
@@ -1033,7 +1044,7 @@ func (model *Model) flushStream() {
 	if model.stream == "" {
 		return
 	}
-	model.enqueuePrint(renderMarkdown(model.stream, model.contentWidth(), model.config.NoColor))
+	model.enqueuePrint(renderMarkdown(model.stream, model.contentWidth(), model.markdownStyle()))
 	model.stream = ""
 	model.liveCache = &streamViewCache{}
 }
@@ -1674,7 +1685,7 @@ func (model Model) renderHistory(history History) []string {
 			lines = append(lines, rendered)
 		}
 		if strings.TrimSpace(message.Content) != "" {
-			lines = append(lines, renderMarkdown(message.Content, model.contentWidth(), model.config.NoColor))
+			lines = append(lines, renderMarkdown(message.Content, model.contentWidth(), model.markdownStyle()))
 		}
 	}
 	return lines

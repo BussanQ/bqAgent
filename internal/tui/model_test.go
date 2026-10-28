@@ -270,7 +270,7 @@ func TestPromptChipHistoryMarkdownAndNarrowResize(t *testing.T) {
 	if err != nil || len(entries) != historyMaxEntries || info.Size() > historyMaxBytes {
 		t.Fatalf("history retention entries=%d size=%d err=%v", len(entries), info.Size(), err)
 	}
-	rendered := renderMarkdown("| 列 | 值 |\n|---|---|\n| 中文 | **好** |", 24, true)
+	rendered := renderMarkdown("| 列 | 值 |\n|---|---|\n| 中文 | **好** |", 24, "notty")
 	if !strings.Contains(rendered, "中文") || strings.Contains(rendered, "\x1b[") {
 		t.Fatalf("markdown = %q", rendered)
 	}

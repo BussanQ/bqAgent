@@ -37,11 +37,20 @@ func newTheme(noColor bool) theme {
 	}
 }
 
-func renderMarkdown(value string, width int, noColor bool) string {
-	style := "dark"
-	if noColor {
-		style = "notty"
+// markdownStyleName picks the glamour palette for the terminal background.
+// The dark palette prints light-gray body text, unreadable on white terminals.
+func markdownStyleName(noColor, lightBackground bool) string {
+	switch {
+	case noColor:
+		return "notty"
+	case lightBackground:
+		return "light"
+	default:
+		return "dark"
 	}
+}
+
+func renderMarkdown(value string, width int, style string) string {
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle(style),
 		glamour.WithWordWrap(max(10, width-2)),
@@ -64,6 +73,8 @@ func (model Model) renderFinalReply(value string, width int) string {
 	style := styles.DarkStyleConfig
 	if model.config.NoColor {
 		style = styles.NoTTYStyleConfig
+	} else if model.lightBackground {
+		style = styles.LightStyleConfig
 	}
 	// Own the outer indentation for the whole answer. Removing whitespace
 	// from individual lines would also destroy nested lists and code indentation.
