@@ -20,6 +20,7 @@ import (
 	"bqagent/internal/session"
 	"bqagent/internal/subagent"
 	apptrace "bqagent/internal/trace"
+	"bqagent/internal/turn"
 	"bqagent/internal/workspace"
 )
 
@@ -459,18 +460,10 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 	ctx = agent.WithLiveTokenUsage(ctx, func(usage agent.LiveTokenUsage) {
 		turnUsage = usage
 	})
-	result, updatedMessages, err := app.RunConversationTurn(ctx, conversation.Messages, runtime.MaxIterations)
+	turnResult, err := app.RunTurn(ctx, conversation.Messages, runtime.MaxIterations)
+	result, updatedMessages := turnResult.Reply, turnResult.Messages
 	writeTurnTokenUsage(outputWriter, turnUsage)
-	if len(updatedMessages) > 0 {
-		conversation.Messages = agent.BoundWorkingMessages(updatedMessages, runtime.Context)
-		if saveErr := conversation.SaveWorkingContext(); saveErr != nil {
-			if err == nil {
-				err = saveErr
-			} else {
-				fmt.Fprintf(errorWriter, "save working context: %v\n", saveErr)
-			}
-		}
-	}
+	err = persistTurnWorkingContext(conversation, updatedMessages, err, errorWriter)
 	if err != nil {
 		if runRecorder != nil {
 			_ = runRecorder.Finish("", err)
@@ -482,7 +475,7 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 		return 1
 	}
 
-	if markErr := conversation.MarkCompleted(); markErr != nil {
+	if markErr := markTurnEnded(conversation, turnResult.Outcome); markErr != nil {
 		fmt.Fprintf(errorWriter, "mark session completed: %v\n", markErr)
 	}
 	if runRecorder != nil {
@@ -491,6 +484,35 @@ func runForeground(ctx context.Context, stdout, stderr io.Writer, getenv func(st
 
 	fmt.Fprintln(outputWriter, result)
 	return 0
+}
+
+// markTurnEnded persists the agent's real outcome so blocked or limited turns
+// (e.g. investigation_stalled) are not recorded as completed.
+func markTurnEnded(conversation *appruntime.Conversation, outcome turn.Outcome) error {
+	if conversation == nil || conversation.Session == nil {
+		return nil
+	}
+	return conversation.Session.MarkTurnEnded(outcome)
+}
+
+// persistTurnWorkingContext saves the working history returned by the agent as-is.
+// The built-in agent already manages context (including summaries), so success and
+// failure alike must keep it; re-pruning here would drop investigation results and
+// fall back to a stale summary.
+func persistTurnWorkingContext(conversation *appruntime.Conversation, updatedMessages []map[string]any, runErr error, errorWriter io.Writer) error {
+	if len(updatedMessages) == 0 {
+		return runErr
+	}
+	conversation.Messages = updatedMessages
+	saveErr := conversation.SaveWorkingContext()
+	if saveErr == nil {
+		return runErr
+	}
+	if runErr == nil {
+		return saveErr
+	}
+	fmt.Fprintf(errorWriter, "save working context: %v\n", saveErr)
+	return runErr
 }
 
 func (options cliOptions) usesTUI(task string) bool {

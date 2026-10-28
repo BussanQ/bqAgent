@@ -27,7 +27,7 @@ func investigationTestRound(g *investigationGuard, call ToolCall, result string,
 
 func TestInvestigationVariedSearchesAndCooldown(t *testing.T) {
 	guard := newLoopGuard(StageConfig{})
-	for i := 1; i <= DefaultInvestigationRoundLimit*2; i++ {
+	for i := 1; i <= 21; i++ {
 		guard.investigation.beginRound()
 		// Parallel lookups count as a single model round. Different arguments
 		// and fresh results must not keep buying an unlimited investigation.
@@ -38,10 +38,10 @@ func TestInvestigationVariedSearchesAndCooldown(t *testing.T) {
 			}
 		}
 		prompt := guard.investigation.finishRound()
-		if (prompt != "") != (i%DefaultInvestigationRoundLimit == 0) {
+		if (prompt != "") != (i == 12 || i == 18 || i == 21) {
 			t.Fatalf("round %d prompt=%q", i, prompt)
 		}
-		if prompt != "" {
+		if prompt != "" && i != 21 {
 			for _, required := range []string{"specific unresolved question", "authorized implementation", "read-only work", "do not edit files", "missing information or authorization", "requirement to run tests"} {
 				if !strings.Contains(prompt, required) {
 					t.Fatalf("missing %q in prompt", required)
@@ -58,13 +58,13 @@ func TestInvestigationMilestonesAndNonProgress(t *testing.T) {
 	}{
 		{"edit", "edit_file", `{"path":"a.go"}`, "ok", true, true},
 		{"write", "write_file", `{"path":"a.go"}`, "ok", true, true},
-		{"verification", "bash", `{"command":"go test ./internal/agent -run '^TestOne$'"}`, "ok", true, true},
+		{"verification without edit", "bash", `{"command":"go test ./internal/agent -run '^TestOne$'"}`, "ok", true, false},
 		{"repeated edit", "edit_file", `{"path":"a.go"}`, "ok", false, false},
 		{"failed edit", "edit_file", `{"path":"a.go"}`, "Error: missing path", true, false},
 		{"failed verification", "bash", `{"command":"go test ./x"}`, "Error: exit status 1", true, false},
 		{"masked verification", "bash", `{"command":"go test ./x || true"}`, "FAIL", true, false},
 		{"background running", "bash", `{"command":"go test ./x"}`, `{"job_id":"job","status":"running","command":"go test ./x"}`, true, false},
-		{"background completed", "bash_wait", `{"job_id":"job"}`, `{"job_id":"job","status":"completed","exit_code":0,"command":"go test ./x","output":"ok"}`, true, true},
+		{"background completed", "bash_wait", `{"job_id":"job"}`, `{"job_id":"job","status":"completed","exit_code":0,"command":"go test ./x","output":"ok"}`, true, false},
 		{"background failed", "bash_wait", `{"job_id":"job"}`, `{"job_id":"job","status":"failed","exit_code":1,"command":"go test ./x"}`, true, false},
 		{"unknown command", "bash", `{"command":"python3 inspect.py"}`, "source", true, false},
 		{"bookkeeping", "task_update", `{}`, "saved", true, false},
@@ -201,7 +201,7 @@ func TestRunConversationInvestigationRoundLimitOption(t *testing.T) {
 	for _, tc := range []struct {
 		option, rounds, reminders int
 	}{
-		{option: 3, rounds: 7, reminders: 2},
+		{option: 3, rounds: 4, reminders: 2},
 		{option: 0, rounds: DefaultInvestigationRoundLimit, reminders: 1},
 		{option: -1, rounds: DefaultInvestigationRoundLimit * 2, reminders: 0},
 	} {

@@ -22,11 +22,16 @@ type anthropicRequest struct {
 	System       []anthropicSystemBlock `json:"system,omitempty"`
 	Messages     []anthropicMessage     `json:"messages"`
 	Tools        []anthropicTool        `json:"tools,omitempty"`
+	ToolChoice   *anthropicToolChoice   `json:"tool_choice,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 	MaxTokens    int                    `json:"max_tokens"`
 	Thinking     *anthropicThinking     `json:"thinking,omitempty"`
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 	Stream       bool                   `json:"stream,omitempty"`
+}
+
+type anthropicToolChoice struct {
+	Type string `json:"type"`
 }
 
 type anthropicCacheControl struct {
@@ -314,6 +319,10 @@ func buildAnthropicRequest(model string, messages []map[string]any, definitions 
 	if options.ReasoningEffort != ReasoningEffortAuto {
 		request.Thinking = &anthropicThinking{Type: "adaptive"}
 		request.OutputConfig = &anthropicOutputConfig{Effort: options.ReasoningEffort}
+	}
+	if options.DisableTools {
+		request.ToolChoice = &anthropicToolChoice{Type: "none"}
+		definitions = nil
 	}
 	for _, definition := range definitions {
 		schema, err := toolSchema(definition)

@@ -20,6 +20,7 @@ type openAIResponseRequest struct {
 	Model              string                           `json:"model"`
 	Input              []any                            `json:"input"`
 	Tools              []openAIResponseTool             `json:"tools,omitempty"`
+	ToolChoice         string                           `json:"tool_choice,omitempty"`
 	Text               map[string]any                   `json:"text,omitempty"`
 	Reasoning          *openAIResponseReasoning         `json:"reasoning,omitempty"`
 	PromptCacheKey     string                           `json:"prompt_cache_key,omitempty"`
@@ -460,6 +461,10 @@ func buildOpenAIResponseRequest(model string, messages []map[string]any, definit
 		Model:       model, Input: openAIResponseInput(messages, options.PromptCache), Stream: stream,
 		PromptCacheKey:     openAIPromptCacheKey(options.PromptCache),
 		PromptCacheOptions: openAIPromptCacheRequest(options.PromptCache),
+	}
+	if options.DisableTools {
+		request.ToolChoice = "none"
+		definitions = nil
 	}
 	for _, definition := range definitions {
 		schema, err := toolSchema(definition)

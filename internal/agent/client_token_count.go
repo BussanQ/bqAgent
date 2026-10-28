@@ -37,6 +37,7 @@ type anthropicInputTokenCountRequest struct {
 	System       []anthropicSystemBlock `json:"system,omitempty"`
 	Messages     []anthropicMessage     `json:"messages"`
 	Tools        []anthropicTool        `json:"tools,omitempty"`
+	ToolChoice   *anthropicToolChoice   `json:"tool_choice,omitempty"`
 	Thinking     *anthropicThinking     `json:"thinking,omitempty"`
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 }
@@ -122,6 +123,7 @@ func (c *Client) countAnthropicInputTokens(ctx context.Context, model string, me
 		System:       messageRequest.System,
 		Messages:     messageRequest.Messages,
 		Tools:        messageRequest.Tools,
+		ToolChoice:   messageRequest.ToolChoice,
 		Thinking:     messageRequest.Thinking,
 		OutputConfig: messageRequest.OutputConfig,
 	}

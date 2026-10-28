@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,10 @@ import (
 	"testing"
 
 	"bqagent/internal/globalconfig"
+	appruntime "bqagent/internal/runtime"
+	"bqagent/internal/session"
+	"bqagent/internal/turn"
+	"bqagent/internal/workspace"
 )
 
 func TestRunUsesExplicitHelloTask(t *testing.T) {
@@ -316,5 +321,74 @@ func TestApplyDotEnvPreservesExistingProcessEnvironment(t *testing.T) {
 	}
 	if exported["LLM_BASE_URL"] != "https://example.test/v1" {
 		t.Fatalf("exported environment = %#v, want dotenv base URL", exported)
+	}
+}
+
+func TestPersistTurnWorkingContextKeepsReturnedMessagesOnFailure(t *testing.T) {
+	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: t.TempDir()}
+	saved, err := session.NewStore(ws.Root, session.Options{AgentDir: ws.AgentDir()}).Create(session.CreateOptions{Task: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	huge := strings.Repeat("调查成果 ", 200000)
+	updated := []map[string]any{
+		{"role": "user", "content": "summary and latest task"},
+		{"role": "assistant", "content": huge},
+		{"role": "user", "content": "continue"},
+	}
+	conversation := &appruntime.Conversation{Session: saved}
+	runErr := errors.New("model failed")
+	var stderr bytes.Buffer
+	if got := persistTurnWorkingContext(conversation, updated, runErr, &stderr); got != runErr {
+		t.Fatalf("err=%v", got)
+	}
+	loaded, err := saved.LoadWorkingMessages()
+	if err != nil || len(loaded) != 3 || loaded[1]["content"] != huge || len(conversation.Messages) != 3 {
+		t.Fatalf("loaded=%d err=%v", len(loaded), err)
+	}
+}
+
+func TestPersistTurnWorkingContextSkipsEmptyMessages(t *testing.T) {
+	conversation := &appruntime.Conversation{Messages: []map[string]any{{"role": "user", "content": "old"}}}
+	if err := persistTurnWorkingContext(conversation, nil, nil, io.Discard); err != nil || len(conversation.Messages) != 1 {
+		t.Fatalf("err=%v messages=%v", err, conversation.Messages)
+	}
+}
+
+func TestPersistTurnWorkingContextKeepsReturnedMessagesOnSuccess(t *testing.T) {
+	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: t.TempDir()}
+	saved, err := session.NewStore(ws.Root, session.Options{AgentDir: ws.AgentDir()}).Create(session.CreateOptions{Task: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	huge := strings.Repeat("调查成果 ", 200000)
+	updated := []map[string]any{
+		{"role": "user", "content": "task"},
+		{"role": "assistant", "content": huge},
+	}
+	conversation := &appruntime.Conversation{Session: saved}
+	if err := persistTurnWorkingContext(conversation, updated, nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := saved.LoadWorkingMessages()
+	if err != nil || len(loaded) != 2 || loaded[1]["content"] != huge {
+		t.Fatalf("loaded=%d err=%v", len(loaded), err)
+	}
+}
+
+func TestMarkTurnEndedPersistsBlockedOutcome(t *testing.T) {
+	ws := &workspace.Workspace{Root: t.TempDir(), GlobalAgentDir: t.TempDir()}
+	saved, err := session.NewStore(ws.Root, session.Options{AgentDir: ws.AgentDir()}).Create(session.CreateOptions{Task: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := turn.Outcome{}
+	outcome.Set(turn.Blocked, "investigation_stalled")
+	if err := markTurnEnded(&appruntime.Conversation{Session: saved}, outcome); err != nil {
+		t.Fatal(err)
+	}
+	meta := saved.Meta()
+	if string(meta.Status) != string(turn.Blocked) || meta.LastTurnOutcome == nil || meta.LastTurnOutcome.Reason != "investigation_stalled" {
+		t.Fatalf("meta=%+v", meta)
 	}
 }

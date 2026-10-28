@@ -1067,7 +1067,11 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	result, updatedMessages, generation := turnResult.Reply, turnResult.Messages, turnResult.Generation
 	response = TurnResponse{SessionID: conversation.Session.ID(), Outcome: turnResult.Outcome, Mode: mode, ConversationType: conversationType}
 	if err != nil {
-		conversation.Messages = agent.BoundWorkingMessages(updatedMessages, service.context)
+		// The built-in agent already manages context; keep its returned working
+		// history as-is so failures do not drop investigation results.
+		if len(updatedMessages) > 0 {
+			conversation.Messages = updatedMessages
+		}
 		// Best effort: even a failed model/tool request may already have pruned a
 		// legacy oversized transcript into a safe working context for the retry.
 		_ = conversation.SaveWorkingContext()
@@ -1078,7 +1082,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		return response, err
 	}
 	conversation.Messages = updatedMessages
-	if err := service.finishConversationTurn(conversation, turnResult.Outcome); err != nil {
+	if err := service.finishConversationTurn(conversation, turnResult.Outcome, false); err != nil {
 		writeTurnError(turnErrorWriter, err)
 		markConversationFailed(conversation, err)
 		return response, err
@@ -1102,8 +1106,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}, nil
 }
 
-func (service *Service) finishConversationTurn(conversation *appruntime.Conversation, outcome turn.Outcome) error {
-	conversation.Messages = agent.BoundWorkingMessages(conversation.Messages, service.context)
+// finishConversationTurn persists the working context. bound must be true for
+// external-agent and shortcut turns, which bypass the agent's context manager;
+// built-in agent turns pass false to keep their managed history unchanged.
+func (service *Service) finishConversationTurn(conversation *appruntime.Conversation, outcome turn.Outcome, bound bool) error {
+	if bound {
+		conversation.Messages = agent.BoundWorkingMessages(conversation.Messages, service.context)
+	}
 	if err := conversation.SaveWorkingContext(); err != nil {
 		return err
 	}
@@ -1114,7 +1123,7 @@ func (service *Service) finishConversationTurn(conversation *appruntime.Conversa
 }
 
 func (service *Service) completeConversation(conversation *appruntime.Conversation) error {
-	return service.finishConversationTurn(conversation, turn.Outcome{Status: turn.Completed})
+	return service.finishConversationTurn(conversation, turn.Outcome{Status: turn.Completed}, true)
 }
 
 func (service *Service) handleFeedbackCommand(message string, savedSession *session.Session) (string, bool, error) {

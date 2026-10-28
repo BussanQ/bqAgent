@@ -20,9 +20,11 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
+	appruntime "bqagent/internal/runtime"
 	serverchanclient "bqagent/internal/serverchan"
 	"bqagent/internal/session"
 	"bqagent/internal/tools"
+	"bqagent/internal/turn"
 	"bqagent/internal/workspace"
 )
 
@@ -1536,4 +1538,25 @@ func (transport rewriteTransport) RoundTrip(request *http.Request) (*http.Respon
 	cloned.URL.Host = transport.target.Host
 	cloned.Host = transport.target.Host
 	return transport.base.RoundTrip(cloned)
+}
+
+func TestFinishConversationTurnBoundsOnlyWhenRequested(t *testing.T) {
+	cfg := agent.DefaultContextConfig()
+	cfg.MaxInputTokens, cfg.TargetInputTokens, cfg.ResponseReserveTokens = 2000, 1000, 100
+	cfg.CompressionTriggerPercent = 50
+	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), Context: cfg})
+	huge := strings.Repeat("investigation result ", 5000)
+	build := func() *appruntime.Conversation {
+		return &appruntime.Conversation{Messages: []map[string]any{
+			{"role": "user", "content": "task"}, {"role": "assistant", "content": huge}, {"role": "user", "content": "latest"},
+		}}
+	}
+	managed := build()
+	if err := service.finishConversationTurn(managed, turn.Outcome{Status: turn.Completed}, false); err != nil || managed.Messages[1]["content"] != huge {
+		t.Fatalf("built-in history must be kept as-is, err=%v", err)
+	}
+	external := build()
+	if err := service.finishConversationTurn(external, turn.Outcome{Status: turn.Completed}, true); err != nil || len(external.Messages) == 0 || (len(external.Messages) > 1 && external.Messages[1]["content"] == huge) {
+		t.Fatalf("external/shortcut history must still be bounded, err=%v", err)
+	}
 }

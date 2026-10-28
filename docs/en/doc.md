@@ -208,12 +208,20 @@ Set `MCP_ALLOWED_ENV` before using placeholders in `.agent/mcp.json` header valu
 | `WEIXIN_ILINK_CHANNEL_VERSION` | `1.0.2` | iLink channel protocol version. |
 | `WEIXIN_ILINK_CDN_BASE_URL` | `https://novac2c.cdn.weixin.qq.com/c2c` | Inbound media CDN override. |
 
+### Investigation convergence and recovery
+
+The budget counts model tool batches, not individual tools within a batch. New search terms, repeated reads, and task bookkeeping do not reset escalation. A fresh successful `edit_file` / `write_file` outside absolute `/tmp/` and `/private/tmp/` paths lowers the level once; a subsequent independent successful reliable verification resets the stage. This is a conservative heuristic, not proof of acceptance; unrecognized shell writes cannot reset it.
+
+At the third checkpoint, all three protocols disable tools and request a decision containing established facts, the smallest deliverable, a next step, and a blocker where applicable. The model chooses implementation, focused investigation, blocked, or completed analysis. The report is persisted as ordinary resumable content. Invalid decisions or unexpected tool calls stop as blocked without executing those tools. Bookkeeping, opaque commands, and repeated progress-only promises also spend the recovery budget. Read-only analysis may deliver its conclusion without file edits or extra tests. Caller cancellation and outer deadlines retain precedence.
+
+CLI, TUI, and WebUI persist the built-in agent's returned working history unchanged on success and failure, without another summary-free prune at turn end. The next request still passes through context budgeting and compaction. External agents and command shortcuts retain local pruning, while saved decision reports and tool evidence remain available when resuming built-in sessions.
+
 ### Runtime, context, sessions, and tracing
 
 | Variable | Default | Description |
 |---|---|---|
 | `AGENT_MAX_ITERATIONS` | `1000` | Global loop runaway safety limit. |
-| `AGENT_INVESTIGATION_ROUND_LIMIT` | `12` | Number of read-only investigation rounds (with no new successful file edit or reliable verification) before the model is reminded to converge. `0` disables the reminder; negative or invalid values use the default. The reminder is advisory and never stops the task. |
+| `AGENT_INVESTIGATION_ROUND_LIMIT` | `12` | Initial investigation budget N, followed by max(1,N/2) and max(1,N/4) rounds using integer division: 12 → 6 → 3 by default. Escalation asks for evidence, narrows the current deliverable, then disables tools for one decision response. Up to 3 recovery rounds follow (less for small N); continued stagnation ends with a saved blocked report. `0` disables escalation; negative or invalid values use the default. |
 | `BASH_OUTPUT_MAX_BYTES` | `1048576` | Maximum combined stdout/stderr bytes retained by `bash`; excess output is drained and discarded, then the result ends with a truncation marker. Non-positive or invalid values use the default. |
 | `BASH_YIELD_TIMEOUT` | `30s` | How long `bash` waits for a command; after that it keeps running in the background and returns `status=running` with a `job_id` (not a success). Use `bash_wait`/`bash_kill`. Must be a positive duration; invalid values use the default. Jobs do not survive the turn and are reclaimed when it ends. |
 | `BASH_MAX_TIMEOUT` | `0` | Hard lifetime cap per bash job; `0` disables it. Must not be negative; invalid values use the default. Jobs are never killed for lack of progress. |

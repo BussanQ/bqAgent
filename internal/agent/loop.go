@@ -133,8 +133,8 @@ type Options struct {
 	ToolEventSink   ToolEventSink
 	Context         ContextConfig
 	Stage           StageConfig
-	// InvestigationRoundLimit is the number of read-only investigation rounds
-	// before a convergence reminder: 0 selects the default, negative disables.
+	// InvestigationRoundLimit sets the first convergence budget; subsequent
+	// budgets halve toward a tool-free decision. Zero defaults; negative disables.
 	InvestigationRoundLimit int
 	BashJobs                tools.BashJobOptions
 	ReasoningEffort         ReasoningEffort
@@ -351,10 +351,23 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if a.stageConfig.ImmediateProgress {
 			a.writeStageProgress(selectModelProgressMessage(modelProgressMessages))
 		}
+		decisionOnly := loopGuard.investigation.decisionPending
 		definitions := loopGuard.filterDefinitions(a.toolDefinitionsForRun())
-		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort, ServiceTier: a.serviceTier}
+		completionOptions := ChatCompletionOptions{ReasoningEffort: a.reasoningEffort, ServiceTier: a.serviceTier, DisableTools: decisionOnly}
+		if decisionOnly {
+			definitions = nil
+			a.writeProgress("调查多次未收敛，已暂停工具调用，要求模型先给出决策。")
+		}
 		completionOptions.PromptCache = buildPromptCacheOptions(a.apiType, a.model, a.prompt, definitions, completionOptions)
-		requestMessages, _, budgetErr := a.buildRequestMessagesChecked(explorationCtx, messages, definitions, completionOptions)
+		var decisionTail []map[string]any
+		if decisionOnly {
+			prompt := investigationDecisionPrompt
+			if loopGuard.investigation.exhausted {
+				prompt += "\n" + investigationStopPrompt
+			}
+			decisionTail = []map[string]any{{"role": "developer", "content": prompt}}
+		}
+		requestMessages, _, budgetErr := a.buildRequestMessagesWithTail(explorationCtx, messages, definitions, completionOptions, decisionTail)
 		if budgetErr != nil {
 			return "", updatedMessages, budgetErr
 		}
@@ -374,6 +387,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 		if a.stream {
 			onChunk := func(chunk string) {
 				streamedText.WriteString(chunk)
+				if decisionOnly {
+					return // Display the parsed report rather than the control response.
+				}
 				state.emit(itemID, "message.updated", "draft", streamedText.String())
 				if a.messageSink != nil {
 					return
@@ -458,6 +474,9 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			if strings.TrimSpace(partial) != "" {
 				// Only preserve visible text, never incomplete or unexecuted tool calls.
 				text := "[未完成的回复：生成过程中断，以下内容仅为已收到的部分，不代表任务已完成。]\n\n" + partial
+				if decisionOnly {
+					text = "[调查决策生成中断，任务尚未完成。已收到的决策草稿：]\n\n" + partial
+				}
 				draft := map[string]any{"role": "assistant", "content": text, "phase": "commentary"}
 				updatedMessages = append(updatedMessages, draft)
 				if saveErr := a.recordMessages(draft); saveErr != nil {
@@ -471,6 +490,56 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			return "", updatedMessages, requestErr
 		}
 		message.normalizeInlineToolCalls()
+		if decisionOnly {
+			if inputs != nil {
+				if pending := inputs.TakeSteering(); len(pending) > 0 {
+					loopGuard.investigation.reset()
+					updatedMessages, err = a.appendTurnInputs(ctx, updatedMessages, pending, false)
+					messages = updatedMessages
+					if err != nil {
+						return "", updatedMessages, err
+					}
+					continue
+				}
+			}
+			decision, decisionErr := parseInvestigationDecision(contentText(message.Content))
+			invalid := decisionErr != nil || len(message.ToolCalls) > 0 || message.Completion.OutputTruncated
+			text := decision.Report
+			if invalid {
+				text = "调查多次未收敛，模型未能提供有效决策，本轮已暂停。已有工具结果和修改保存在会话中；任务尚未完成，请根据最后的证据继续最小实现或补充具体阻塞信息。"
+			} else if decision.Action == "implement" || decision.Action == "investigate" {
+				text = fmt.Sprintf("调查结论：%s\n本阶段交付：%s\n下一步：%s", decision.Facts, decision.Deliverable, decision.NextStep)
+				if decision.Blocker != "" {
+					text += "\n待解决问题：" + decision.Blocker
+				}
+			}
+			stop := invalid || loopGuard.investigation.exhausted || decision.Action == "blocked"
+			if stop {
+				setTurnStop(ctx, turn.Blocked, "investigation_stalled")
+				if !invalid {
+					text = "本轮调查未能继续推进，任务尚未完成。\n\n" + text
+				}
+			}
+			decisionMessage := map[string]any{"role": "assistant", "content": text, "phase": "commentary"}
+			updatedMessages = append(updatedMessages, decisionMessage)
+			if err := a.recordMessages(decisionMessage); err != nil {
+				return "", updatedMessages, err
+			}
+			state.emit(itemID, "message.completed", "commentary", text)
+			if stop || decision.Action == "complete" {
+				state.finalItem = itemID
+				return text, updatedMessages, nil
+			}
+			loopGuard.investigation.decisionPending = false
+			loopGuard.investigation.decisionUsed = true
+			loopGuard.investigation.rounds = 0
+			updatedMessages, err = a.appendContinuation(updatedMessages, "Execute the recorded decision now. Tools are available again. Resolve only the named uncertainty or take the smallest authorized implementation step; do not expand scope. The remaining recovery budget is at most three tool rounds without concrete progress.")
+			messages = updatedMessages
+			if err != nil {
+				return "", updatedMessages, err
+			}
+			continue
+		}
 		truncatedToolBatch := message.Completion.OutputTruncated && len(message.ToolCalls) > 0
 		recoveredToolCalls := false
 		if truncatedToolBatch {
@@ -525,6 +594,12 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 				}
 			}
 			if reason := a.continuationReason(ctx, message); reason != "" {
+				if loopGuard.investigation.decisionUsed {
+					loopGuard.investigation.beginRound()
+					if prompt := loopGuard.investigation.finishRound(); prompt != "" {
+						reason = prompt
+					}
+				}
 				if strings.TrimSpace(message.FinalContent()) != "" {
 					emptyFinalRecoveries = 0
 				}
