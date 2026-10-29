@@ -15,9 +15,9 @@ import (
 
 func TestTUIEffortCommand(t *testing.T) {
 	// Commands work before a session/provider exists and never call the model.
-	backend := &tuiBackend{}
+	backend := &tuiBackend{effort: agent.DefaultReasoningEffort}
 	for _, test := range []struct{ command, want string }{
-		{"/effort", "auto"}, {"/effort low", "low"}, {"/effort medium", "medium"},
+		{"/effort", "high"}, {"/effort low", "low"}, {"/effort medium", "medium"},
 		{"/effort high", "high"}, {" /EFFORT MAX ", "max"}, {"/effort", "max"},
 	} {
 		result, err := backend.RunTurn(context.Background(), "session", test.command, apptui.TurnEvents{})

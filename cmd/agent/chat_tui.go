@@ -34,7 +34,7 @@ func runTUI(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, gete
 	defer herdrReporter.Close()
 	service, externalBroker := newConversationService(ctx, getenv, ws, systemPrompt, nil)
 	defer func() { cancel(); _ = externalBroker.Close() }()
-	backend := &tuiBackend{service: service, workspace: ws}
+	backend := &tuiBackend{service: service, workspace: ws, effort: agent.DefaultReasoningEffort}
 	noColor := getenv != nil && strings.TrimSpace(getenv("NO_COLOR")) != ""
 	err := apptui.Run(backend, apptui.Config{
 		ActivitySink: herdrReporter.Report,

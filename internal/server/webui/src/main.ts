@@ -1,4 +1,4 @@
-import { REASONING_EFFORT_VALUES, REASONING_EFFORT_LABELS, normalizeReasoningEffort } from "./reasoning-effort";
+import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_VALUES, REASONING_EFFORT_LABELS, normalizeReasoningEffort } from "./reasoning-effort";
 import "@awesome.me/webawesome/dist/styles/themes/default.css";
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "./styles.css";
@@ -98,7 +98,7 @@ import { createDoctorController } from "./doctor-controller";
   var conversations: ConversationSummary[] = [];
   var conversationContextTarget: ConversationSummary | null = null;
   var sessionId = "";
-  var reasoningEffort: ReasoningEffort = "auto";
+  var reasoningEffort: ReasoningEffort = DEFAULT_REASONING_EFFORT;
   var chatMode: ChatMode = "run";
   var conversationType: ConversationType = "default";
   var currentGroup: GroupInfo | null = null;
@@ -1953,7 +1953,7 @@ import { createDoctorController } from "./doctor-controller";
     pendingImages.forEach(function (image) { URL.revokeObjectURL(image.objectURL); });
   });
 
-  setReasoningEffort(localStorage.getItem(REASONING_EFFORT_KEY), false);
+  setReasoningEffort(localStorage.getItem(REASONING_EFFORT_KEY) ?? DEFAULT_REASONING_EFFORT, false);
   setTheme(initialTheme(localStorage.getItem(THEME_KEY),
     Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)));
   const disposeConversationLayout = initConversationLayout();

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { normalizeReasoningEffort, REASONING_EFFORT_LABELS, REASONING_EFFORT_VALUES } from "./reasoning-effort";
+import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, REASONING_EFFORT_LABELS, REASONING_EFFORT_VALUES } from "./reasoning-effort";
 
 describe("reasoning effort", () => {
   it("restores max and existing preferences and defaults invalid values to auto", () => {
@@ -10,6 +10,15 @@ describe("reasoning effort", () => {
     expect(normalizeReasoningEffort(" MAX ")).toBe("max");
     expect(normalizeReasoningEffort(undefined)).toBe("auto");
     expect(normalizeReasoningEffort("invalid")).toBe("auto");
+  });
+
+  it("defaults new browsers to high and renders the slider at high", () => {
+    expect(DEFAULT_REASONING_EFFORT).toBe("high");
+    const html = readFileSync("index.html", "utf8");
+    document.body.innerHTML = html.slice(html.indexOf("<body"), html.indexOf("</body>") + 7);
+    const range = document.getElementById("reasoning-effort-range") as HTMLInputElement;
+    expect(REASONING_EFFORT_VALUES[Number(range.value)]).toBe("high");
+    expect(document.getElementById("reasoning-effort-label")!.textContent).toBe(REASONING_EFFORT_LABELS.high);
   });
 
   it("makes max reachable at the slider endpoint with matching labels and ticks", () => {

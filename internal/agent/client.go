@@ -61,6 +61,10 @@ const (
 	ReasoningEffortMax    ReasoningEffort = "max"
 )
 
+// DefaultReasoningEffort is used by entry points until the caller chooses
+// another level. Providers that reject it are downgraded to auto.
+const DefaultReasoningEffort = ReasoningEffortHigh
+
 func ParseReasoningEffort(raw string) (ReasoningEffort, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "auto":

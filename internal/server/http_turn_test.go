@@ -108,3 +108,13 @@ func TestChatEndpointTaskRelationJSONAndForm(t *testing.T) {
 		}
 	}
 }
+
+func TestParseTurnRequestDefaultsReasoningEffortToHigh(t *testing.T) {
+	turnRequest, err := parseTurnRequest(map[string]string{"message": "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turnRequest.ReasoningEffort != agent.DefaultReasoningEffort || agent.DefaultReasoningEffort != agent.ReasoningEffortHigh {
+		t.Fatalf("reasoning effort = %q, want high", turnRequest.ReasoningEffort)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
 	"bqagent/internal/globalconfig"
 
@@ -413,6 +414,7 @@ func parseTurnRequest(values map[string]string) (TurnRequest, error) {
 		TurnID:           turnID,
 		TaskRelation:     taskRelation,
 		ConversationType: conversationType,
+		ReasoningEffort:  agent.DefaultReasoningEffort,
 	}, nil
 }
 

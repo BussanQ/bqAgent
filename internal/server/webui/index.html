@@ -253,16 +253,16 @@
         <wa-select id="model-select" title="模型" label="选择 Provider 和模型" placement="top" size="s"></wa-select>
       </div>
       <div class="reasoning-effort" id="reasoning-effort">
-        <button class="reasoning-effort-trigger" id="reasoning-effort-toggle" type="button" title="推理强度" aria-label="推理强度：自动" aria-expanded="false" aria-controls="reasoning-effort-menu">
-          <span id="reasoning-effort-label">自动</span>
+        <button class="reasoning-effort-trigger" id="reasoning-effort-toggle" type="button" title="推理强度" aria-label="推理强度：高" aria-expanded="false" aria-controls="reasoning-effort-menu">
+          <span id="reasoning-effort-label">高</span>
           <svg class="ui-icon reasoning-chevron" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chevron-down"></use></svg>
         </button>
         <div class="reasoning-effort-menu" id="reasoning-effort-menu" role="dialog" aria-label="设置推理强度" hidden>
-          <div class="reasoning-effort-heading"><span>推理强度</span><strong id="reasoning-effort-current">自动</strong></div>
+          <div class="reasoning-effort-heading"><span>推理强度</span><strong id="reasoning-effort-current">高</strong></div>
           <div class="reasoning-effort-slider" id="reasoning-effort-slider">
             <div class="reasoning-effort-track" aria-hidden="true"></div>
             <div class="reasoning-effort-dots" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
-            <input class="reasoning-effort-range" id="reasoning-effort-range" type="range" min="0" max="4" step="1" value="0" aria-label="推理强度" aria-valuetext="自动">
+            <input class="reasoning-effort-range" id="reasoning-effort-range" type="range" min="0" max="4" step="1" value="3" aria-label="推理强度" aria-valuetext="高">
           </div>
           <div class="reasoning-effort-labels" id="reasoning-effort-labels" aria-hidden="true"><span>自动</span><span>低</span><span>中</span><span>高</span><span>最高</span></div>
         </div>

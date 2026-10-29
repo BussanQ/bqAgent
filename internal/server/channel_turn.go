@@ -272,7 +272,7 @@ func (runner *ChannelTurnRunner) process(ctx context.Context, options ChannelTur
 	}
 
 	progressWriter := newChannelProgressWriter(ctx, options.progressSender())
-	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message, PeerKey: peerKey, Images: options.Images}, TurnOptions{ProgressWriter: progressWriter, MaxIterations: ChannelMaxIterations(), Stage: options.Stage})
+	response, err := runner.service.HandleTurnWithOptions(ctx, TurnRequest{SessionID: state.SessionID, Message: options.Message, PeerKey: peerKey, Images: options.Images, ReasoningEffort: agent.DefaultReasoningEffort}, TurnOptions{ProgressWriter: progressWriter, MaxIterations: ChannelMaxIterations(), Stage: options.Stage})
 	if err != nil {
 		state.LastError = err.Error()
 		if response.SessionID != "" {
