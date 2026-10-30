@@ -33,7 +33,7 @@ func TestStreamProgressTimeoutIgnoresHeartbeats(t *testing.T) {
 				if !errors.As(err, &providerErr) || providerErr.Category != ProviderErrorTimeout || !strings.Contains(err.Error(), "无有效进展") || errors.Is(err, context.Canceled) {
 					t.Fatalf("error=%v", err)
 				}
-				if calls != 2 || time.Since(start) != 4*time.Minute+client.providerRetryDelay(providerErr) || !body.closed || providerErr.Request.RetryCount != 1 {
+				if calls != 5 || time.Since(start) != 10*time.Minute+15*time.Second || !body.closed || providerErr.Request.RetryCount != 4 {
 					t.Fatalf("calls=%d elapsed=%s closed=%v", calls, time.Since(start), body.closed)
 				}
 			})
@@ -83,7 +83,7 @@ func TestStreamProgressTimeoutRetriesWithFreshAttempt(t *testing.T) {
 				if !strings.Contains(logs.String(), `last_event="`+map[APIType]string{APITypeOpenAI: "chat.completion.chunk", APITypeOpenAIResponse: "response.in_progress", APITypeAnthropic: "ping"}[api]+`"`) {
 					t.Fatalf("stream activity not recorded: %s", logs.String())
 				}
-				if !strings.Contains(progress.String(), "自动重试一次") || !strings.Contains(logs.String(), "[ModelWait]") || !strings.Contains(logs.String(), "category=model_timeout") {
+				if !strings.Contains(progress.String(), "自动重试（第 1/4 次）") || !strings.Contains(logs.String(), "[ModelWait]") || !strings.Contains(logs.String(), "category=model_timeout") {
 					t.Fatalf("progress=%s logs=%s", progress.String(), logs.String())
 				}
 			})
@@ -105,7 +105,7 @@ func TestStreamProgressTimeoutSharesRetryBudget(t *testing.T) {
 				})}, ClientOptions{StreamProgressTimeout: time.Minute})
 				client.retryJitter = func(time.Duration) time.Duration { return 0 }
 				_, err := client.CreateChatCompletionStream(context.Background(), "test", nil, nil, nil)
-				if err == nil || calls != 2 || ProviderRequestMetadataFromError(err).RetryCount != 1 {
+				if err == nil || calls != 5 || ProviderRequestMetadataFromError(err).RetryCount != 4 {
 					t.Fatalf("calls=%d err=%v", calls, err)
 				}
 			})

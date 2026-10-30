@@ -310,13 +310,13 @@ func (r *modelProgressReporter) markTransportActivity(kind string) {
 	}
 }
 
-func (r *modelProgressReporter) markRetry(delay time.Duration) {
+func (r *modelProgressReporter) markRetry(retry int, delay time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.stopped {
 		return
 	}
-	fmt.Fprintf(r.logWriter, "上游请求中断，将在 %s 后自动重试一次\n", formatWaitDuration(delay))
+	fmt.Fprintf(r.logWriter, "上游请求中断，将在 %s 后自动重试（第 %d/%d 次）\n", formatWaitDuration(delay), retry, providerMaxRetries)
 	// Waiting for a new attempt is not evidence that model output recovered.
 	r.lastActivity = modelProgressNow().Add(delay)
 	r.lastTransport = time.Time{}

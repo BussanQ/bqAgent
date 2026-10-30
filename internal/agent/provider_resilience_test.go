@@ -255,7 +255,7 @@ func TestProviderStreamsRetryUpstreamErrorsAfterOutput(t *testing.T) {
 					metadata := ProviderRequestMetadataFromError(err)
 					if scenario == "exhausted" {
 						var providerErr *ProviderError
-						if !errors.As(err, &providerErr) || providerErr.Category != ProviderErrorServer || metadata.RetryCount != 1 {
+						if !errors.As(err, &providerErr) || providerErr.Category != ProviderErrorServer || metadata.RetryCount != 4 {
 							t.Fatalf("err=%#v metadata=%#v", err, metadata)
 						}
 					} else if metadata.RetryCount != 0 {
@@ -266,6 +266,9 @@ func TestProviderStreamsRetryUpstreamErrorsAfterOutput(t *testing.T) {
 					}
 				}
 				wantCalls, wantResets := 2, 1
+				if scenario == "exhausted" {
+					wantCalls, wantResets = 5, 4
+				}
 				if scenario != "success" && scenario != "exhausted" {
 					wantCalls, wantResets = 1, 0
 				}
@@ -572,11 +575,11 @@ func TestParseRetryAfterSupportsSecondsDatesAndCap(t *testing.T) {
 		t.Fatal("past Retry-After was accepted")
 	}
 	client := newTestResilientClient(APITypeOpenAI, "https://retry.test", &http.Client{}, 0)
-	delay := client.providerRetryDelay(&ProviderError{StatusCode: http.StatusTooManyRequests, HasRetryAfter: true, RetryAfter: time.Minute})
+	delay := client.providerRetryDelay(&ProviderError{StatusCode: http.StatusTooManyRequests, HasRetryAfter: true, RetryAfter: time.Minute}, 4)
 	if delay != providerRetryAfterCap {
 		t.Fatalf("capped delay=%s want=%s", delay, providerRetryAfterCap)
 	}
-	ignored := client.providerRetryDelay(&ProviderError{StatusCode: http.StatusInternalServerError, HasRetryAfter: true, RetryAfter: 5 * time.Second})
+	ignored := client.providerRetryDelay(&ProviderError{StatusCode: http.StatusInternalServerError, HasRetryAfter: true, RetryAfter: 5 * time.Second}, 1)
 	if ignored != providerRetryBaseDelay {
 		t.Fatalf("500 Retry-After delay=%s want local backoff %s", ignored, providerRetryBaseDelay)
 	}

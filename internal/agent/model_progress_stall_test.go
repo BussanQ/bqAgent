@@ -56,8 +56,8 @@ func TestModelProgressReporterDistinguishesTransportAndContent(t *testing.T) {
 			t.Fatalf("logs=%q want=%q", logs.String(), want)
 		}
 	}
-	reporter.markRetry(time.Second)
-	if strings.Contains(progress.String(), modelProgressRecoveredMessage) || !strings.Contains(progress.String(), "自动重试一次") {
+	reporter.markRetry(4, time.Second)
+	if strings.Contains(progress.String(), modelProgressRecoveredMessage) || !strings.Contains(progress.String(), "自动重试（第 4/4 次）") {
 		t.Fatalf("progress=%q", progress.String())
 	}
 	clock.Advance(46 * time.Second)

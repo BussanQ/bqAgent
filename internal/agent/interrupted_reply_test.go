@@ -144,7 +144,11 @@ func TestRunTurnReplacesDraftOnProviderRetry(t *testing.T) {
 				} else if err != nil || result.Reply != "new answer" {
 					t.Fatalf("result=%+v err=%v", result, err)
 				}
-				if calls != 2 || toolExecutions != 0 {
+				wantCalls := 2
+				if failRetry {
+					wantCalls = 5
+				}
+				if calls != wantCalls || toolExecutions != 0 {
 					t.Fatalf("calls=%d toolExecutions=%d", calls, toolExecutions)
 				}
 				last := result.Messages[len(result.Messages)-1]
@@ -153,7 +157,7 @@ func TestRunTurnReplacesDraftOnProviderRetry(t *testing.T) {
 					t.Fatalf("last message=%#v", last)
 				}
 				if useMessageSink {
-					if strings.Join(drafts, "|") != "old draft||new answer" || projection.Latest.Text != text {
+					if strings.Join(drafts, "|") != "old draft"+strings.Repeat("||new answer", wantCalls-1) || projection.Latest.Text != text {
 						t.Fatalf("drafts=%q projection=%+v", drafts, projection)
 					}
 				} else if !strings.Contains(tokens.String(), "old draft\n\n[上游请求中断，正在重试；以下为重新生成的回复]\n\nnew answer") {
@@ -178,9 +182,9 @@ func TestRunTurnProgressTimeoutPreservesCompletedTools(t *testing.T) {
 					if calls == 1 {
 						body = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"completed\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n"
 					}
-					if calls == 2 || failRetry && calls == 3 {
+					if calls == 2 || failRetry && calls >= 3 {
 						text := "old draft"
-						if calls == 3 {
+						if calls >= 3 {
 							text = "new answer"
 						}
 						partial := "data: {\"choices\":[{\"delta\":{\"content\":\"" + text + "\",\"tool_calls\":[{\"index\":0,\"id\":\"unfinished\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{\"}}]}}]}\n\n"
@@ -206,8 +210,17 @@ func TestRunTurnProgressTimeoutPreservesCompletedTools(t *testing.T) {
 				} else if err != nil || result.Reply != "new answer" {
 					t.Fatalf("result=%+v err=%v", result, err)
 				}
-				if calls != 3 || executions != 1 || requests[1] != requests[2] || !strings.Contains(requests[2], "already written") {
+				wantCalls := 3
+				if failRetry {
+					wantCalls = 6
+				}
+				if calls != wantCalls || executions != 1 || !strings.Contains(requests[1], "already written") {
 					t.Fatalf("calls=%d executions=%d requests=%q", calls, executions, requests)
+				}
+				for _, request := range requests[2:] {
+					if request != requests[1] {
+						t.Fatal("retry changed completed tool results")
+					}
 				}
 				last := result.Messages[len(result.Messages)-1]
 				if strings.Contains(projection.Latest.Text, "old draft") || !strings.HasSuffix(projection.Latest.Text, "new answer") || last["tool_calls"] != nil {

@@ -23,8 +23,9 @@ import (
 
 const (
 	DefaultStreamIdleTimeout = 2 * time.Minute
-	providerRetryBaseDelay   = 250 * time.Millisecond
+	providerRetryBaseDelay   = time.Second
 	providerRetryJitter      = 250 * time.Millisecond
+	providerMaxRetries       = 4
 	providerRetryAfterCap    = 10 * time.Second
 )
 
@@ -192,7 +193,7 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 		}
 	}
 
-	transientRetryUsed := false
+	transientRetries := 0
 	downgradeAttempt := false
 	cacheDowngradeAttempt := false
 	attemptNumber := 0
@@ -212,7 +213,7 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 			return AssistantMessage{}, &providerRequestError{cause: ctxErr, request: metadata}
 		}
 		providerErr := normalizeProviderError(ctx, err)
-		if stream && state.semanticOutput && (!providerErr.Transient || transientRetryUsed) {
+		if stream && state.semanticOutput && (!providerErr.Transient || transientRetries >= providerMaxRetries) {
 			providerErr.Request = cloneProviderRequestMetadata(metadata)
 			return AssistantMessage{}, providerErr
 		}
@@ -243,10 +244,11 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 			continue
 		}
 
-		if !transientRetryUsed && providerErr.Transient {
-			delay := c.providerRetryDelay(providerErr)
-			if observer, _ := ctx.Value(providerRetryObserverKey{}).(func(time.Duration)); observer != nil {
-				observer(delay)
+		if transientRetries < providerMaxRetries && providerErr.Transient {
+			transientRetries++
+			delay := c.providerRetryDelay(providerErr, transientRetries)
+			if observer, _ := ctx.Value(providerRetryObserverKey{}).(func(int, time.Duration)); observer != nil {
+				observer(transientRetries, delay)
 			}
 			if waitErr := c.waitForProviderRetry(ctx, delay); waitErr != nil {
 				return AssistantMessage{}, &providerRequestError{cause: waitErr, request: metadata}
@@ -256,7 +258,6 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 				Kind: "provider_retry", Attempt: attemptNumber + 1,
 				Category: providerErr.Category, StatusCode: providerErr.StatusCode, Delay: delay,
 			})
-			transientRetryUsed = true
 			if stream && state.semanticOutput {
 				// The next attempt starts a fresh response; discard its predecessor's draft.
 				if observer, _ := ctx.Value(streamRetryObserverKey{}).(func()); observer != nil {
@@ -325,7 +326,9 @@ func reasoningUnsupportedError(apiType APIType, err *ProviderError) bool {
 	}
 }
 
-func (c *Client) providerRetryDelay(err *ProviderError) time.Duration {
+// providerRetryDelay honors a server Retry-After for 429/503; otherwise it
+// backs off exponentially (1s, 2s, 4s, 8s) with a small random jitter.
+func (c *Client) providerRetryDelay(err *ProviderError, retry int) time.Duration {
 	if err != nil && err.HasRetryAfter && (err.StatusCode == http.StatusTooManyRequests || err.StatusCode == http.StatusServiceUnavailable) {
 		if err.RetryAfter > providerRetryAfterCap {
 			return providerRetryAfterCap
@@ -338,7 +341,7 @@ func (c *Client) providerRetryDelay(err *ProviderError) time.Duration {
 	if c.retryJitter != nil {
 		jitter = c.retryJitter(providerRetryJitter)
 	}
-	return providerRetryBaseDelay + jitter
+	return providerRetryBaseDelay<<max(retry-1, 0) + jitter
 }
 
 func defaultProviderRetryJitter(max time.Duration) time.Duration {
