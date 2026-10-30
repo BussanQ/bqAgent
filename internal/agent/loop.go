@@ -47,6 +47,7 @@ type MessageRecorder interface {
 }
 
 type ToolEvent struct {
+	apptrace.ToolExecution
 	Kind       string         `json:"-"`
 	Seq        uint64         `json:"seq"`
 	ID         string         `json:"id"`
@@ -346,6 +347,11 @@ func (a *Agent) runConversation(ctx context.Context, messages []map[string]any, 
 			if err != nil {
 				return "", updatedMessages, err
 			}
+		}
+		messages, err = a.deliverFinishedBashJobs(ctx, messages)
+		updatedMessages = messages
+		if err != nil {
+			return "", updatedMessages, err
 		}
 		actualIterations = iteration + 1
 		if a.stageConfig.ImmediateProgress {

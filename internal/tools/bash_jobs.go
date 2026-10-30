@@ -410,6 +410,31 @@ func (m *BashJobs) Pending() []BashJobStatus {
 	return result
 }
 
+// TakeFinished returns the final state of jobs that finished without being
+// observed and marks them observed, so the harness can deliver them itself.
+func (m *BashJobs) TakeFinished() []BashJobStatus {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	jobs := make([]*bashJob, 0, len(m.order))
+	for _, id := range m.order {
+		if job := m.jobs[id]; job != nil {
+			jobs = append(jobs, job)
+		}
+	}
+	m.mu.Unlock()
+	var result []BashJobStatus
+	for _, job := range jobs {
+		if job.isObserved() || job.isRunning() {
+			continue
+		}
+		result = append(result, job.snapshot(true))
+		m.observeFinal(job)
+	}
+	return result
+}
+
 // Close cancels all jobs, waits for them to be reaped and returns the final
 // state of jobs that were never observed. It is safe to call repeatedly.
 func (m *BashJobs) Close() []BashJobStatus {

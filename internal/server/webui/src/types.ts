@@ -60,6 +60,11 @@ export interface ConversationHistoryTool {
   arguments?: Record<string, unknown>;
   result?: string;
   status?: string;
+  call_status?: string;
+  execution_status?: string;
+  job_id?: string;
+  exit_code?: number;
+  result_delivered?: boolean;
   truncated?: boolean;
 }
 
@@ -265,6 +270,11 @@ export interface ToolEventPayload {
   seq?: number;
   name?: string;
   status?: string;
+  call_status?: string;
+  execution_status?: string;
+  job_id?: string;
+  exit_code?: number;
+  result_delivered?: boolean;
   arguments?: Record<string, unknown>;
   duration_ms?: number;
   truncated?: boolean;

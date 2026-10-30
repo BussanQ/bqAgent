@@ -72,15 +72,20 @@ type TokenUsage struct {
 }
 
 type ToolEvent struct {
-	Kind       string
-	Seq        uint64
-	ID         string
-	Name       string
-	Status     string
-	Arguments  map[string]any
-	Preview    string
-	DurationMS int64
-	Truncated  bool
+	Kind            string
+	Seq             uint64
+	ID              string
+	Name            string
+	Status          string
+	CallStatus      string
+	ExecutionStatus string
+	JobID           string
+	ExitCode        *int
+	ResultDelivered *bool
+	Arguments       map[string]any
+	Preview         string
+	DurationMS      int64
+	Truncated       bool
 }
 
 type TurnResult struct {

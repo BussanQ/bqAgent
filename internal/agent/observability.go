@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"bqagent/internal/tools"
+	apptrace "bqagent/internal/trace"
 )
 
 type instrumentedClient struct {
@@ -370,7 +371,7 @@ func randomModelProgressMessage(messages []string) string {
 	return messages[int(index.Int64())]
 }
 
-func logToolTiming(logWriter io.Writer, toolName string, duration time.Duration, err error) {
+func logToolTiming(logWriter io.Writer, toolName string, duration time.Duration, err error, execution apptrace.ToolExecution) {
 	if logWriter == nil {
 		return
 	}
@@ -382,7 +383,17 @@ func logToolTiming(logWriter io.Writer, toolName string, duration time.Duration,
 		extra = fmt.Sprintf(" error=%q", sanitizeLogValue(err.Error()))
 	}
 
-	fmt.Fprintf(logWriter, "[Tool] name=%s duration=%s status=%s%s\n", toolName, formatDuration(duration), status, extra)
+	if execution.JobID != "" {
+		status = execution.ExecutionStatus
+		extra += fmt.Sprintf(" execution_status=%s job_id=%s", execution.ExecutionStatus, execution.JobID)
+		if execution.ExitCode != nil {
+			extra += fmt.Sprintf(" exit_code=%d", *execution.ExitCode)
+		}
+		if execution.ResultDelivered != nil {
+			extra += fmt.Sprintf(" result_delivered=%t", *execution.ResultDelivered)
+		}
+	}
+	fmt.Fprintf(logWriter, "[Tool] name=%s duration=%s status=%s call_status=%s%s\n", toolName, formatDuration(duration), status, execution.CallStatus, extra)
 }
 
 func logTurnTiming(logWriter io.Writer, actualIterations int, duration time.Duration, err error) {

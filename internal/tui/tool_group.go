@@ -79,6 +79,18 @@ func (group *toolGroup) add(event ToolEvent) (becameExpandable bool) {
 			group.items[index].hasResult = true
 		}
 	}
+	if event.JobID != "" && event.ExecutionStatus != "" && event.ExecutionStatus != "running" {
+		for index := range group.items {
+			item := &group.items[index]
+			if item.result.JobID == event.JobID && item.result.Status == "running" {
+				item.result.Status = event.Status
+				item.result.ExecutionStatus = event.ExecutionStatus
+				item.result.ExitCode = event.ExitCode
+				item.result.ResultDelivered = event.ResultDelivered
+				item.result.Preview = event.Preview
+			}
+		}
+	}
 	return !previous && group.canExpand()
 }
 
@@ -195,7 +207,9 @@ func (group toolGroup) counts() (running, succeeded, failed int) {
 			continue
 		}
 		status := strings.ToLower(strings.TrimSpace(item.result.Status))
-		if status == "failed" || status == "error" {
+		if status == "running" {
+			running++
+		} else if status == "failed" || status == "error" || status == "killed" {
 			failed++
 		} else {
 			succeeded++

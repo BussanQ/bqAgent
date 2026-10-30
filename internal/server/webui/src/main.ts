@@ -21,6 +21,7 @@ import { initialTheme } from "./theme";
 import { isTaskUpdatedEvent, renderTaskPanel, TaskProgress } from "./task-progress";
 import { inputKindForKey, isInputAppliedEvent, TURN_INPUT_STATE_LABELS, TurnInputSession, type TurnInputKind } from "./turn-input";
 import { shouldGroupToolCalls } from "./tool-groups";
+import { applyToolResult, restoredToolPayload, type ToolState } from "./tool-status";
 import type { SentFile, SentImage } from "./attachments";
 import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, ConversationType, GenerationMetrics, GroupEventPayload, GroupInfo, MessageSnapshot, PendingFile, PendingInputPayload, PendingImage, ReasoningEffort, ToolEventPayload, WebUIDoneEvent } from "./types";
 import { createSlashCommands } from "./slash-commands";
@@ -36,7 +37,8 @@ import { createDoctorController } from "./doctor-controller";
     status: HTMLSpanElement;
     arguments: HTMLPreElement;
     result: HTMLPreElement;
-    state: "running" | "succeeded" | "failed";
+    state: ToolState;
+    jobID?: string;
   }
   type ToolCards = Record<string, ToolCard>;
   interface ToolGroup { root: HTMLDivElement; items: HTMLDivElement; status: HTMLSpanElement }
@@ -692,19 +694,20 @@ import { createDoctorController } from "./doctor-controller";
     var cardList = toolCardList(cards);
     var running = 0;
     var failed = 0;
+    var killed = 0;
     cardList.forEach(function (card) {
       if (card.state === "running") running++;
       if (card.state === "failed") failed++;
+      if (card.state === "killed") killed++;
     });
     group.root.classList.remove("succeeded", "failed");
-    if (running === 0) group.root.classList.add(failed > 0 ? "failed" : "succeeded");
-    if (running > 0) {
-      group.status.textContent = cardList.length + " 次，" + running + " 运行中" + (failed > 0 ? "，" + failed + " 失败" : "");
-    } else if (failed > 0) {
-      group.status.textContent = cardList.length + " 次，" + failed + " 失败";
-    } else {
-      group.status.textContent = cardList.length + " 次，全部完成";
-    }
+    if (running === 0) group.root.classList.add(failed > 0 || killed > 0 ? "failed" : "succeeded");
+    var details = [cardList.length + " 次"];
+    if (running > 0) details.push(running + " 运行中");
+    if (failed > 0) details.push(failed + " 失败");
+    if (killed > 0) details.push(killed + " 已终止");
+    if (running === 0 && failed === 0 && killed === 0) details.push("全部完成");
+    group.status.textContent = details.join("，");
   }
 
   function ensureToolGroup(timeline: ToolTimeline, cards: ToolCards): ToolGroup | undefined {
@@ -825,16 +828,7 @@ import { createDoctorController } from "./doctor-controller";
       ensureToolGroup(timeline, cards);
     }
     if (payload.arguments) card.arguments.textContent = JSON.stringify(payload.arguments, null, 2);
-    if (eventName === "tool_result") {
-      var failed = payload.status === "failed";
-      card.root.classList.remove("succeeded", "failed");
-      card.root.classList.add(failed ? "failed" : "succeeded");
-      card.state = failed ? "failed" : "succeeded";
-      var duration = payload.duration_ms ? "，" + payload.duration_ms + "ms" : "";
-      var truncated = payload.truncated ? "，已截断" : "";
-      card.status.textContent = (failed ? "失败" : "完成") + duration + truncated;
-      card.result.textContent = payload.preview || (failed ? "工具执行失败" : "（无输出）");
-    }
+    if (eventName === "tool_result") applyToolResult(cards, card, payload);
     updateToolGroupSummary(timeline, cards);
   }
 
@@ -1109,14 +1103,7 @@ import { createDoctorController } from "./doctor-controller";
     if (view.tools.length) {
       var cards: ToolCards = {};
       view.tools.forEach(function (tool, index) {
-        var payload: ToolEventPayload = {
-          id: tool.id || ("history-tool-" + (index + 1)),
-          name: tool.name,
-          arguments: tool.arguments,
-          status: tool.status,
-          preview: tool.preview,
-          truncated: tool.truncated,
-        };
+        var payload = restoredToolPayload(tool, index);
         updateToolTimeline(bubble, cards, "tool_call", payload);
         updateToolTimeline(bubble, cards, "tool_result", payload);
       });

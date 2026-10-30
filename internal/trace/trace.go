@@ -276,7 +276,16 @@ func (r *Recorder) ModelCallWithMetadata(contextHash string, usage TokenUsage, d
 	}
 }
 
-func (r *Recorder) ToolCall(name string, arguments map[string]any, result string, duration time.Duration, err error) {
+// ToolExecution separates a tool invocation from the command it observes.
+type ToolExecution struct {
+	CallStatus      string `json:"call_status,omitempty"`
+	ExecutionStatus string `json:"execution_status,omitempty"`
+	JobID           string `json:"job_id,omitempty"`
+	ExitCode        *int   `json:"exit_code,omitempty"`
+	ResultDelivered *bool  `json:"result_delivered,omitempty"`
+}
+
+func (r *Recorder) ToolCall(name string, arguments map[string]any, result string, duration time.Duration, err error, execution ...ToolExecution) {
 	data := map[string]any{
 		"name":           name,
 		"arguments":      arguments,
@@ -288,6 +297,20 @@ func (r *Recorder) ToolCall(name string, arguments map[string]any, result string
 	if err != nil {
 		data["error"] = err.Error()
 		data["error_category"] = ClassifyError(err)
+	}
+	if len(execution) > 0 {
+		state := execution[0]
+		data["call_status"] = state.CallStatus
+		if state.JobID != "" {
+			data["execution_status"] = state.ExecutionStatus
+			data["job_id"] = state.JobID
+			if state.ExitCode != nil {
+				data["exit_code"] = *state.ExitCode
+			}
+			if state.ResultDelivered != nil {
+				data["result_delivered"] = *state.ResultDelivered
+			}
+		}
 	}
 	_ = r.Event("tool_call", data)
 }

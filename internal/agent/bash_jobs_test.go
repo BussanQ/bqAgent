@@ -138,6 +138,60 @@ func TestBashJobTurnDefersFinalAnswerUntilJobResolved(t *testing.T) {
 	}
 }
 
+func TestBashJobFinishedResultDeliveredBeforeNextRequest(t *testing.T) {
+	var jobID string
+	client := &bashTurnClient{run: func(ctx context.Context, messages []map[string]any, step int) (AssistantMessage, error) {
+		switch step {
+		case 1:
+			return AssistantMessage{ToolCalls: []ToolCall{bashTestCall("start", "bash", map[string]any{"command": "sleep 0.1; printf done"})}}, nil
+		case 2:
+			status, ok := bashWaitStatus(fmt.Sprint(extractToolMessages(messages)[0]["content"]))
+			if !ok || status.Status != "running" {
+				t.Fatal("missing running result")
+			}
+			jobID = status.JobID
+			<-tools.BashJobsFromContext(ctx).Done(jobID)
+			return AssistantMessage{ToolCalls: []ToolCall{bashTestCall("noop", "noop", map[string]any{})}}, nil
+		case 3:
+			var delivered string
+			for _, message := range messages {
+				if text := fmt.Sprint(message["content"]); strings.Contains(text, "Background Bash jobs finished") {
+					delivered = text
+				}
+			}
+			if !strings.Contains(delivered, jobID) || !strings.Contains(delivered, `"status":"completed"`) || !strings.Contains(delivered, "done") {
+				t.Fatalf("final result not delivered: %q", delivered)
+			}
+			if len(tools.BashJobsFromContext(ctx).Pending()) != 0 {
+				t.Fatal("delivered job still pending")
+			}
+			return AssistantMessage{Content: "finished"}, nil
+		}
+		t.Fatalf("unexpected request %d", step)
+		return AssistantMessage{}, nil
+	}}
+	sink := &recordingToolEventSink{}
+	app := NewWithOptions(client, "", Options{ToolEventSink: sink, Context: ContextConfig{Enabled: false}, BashJobs: tools.BashJobOptions{YieldTimeout: time.Millisecond}, Functions: map[string]tools.Function{
+		"bash":      tools.ExecuteBash,
+		"bash_wait": tools.BashWait,
+		"bash_kill": tools.BashKill,
+		"noop":      func(context.Context, map[string]any) (string, error) { return "ok", nil },
+	}})
+	result, err := app.RunTurn(context.Background(), []map[string]any{{"role": "user", "content": "run"}}, 5)
+	if err != nil || result.Reply != "finished" || client.step != 3 {
+		t.Fatalf("result=%#v err=%v steps=%d", result, err, client.step)
+	}
+	var final *ToolEvent
+	for i := range sink.events {
+		if sink.events[i].ID == "start" && sink.events[i].Kind == "tool_result" {
+			final = &sink.events[i]
+		}
+	}
+	if final == nil || final.Status != "succeeded" || final.ResultDelivered == nil || !*final.ResultDelivered {
+		t.Fatalf("original card not resolved: %+v", final)
+	}
+}
+
 func TestBashJobTurnCleansUpOnErrorCancellationAndBudget(t *testing.T) {
 	for _, mode := range []string{"model_error", "cancel", "budget"} {
 		t.Run(mode, func(t *testing.T) {
@@ -155,7 +209,8 @@ func TestBashJobTurnCleansUpOnErrorCancellationAndBudget(t *testing.T) {
 				}
 				return AssistantMessage{}, errors.New("model failed")
 			}}
-			app := NewWithOptions(client, "", Options{Context: ContextConfig{Enabled: false}, BashJobs: tools.BashJobOptions{YieldTimeout: time.Millisecond}})
+			sink := &recordingToolEventSink{}
+			app := NewWithOptions(client, "", Options{ToolEventSink: sink, Context: ContextConfig{Enabled: false}, BashJobs: tools.BashJobOptions{YieldTimeout: time.Millisecond}})
 			limit := 3
 			if mode == "budget" {
 				limit = 1
@@ -163,6 +218,10 @@ func TestBashJobTurnCleansUpOnErrorCancellationAndBudget(t *testing.T) {
 			result, _ := app.RunTurn(ctx, []map[string]any{{"role": "user", "content": "run"}}, limit)
 			if jobs == nil || len(jobs.Pending()) != 0 {
 				t.Fatal("turn left a pending job")
+			}
+			last := sink.events[len(sink.events)-1]
+			if last.ID != "start" || last.Status != "killed" || last.ResultDelivered == nil || *last.ResultDelivered {
+				t.Fatalf("cleanup did not resolve running event: %+v", last)
 			}
 			var cleanup string
 			for _, message := range result.Messages {

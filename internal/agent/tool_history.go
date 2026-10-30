@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+
+	apptrace "bqagent/internal/trace"
 )
 
 const (
@@ -17,6 +19,7 @@ const (
 var completedToolResultHeader = regexp.MustCompile(`(?m)^Result ([^\n:]*):\n`)
 
 type HistoryTool struct {
+	apptrace.ToolExecution
 	ID        string         `json:"id,omitempty"`
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments,omitempty"`
@@ -82,15 +85,8 @@ func ParseCompletedToolActivity(content string) (note string, tools []HistoryToo
 	seen := map[string]bool{}
 	for _, call := range calls {
 		result := resultByID(results, call.ID)
-		preview, truncated := boundedToolEventPreview(result)
-		tools = append(tools, HistoryTool{
-			ID:        call.ID,
-			Name:      strings.TrimSpace(call.Function.Name),
-			Arguments: parseHistoryToolArguments(call.Function.Arguments),
-			Result:    preview,
-			Status:    historyToolStatus(result),
-			Truncated: truncated,
-		})
+		historyTool := HistoryToolFromCall(ToolCall{ID: call.ID, Function: FunctionCall{Name: call.Function.Name, Arguments: string(call.Function.Arguments)}}, result)
+		tools = append(tools, historyTool)
 		if call.ID != "" {
 			seen[call.ID] = true
 		}
@@ -115,7 +111,7 @@ func ParseCompletedToolActivity(content string) (note string, tools []HistoryToo
 // into the display form used by restored transcripts.
 func HistoryToolFromCall(call ToolCall, result string) HistoryTool {
 	preview, truncated := boundedToolEventPreview(result)
-	return HistoryTool{
+	tool := HistoryTool{
 		ID:        call.ID,
 		Name:      strings.TrimSpace(call.Function.Name),
 		Arguments: parseHistoryToolArguments(json.RawMessage(call.Function.Arguments)),
@@ -123,6 +119,26 @@ func HistoryToolFromCall(call ToolCall, result string) HistoryTool {
 		Status:    historyToolStatus(result),
 		Truncated: truncated,
 	}
+	if tool.Name == "bash" || tool.Name == "bash_wait" || tool.Name == "bash_kill" {
+		text := result
+		failed := strings.HasPrefix(strings.TrimSpace(text), "Error:")
+		if failed {
+			if _, output, ok := strings.Cut(text, "Output before failure:\n"); ok {
+				text = output
+			}
+		}
+		if job, ok := bashWaitStatus(text); ok {
+			tool.ToolExecution = toolExecutionState(nil, &job)
+			if failed {
+				tool.CallStatus = "error"
+			}
+			// An explicit kill outranks the call error, matching live tool events.
+			if !failed || job.Status == "killed" {
+				tool.Status = toolExecutionStatus(tool.ToolExecution)
+			}
+		}
+	}
+	return tool
 }
 
 func extractCompletedToolResults(body string, calls []completedToolCall) []namedToolResult {

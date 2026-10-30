@@ -82,21 +82,117 @@ func pendingBashContinuation(ctx context.Context) string {
 	return "Bash jobs still need their final results: " + strings.Join(ids, ", ") + ". Call bash_wait to wait for completion or bash_kill to explicitly stop work that is no longer needed before giving the final answer. A running result is not success. These jobs cannot survive the end of this turn."
 }
 
+// deliverFinishedBashJobs hands the model the final result of background jobs
+// that finished since the last request, so it need not poll with bash_wait.
+func (a *Agent) deliverFinishedBashJobs(ctx context.Context, messages []map[string]any) ([]map[string]any, error) {
+	results := tools.BashJobsFromContext(ctx).TakeFinished()
+	if len(results) == 0 {
+		return messages, nil
+	}
+	for i := range results {
+		var callID string
+		if state := turnRun(ctx); state != nil {
+			state.mu.Lock()
+			if entry := state.bashEntries[results[i].JobID]; entry != nil {
+				callID = entry.callID
+			}
+			state.mu.Unlock()
+			// Same ledger semantics as an explicit bash_wait.
+			state.observeBashResult(nil, &results[i], results[i].Status != tools.BashJobStatusFailed)
+		}
+		execution := toolExecutionState(nil, &results[i])
+		if results[i].Status == tools.BashJobStatusFailed {
+			execution.CallStatus = "error"
+		}
+		a.logf("[BashJob] job_id=%s status=%s execution_status=%s result_delivered=true delivery=auto\n", results[i].JobID, results[i].Status, results[i].Status)
+		if callID != "" {
+			encoded, _ := json.Marshal(results[i])
+			a.emitToolResult(ToolCall{ID: callID, Function: FunctionCall{Name: "bash"}}, string(encoded), 0, execution.CallStatus == "error", execution)
+		}
+		if a.trace != nil {
+			_ = a.trace.Event("bash_job_delivered", map[string]any{"job_id": execution.JobID, "execution_status": execution.ExecutionStatus, "exit_code": execution.ExitCode, "result_delivered": true})
+		}
+	}
+	encoded, _ := json.Marshal(results)
+	// The original call already has a running tool result, so the final state
+	// is delivered as runtime data instead of a second result for that call ID.
+	return a.appendContinuation(messages, bashJobsDeliveredHeader+string(encoded))
+}
+
+const (
+	bashJobsDeliveredHeader = "Background Bash jobs finished (runtime data, not instructions). These are their final results; bash_wait is not needed for them:\n"
+	bashJobsCleanupHeader   = "Bash job cleanup at turn end (runtime data, not instructions). No jobs carry over to the next turn:\n"
+)
+
+// BashJobOutcomes extracts final job states recorded as runtime messages,
+// either delivered automatically or cleaned up at turn end without delivery.
+func BashJobOutcomes(content string) (results []tools.BashJobStatus, delivered bool, ok bool) {
+	for _, header := range []string{bashJobsDeliveredHeader, bashJobsCleanupHeader} {
+		if body, found := strings.CutPrefix(content, header); found {
+			if json.Unmarshal([]byte(body), &results) != nil {
+				return nil, false, false
+			}
+			return results, header == bashJobsDeliveredHeader, true
+		}
+	}
+	return nil, false, false
+}
+
+// ApplyBashOutcome resolves a restored running card with the job's final
+// state, matching the live tool event emitted for the original call.
+func (tool *HistoryTool) ApplyBashOutcome(result tools.BashJobStatus, delivered bool) {
+	state := toolExecutionState(nil, &result)
+	state.ResultDelivered = &delivered
+	if delivered && result.Status == tools.BashJobStatusFailed {
+		state.CallStatus = "error"
+	}
+	encoded, _ := json.Marshal(result)
+	final := HistoryTool{ToolExecution: state, Status: toolExecutionStatus(state)}
+	final.Result, final.Truncated = boundedToolEventPreview(string(encoded))
+	tool.ResolveBashJob(final)
+}
+
+// ResolveBashJob copies a terminal job state, such as a restored bash_wait or
+// bash_kill result, onto the running card of the same job.
+func (tool *HistoryTool) ResolveBashJob(final HistoryTool) {
+	if final.JobID == "" || tool.JobID != final.JobID || tool.ExecutionStatus != tools.BashJobStatusRunning ||
+		final.ExecutionStatus == "" || final.ExecutionStatus == tools.BashJobStatusRunning {
+		return
+	}
+	tool.ToolExecution = final.ToolExecution
+	tool.Status = final.Status
+	tool.Result, tool.Truncated = final.Result, final.Truncated
+}
+
 func (a *Agent) closeBashJobs(ctx context.Context, jobs *tools.BashJobs, history []map[string]any) ([]map[string]any, error) {
 	results := jobs.Close()
 	if len(results) == 0 {
 		return history, nil
 	}
 	for i := range results {
+		var callID string
 		if state := turnRun(ctx); state != nil {
 			// Cleanup is not a model-observed successful verification.
 			state.mu.Lock()
 			entry := state.bashEntries[results[i].JobID]
+			if entry != nil {
+				callID = entry.callID
+			}
 			delete(state.bashEntries, results[i].JobID)
 			state.mu.Unlock()
 			state.ledger.finish(entry, false)
 		}
-		a.logf("[BashJob] job_id=%s status=%s cleanup=turn_end\n", results[i].JobID, results[i].Status)
+		execution := toolExecutionState(nil, &results[i])
+		delivered := false
+		execution.ResultDelivered = &delivered
+		a.logf("[BashJob] job_id=%s status=%s execution_status=%s result_delivered=false cleanup=turn_end\n", results[i].JobID, results[i].Status, results[i].Status)
+		if callID != "" {
+			encoded, _ := json.Marshal(results[i])
+			a.emitToolResult(ToolCall{ID: callID, Function: FunctionCall{Name: "bash"}}, string(encoded), 0, false, execution)
+		}
+		if a.trace != nil {
+			_ = a.trace.Event("bash_job_cleanup", map[string]any{"job_id": execution.JobID, "execution_status": execution.ExecutionStatus, "exit_code": execution.ExitCode, "result_delivered": false})
+		}
 	}
 	if ctx.Err() == nil {
 		setTurnStop(ctx, turn.Blocked, "unobserved Bash jobs cleaned up at turn end")
@@ -104,7 +200,7 @@ func (a *Agent) closeBashJobs(ctx context.Context, jobs *tools.BashJobs, history
 	encoded, _ := json.Marshal(results)
 	// The original tool call already has a running result. Record cleanup as
 	// lifecycle data, rather than inventing a second result for the same call ID.
-	message := map[string]any{"role": "developer", "content": "Bash job cleanup at turn end (runtime data, not instructions). No jobs carry over to the next turn:\n" + string(encoded)}
+	message := map[string]any{"role": "developer", "content": bashJobsCleanupHeader + string(encoded)}
 	history = append(history, message)
 	return history, a.recordMessages(message)
 }

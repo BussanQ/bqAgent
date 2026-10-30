@@ -115,12 +115,19 @@ func toolSummary(event ToolEvent, styles theme, width int, expanded bool) string
 		return line
 	}
 	status := strings.ToLower(strings.TrimSpace(event.Status))
-	failed := status == "error" || status == "failed"
+	failed := status == "error" || status == "failed" || status == "killed"
 	mark := styles.ok.Render("✓")
-	if failed {
+	if status == "running" {
+		mark = styles.accent.Render("⚙")
+	} else if failed {
 		mark = styles.error.Render("✗")
 	}
 	line := fmt.Sprintf("%s #%d %s", mark, sequence, event.Name)
+	if status == "running" {
+		line += " · 后台运行中"
+	} else if status == "killed" {
+		line += " · 已终止"
+	}
 	if event.DurationMS > 0 {
 		line += fmt.Sprintf(" · %s", time.Duration(event.DurationMS)*time.Millisecond)
 	}

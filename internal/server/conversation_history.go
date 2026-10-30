@@ -271,8 +271,29 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 				delete(pendingGroupCalls, callID)
 			}
 			if pending, ok := pendingTools[callID]; ok {
-				filtered[pending.message].Tools[pending.tool] = agent.HistoryToolFromCall(pending.call, content)
+				resolved := agent.HistoryToolFromCall(pending.call, content)
+				filtered[pending.message].Tools[pending.tool] = resolved
 				delete(pendingTools, callID)
+				// A bash_wait/bash_kill result also finishes the original running card.
+				for i := range filtered {
+					for j := range filtered[i].Tools {
+						filtered[i].Tools[j].ResolveBashJob(resolved)
+					}
+				}
+			}
+			continue
+		}
+		if role == "developer" {
+			// Background jobs resolved after their running tool result are
+			// recorded as runtime data; fold the final state into that card.
+			if outcomes, delivered, ok := agent.BashJobOutcomes(content); ok {
+				for _, outcome := range outcomes {
+					for i := range filtered {
+						for j := range filtered[i].Tools {
+							filtered[i].Tools[j].ApplyBashOutcome(outcome, delivered)
+						}
+					}
+				}
 			}
 			continue
 		}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"bqagent/internal/tools"
 	apptrace "bqagent/internal/trace"
@@ -156,16 +157,48 @@ func (a *Agent) emitToolEvent(event ToolEvent) {
 	a.toolEventSink.EmitToolEvent(event)
 }
 
-func (a *Agent) emitToolResult(toolCall ToolCall, result string, duration time.Duration, failed bool) {
+func (a *Agent) emitToolResult(toolCall ToolCall, result string, duration time.Duration, failed bool, execution ...apptrace.ToolExecution) {
 	preview, truncated := boundedToolEventPreview(result)
-	status := "succeeded"
+	state := apptrace.ToolExecution{CallStatus: "success"}
 	if failed {
-		status = "failed"
+		state.CallStatus = "error"
+	}
+	if len(execution) > 0 {
+		state = execution[0]
 	}
 	a.emitToolEvent(ToolEvent{
-		Kind: "tool_result", ID: toolCall.ID, Name: toolCall.Function.Name,
-		Status: status, Preview: preview, DurationMS: duration.Milliseconds(), Truncated: truncated,
+		ToolExecution: state,
+		Kind:          "tool_result", ID: toolCall.ID, Name: toolCall.Function.Name,
+		Status: toolExecutionStatus(state), Preview: preview, DurationMS: duration.Milliseconds(), Truncated: truncated,
 	})
+}
+
+func toolExecutionStatus(state apptrace.ToolExecution) string {
+	if state.ExecutionStatus != "" {
+		if state.ExecutionStatus == tools.BashJobStatusCompleted {
+			return "succeeded"
+		}
+		return state.ExecutionStatus
+	}
+	if state.CallStatus == "error" {
+		return "failed"
+	}
+	return "succeeded"
+}
+
+func toolExecutionState(err error, job *tools.BashJobStatus) apptrace.ToolExecution {
+	state := apptrace.ToolExecution{CallStatus: "success"}
+	if err != nil {
+		state.CallStatus = "error"
+	}
+	if job != nil {
+		delivered := job.Status != tools.BashJobStatusRunning
+		state.ExecutionStatus = job.Status
+		state.JobID = job.JobID
+		state.ExitCode = job.ExitCode
+		state.ResultDelivered = &delivered
+	}
+	return state
 }
 
 func boundedToolEventPreview(value string) (string, bool) {
@@ -295,7 +328,7 @@ func (a *Agent) runRegularToolCallInner(ctx context.Context, toolCall ToolCall) 
 		}
 		bashStatus = tools.BashResultFromContext(callCtx)
 		if toolErr != nil {
-			toolResult = formatToolError(toolErr, toolResult)
+			toolResult = formatToolError(toolErr, boundedBashJobJSON(toolResult))
 		}
 		if run != nil {
 			succeeded := toolErr == nil && !strings.HasPrefix(strings.TrimSpace(toolResult), "Error:")
@@ -303,17 +336,18 @@ func (a *Agent) runRegularToolCallInner(ctx context.Context, toolCall ToolCall) 
 		}
 	}
 	duration := time.Since(toolStartedAt)
-	logToolTiming(a.logWriter, toolCall.Function.Name, duration, toolErr)
-	status := "completed"
-	if toolErr != nil {
-		status = "failed"
-	} else if bashStatus != nil && bashStatus.Status == tools.BashJobStatusRunning {
+	execution := toolExecutionState(toolErr, bashStatus)
+	logToolTiming(a.logWriter, toolCall.Function.Name, duration, toolErr, execution)
+	status := toolExecutionStatus(execution)
+	if status == "succeeded" {
+		status = "completed"
+	} else if status == tools.BashJobStatusRunning {
 		status = "running in background"
 	}
 	a.writeStageProgress(fmt.Sprintf("Tool %s %s", toolCall.Function.Name, status))
-	a.emitToolResult(toolCall, toolResult, duration, toolErr != nil)
+	a.emitToolResult(toolCall, toolResult, duration, toolErr != nil, execution)
 	if a.trace != nil {
-		a.trace.ToolCall(toolCall.Function.Name, arguments, toolResult, duration, toolErr)
+		a.trace.ToolCall(toolCall.Function.Name, arguments, toolResult, duration, toolErr, execution)
 		if toolErr == nil && (toolCall.Function.Name == "write_file" || toolCall.Function.Name == "edit_file") {
 			if path, _ := arguments["path"].(string); strings.TrimSpace(path) != "" {
 				if !filepath.IsAbs(path) {
@@ -327,6 +361,36 @@ func (a *Agent) runRegularToolCallInner(ctx context.Context, toolCall ToolCall) 
 }
 
 const maxToolErrorOutputChars = 12 * 1024
+
+// boundedBashJobJSON fits a long job status within the error output limit by
+// trimming its output fields. Cutting the JSON text itself would drop job_id
+// and the final state that history restore relies on.
+func boundedBashJobJSON(text string) string {
+	status, ok := bashWaitStatus(strings.TrimSpace(text))
+	if !ok || len(strings.TrimSpace(text)) <= maxToolErrorOutputChars {
+		return text
+	}
+	output := status.Output
+	status.NewOutput = ""
+	status.Truncated = true
+	for keep := len(output); ; keep = keep * 3 / 4 {
+		tail := output[len(output)-keep:]
+		for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+			tail = tail[1:]
+		}
+		status.Output = tail
+		if keep < len(output) {
+			status.Output = "... [truncated]\n" + tail
+		}
+		encoded, err := json.Marshal(status)
+		if err != nil {
+			return text
+		}
+		if len(encoded) <= maxToolErrorOutputChars || keep == 0 {
+			return string(encoded)
+		}
+	}
+}
 
 func formatToolError(err error, output string) string {
 	output = strings.TrimSpace(output)

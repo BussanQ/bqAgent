@@ -202,6 +202,8 @@ func (backend *tuiBackend) History(sessionID string, budget int) (apptui.History
 		for _, tool := range message.Tools {
 			tools = append(tools, apptui.ToolEvent{
 				ID: tool.ID, Name: tool.Name, Status: tool.Status,
+				CallStatus: tool.CallStatus, ExecutionStatus: tool.ExecutionStatus,
+				JobID: tool.JobID, ExitCode: tool.ExitCode, ResultDelivered: tool.ResultDelivered,
 				Arguments: tool.Arguments, Preview: tool.Result, Truncated: tool.Truncated,
 			})
 		}
@@ -397,15 +399,20 @@ type toolEventSink struct {
 func (sink toolEventSink) EmitToolEvent(event agent.ToolEvent) {
 	if sink.emit != nil {
 		sink.emit(apptui.ToolEvent{
-			Kind:       event.Kind,
-			Seq:        event.Seq,
-			ID:         event.ID,
-			Name:       event.Name,
-			Status:     event.Status,
-			Arguments:  event.Arguments,
-			Preview:    event.Preview,
-			DurationMS: event.DurationMS,
-			Truncated:  event.Truncated,
+			Kind:            event.Kind,
+			Seq:             event.Seq,
+			ID:              event.ID,
+			Name:            event.Name,
+			Status:          event.Status,
+			CallStatus:      event.CallStatus,
+			ExecutionStatus: event.ExecutionStatus,
+			JobID:           event.JobID,
+			ExitCode:        event.ExitCode,
+			ResultDelivered: event.ResultDelivered,
+			Arguments:       event.Arguments,
+			Preview:         event.Preview,
+			DurationMS:      event.DurationMS,
+			Truncated:       event.Truncated,
 		})
 	}
 }

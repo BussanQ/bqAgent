@@ -1,4 +1,5 @@
 import type { ConversationHistoryTool, ConversationMessage, ToolEventPayload } from "./types";
+import { normalizeToolResult } from "./tool-status";
 
 const COMPLETED_TOOL_ACTIVITY = "Completed tool activity (retain this evidence for later reasoning):";
 const COMPLETED_TOOL_RESULT = "Completed tool result:";
@@ -50,6 +51,11 @@ export function normalizeHistoryMessages(messages: ConversationMessage[]): Conve
           arguments: tool.arguments,
           result: tool.preview,
           status: tool.status,
+          call_status: tool.call_status,
+          execution_status: tool.execution_status,
+          job_id: tool.job_id,
+          exit_code: tool.exit_code,
+          result_delivered: tool.result_delivered,
           truncated: tool.truncated,
         };
       }),
@@ -141,13 +147,13 @@ export function parseCompletedToolActivity(content: string): HistoryAssistantVie
   calls.forEach(function (call) {
     const id = call && call.id ? String(call.id) : "";
     const result = results[id] || "";
-    tools.push({
+    tools.push(normalizeToolResult({
       id: id || undefined,
       name: call && call.function && call.function.name ? String(call.function.name) : "tool",
       arguments: parseToolArguments(call && call.function ? call.function.arguments : undefined),
       status: historyToolStatus(result),
       preview: result,
-    });
+    }));
     if (id) seen[id] = true;
   });
   Object.keys(results).forEach(function (id) {
@@ -158,14 +164,19 @@ export function parseCompletedToolActivity(content: string): HistoryAssistantVie
 }
 
 function historyToolEvent(tool: ConversationHistoryTool): ToolEventPayload {
-  return {
+  return normalizeToolResult({
     id: tool.id,
     name: tool.name,
     arguments: tool.arguments,
     status: tool.status || historyToolStatus(tool.result || ""),
+    call_status: tool.call_status,
+    execution_status: tool.execution_status,
+    job_id: tool.job_id,
+    exit_code: tool.exit_code,
+    result_delivered: tool.result_delivered,
     preview: tool.result,
     truncated: tool.truncated,
-  };
+  });
 }
 
 function extractCompletedToolResults(body: string, ids: string[]): Record<string, string> {

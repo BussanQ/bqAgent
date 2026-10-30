@@ -1663,10 +1663,8 @@ func historyToolGroup(tools []ToolEvent) toolGroup {
 			continue
 		}
 		group.add(ToolEvent{Kind: "tool_start", ID: tool.ID, Name: tool.Name, Arguments: tool.Arguments})
-		group.add(ToolEvent{
-			Kind: "tool_result", ID: tool.ID, Name: tool.Name, Status: tool.Status,
-			Arguments: tool.Arguments, Preview: tool.Preview, Truncated: tool.Truncated,
-		})
+		tool.Kind = "tool_result"
+		group.add(tool)
 	}
 	return group
 }

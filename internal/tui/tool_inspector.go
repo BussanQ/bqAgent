@@ -175,7 +175,11 @@ func (item toolDisplay) detailLines(width int) []string {
 	if item.hasResult {
 		event = item.result
 		status = "成功"
-		if strings.EqualFold(event.Status, "failed") || strings.EqualFold(event.Status, "error") {
+		if strings.EqualFold(event.Status, "running") {
+			status = "后台运行中"
+		} else if strings.EqualFold(event.Status, "killed") {
+			status = "已终止"
+		} else if strings.EqualFold(event.Status, "failed") || strings.EqualFold(event.Status, "error") {
 			status = "失败"
 		}
 	}
@@ -184,6 +188,15 @@ func (item toolDisplay) detailLines(width int) []string {
 		name = event.Name
 	}
 	lines := []string{fmt.Sprintf("#%d %s · %s", item.number, name, status)}
+	if event.JobID != "" {
+		lines = append(lines, "后台任务 ID："+event.JobID, "工具调用状态："+event.CallStatus, "命令执行状态："+event.ExecutionStatus)
+		if event.ExitCode != nil {
+			lines = append(lines, fmt.Sprintf("退出码：%d", *event.ExitCode))
+		}
+		if event.ResultDelivered != nil {
+			lines = append(lines, fmt.Sprintf("最终结果已交付：%t", *event.ResultDelivered))
+		}
+	}
 	if event.DurationMS > 0 {
 		lines = append(lines, fmt.Sprintf("耗时：%dms", event.DurationMS))
 	}

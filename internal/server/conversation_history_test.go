@@ -224,6 +224,80 @@ func TestConversationHistoryRestoresStructuredToolBatches(t *testing.T) {
 	}
 }
 
+func TestConversationHistoryResolvesBackgroundJobOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		header, status string
+		delivered      bool
+	}{
+		{"Background Bash jobs finished (runtime data, not instructions). These are their final results; bash_wait is not needed for them:\n", "completed", true},
+		{"Bash job cleanup at turn end (runtime data, not instructions). No jobs carry over to the next turn:\n", "killed", false},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			agentDir := filepath.Join(t.TempDir(), ".agent")
+			service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir})
+			saved, err := service.store.Create(session.CreateOptions{Task: "background", Chat: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			final := `[{"job_id":"job-1","status":"` + tc.status + `","exit_code":0,"output":"done"}]`
+			if err := saved.RecordMessages(
+				map[string]any{"role": "user", "content": "run"},
+				map[string]any{"role": "assistant", "content": nil, "tool_calls": []agent.ToolCall{{ID: "start", Function: agent.FunctionCall{Name: "bash", Arguments: `{"command":"sleep 1"}`}}}},
+				map[string]any{"role": "tool", "tool_call_id": "start", "content": `{"job_id":"job-1","status":"running"}`},
+				map[string]any{"role": "developer", "content": tc.header + final},
+				map[string]any{"role": "assistant", "content": "ok"},
+			); err != nil {
+				t.Fatal(err)
+			}
+			history, err := service.ConversationHistory(saved.ID(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tool := history.Messages[1].Tools[0]
+			want := tc.status
+			if want == "completed" {
+				want = "succeeded"
+			}
+			if tool.Status != want || tool.ExecutionStatus != tc.status || tool.ResultDelivered == nil || *tool.ResultDelivered != tc.delivered || !strings.Contains(tool.Result, tc.status) {
+				t.Fatalf("tool = %#v", tool)
+			}
+			if len(history.Messages) != 3 {
+				t.Fatalf("runtime message leaked into history: %#v", history.Messages)
+			}
+		})
+	}
+}
+
+func TestConversationHistoryBashWaitResolvesOriginalJob(t *testing.T) {
+	agentDir := filepath.Join(t.TempDir(), ".agent")
+	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir})
+	saved, err := service.store.Create(session.CreateOptions{Task: "bash-wait", Chat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saved.RecordMessages(
+		map[string]any{"role": "user", "content": "run"},
+		map[string]any{"role": "assistant", "content": nil, "tool_calls": []agent.ToolCall{{ID: "start", Function: agent.FunctionCall{Name: "bash", Arguments: `{"command":"sleep 1"}`}}}},
+		map[string]any{"role": "tool", "tool_call_id": "start", "content": `{"job_id":"job-1","status":"running"}`},
+		map[string]any{"role": "assistant", "content": nil, "tool_calls": []agent.ToolCall{{ID: "wait", Function: agent.FunctionCall{Name: "bash_wait", Arguments: `{"job_id":"job-1"}`}}}},
+		map[string]any{"role": "tool", "tool_call_id": "wait", "content": `{"job_id":"job-1","status":"completed","exit_code":0,"output":"done"}`},
+		map[string]any{"role": "assistant", "content": "ok"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	history, err := service.ConversationHistory(saved.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, wait := history.Messages[1].Tools[0], history.Messages[2].Tools[0]
+	if wait.Status != "succeeded" {
+		t.Fatalf("wait = %#v", wait)
+	}
+	if start.Status != "succeeded" || start.ExecutionStatus != "completed" || start.ResultDelivered == nil || !*start.ResultDelivered || !strings.Contains(start.Result, "done") {
+		t.Fatalf("original bash still unresolved: %#v", start)
+	}
+}
+
 func TestConversationHistoryHidesToolImagesMessage(t *testing.T) {
 	agentDir := filepath.Join(t.TempDir(), ".agent")
 	service := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir})
