@@ -102,7 +102,7 @@ export function updateToolTimeline(bubble: HTMLDivElement, cards: ToolCards, eve
   if (!payload) return;
   // Automatic delivery reuses the original call ID, even after its segment
   // closed. Resolve that card before creating a timeline or another card.
-  var callID = payload.id;
+  const callID = payload.id;
   if (eventName === "tool_result" && callID && !cards[callID]) {
     var original = previous.find(segment => segment.cards[callID]);
     if (original) {
