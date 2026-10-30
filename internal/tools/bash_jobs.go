@@ -410,9 +410,9 @@ func (m *BashJobs) Pending() []BashJobStatus {
 	return result
 }
 
-// TakeFinished returns the final state of jobs that finished without being
-// observed and marks them observed, so the harness can deliver them itself.
-func (m *BashJobs) TakeFinished() []BashJobStatus {
+// Finished returns unobserved terminal results without consuming them. The
+// turn loop acknowledges these jobs only after persisting their delivery.
+func (m *BashJobs) Finished() []BashJobStatus {
 	if m == nil {
 		return nil
 	}
@@ -429,10 +429,20 @@ func (m *BashJobs) TakeFinished() []BashJobStatus {
 		if job.isObserved() || job.isRunning() {
 			continue
 		}
-		result = append(result, job.snapshot(true))
-		m.observeFinal(job)
+		result = append(result, job.snapshot(false))
 	}
 	return result
+}
+
+// AcknowledgeFinished consumes results already persisted by the turn loop.
+func (m *BashJobs) AcknowledgeFinished(results []BashJobStatus) {
+	for _, result := range results {
+		job, err := m.lookup(result.JobID)
+		if err == nil && !job.isRunning() && !job.isObserved() {
+			job.newOut.take()
+			m.observeFinal(job)
+		}
+	}
 }
 
 // Close cancels all jobs, waits for them to be reaped and returns the final

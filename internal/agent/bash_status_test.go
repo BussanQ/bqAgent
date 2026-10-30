@@ -100,7 +100,7 @@ func TestBashWaitLongFailureKeepsJobState(t *testing.T) {
 	ctx, jobs := tools.WithBashJobs(context.Background(), tools.BashJobOptions{YieldTimeout: time.Millisecond})
 	defer jobs.Close()
 	app := NewWithOptions(&stubClient{}, "", Options{Functions: map[string]tools.Function{"bash": tools.ExecuteBashInDir(root), "bash_wait": tools.BashWait}})
-	_, result := app.runRegularToolCall(ctx, bashTestCall("start", "bash", map[string]any{"command": "sleep 0.05; head -c 40000 /dev/zero | tr '\\0' x; printf TAIL; exit 3"}))
+	_, result := app.runRegularToolCall(ctx, bashTestCall("start", "bash", map[string]any{"command": "sleep 0.05; head -c 40000 /dev/zero | tr '\\0' x; printf TAIL; exit 3\n# " + strings.Repeat("长脚本<&>", 6000)}))
 	job, ok := bashWaitStatus(result)
 	if !ok || job.Status != "running" {
 		t.Fatalf("not running: %s", result)

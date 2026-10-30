@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { applyToolResult, normalizeToolResult, restoredToolPayload, type ToolResultCard } from "./tool-status";
+import { applyToolResult, normalizeToolResult, restoredToolPayload, type ToolResultCard, type ToolSegment } from "./tool-status";
 import { historyAssistantView, normalizeHistoryMessages, parseCompletedToolActivity } from "./chat-rendering";
 
 function card(): ToolResultCard {
@@ -67,6 +67,42 @@ describe("后台命令状态", () => {
   it("Error 前缀优先且保留失败 job 的关联信息", () => {
     expect(normalizeToolResult({ name: "bash_wait", status: "succeeded", preview: "Error: failed\n\nOutput before failure:\n" + JSON.stringify({ job_id: "job-1", status: "failed", exit_code: 2 }) })).toMatchObject({ status: "failed", job_id: "job-1", execution_status: "failed", exit_code: 2 });
     expect(normalizeToolResult({ name: "bash", execution_status: "completed", preview: "Error: failure" }).status).toBe("failed");
+  });
+});
+
+describe("跨消息段后台命令状态", () => {
+  it("终态结果更新旧消息段中仍在运行的同 job 卡片并刷新摘要", () => {
+    const oldStart = card();
+    const oldOther = card();
+    const oldCards = { start: oldStart, other: oldOther };
+    let refreshed = 0;
+    const previous: ToolSegment[] = [{ cards: oldCards, refresh: () => { refreshed++; } }];
+    applyToolResult(oldCards, oldStart, { name: "bash", preview: running });
+    applyToolResult(oldCards, oldOther, { name: "bash", job_id: "other", execution_status: "running" });
+    // 用户插话后新消息段重置 cards。
+    const newCards = {};
+    const wait = card();
+    applyToolResult(newCards, wait, { name: "bash_wait", job_id: "job-1", execution_status: "completed", exit_code: 0, result_delivered: true }, previous);
+    expect(oldStart.state).toBe("succeeded");
+    expect(oldStart.status.textContent).toBe("完成");
+    expect(oldStart.status.title).toContain("最终结果：已交付");
+    expect(oldOther.state).toBe("running");
+    expect(refreshed).toBe(1);
+  });
+
+  it("运行中结果、无变化或其他会话的 job 不触碰旧消息段", () => {
+    const oldStart = card();
+    const oldCards = { start: oldStart };
+    let refreshed = 0;
+    const previous: ToolSegment[] = [{ cards: oldCards, refresh: () => { refreshed++; } }];
+    applyToolResult(oldCards, oldStart, { name: "bash", preview: running });
+    const wait = card();
+    applyToolResult({}, wait, { name: "bash_wait", job_id: "job-1", execution_status: "running" }, previous);
+    applyToolResult({}, wait, { name: "bash_wait", job_id: "job-2", execution_status: "failed" }, previous);
+    // 不传 previous（另一个会话/轮次）时旧卡片不受影响。
+    applyToolResult({}, wait, { name: "bash_wait", job_id: "job-1", execution_status: "killed" });
+    expect(oldStart.state).toBe("running");
+    expect(refreshed).toBe(0);
   });
 });
 

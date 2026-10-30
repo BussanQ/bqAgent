@@ -37,14 +37,36 @@ export function restoredToolPayload(tool: ToolEventPayload, index: number): Tool
   return { ...tool, id: tool.id || "history-tool-" + (index + 1) };
 }
 
-export function applyToolResult(cards: Record<string, ToolResultCard>, current: ToolResultCard, payload: ToolEventPayload): void {
+// ToolSegment is a group of cards rendered in one message segment. A turn can
+// span several segments (user interjection, group chat switching), and a
+// background job started in an earlier segment may finish in a later one.
+export interface ToolSegment {
+  cards: Record<string, ToolResultCard>;
+  refresh?: () => void;
+}
+
+// applyToolResult updates the current card and, when the result is a terminal
+// job state, every still-running card of the same job in the current cards and
+// in the previous segments of the same turn.
+export function applyToolResult(cards: Record<string, ToolResultCard>, current: ToolResultCard, payload: ToolEventPayload, previous: ToolSegment[] = []): void {
   const result = normalizeToolResult(payload);
   if (result.job_id) current.jobID = result.job_id;
   renderToolResult(current, result);
-  if (result.job_id && result.execution_status && result.execution_status !== "running") {
-    for (const card of Object.values(cards)) {
-      if (card !== current && card.jobID === result.job_id && card.state === "running") renderToolResult(card, result);
+  const terminal = result.job_id && result.execution_status && result.execution_status !== "running";
+  const settle = (group: Record<string, ToolResultCard>): boolean => {
+    if (!terminal) return false;
+    let changed = false;
+    for (const card of Object.values(group)) {
+      if (card !== current && card.jobID === result.job_id && card.state === "running") {
+        renderToolResult(card, result);
+        changed = true;
+      }
     }
+    return changed;
+  };
+  settle(cards);
+  for (const segment of previous) {
+    if (segment.cards !== cards && (settle(segment.cards) || Object.values(segment.cards).includes(current))) segment.refresh?.();
   }
 }
 

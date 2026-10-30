@@ -370,25 +370,32 @@ func boundedBashJobJSON(text string) string {
 	if !ok || len(strings.TrimSpace(text)) <= maxToolErrorOutputChars {
 		return text
 	}
-	output := status.Output
 	status.NewOutput = ""
 	status.Truncated = true
-	for keep := len(output); ; keep = keep * 3 / 4 {
-		tail := output[len(output)-keep:]
-		for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
-			tail = tail[1:]
-		}
-		status.Output = tail
-		if keep < len(output) {
-			status.Output = "... [truncated]\n" + tail
-		}
+	for {
 		encoded, err := json.Marshal(status)
 		if err != nil {
 			return text
 		}
-		if len(encoded) <= maxToolErrorOutputChars || keep == 0 {
+		if len(encoded) <= maxToolErrorOutputChars {
 			return string(encoded)
 		}
+		// Command and error text can exceed the budget even with empty output.
+		// Bound all free-form fields; keep job identity and exit state intact.
+		field := &status.Output
+		for _, candidate := range []*string{&status.Command, &status.Error} {
+			if len(*candidate) > len(*field) {
+				field = candidate
+			}
+		}
+		if len(*field) == 0 {
+			return string(encoded)
+		}
+		tail := (*field)[len(*field)-len(*field)*3/4:]
+		for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+			tail = tail[1:]
+		}
+		*field = tail
 	}
 }
 

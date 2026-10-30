@@ -88,6 +88,7 @@ func (group *toolGroup) add(event ToolEvent) (becameExpandable bool) {
 				item.result.ExitCode = event.ExitCode
 				item.result.ResultDelivered = event.ResultDelivered
 				item.result.Preview = event.Preview
+				item.result.Truncated = event.Truncated
 			}
 		}
 	}

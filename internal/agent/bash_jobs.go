@@ -85,10 +85,22 @@ func pendingBashContinuation(ctx context.Context) string {
 // deliverFinishedBashJobs hands the model the final result of background jobs
 // that finished since the last request, so it need not poll with bash_wait.
 func (a *Agent) deliverFinishedBashJobs(ctx context.Context, messages []map[string]any) ([]map[string]any, error) {
-	results := tools.BashJobsFromContext(ctx).TakeFinished()
+	jobs := tools.BashJobsFromContext(ctx)
+	results := jobs.Finished()
 	if len(results) == 0 {
 		return messages, nil
 	}
+	encoded, err := json.Marshal(results)
+	if err != nil {
+		return messages, err
+	}
+	// Persist before consuming output, releasing conflicts or publishing delivery.
+	// A failed save leaves the full results pending for retry or turn cleanup.
+	messages, err = a.appendContinuation(messages, bashJobsDeliveredHeader+string(encoded))
+	if err != nil {
+		return messages, err
+	}
+	jobs.AcknowledgeFinished(results)
 	for i := range results {
 		var callID string
 		if state := turnRun(ctx); state != nil {
@@ -113,10 +125,7 @@ func (a *Agent) deliverFinishedBashJobs(ctx context.Context, messages []map[stri
 			_ = a.trace.Event("bash_job_delivered", map[string]any{"job_id": execution.JobID, "execution_status": execution.ExecutionStatus, "exit_code": execution.ExitCode, "result_delivered": true})
 		}
 	}
-	encoded, _ := json.Marshal(results)
-	// The original call already has a running tool result, so the final state
-	// is delivered as runtime data instead of a second result for that call ID.
-	return a.appendContinuation(messages, bashJobsDeliveredHeader+string(encoded))
+	return messages, nil
 }
 
 const (
@@ -141,6 +150,14 @@ func BashJobOutcomes(content string) (results []tools.BashJobStatus, delivered b
 // ApplyBashOutcome resolves a restored running card with the job's final
 // state, matching the live tool event emitted for the original call.
 func (tool *HistoryTool) ApplyBashOutcome(result tools.BashJobStatus, delivered bool) {
+	if result.JobID == "" || tool.JobID != result.JobID || tool.ExecutionStatus != tools.BashJobStatusRunning ||
+		result.Status == "" || result.Status == tools.BashJobStatusRunning {
+		return
+	}
+	tool.ResolveBashJob(historyBashOutcome(result, delivered))
+}
+
+func historyBashOutcome(result tools.BashJobStatus, delivered bool) HistoryTool {
 	state := toolExecutionState(nil, &result)
 	state.ResultDelivered = &delivered
 	if delivered && result.Status == tools.BashJobStatusFailed {
@@ -149,7 +166,7 @@ func (tool *HistoryTool) ApplyBashOutcome(result tools.BashJobStatus, delivered 
 	encoded, _ := json.Marshal(result)
 	final := HistoryTool{ToolExecution: state, Status: toolExecutionStatus(state)}
 	final.Result, final.Truncated = boundedToolEventPreview(string(encoded))
-	tool.ResolveBashJob(final)
+	return final
 }
 
 // ResolveBashJob copies a terminal job state, such as a restored bash_wait or

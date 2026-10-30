@@ -5,6 +5,32 @@ import (
 	"testing"
 )
 
+func TestToolGroupBackgroundResultUpdatesTruncation(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		initial, final bool
+	}{
+		{"final_truncated", false, true},
+		{"final_complete", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			group := toolGroup{}
+			group.add(ToolEvent{Kind: "tool_start", ID: "start", Name: "bash"})
+			group.add(ToolEvent{Kind: "tool_result", ID: "start", Name: "bash", JobID: "job", Status: "running", ExecutionStatus: "running", Preview: "partial", Truncated: tc.initial})
+			group.add(ToolEvent{Kind: "tool_result", ID: "wait", Name: "bash_wait", JobID: "job", Status: "succeeded", ExecutionStatus: "completed", Preview: "final output", Truncated: tc.final})
+			original := group.items[0]
+			if original.result.Preview != "final output" || original.result.Truncated != tc.final {
+				t.Fatalf("preview and truncation are out of sync: %+v", original.result)
+			}
+			for _, text := range []string{original.render(newTheme(true), 120, false), strings.Join(original.detailLines(120), "\n")} {
+				if strings.Contains(text, "输出已截断") != tc.final {
+					t.Fatalf("incorrect truncation notice: %s", text)
+				}
+			}
+		})
+	}
+}
+
 func TestToolGroupBackgroundExecutionStatus(t *testing.T) {
 	for _, terminal := range []string{"succeeded", "failed", "killed"} {
 		t.Run(terminal, func(t *testing.T) {
