@@ -17,6 +17,7 @@ import { waitForModelSelection } from "./model-selection";
 import { initParticleField, redrawParticleField, refreshParticleCapability, refreshParticlePalette } from "./particles";
 import { SSEBuffer, MessageSnapshots } from "./stream";
 import { StreamRenderQueue } from "./stream-render";
+import { ContextProgress } from "./context-progress";
 import { initialTheme } from "./theme";
 import { isTaskUpdatedEvent, renderTaskPanel, TaskProgress } from "./task-progress";
 import { inputKindForKey, isInputAppliedEvent, TURN_INPUT_STATE_LABELS, TurnInputSession, type TurnInputKind } from "./turn-input";
@@ -1277,6 +1278,7 @@ import { createDoctorController } from "./doctor-controller";
     var streamTurnId = currentTurnId;
     var streamed = "";
     var progress = "";
+    var contextProgress = new ContextProgress(() => addMessage("assistant", "bqagent"));
     var renders = new StreamRenderQueue(main);
     streamRender = renders;
     function queueText(target: HTMLDivElement, text: string, notice = false): void {
@@ -1465,10 +1467,14 @@ import { createDoctorController } from "./doctor-controller";
             if (busy) statusEl.textContent = liveSpeed ? "处理中 · " + liveSpeed : "处理中";
           } else if (evt.event === "progress") {
             var progressPayload = parseJSONEvent<{ message?: string }>(evt.data);
-            if (conversationType !== "group" && progressPayload.message && !streamed) {
-              var progressBubble = ensureCoordinatorBubble();
-              progress = progressPayload.message;
-              queueText(progressBubble, progress, true);
+            if (progressPayload.message) {
+              // Handle compaction before the ordinary progress visibility filters.
+              var contextNotice = contextProgress.apply(progressPayload.message);
+              if (!contextNotice && conversationType !== "group" && !streamed) {
+                var progressBubble = ensureCoordinatorBubble();
+                progress = progressPayload.message;
+                queueText(progressBubble, progress, true);
+              }
             }
           } else {
             var payload = parseJSONEvent<{ delta?: string }>(evt.data);
@@ -1521,6 +1527,7 @@ import { createDoctorController } from "./doctor-controller";
         statusEl.classList.add("error");
       }
     } finally {
+      contextProgress.finish();
       if (!api.suspended) renders.flush();
       renders.dispose();
       streamRender = null;

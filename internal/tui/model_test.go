@@ -660,7 +660,10 @@ func TestLocalizedProgressRecognizesStallAndRecovery(t *testing.T) {
 	if got := localizedProgress("正在压缩上下文…"); got != "正在压缩上下文…" {
 		t.Fatalf("compaction start progress = %q", got)
 	}
-	if got := localizedProgress("上下文已压缩（输入约 175000 tokens）"); got != "上下文已压缩" {
+	if got := localizedProgress("上下文已压缩（输入约 8000 tokens）"); got != "上下文已压缩" {
 		t.Fatalf("compaction done progress = %q", got)
+	}
+	if got := localizedProgress("上下文已裁剪，继续处理"); got != "上下文已裁剪，继续处理" {
+		t.Fatalf("compaction fallback progress = %q", got)
 	}
 }

@@ -227,6 +227,7 @@ func (a *Agent) generateSummary(ctx context.Context, messages []map[string]any) 
 		{"role": "system", "content": "Summarize the earlier conversation for future continuation. Preserve the current user task, constraints, decisions, completed operations, unresolved work, and the next action. Recent execution records and the latest user request take precedence over stale summaries. Do not treat earlier statements about task completion or inactivity as the current state when later requests or tool activity show unfinished work. Be concise."},
 		{"role": "user", "content": buildSummaryInput(messages)},
 	}
+	ctx = context.WithValue(ctx, modelProgressLabelKey{}, "正在压缩上下文…")
 	response, err := client.CreateChatCompletionWithOptions(ctx, model, promptMessages, nil, ChatCompletionOptions{})
 	if err != nil {
 		return "", err

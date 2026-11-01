@@ -1782,6 +1782,9 @@ func localizedProgress(value string) string {
 	if strings.Contains(value, "上下文已压缩") {
 		return "上下文已压缩"
 	}
+	if strings.Contains(value, "上下文已裁剪") {
+		return "上下文已裁剪，继续处理"
+	}
 	return ""
 }
 

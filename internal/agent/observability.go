@@ -197,6 +197,7 @@ type modelProgressReporter struct {
 	lastTransport    time.Time
 	lastHeartbeat    time.Time
 	lastEvent        string
+	label            string
 	diagnosticWriter io.Writer
 	stalled          bool
 	stopped          bool
@@ -230,13 +231,17 @@ var newModelProgressTicker = func(interval time.Duration) modelProgressTicker {
 var modelProgressNow = time.Now
 var selectModelProgressMessage = randomModelProgressMessage
 
+type modelProgressLabelKey struct{}
+
 func startModelProgressReporter(ctx context.Context, logWriter io.Writer, stream bool) *modelProgressReporter {
 	if logWriter == nil || modelProgressInterval <= 0 {
 		return nil
 	}
 
 	progressCtx, cancel := context.WithCancel(ctx)
+	label, _ := ctx.Value(modelProgressLabelKey{}).(string)
 	reporter := &modelProgressReporter{
+		label:        label,
 		cancel:       cancel,
 		done:         make(chan struct{}),
 		logWriter:    logWriter,
@@ -267,6 +272,10 @@ func (r *modelProgressReporter) emit() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.stopped {
+		return
+	}
+	if r.label != "" {
+		fmt.Fprintln(r.logWriter, r.label)
 		return
 	}
 	if !r.stream {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func TestContextWaitsForTriggerThenCompactsBelowTenPercent(t *testing.T) {
-	for _, mode := range []string{"summary", "summary failure", "prune only"} {
+	for _, mode := range []string{"summary", "summary failure", "empty summary", "prune only"} {
 		t.Run(mode, func(t *testing.T) {
 			config := normalizeContextConfig(DefaultContextConfig())
 			config.SummarizationEnabled = mode != "prune only"
@@ -20,7 +21,11 @@ func TestContextWaitsForTriggerThenCompactsBelowTenPercent(t *testing.T) {
 			if mode == "summary failure" {
 				client.optionErrors = []error{errors.New("summary unavailable")}
 			}
-			app := NewWithOptions(client, "test", Options{Context: config, ToolDefinitions: []tools.Definition{}})
+			if mode == "empty summary" {
+				client.optionResponses = []AssistantMessage{{Content: " "}}
+			}
+			var progress bytes.Buffer
+			app := NewWithOptions(client, "test", Options{Context: config, ToolDefinitions: []tools.Definition{}, ProgressWriter: &progress})
 			var usage turn.ContextUsage
 			ctx := WithContextUsage(context.Background(), func(value turn.ContextUsage) { usage = value })
 			messages := []map[string]any{
@@ -31,6 +36,9 @@ func TestContextWaitsForTriggerThenCompactsBelowTenPercent(t *testing.T) {
 			request, compacted := app.buildRequestMessages(ctx, messages, nil, ChatCompletionOptions{})
 			if compacted != nil || len(request) != len(messages) || len(client.optionMessages) != 0 {
 				t.Fatal("context was compacted between the target and trigger")
+			}
+			if progress.Len() != 0 {
+				t.Fatalf("unexpected notice below trigger: %q", progress.String())
 			}
 			before := usage.Tokens
 			for i := 0; i < 6; i++ {
@@ -56,6 +64,15 @@ func TestContextWaitsForTriggerThenCompactsBelowTenPercent(t *testing.T) {
 			}
 			if mode == "summary" && !strings.Contains(buildSummaryInput(request), "important decisions") {
 				t.Fatal("summary missing from compacted request")
+			}
+			wantProgress := ""
+			if mode == "summary" {
+				wantProgress = fmt.Sprintf("正在压缩上下文…\n上下文已压缩（输入约 %d tokens）\n", usage.Tokens)
+			} else if mode != "prune only" {
+				wantProgress = "正在压缩上下文…\n上下文已裁剪，继续处理\n"
+			}
+			if progress.String() != wantProgress {
+				t.Fatalf("progress=%q, want %q", progress.String(), wantProgress)
 			}
 			if _, next := app.buildRequestMessages(ctx, compacted, nil, ChatCompletionOptions{}); next != nil {
 				t.Fatal("compacted context immediately triggered another compaction")
@@ -131,38 +148,5 @@ func TestContextSummaryStartsAtCompressionBoundary(t *testing.T) {
 	config := normalizeContextConfig(DefaultContextConfig())
 	if shouldSummarize(169999, config) || !shouldSummarize(170000, config) {
 		t.Fatalf("summary does not follow compression boundary: %+v", config)
-	}
-}
-
-func TestContextCompactionEmitsProgressNotices(t *testing.T) {
-	config := normalizeContextConfig(DefaultContextConfig())
-	config.SummarizationEnabled = true
-	client := &stubClient{optionResponses: []AssistantMessage{{Content: "important decisions"}}}
-	var progress bytes.Buffer
-	app := NewWithOptions(client, "test", Options{
-		Context:        config,
-		ProgressWriter: &progress,
-	})
-	messages := []map[string]any{
-		{"role": "system", "content": "instructions"},
-		{"role": "user", "content": "early decision " + strings.Repeat("a", 80000)},
-		{"role": "assistant", "content": strings.Repeat("b", 400000)},
-	}
-	for i := 0; i < 6; i++ {
-		messages = append(messages, map[string]any{"role": "user", "content": "latest task " + strings.Repeat("c", 60000)})
-	}
-	if estimateMessagesTokens(messages) <= config.CompressionTriggerTokens {
-		t.Fatal("fixture does not exceed the trigger")
-	}
-	_, compacted := app.buildRequestMessages(context.Background(), messages, nil, ChatCompletionOptions{})
-	if compacted == nil {
-		t.Fatal("expected compaction to run")
-	}
-	output := progress.String()
-	if !strings.Contains(output, "正在压缩上下文") {
-		t.Fatalf("missing pre-compaction progress notice; got: %q", output)
-	}
-	if !strings.Contains(output, "上下文已压缩") {
-		t.Fatalf("missing post-compaction progress notice; got: %q", output)
 	}
 }
