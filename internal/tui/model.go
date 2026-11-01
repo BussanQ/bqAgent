@@ -1776,6 +1776,12 @@ func localizedProgress(value string) string {
 	if strings.Contains(lower, "stage") {
 		return "正在处理阶段"
 	}
+	if strings.Contains(value, "正在压缩上下文") {
+		return "正在压缩上下文…"
+	}
+	if strings.Contains(value, "上下文已压缩") {
+		return "上下文已压缩"
+	}
 	return ""
 }
 

@@ -192,12 +192,14 @@ func (a *Agent) buildBudgetedRequestMessages(ctx context.Context, messages []map
 		return pruned, pruned, prunedMeasurement
 	}
 
+	a.writeProgress("正在压缩上下文…")
 	summarized, ok := a.summarizeMessages(ctx, sanitized, messageTarget)
 	if !ok {
 		pruned, prunedMeasurement := a.finalizeRequestBudget(ctx, pruned, definitions, options, measurement.exact)
 		a.logContextBudget(ctx, len(messages), len(sanitized), len(pruned), prunedMeasurement, true, false)
 		return pruned, pruned, prunedMeasurement
 	}
+	a.writeProgress(fmt.Sprintf("上下文已压缩（输入约 %d tokens）", measurement.tokens))
 	summarized, summaryMeasurement := a.finalizeRequestBudget(ctx, summarized, definitions, options, measurement.exact)
 	a.logContextBudget(ctx, len(messages), len(sanitized), len(summarized), summaryMeasurement, true, true)
 	return summarized, summarized, summaryMeasurement

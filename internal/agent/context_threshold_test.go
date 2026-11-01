@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -130,5 +131,38 @@ func TestContextSummaryStartsAtCompressionBoundary(t *testing.T) {
 	config := normalizeContextConfig(DefaultContextConfig())
 	if shouldSummarize(169999, config) || !shouldSummarize(170000, config) {
 		t.Fatalf("summary does not follow compression boundary: %+v", config)
+	}
+}
+
+func TestContextCompactionEmitsProgressNotices(t *testing.T) {
+	config := normalizeContextConfig(DefaultContextConfig())
+	config.SummarizationEnabled = true
+	client := &stubClient{optionResponses: []AssistantMessage{{Content: "important decisions"}}}
+	var progress bytes.Buffer
+	app := NewWithOptions(client, "test", Options{
+		Context:        config,
+		ProgressWriter: &progress,
+	})
+	messages := []map[string]any{
+		{"role": "system", "content": "instructions"},
+		{"role": "user", "content": "early decision " + strings.Repeat("a", 80000)},
+		{"role": "assistant", "content": strings.Repeat("b", 400000)},
+	}
+	for i := 0; i < 6; i++ {
+		messages = append(messages, map[string]any{"role": "user", "content": "latest task " + strings.Repeat("c", 60000)})
+	}
+	if estimateMessagesTokens(messages) <= config.CompressionTriggerTokens {
+		t.Fatal("fixture does not exceed the trigger")
+	}
+	_, compacted := app.buildRequestMessages(context.Background(), messages, nil, ChatCompletionOptions{})
+	if compacted == nil {
+		t.Fatal("expected compaction to run")
+	}
+	output := progress.String()
+	if !strings.Contains(output, "正在压缩上下文") {
+		t.Fatalf("missing pre-compaction progress notice; got: %q", output)
+	}
+	if !strings.Contains(output, "上下文已压缩") {
+		t.Fatalf("missing post-compaction progress notice; got: %q", output)
 	}
 }
