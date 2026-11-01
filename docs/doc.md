@@ -132,7 +132,7 @@ set LLM_API_KEY=your-key-here
 | `LLM_MODEL` | 空 | 内置 LLM 使用的模型 ID，需要显式配置。 |
 | `LLM_MODELS` | 空 | 同一供应商下可切换的模型列表，逗号分隔；支持 `别名=模型ID`。聊天中使用 `/model` 查看，`/model <名称或别名>` 切换当前会话，`/model default` 恢复默认。 |
 | `LLM_STREAM_IDLE_TIMEOUT` | `2m` | 流式模型请求连续无响应头或响应体字节时的 idle watchdog；使用 Go duration 格式，设为 `0` 禁用。 |
-| `LLM_STREAM_PROGRESS_TIMEOUT` | `2m` | 普通模型生成流连续无正文、推理或工具调用进展时终止当前请求尝试；心跳和空增量不续期。超时与网络瞬时错误共享最多 4 次自动重试额度，按 1、2、4、8 秒指数退避并附加 0–250 毫秒随机抖动，每次尝试重新计时；用户取消或外层截止不重试。使用 Go duration 格式，`0` 禁用；不影响原生搜索流。停滞 30 秒后显示等待时长，`[ModelWait]` 日志记录最近网络活动、心跳和流事件。 |
+| `LLM_STREAM_PROGRESS_TIMEOUT` | `10m` | 普通模型生成流连续无正文、推理或工具调用进展时终止当前请求尝试；心跳和空增量不续期。超时与网络瞬时错误共享最多 4 次自动重试额度，按 1、2、4、8 秒指数退避并附加 0–250 毫秒随机抖动，每次尝试重新计时；用户取消或外层截止不重试。使用 Go duration 格式，`0` 禁用；不影响原生搜索流。停滞 30 秒后显示等待时长，`[ModelWait]` 日志记录最近网络活动、心跳和流事件。 |
 | `OPENAI_API_TYPE` | — | `LLM_API_TYPE` 的兼容别名。 |
 | `OPENAI_API_KEY` | — | OpenAI 兼容 API Key 回退值。 |
 | `OPENAI_BASE_URL` | 供应商默认值 | OpenAI 兼容端点回退值。 |

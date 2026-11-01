@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const DefaultStreamProgressTimeout = 2 * time.Minute
+const DefaultStreamProgressTimeout = 10 * time.Minute
 
 type modelProgressObserverKey struct{}
 type streamActivityObserverKey struct{}
