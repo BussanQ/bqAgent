@@ -116,7 +116,7 @@ func (c *Client) createAnthropicMessage(ctx context.Context, model string, messa
 	defer response.Body.Close()
 
 	var decoded anthropicResponse
-	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(limitProviderReader(response.Body, maxProviderResponseBytes)).Decode(&decoded); err != nil {
 		if errors.Is(err, io.ErrUnexpectedEOF) {
 			return AssistantMessage{}, providerTransportError(ctx, err)
 		}
@@ -152,6 +152,9 @@ func (c *Client) createAnthropicMessageStream(ctx context.Context, model string,
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
+		if providerBodyExceeded(response.Body) {
+			break
+		}
 		line := scanner.Text()
 		reportStreamLine(ctx, line)
 		if !strings.HasPrefix(line, "data:") {
@@ -540,9 +543,5 @@ func (c *Client) doAnthropicJSONRequest(ctx context.Context, url string, payload
 		return response, nil
 	}
 	defer response.Body.Close()
-	errorPayload, readErr := io.ReadAll(response.Body)
-	if readErr != nil {
-		return nil, providerHTTPError(response, response.Status)
-	}
-	return nil, providerHTTPError(response, strings.TrimSpace(string(errorPayload)))
+	return nil, providerHTTPError(response, readProviderErrorBody(response.Body, response.Status))
 }

@@ -139,6 +139,10 @@ type Client struct {
 
 	searchUnsupportedParameters sync.Map // nativeSearchParameterKey -> expiry
 	magpieSearch                bool
+
+	// capabilities records reasoning-effort and prompt-cache rejections for
+	// this endpoint and credential only, expiring after providerCapabilityTTL.
+	capabilities capabilityCache
 }
 
 type CompletionState struct {
@@ -345,7 +349,7 @@ func (c *Client) doStreamingRequest(request *http.Request) (*http.Response, erro
 		response, err := streamingClient.Do(request)
 		if err == nil {
 			reportStreamActivity(request.Context(), "headers")
-			response.Body = &watchdogResponseBody{inner: response.Body, ctx: request.Context()}
+			response.Body = newLimitedResponseBody(&watchdogResponseBody{inner: response.Body, ctx: request.Context()}, maxProviderStreamBytes)
 		}
 		return response, err
 	}
@@ -363,7 +367,7 @@ func (c *Client) doStreamingRequest(request *http.Request) (*http.Response, erro
 	}
 	watchdog.touch()
 	reportStreamActivity(request.Context(), "headers")
-	response.Body = &watchdogResponseBody{inner: response.Body, watchdog: watchdog, ctx: request.Context()}
+	response.Body = newLimitedResponseBody(&watchdogResponseBody{inner: response.Body, watchdog: watchdog, ctx: request.Context()}, maxProviderStreamBytes)
 	return response, nil
 }
 
@@ -451,15 +455,11 @@ func (c *Client) createChatCompletion(ctx context.Context, model string, message
 	defer response.Body.Close()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		payload, readErr := io.ReadAll(response.Body)
-		if readErr != nil {
-			return AssistantMessage{}, providerHTTPError(response, response.Status)
-		}
-		return AssistantMessage{}, providerHTTPError(response, strings.TrimSpace(string(payload)))
+		return AssistantMessage{}, providerHTTPError(response, readProviderErrorBody(response.Body, response.Status))
 	}
 
 	var decoded chatCompletionResponse
-	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(limitProviderReader(response.Body, maxProviderResponseBytes)).Decode(&decoded); err != nil {
 		if errors.Is(err, io.ErrUnexpectedEOF) {
 			return AssistantMessage{}, providerTransportError(ctx, err)
 		}
@@ -534,11 +534,7 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 	defer response.Body.Close()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		payload, readErr := io.ReadAll(response.Body)
-		if readErr != nil {
-			return AssistantMessage{}, providerHTTPError(response, response.Status)
-		}
-		return AssistantMessage{}, providerHTTPError(response, strings.TrimSpace(string(payload)))
+		return AssistantMessage{}, providerHTTPError(response, readProviderErrorBody(response.Body, response.Status))
 	}
 
 	type partialToolCall struct {
@@ -563,6 +559,9 @@ func (c *Client) createChatCompletionStream(ctx context.Context, model string, m
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
+		if providerBodyExceeded(response.Body) {
+			break
+		}
 		line := scanner.Text()
 		reportStreamLine(ctx, line)
 		if !strings.HasPrefix(line, "data:") {

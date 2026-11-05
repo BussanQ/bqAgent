@@ -63,7 +63,7 @@ func tokenCountEndpointUnsupportedStatus(err error) (int, bool) {
 // own exact count endpoint without changing the agent loop.
 func (c *Client) CountInputTokens(ctx context.Context, model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions) (InputTokenCount, error) {
 	if options.PromptCache.Enabled {
-		if _, disabled := cacheUnsupportedEndpoints.Load(c.promptCacheCapabilityKey()); disabled {
+		if c.capabilities.disabled(promptCacheCapabilityKey) {
 			options.PromptCache.Enabled = false
 		}
 	}
@@ -104,7 +104,7 @@ func (c *Client) countOpenAIResponseInputTokens(ctx context.Context, model strin
 	defer response.Body.Close()
 
 	var decoded openAIInputTokenCountResponse
-	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(limitProviderReader(response.Body, maxProviderSmallResponseBytes)).Decode(&decoded); err != nil {
 		return InputTokenCount{}, providerProtocolError("decode responses input token count", err)
 	}
 	if decoded.InputTokens <= 0 {
@@ -134,7 +134,7 @@ func (c *Client) countAnthropicInputTokens(ctx context.Context, model string, me
 	defer response.Body.Close()
 
 	var decoded anthropicInputTokenCountResponse
-	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(limitProviderReader(response.Body, maxProviderSmallResponseBytes)).Decode(&decoded); err != nil {
 		return InputTokenCount{}, providerProtocolError("decode anthropic input token count", err)
 	}
 	if decoded.InputTokens <= 0 {

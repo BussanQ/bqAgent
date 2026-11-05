@@ -163,8 +163,6 @@ func TestPromptCacheUnknownFieldRetriesOnceAndCachesEndpointDowngrade(t *testing
 	defer server.Close()
 
 	client := NewClient("", server.URL, server.Client())
-	cacheUnsupportedEndpoints.Delete(client.promptCacheCapabilityKey())
-	defer cacheUnsupportedEndpoints.Delete(client.promptCacheCapabilityKey())
 	prompt := NewFrozenPromptSnapshot("stable", "")
 	options := ChatCompletionOptions{}
 	options.PromptCache = buildPromptCacheOptions(APITypeOpenAI, "gpt-5.6", prompt, nil, options)
@@ -200,8 +198,6 @@ func TestPromptCacheDoesNotRetryUnrelatedRequestError(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient("", server.URL, server.Client())
-	cacheUnsupportedEndpoints.Delete(client.promptCacheCapabilityKey())
-	defer cacheUnsupportedEndpoints.Delete(client.promptCacheCapabilityKey())
 	options := ChatCompletionOptions{}
 	options.PromptCache = buildPromptCacheOptions(APITypeOpenAI, "gpt-5.6", NewFrozenPromptSnapshot("stable", ""), nil, options)
 	_, err := client.CreateChatCompletionWithOptions(context.Background(), "gpt-5.6", []map[string]any{{"role": "system", "content": "stable"}}, nil, options)
@@ -211,7 +207,7 @@ func TestPromptCacheDoesNotRetryUnrelatedRequestError(t *testing.T) {
 	if attempts != 1 {
 		t.Fatalf("attempts = %d, want no cache downgrade retry", attempts)
 	}
-	if _, disabled := cacheUnsupportedEndpoints.Load(client.promptCacheCapabilityKey()); disabled {
+	if client.capabilities.disabled(promptCacheCapabilityKey) {
 		t.Fatal("unrelated 400 disabled prompt caching for endpoint")
 	}
 }

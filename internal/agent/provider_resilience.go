@@ -169,23 +169,60 @@ func (state *streamAttemptState) markSemantic(ctx context.Context) {
 
 type providerAttempt func(ChatCompletionOptions, *streamAttemptState) (AssistantMessage, error)
 
-var reasoningUnsupportedModels sync.Map
-var cacheUnsupportedEndpoints sync.Map
+// providerCapabilityTTL bounds how long a provider rejection of reasoning
+// effort or prompt-cache fields keeps the feature disabled, so a temporary
+// gateway misconfiguration does not degrade requests for the whole process.
+const providerCapabilityTTL = 30 * time.Minute
+
+// capabilityCache records features a provider rejected. It lives on Client,
+// which is already scoped to one endpoint and credential, so different
+// clients (for example two providers sharing a gateway URL with different keys)
+// cannot disable features for each other.
+type capabilityCache struct {
+	entries sync.Map // key -> expiry time.Time
+	now     func() time.Time
+}
+
+func (cache *capabilityCache) clock() time.Time {
+	if cache.now != nil {
+		return cache.now()
+	}
+	return time.Now()
+}
+
+func (cache *capabilityCache) disabled(key string) bool {
+	value, ok := cache.entries.Load(key)
+	if !ok {
+		return false
+	}
+	if cache.clock().Before(value.(time.Time)) {
+		return true
+	}
+	cache.entries.CompareAndDelete(key, value)
+	return false
+}
+
+func (cache *capabilityCache) disable(key string, ttl time.Duration) {
+	cache.entries.Store(key, cache.clock().Add(ttl))
+}
+
+// promptCacheCapabilityKey is the single prompt-cache key; the client itself
+// already identifies the endpoint and credential.
+const promptCacheCapabilityKey = "prompt_cache"
 
 func (c *Client) executeWithResilience(ctx context.Context, model string, options ChatCompletionOptions, stream bool, attempt providerAttempt) (AssistantMessage, error) {
 	metadata := ProviderRequestMetadata{CacheMode: options.PromptCache.Mode}
 	effectiveOptions := options
-	cacheKey := c.reasoningCacheKey(model)
+	cacheKey := reasoningCapabilityKey(model)
 	if options.ReasoningEffort != ReasoningEffortAuto {
-		if _, disabled := reasoningUnsupportedModels.Load(cacheKey); disabled {
+		if c.capabilities.disabled(cacheKey) {
 			effectiveOptions.ReasoningEffort = ReasoningEffortAuto
 			metadata.ReasoningDowngraded = true
 			metadata.ReasoningDowngradeSource = "capability_cache"
 		}
 	}
-	cacheCapabilityKey := c.promptCacheCapabilityKey()
 	if options.PromptCache.Enabled {
-		if _, disabled := cacheUnsupportedEndpoints.Load(cacheCapabilityKey); disabled {
+		if c.capabilities.disabled(promptCacheCapabilityKey) {
 			effectiveOptions.PromptCache.Enabled = false
 			metadata.CacheDowngraded = true
 			metadata.CacheDowngradeReason = "capability_cache"
@@ -203,7 +240,7 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 		message, err := attempt(effectiveOptions, state)
 		if err == nil {
 			if downgradeAttempt {
-				reasoningUnsupportedModels.Store(cacheKey, struct{}{})
+				c.capabilities.disable(cacheKey, providerCapabilityTTL)
 			}
 			message.Request = cloneProviderRequestMetadata(metadata)
 			return message, nil
@@ -227,7 +264,7 @@ func (c *Client) executeWithResilience(ctx context.Context, model string, option
 				Kind: "prompt_cache_downgrade", Attempt: attemptNumber + 1,
 				Category: providerErr.Category, StatusCode: providerErr.StatusCode,
 			})
-			cacheUnsupportedEndpoints.Store(cacheCapabilityKey, struct{}{})
+			c.capabilities.disable(promptCacheCapabilityKey, providerCapabilityTTL)
 			cacheDowngradeAttempt = true
 			continue
 		}
@@ -277,12 +314,8 @@ func cloneProviderRequestMetadata(metadata ProviderRequestMetadata) ProviderRequ
 	return metadata
 }
 
-func (c *Client) reasoningCacheKey(model string) string {
-	return strings.Join([]string{string(c.apiType), strings.ToLower(strings.TrimRight(strings.TrimSpace(c.baseURL), "/")), strings.TrimSpace(model)}, "\x00")
-}
-
-func (c *Client) promptCacheCapabilityKey() string {
-	return strings.Join([]string{string(c.apiType), strings.ToLower(strings.TrimRight(strings.TrimSpace(c.baseURL), "/"))}, "\x00")
+func reasoningCapabilityKey(model string) string {
+	return "reasoning\x00" + strings.TrimSpace(model)
 }
 
 func promptCacheUnsupportedError(err *ProviderError) bool {
@@ -486,6 +519,9 @@ func providerTransportError(ctx context.Context, err error) *ProviderError {
 	}
 	if ctx != nil && ctx.Err() != nil {
 		return &ProviderError{Category: ProviderErrorTimeout, Message: ctx.Err().Error(), Cause: ctx.Err()}
+	}
+	if errors.Is(err, errProviderResponseTooLarge) {
+		return providerProtocolError(err.Error(), err)
 	}
 	var idle *streamIdleTimeoutError
 	if errors.As(err, &idle) {
