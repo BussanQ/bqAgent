@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"bqagent/internal/privatefile"
 )
 
 type TokenState struct {
@@ -40,7 +42,7 @@ func (store *TokenStore) Load() (TokenState, error) {
 
 func (store *TokenStore) Save(state TokenState) error {
 	state.UpdatedAt = time.Now().UTC()
-	if err := os.MkdirAll(filepath.Dir(store.path), 0o755); err != nil {
+	if err := privatefile.MkdirAll(filepath.Dir(store.path)); err != nil {
 		return err
 	}
 	content, err := json.MarshalIndent(state, "", "  ")
@@ -48,5 +50,5 @@ func (store *TokenStore) Save(state TokenState) error {
 		return err
 	}
 	content = append(content, '\n')
-	return os.WriteFile(store.path, content, 0o600)
+	return privatefile.WriteFile(store.path, content)
 }

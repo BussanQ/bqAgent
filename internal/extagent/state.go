@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"bqagent/internal/privatefile"
 )
 
 type StateStore struct {
@@ -53,10 +55,10 @@ func (store *StateStore) SaveGroup(state SessionState) error {
 		return err
 	}
 	directory := filepath.Join(store.groupRoot, sessionID)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
+	if err := privatefile.MkdirAll(directory); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(directory, agentName+".json"), append(content, '\n'), 0o644)
+	return privatefile.WriteFile(filepath.Join(directory, agentName+".json"), append(content, '\n'))
 }
 
 func (store *StateStore) ClearGroup(sessionID string) error {
@@ -109,7 +111,7 @@ func (store *StateStore) Save(state SessionState) error {
 	if state.BQSessionID == "." || state.BQSessionID == "" {
 		return fmt.Errorf("session_id is required")
 	}
-	if err := os.MkdirAll(store.root, 0o755); err != nil {
+	if err := privatefile.MkdirAll(store.root); err != nil {
 		return err
 	}
 	content, err := json.MarshalIndent(state, "", "  ")
@@ -117,7 +119,7 @@ func (store *StateStore) Save(state SessionState) error {
 		return err
 	}
 	content = append(content, '\n')
-	return os.WriteFile(store.path(state.BQSessionID), content, 0o644)
+	return privatefile.WriteFile(store.path(state.BQSessionID), content)
 }
 
 func (store *StateStore) Clear(sessionID string) error {

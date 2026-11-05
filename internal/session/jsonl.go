@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"bqagent/internal/atomicfile"
+	"bqagent/internal/privatefile"
 )
 
 // Recovery and append must not race: a repaired prefix must never replace an
@@ -44,7 +45,7 @@ func appendJSONL(path string, entries ...any) error {
 	mu := jsonlMutex(path)
 	mu.Lock()
 	defer mu.Unlock()
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
+	file, err := privatefile.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND)
 	if err != nil {
 		return err
 	}
@@ -64,7 +65,7 @@ func appendJSONL(path string, entries ...any) error {
 			if _, err := readMessagesJSONLUnlocked(path); err != nil {
 				return err
 			}
-			file, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+			file, err = privatefile.OpenFile(path, os.O_WRONLY|os.O_APPEND)
 			if err != nil {
 				return err
 			}
@@ -91,7 +92,7 @@ func writeMessagesJSONL(path string, entries []map[string]any) error {
 	mu := jsonlMutex(path)
 	mu.Lock()
 	defer mu.Unlock()
-	return atomicfile.WriteFunc(path, 0o644, func(file io.Writer) error {
+	return atomicfile.WriteFunc(path, privatefile.FileMode, func(file io.Writer) error {
 		encoder := json.NewEncoder(file)
 		for _, entry := range entries {
 			if err := encoder.Encode(entry); err != nil {
@@ -159,7 +160,7 @@ func preserveIncompleteTail(path string, content []byte, validEnd int) error {
 	if err != nil {
 		return fmt.Errorf("preserve incomplete transcript %s: %w", backup.Name(), err)
 	}
-	if err := atomicfile.Write(path, content[:validEnd], 0o644); err != nil {
+	if err := atomicfile.Write(path, content[:validEnd], privatefile.FileMode); err != nil {
 		return fmt.Errorf("recover transcript (original saved at %s): %w", backup.Name(), err)
 	}
 	log.Printf("session recovery: ignored incomplete final record in %s; recovered %d bytes, original preserved at %s", path, validEnd, backup.Name())

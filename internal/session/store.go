@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"bqagent/internal/atomicfile"
+	"bqagent/internal/privatefile"
 	"bqagent/internal/safepath"
 	"bqagent/internal/turn"
 )
@@ -418,7 +419,7 @@ func (session *Session) loadResumableMessages() ([]map[string]any, bool, error) 
 }
 
 func (session *Session) SaveWorkingMessages(messages []map[string]any) error {
-	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
+	if err := privatefile.MkdirAll(session.Dir()); err != nil {
 		return err
 	}
 	if session.store.options.TranscriptMode == TranscriptModeCompact {
@@ -446,7 +447,7 @@ func (session *Session) RecordMessage(message map[string]any) error {
 }
 
 func (session *Session) RecordMessages(messages ...map[string]any) error {
-	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
+	if err := privatefile.MkdirAll(session.Dir()); err != nil {
 		return err
 	}
 
@@ -458,14 +459,14 @@ func (session *Session) RecordMessages(messages ...map[string]any) error {
 }
 
 func (session *Session) RewriteMessages(messages []map[string]any) error {
-	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
+	if err := privatefile.MkdirAll(session.Dir()); err != nil {
 		return err
 	}
 	return writeMessagesJSONL(session.MessagesPath(), messages)
 }
 
 func (session *Session) SaveCheckpoint(checkpoint ContextCheckpoint) error {
-	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
+	if err := privatefile.MkdirAll(session.Dir()); err != nil {
 		return err
 	}
 	content, err := json.MarshalIndent(checkpoint, "", "  ")
@@ -473,7 +474,7 @@ func (session *Session) SaveCheckpoint(checkpoint ContextCheckpoint) error {
 		return err
 	}
 	content = append(content, '\n')
-	return atomicfile.Write(session.CheckpointPath(), content, 0o644)
+	return atomicfile.Write(session.CheckpointPath(), content, privatefile.FileMode)
 }
 
 func (session *Session) LoadCheckpoint() (ContextCheckpoint, error) {
@@ -520,10 +521,10 @@ func (session *Session) SaveCheckpointSummaryWithPrompt(summary string, tailMess
 }
 
 func (session *Session) OpenOutputFile() (*os.File, error) {
-	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
+	if err := privatefile.MkdirAll(session.Dir()); err != nil {
 		return nil, err
 	}
-	return os.OpenFile(session.OutputPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	return privatefile.OpenFile(session.OutputPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND)
 }
 
 func (session *Session) TrimOutputLog() error {
@@ -561,7 +562,7 @@ func (session *Session) TrimOutputLog() error {
 	if index := bytes.IndexByte(tail, '\n'); index >= 0 && index+1 < len(tail) {
 		tail = tail[index+1:]
 	}
-	return writeFileAtomic(session.OutputPath(), tail, 0o644)
+	return writeFileAtomic(session.OutputPath(), tail, privatefile.FileMode)
 }
 
 func (s *Store) MaintainExistingSessions() []error {
@@ -685,7 +686,7 @@ func (session *Session) updateStatus(status Status, lastError string) error {
 }
 
 func (session *Session) persistMeta() error {
-	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
+	if err := privatefile.MkdirAll(session.Dir()); err != nil {
 		return err
 	}
 
@@ -694,7 +695,7 @@ func (session *Session) persistMeta() error {
 		return err
 	}
 	content = append(content, '\n')
-	return atomicfile.Write(filepath.Join(session.Dir(), "meta.json"), content, 0o644)
+	return atomicfile.Write(filepath.Join(session.Dir(), "meta.json"), content, privatefile.FileMode)
 }
 
 func newSessionID() (string, error) {

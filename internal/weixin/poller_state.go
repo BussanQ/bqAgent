@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"bqagent/internal/atomicfile"
+	"bqagent/internal/privatefile"
 )
 
 type PollerState struct {
@@ -49,5 +49,5 @@ func (store *PollerStateStore) Save(state PollerState) error {
 		return err
 	}
 	content = append(content, '\n')
-	return atomicfile.Write(store.path, content, 0o644)
+	return privatefile.WriteFile(store.path, content)
 }

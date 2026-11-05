@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"bqagent/internal/atomicfile"
+	"bqagent/internal/privatefile"
 	"bqagent/internal/taskstate"
 )
 
@@ -39,5 +40,5 @@ func (session *Session) SaveTaskState(state taskstate.State) error {
 	if err != nil {
 		return err
 	}
-	return atomicfile.Write(filepath.Join(session.dir, "task.json"), append(data, '\n'), 0600)
+	return atomicfile.Write(filepath.Join(session.dir, "task.json"), append(data, '\n'), privatefile.FileMode)
 }

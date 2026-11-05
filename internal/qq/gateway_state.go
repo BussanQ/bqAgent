@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"bqagent/internal/privatefile"
 )
 
 type GatewaySessionState struct {
@@ -39,7 +41,7 @@ func (store *GatewayStateStore) Load() (GatewaySessionState, error) {
 
 func (store *GatewayStateStore) Save(state GatewaySessionState) error {
 	state.UpdatedAt = time.Now().UTC()
-	if err := os.MkdirAll(filepath.Dir(store.path), 0o755); err != nil {
+	if err := privatefile.MkdirAll(filepath.Dir(store.path)); err != nil {
 		return err
 	}
 	content, err := json.MarshalIndent(state, "", "  ")
@@ -47,7 +49,7 @@ func (store *GatewayStateStore) Save(state GatewaySessionState) error {
 		return err
 	}
 	content = append(content, '\n')
-	return os.WriteFile(store.path, content, 0o644)
+	return privatefile.WriteFile(store.path, content)
 }
 
 func (store *GatewayStateStore) ClearSession() error {

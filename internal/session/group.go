@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"bqagent/internal/atomicfile"
+	"bqagent/internal/privatefile"
 )
 
 const GroupConfigVersion = 1
@@ -35,10 +36,10 @@ func (session *Session) SaveGroupConfig(config GroupConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(session.Dir(), 0o755); err != nil {
+	if err := privatefile.MkdirAll(session.Dir()); err != nil {
 		return err
 	}
-	return atomicfile.Write(session.GroupConfigPath(), append(content, '\n'), 0o644)
+	return atomicfile.Write(session.GroupConfigPath(), append(content, '\n'), privatefile.FileMode)
 }
 
 func (session *Session) LoadGroupConfig() (GroupConfig, error) {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"bqagent/internal/privatefile"
 )
 
 type ChatState struct {
@@ -56,7 +58,7 @@ func (store *StateStore) Save(state ChatState) error {
 		return fmt.Errorf("peer_key is required")
 	}
 	state.UpdatedAt = time.Now().UTC()
-	if err := os.MkdirAll(store.root, 0o755); err != nil {
+	if err := privatefile.MkdirAll(store.root); err != nil {
 		return err
 	}
 	content, err := json.MarshalIndent(state, "", "  ")
@@ -64,7 +66,7 @@ func (store *StateStore) Save(state ChatState) error {
 		return err
 	}
 	content = append(content, '\n')
-	return os.WriteFile(store.statePath(state.PeerKey), content, 0o644)
+	return privatefile.WriteFile(store.statePath(state.PeerKey), content)
 }
 
 func (store *StateStore) statePath(peerKey string) string {

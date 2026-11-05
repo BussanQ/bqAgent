@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"bqagent/internal/privatefile"
 )
 
 type ChatState struct {
@@ -54,7 +56,7 @@ func (store *ChatStateStore) Save(state ChatState) error {
 		return fmt.Errorf("user_id is required")
 	}
 	state.UpdatedAt = time.Now().UTC()
-	if err := os.MkdirAll(store.root, 0o755); err != nil {
+	if err := privatefile.MkdirAll(store.root); err != nil {
 		return err
 	}
 	content, err := json.MarshalIndent(state, "", "  ")
@@ -62,7 +64,7 @@ func (store *ChatStateStore) Save(state ChatState) error {
 		return err
 	}
 	content = append(content, '\n')
-	return os.WriteFile(store.statePath(state.UserID), content, 0o644)
+	return privatefile.WriteFile(store.statePath(state.UserID), content)
 }
 
 func (store *ChatStateStore) statePath(userID string) string {
