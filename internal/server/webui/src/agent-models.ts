@@ -79,6 +79,8 @@ export class AgentModelPicker {
   private preview?: AbortController;
   private previewRead?: Promise<void>;
   private previewError = "";
+  private readonly settings?: HTMLDetailsElement;
+  private readonly modelName: HTMLElement | null;
 
   constructor(private controls: HTMLElement, private select: HTMLSelectElement, private input: HTMLInputElement,
     private retry: HTMLButtonElement, private effort: HTMLSelectElement,
@@ -87,6 +89,20 @@ export class AgentModelPicker {
     private onSelectionChange?: () => void,
     private remember?: (agent: string, pick: ModelPick) => void,
     private tier?: HTMLSelectElement, private mode?: HTMLSelectElement) {
+    this.modelName = controls.querySelector(".agent-model-name");
+    if (controls instanceof HTMLDetailsElement) {
+      this.settings = controls;
+      controls.ownerDocument.addEventListener("pointerdown", event => {
+        if (controls.open && !event.composedPath().includes(controls)) controls.open = false;
+      });
+      controls.addEventListener("keydown", event => {
+        if (event.key !== "Escape" || !controls.open) return;
+        event.stopPropagation();
+        controls.open = false;
+        controls.querySelector("summary")?.focus();
+      });
+      controls.addEventListener("invalid", () => { controls.open = true; }, true);
+    }
     mode?.addEventListener("change", () => {
       this.selectInteractionMode(this.agent,mode.value);
     });
@@ -123,6 +139,7 @@ export class AgentModelPicker {
         menu.revision = Symbol();
         menu.submittedTurn = undefined;
         menu.draft = input.value.trim();
+        this.updateModelName(menu);
         this.saveDraft(menu);
         input.setCustomValidity("");
         this.onSelectionChange?.();
@@ -227,6 +244,7 @@ export class AgentModelPicker {
     this.allowCustomDuringLoad = allowCustomDuringLoad;
     const menu = this.menus.get(agent);
     if (changed) {
+      if (this.settings) this.settings.open = false;
       this.preview?.abort();
       this.previewError = "";
       const expired = menu?.listedAt !== undefined && Date.now() - menu.listedAt >= catalogLifetimeMs;
@@ -580,6 +598,13 @@ export class AgentModelPicker {
     this.mode.value = value;
   }
 
+  private updateModelName(menu?: ModelMenu): void {
+    if (!this.modelName) return;
+    const name = menu?.custom ? menu.draft || "自定义模型" : this.select.selectedOptions[0]?.text || "模型";
+    this.modelName.textContent = name;
+    this.modelName.title = name;
+  }
+
   private render(): void {
     this.controls.hidden = !this.agent;
     if (!this.agent) return;
@@ -615,6 +640,7 @@ export class AgentModelPicker {
       this.select.add(new Option(draftLabel + (loading ? "（待确认）" : "（请重新选择）"), customValue));
     }
     this.select.value = menu?.custom ? customValue : effective;
+    this.updateModelName(menu);
     this.select.disabled = this.select.length <= 1;
     this.select.title = menu?.error || (loading && models.length ? "正在刷新模型目录，可先选择模型" : this.agent + " 模型 · 下一条消息生效");
     this.select.setAttribute("aria-label", this.agent + " 模型");

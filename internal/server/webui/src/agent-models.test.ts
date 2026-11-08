@@ -636,6 +636,42 @@ it("captures displayed queue settings and restores a withdrawn card without repl
   expect(picker.queueSelection("pi").agent_model).toBe("active");
 });
 
+it("keeps Codex and Claude settings in a collapsed model picker and updates its visible name", async () => {
+  const page = new DOMParser().parseFromString(readFileSync("index.html", "utf8"), "text/html");
+  const controls = page.querySelector<HTMLDetailsElement>("details#agent-model-controls")!;
+  const name = controls.querySelector("summary .agent-model-name")!;
+  const model = controls.querySelector<HTMLSelectElement>("#agent-model-select")!;
+  const input = controls.querySelector("input")!;
+  const picker = new AgentModelPicker(controls, model, input, controls.querySelector("button")!,
+    controls.querySelector<HTMLSelectElement>("#agent-effort-select")!, async agent => ({
+      models: [{ id: "one", name: agent === "codex" ? "GPT-6-Astra" : "workbuddy/deepseek-v4.1-flash" }],
+      selected: "one", allow_custom: true,
+    }));
+
+  picker.configure("draft", "codex", false);
+  await vi.waitFor(() => expect(name.textContent).toBe("GPT-6-Astra"));
+  expect(controls.open).toBe(false);
+  controls.open = true;
+  picker.configure("draft", "claude", false);
+  await vi.waitFor(() => expect(name.textContent).toBe("workbuddy/deepseek-v4.1-flash"));
+  expect(controls.open).toBe(false);
+
+  controls.open = true;
+  model.value = Array.from(model.options).find(option => option.text === "输入模型 ID…")!.value;
+  model.dispatchEvent(new Event("change"));
+  input.value = "custom/picked";
+  input.dispatchEvent(new Event("input"));
+  expect(name.textContent).toBe("custom/picked");
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  expect(controls.open).toBe(false);
+  input.value = "";
+  input.dispatchEvent(new Event("input"));
+  expect(picker.validFor("claude")).toBe(false);
+  expect(controls.open).toBe(true);
+  page.querySelector("#input")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+  expect(controls.open).toBe(false);
+});
+
 it("routes the displayed model with the receiving agent and keeps other picks when the new chat binds", async () => {
   const page = new DOMParser().parseFromString(readFileSync("index.html", "utf8"), "text/html");
   const agentSelect = page.querySelector<HTMLSelectElement>("#chat-agent")!;

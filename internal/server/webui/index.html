@@ -258,16 +258,17 @@
       <div class="model-controls" aria-label="模型选择">
         <wa-select id="model-select" title="模型" label="选择 Provider 和模型" placement="top" size="s"></wa-select>
       </div>
-      <div class="model-controls" id="agent-model-controls" aria-label="外部 Agent 模型选择" hidden>
-        <label class="agent-model-field" for="agent-model-select">模型
-          <select id="agent-model-select" aria-label="外部 Agent 模型"></select>
-        </label>
-        <input id="agent-model-input" aria-label="自定义模型 ID" placeholder="模型 ID" autocomplete="off" spellcheck="false" hidden>
-        <select id="agent-interaction-mode" aria-label="Agent 执行或规划模式" title="交互模式 · 下一条消息生效" hidden></select>
-        <select id="agent-effort-select" aria-label="外部 Agent 推理强度" title="推理强度" hidden></select>
-        <select id="agent-service-tier" aria-label="Codex 服务档位" title="Codex 服务档位 · 下一条消息生效" hidden></select>
-        <button type="button" id="agent-model-retry" aria-label="重新读取 Agent 模型" hidden>刷新</button>
-      </div>
+      <details id="agent-model-controls" aria-label="外部 Agent 模型设置" hidden>
+        <summary title="模型设置"><span class="agent-model-name">模型</span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></summary>
+        <div class="agent-model-panel">
+          <label>模型<select id="agent-model-select" aria-label="外部 Agent 模型"></select></label>
+          <label>自定义模型<input id="agent-model-input" aria-label="自定义模型 ID" placeholder="模型 ID" autocomplete="off" spellcheck="false" hidden></label>
+          <label>交互模式<select id="agent-interaction-mode" aria-label="Agent 执行或规划模式" title="交互模式 · 下一条消息生效" hidden></select></label>
+          <label>推理强度<select id="agent-effort-select" aria-label="外部 Agent 推理强度" title="推理强度" hidden></select></label>
+          <label>服务档位<select id="agent-service-tier" aria-label="Codex 服务档位" title="Codex 服务档位 · 下一条消息生效" hidden></select></label>
+          <button type="button" id="agent-model-retry" aria-label="重新读取 Agent 模型" hidden>刷新</button>
+        </div>
+      </details>
       <div class="reasoning-effort" id="reasoning-effort">
         <button class="reasoning-effort-trigger" id="reasoning-effort-toggle" type="button" title="推理强度" aria-label="推理强度：高" aria-expanded="false" aria-controls="reasoning-effort-menu">
           <span id="reasoning-effort-label">高</span>

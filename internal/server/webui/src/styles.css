@@ -1864,10 +1864,32 @@
   .context-usage-info { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); display: grid; gap: 4px; width: max-content; max-width: min(280px, 80vw); overflow-wrap: anywhere; padding: 9px 12px; background: var(--panel-strong); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--overlay-shadow); z-index: 4; }
   .context-usage-info ul { margin: 4px 0 0; padding-inline-start: 18px; max-height: min(200px, 35vh); overflow: auto; text-align: start; }
   .agent-picker[hidden], .model-controls[hidden], .reasoning-effort[hidden] { display: none; }
-  #agent-model-controls { flex-wrap: wrap; max-width: 48%; gap: 4px; font-size: 12px; }
-  .agent-model-field { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; white-space: nowrap; }
-  #agent-model-controls select, #agent-model-controls input { min-width: 0; max-width: min(200px, 100%); padding: 5px 6px; font: inherit; color: var(--text); background: var(--panel-strong); border: 1px solid var(--line); border-radius: 8px; }
-  #agent-model-controls button { padding: 4px; color: var(--text-muted); font-size: 12px; }
+  .composer:has(> #agent-model-controls:not([hidden])) { display: flex; flex-wrap: nowrap; }
+  #agent-model-controls { flex: 0 1 auto; min-width: 0; max-width: 32%; margin-bottom: 5px; }
+  #agent-model-controls summary {
+    display: flex; align-items: center; gap: 5px; height: 36px; padding: 0 9px;
+    border: 1px solid transparent; border-radius: 10px; color: var(--text-soft);
+    font-size: 13px; font-weight: 600; list-style: none; cursor: pointer;
+  }
+  #agent-model-controls summary::-webkit-details-marker { display: none; }
+  #agent-model-controls summary:hover, #agent-model-controls[open] summary {
+    background: var(--surface-hover); border-color: var(--line); color: var(--text);
+  }
+  .agent-model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #agent-model-controls summary svg { flex: none; width: 12px; height: 12px; }
+  #agent-model-controls[open] summary svg { transform: rotate(180deg); }
+  .agent-model-panel {
+    position: absolute; z-index: 3; right: 8px; bottom: calc(100% + 8px);
+    display: grid; gap: 8px; padding: 12px; width: min(300px, calc(100% - 16px));
+    max-height: 50vh; overflow: auto; background: var(--panel-strong); border: 1px solid var(--line-strong);
+    border-radius: var(--radius); box-shadow: var(--overlay-shadow); font-size: 12px;
+  }
+  .agent-model-panel label { display: grid; grid-template-columns: 5em minmax(0, 1fr); align-items: center; gap: 6px; color: var(--text-muted); }
+  .agent-model-panel label:has(> [hidden]) { display: none; }
+  .agent-model-panel select, .agent-model-panel input { width: 100%; min-width: 0; padding: 6px; font: inherit; color: var(--text); background: var(--panel-strong); border: 1px solid var(--line); border-radius: 8px; }
+  .agent-model-panel button { justify-self: end; padding: 4px 9px; border-radius: 8px; color: var(--text-soft); font-size: 12px; }
+  .composer:has(> #agent-model-controls:not([hidden])) #input::placeholder { white-space: nowrap; }
+  .composer:has(> #agent-model-controls:not([hidden])) .attachment-error:empty { display: none; }
   .turn-input-actions { display: inline-flex; gap: 6px; margin-left: auto; }
   .turn-input-actions[hidden], .turn-input-queue[hidden] { display: none; }
   .turn-input-btn { padding: 3px 10px; font-size: 12px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--text); background: var(--panel-strong); cursor: pointer; }
@@ -2091,7 +2113,8 @@
     .composer-content { grid-column: 1 / -1; grid-row: 1; }
     .attachment-actions { grid-column: 1; grid-row: 2; margin-bottom: 0; }
     .model-controls { width: 100%; grid-column: 2; grid-row: 2; margin-bottom: 0; overflow: hidden; }
-    #agent-model-controls { grid-column: 2 / 4; max-width: none; justify-content: flex-start; }
+    #agent-model-controls { margin-bottom: 4px; }
+    .composer:has(> #agent-model-controls:not([hidden])) .attachment-actions { margin-bottom: 4px; }
     .reasoning-effort { grid-column: 3; grid-row: 2; margin-bottom: 0; }
     .reasoning-effort-trigger { width: 40px; min-width: 40px; padding: 0; gap: 0; }
     .reasoning-effort-trigger .reasoning-chevron { display: none; }
