@@ -14,6 +14,7 @@ export interface WorkspaceDependencies {
   statusEl: HTMLDivElement;
   sessionId: string;
   busy: boolean;
+  attachmentsEnabled: boolean;
   pendingFiles: PendingFile[];
   MAX_PENDING_FILES: number;
   MAX_PENDING_TOTAL_FILE_BYTES: number;
@@ -443,7 +444,7 @@ export function createWorkspaceController(api: APIClient, deps: WorkspaceDepende
     var countLimited = Boolean(current && deps.pendingFiles.length >= deps.MAX_PENDING_FILES);
     var knownTotalBytes = deps.pendingFiles.reduce(function (sum, file) { return sum + (Number(file.size) || 0); }, 0);
     var totalLimited = Boolean(current && current.payload && current.payload.size && knownTotalBytes + current.payload.size > deps.MAX_PENDING_TOTAL_FILE_BYTES);
-    workspacePreviewAttach.disabled = deps.busy || !attachable || duplicate || countLimited || totalLimited;
+    workspacePreviewAttach.disabled = !deps.attachmentsEnabled || !attachable || duplicate || countLimited || totalLimited;
     if (duplicate) {
       setIconButtonLabel(workspacePreviewAttach, "paperclip", "已加入附件");
       workspacePreviewAttach.title = "该文件已在待发送附件中";
@@ -456,7 +457,7 @@ export function createWorkspaceController(api: APIClient, deps: WorkspaceDepende
     } else if (current && current.payload && !current.payload.attachable) {
       setIconButtonLabel(workspacePreviewAttach, "paperclip", "超过 2 MiB 附件上限");
       workspacePreviewAttach.title = "工作区路径附件单文件不能超过 2 MiB";
-    } else if (deps.busy) {
+    } else if (!deps.attachmentsEnabled) {
       setIconButtonLabel(workspacePreviewAttach, "paperclip", "生成期间不可添加");
       workspacePreviewAttach.title = "请等待当前回复结束";
     } else {

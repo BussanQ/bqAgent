@@ -43,6 +43,12 @@ export class MessageSnapshots {
   latest: MessageSnapshot | null = null;
   constructor(private turnId = "") {}
 
+  expand(patch: MessageSnapshot & {base_seq: number}): MessageSnapshot {
+    const prev = this.items.get(patch.item_id);
+    if (!prev || prev.turn_id !== patch.turn_id || prev.seq !== patch.base_seq) throw new Error("消息增量与当前回合不匹配");
+    return { ...patch, text: prev.text + patch.text };
+  }
+
   apply(event: MessageSnapshot): boolean {
     if (event.kind !== "message.updated" && event.kind !== "message.completed") return false;
     if (!event.turn_id || !event.item_id || (this.turnId && this.turnId !== event.turn_id)) return false;

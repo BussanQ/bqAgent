@@ -13,6 +13,7 @@ import (
 	"bqagent/internal/taskstate"
 	"bqagent/internal/tools"
 	apptrace "bqagent/internal/trace"
+	"bqagent/internal/transcript"
 	"bqagent/internal/turn"
 )
 
@@ -47,7 +48,11 @@ type MessageRecorder interface {
 }
 
 type ToolEvent struct {
+	Edits  *transcript.FileEdits `json:"edits,omitempty"`
+	TurnID string                `json:"turn_id,omitempty"`
+	Sender string                `json:"sender,omitempty"`
 	apptrace.ToolExecution
+	Source     string         `json:"source,omitempty"`
 	Kind       string         `json:"-"`
 	Seq        uint64         `json:"seq"`
 	ID         string         `json:"id"`

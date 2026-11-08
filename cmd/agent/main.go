@@ -298,7 +298,7 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 func runSubagentWorker(ctx context.Context, stderr io.Writer, getenv func(string) string, ws *workspace.Workspace, id, lease string) int {
 	runtimeConfig := runtimeConfigFromSources(getenv, ws.AgentDir())
 	externalConfig := extagent.ConfigFromEnv(getenv, ws.Root)
-	broker := extagent.NewDetectingBroker(ctx, extagent.NewStateStore(ws.Root), externalConfig, nil, nil)
+	broker := extagent.NewDetectingBroker(ctx, extagent.NewStateStore(ws.Root, session.Options{AgentDir: ws.AgentDir()}), externalConfig, nil, nil)
 	defer broker.Close()
 	manager := subagent.NewWorkerManager(ws.Root, broker, runtimeConfig.RunTraceEnabled)
 	if err := manager.RunPersisted(ctx, id, lease); err != nil {

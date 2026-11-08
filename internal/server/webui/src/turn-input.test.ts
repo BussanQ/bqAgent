@@ -1,8 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { inputKindForKey, isInputAppliedEvent, postTurnInput, restoreDraft, TurnInputSession, TurnInputTracker, type TurnInputHost } from "./turn-input";
+import { busyInputActions, inputKindForKey, isInputAppliedEvent, nativeInputOption, postTurnInput, restoreDraft, TurnInputSession, TurnInputTracker, type TurnInputHost, type TurnInputKind } from "./turn-input";
 import { MessageSnapshots } from "./stream";
 
 describe("忙时输入快捷键", () => {
+  it("按目标区分本轮纠偏、Pi 原生追加和跨回合排队", () => {
+    const both = new Set<TurnInputKind>(["steering", "follow_up"]), none = new Set<TurnInputKind>();
+    expect(busyInputActions("普通文本", "claude", false, "claude", none, false)).toEqual({ steer: false, followUp: false, queue: "message" });
+    expect(busyInputActions("普通文本", "pi", false, "pi", both, false)).toEqual({ steer: true, followUp: true, queue: "message" });
+    expect(busyInputActions("普通文本", "pi", true, "codex", both, false)).toEqual({ steer: false, followUp: false, queue: "message" });
+    expect(busyInputActions("/compact 保留测试", "pi", true, "codex", both, true)).toEqual({ steer: false, followUp: false, queue: "compact" });
+    expect(busyInputActions("/run", "pi", true, "codex", both, false).queue).toBeUndefined();
+    expect(busyInputActions("普通文本", undefined, false, undefined, none, false)).toEqual({ steer: true, followUp: true, queue: undefined });
+    expect(busyInputActions("", "pi", false, "pi", both, false, true)).toEqual({ steer: false, followUp: false, queue: "message" });
+  });
   it("Enter 纠偏，Ctrl/Cmd/Alt+Enter 作为后续任务，Shift+Enter 与输入法组合不提交", () => {
     expect(inputKindForKey({ key: "Enter" })).toBe("steering");
     expect(inputKindForKey({ key: "Enter", ctrlKey: true })).toBe("follow_up");
@@ -99,6 +109,60 @@ function fakeHost(overrides: Partial<TurnInputHost> = {}) {
 }
 
 describe("TurnInputSession 接入状态", () => {
+  it("刷新后重放队列和已应用事件，恢复未消费的草稿一次", () => {
+    const { state,host } = fakeHost();
+    const session = new TurnInputSession("turn","w",host);
+    const queued = {id:"q",kind:"follow_up",text:"稍后核对"};
+    session.onQueued(queued);
+    session.onQueued(queued);
+    session.onApplied({item_id:"s",phase:"steering",text:"先检查"});
+    session.onQueued({id:"s",kind:"steering",text:"先检查"});
+    expect(session.tracker.queued().map(item=>item.id)).toEqual(["q"]);
+    session.finish([queued,{id:"late",kind:"follow_up",text:"再检查"}]);
+    session.finish([queued]);
+    expect(state.draft).toBe("稍后核对\n\n再检查");
+  });
+  it("Pi 停止后仅恢复已经排队且没有实际消费的文字", async () => {
+    let seq = 0;
+    const { state, host } = fakeHost({ request: async () => new Response(JSON.stringify({ status: "accepted", id: String(++seq) })) });
+    const session = new TurnInputSession("pi-turn", "w", host);
+    state.draft = "稍后汇总";
+    await session.submit("follow_up");
+    state.draft = "先读文档";
+    await session.submit("steering");
+    session.onApplied({ item_id: "2", phase: "steering", text: "先读文档" });
+    state.draft = "草稿";
+    session.finish([{id: "1", kind: "follow_up", text: "稍后汇总"}]);
+    expect(state.applied).toEqual([["steering", "先读文档"]]);
+    expect(state.draft).toBe("稍后汇总\n\n草稿");
+  });
+  it("原生纠偏入口只对当前回合确认的能力开放", () => {
+    const ready = { turn_id: "first", kind: "input.available", phase: "steering", text: "codex" };
+    expect(nativeInputOption(ready, "first")).toEqual({agent: "codex", kind: "steering"});
+    expect(nativeInputOption(ready, "second")).toBeUndefined();
+    expect(nativeInputOption({ ...ready, text: "pi", phase: "follow_up" }, "first")).toEqual({agent: "pi", kind: "follow_up"});
+    expect(nativeInputOption({ ...ready, phase: "unknown" }, "first")).toBeUndefined();
+  });
+
+  it("原生纠偏已确认后 HTTP 响应丢失仍保留已应用状态", async () => {
+    let reject!: (reason: Error) => void;
+    const { state, host } = fakeHost({ request: () => new Promise((_resolve, fail) => { reject = fail; }) });
+    state.draft = "改用 Go";
+    const session = new TurnInputSession("t", "w", host);
+    const pending = session.submit("steering");
+    const snapshot = { item_id: "i", phase: "steering", text: "改用 Go" };
+    const closeSegment = vi.fn();
+    session.onApplied(snapshot, closeSegment);
+    session.onApplied(snapshot, closeSegment);
+    expect(closeSegment).toHaveBeenCalledTimes(1);
+    reject(new Error("offline"));
+    await pending;
+    session.finish();
+    expect(state.draft).toBe("");
+    expect(session.tracker.items[0].state).toBe("applied");
+    expect(state.applied).toEqual([["steering", "改用 Go"]]);
+  });
+
   it("input.applied 先于 accepted 到达：渲染一次，之后既不排队也不恢复草稿", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

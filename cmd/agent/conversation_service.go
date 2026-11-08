@@ -13,6 +13,7 @@ import (
 	"bqagent/internal/globalconfig"
 	appruntime "bqagent/internal/runtime"
 	appserver "bqagent/internal/server"
+	"bqagent/internal/session"
 	"bqagent/internal/subagent"
 	"bqagent/internal/workspace"
 )
@@ -37,7 +38,7 @@ func newConversationService(ctx context.Context, getenv func(string) string, ws 
 	if statusWriter != nil {
 		fmt.Fprintln(statusWriter, "external-agent detection=background")
 	}
-	externalBroker = extagent.NewDetectingBroker(ctx, extagent.NewStateStore(ws.Root), externalConfig, nil, func(detections map[extagent.AgentName]extagent.DetectionResult) {
+	externalBroker = extagent.NewDetectingBroker(ctx, extagent.NewStateStore(ws.Root, session.Options{AgentDir: ws.AgentDir()}), externalConfig, nil, func(detections map[extagent.AgentName]extagent.DetectionResult) {
 		if statusWriter != nil {
 			for _, status := range extagent.FormatStatuses(detections) {
 				log.Printf("external-agent %s", status)

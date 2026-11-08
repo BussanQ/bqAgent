@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"sync"
+
+	"bqagent/internal/media"
 )
 
 // InputKind distinguishes corrections to ongoing work from work to do afterwards.
@@ -16,11 +18,15 @@ const (
 
 var ErrInputClosed = errors.New("turn no longer accepts input")
 
+var ErrInputRejected = errors.New("input was refused before application")
+
 type Input struct {
-	ID      string    `json:"id"`
-	Kind    InputKind `json:"kind"`
-	Text    string    `json:"text"`
-	Content any       `json:"-"`
+	Images    []media.Image `json:"-"`
+	QueueCard string        `json:"-"`
+	ID        string        `json:"id"`
+	Kind      InputKind     `json:"kind"`
+	Text      string        `json:"text"`
+	Content   any           `json:"-"`
 }
 
 // InputQueue serializes input acceptance with natural turn completion. Accepted
@@ -40,7 +46,7 @@ func (q *InputQueue) Add(input Input) error {
 	if input.Kind != Steering && input.Kind != FollowUp {
 		return errors.New("invalid input kind")
 	}
-	if input.Text == "" {
+	if input.Text == "" && len(input.Images) == 0 {
 		return errors.New("input text is required")
 	}
 	q.items = append(q.items, input)

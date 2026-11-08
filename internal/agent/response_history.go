@@ -1,6 +1,9 @@
 package agent
 
-import "encoding/json"
+import (
+	"bqagent/internal/transcript"
+	"encoding/json"
+)
 
 func responseItemsFromMessage(message map[string]any) []json.RawMessage {
 	value, ok := message["response_items"]
@@ -77,6 +80,11 @@ func chatMessagesWithoutResponseMetadata(messages []map[string]any) []map[string
 		delete(message, "response_items")
 		delete(message, "phase")
 		delete(message, ToolImagesMessageKey)
+		delete(message, ExternalToolsMessageKey)
+		delete(message, transcript.ExternalHistoryKey)
+		delete(message, transcript.ExternalPatchKey)
+		delete(message, transcript.ExternalInputKey)
+		delete(message, transcript.SubmissionKey)
 	}
 	return result
 }

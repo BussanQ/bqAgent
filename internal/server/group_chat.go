@@ -23,7 +23,8 @@ type ConversationType string
 const (
 	ConversationTypeDefault          ConversationType = "default"
 	ConversationTypeGroup            ConversationType = "group"
-	groupScheduler                                    = "bqagent"
+	builtinChatAgent                                  = "bqagent"
+	groupScheduler                                    = builtinChatAgent
 	groupConsultTool                                  = "consult_group_agent"
 	groupReplyKindCoordinator                         = "coordinator"
 	groupReplyKindParticipants                        = "participant_results"
@@ -31,11 +32,12 @@ const (
 )
 
 type GroupParticipant struct {
-	ID        string                 `json:"id"`
-	Name      string                 `json:"name"`
-	Kind      string                 `json:"kind"`
-	Available bool                   `json:"available"`
-	Transport extagent.TransportKind `json:"transport,omitempty"`
+	SupportsImages bool                   `json:"supports_images"`
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Kind           string                 `json:"kind"`
+	Available      bool                   `json:"available"`
+	Transport      extagent.TransportKind `json:"transport,omitempty"`
 }
 
 type GroupInfo struct {
@@ -88,7 +90,7 @@ func persistedConversationType(value ConversationType) string {
 }
 
 func (service *Service) GroupParticipants() []GroupParticipant {
-	participants := []GroupParticipant{{ID: groupScheduler, Name: groupScheduler, Kind: "builtin", Available: true}}
+	participants := []GroupParticipant{{ID: groupScheduler, Name: groupScheduler, Kind: "builtin", Available: true, SupportsImages: true}}
 	if service == nil || service.externalBroker == nil {
 		return participants
 	}
@@ -97,6 +99,7 @@ func (service *Service) GroupParticipants() []GroupParticipant {
 		participant := GroupParticipant{ID: string(name), Name: string(name), Kind: "external", Available: detection.Preferred != nil}
 		if detection.Preferred != nil {
 			participant.Transport = detection.Preferred.Kind
+			participant.SupportsImages = detection.Preferred.SupportsImages()
 		}
 		participants = append(participants, participant)
 	}

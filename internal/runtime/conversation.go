@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"encoding/base64"
 	"errors"
 	"log"
 	"os"
@@ -9,6 +8,7 @@ import (
 
 	"bqagent/internal/agent"
 	"bqagent/internal/session"
+	"bqagent/internal/transcript"
 )
 
 type Conversation struct {
@@ -319,7 +319,14 @@ func (conversation *Conversation) AddUserMessage(content string) error {
 // parts, each image inlined as a base64 data URI. The full message (including the
 // base64 payload) is recorded to the transcript so resume reconstructs it.
 func (conversation *Conversation) AddUserMessageWithImages(content string, images []agent.ImageAttachment) error {
-	userMessage := map[string]any{"role": "user", "content": userMessageContent(content, images)}
+	return conversation.AddSubmission(content, images, "")
+}
+
+func (conversation *Conversation) AddSubmission(content string, images []agent.ImageAttachment, id string) error {
+	userMessage := map[string]any{"role": "user", "content": UserMessageContent(content, images)}
+	if id != "" {
+		userMessage[transcript.SubmissionKey] = id
+	}
 	conversation.Messages = append(conversation.Messages, userMessage)
 	if conversation.Session != nil {
 		return conversation.Session.RecordMessage(userMessage)
@@ -327,7 +334,8 @@ func (conversation *Conversation) AddUserMessageWithImages(content string, image
 	return nil
 }
 
-func userMessageContent(content string, images []agent.ImageAttachment) any {
+// UserMessageContent builds the same persisted content for a new turn or a correction.
+func UserMessageContent(content string, images []agent.ImageAttachment) any {
 	if len(images) == 0 {
 		return content
 	}
@@ -339,14 +347,9 @@ func userMessageContent(content string, images []agent.ImageAttachment) any {
 		if len(image.Data) == 0 {
 			continue
 		}
-		mimeType := strings.TrimSpace(image.MIMEType)
-		if mimeType == "" {
-			mimeType = "image/jpeg"
-		}
-		dataURI := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(image.Data)
 		parts = append(parts, map[string]any{
 			"type":      "image_url",
-			"image_url": map[string]any{"url": dataURI},
+			"image_url": map[string]any{"url": image.DataURL()},
 		})
 	}
 	if len(parts) == 0 {

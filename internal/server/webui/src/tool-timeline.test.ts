@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { updateToolGroupSummary, updateToolTimeline, type ToolCards, type ToolTimeline } from "./tool-timeline";
-import type { ToolSegment } from "./tool-status";
+import { updateToolGroupSummary, updateToolTimeline, type ToolCards, type ToolTimeline, type ToolTimelineSegment } from "./tool-timeline";
 import type { ToolEventPayload } from "./types";
 
 function segment() {
@@ -13,7 +12,7 @@ function segment() {
   return { stack, bubble, cards };
 }
 
-function archive(part: ReturnType<typeof segment>): ToolSegment {
+function archive(part: ReturnType<typeof segment>): ToolTimelineSegment {
   const timeline = part.stack.querySelector<ToolTimeline>(".tool-timeline")!;
   return { cards: part.cards, refresh: () => updateToolGroupSummary(timeline, part.cards) };
 }
@@ -33,6 +32,31 @@ function completeOrdinaryCalls(part: ReturnType<typeof segment>) {
 }
 
 afterEach(() => { document.body.replaceChildren(); });
+
+it("keeps an external tool in its original segment when it streams across a correction", () => {
+  const first = segment(), next = segment();
+  const call = { id: "r", source: "external", name: "bash" };
+  updateToolTimeline(first.bubble, first.cards, "tool_start", call);
+  const previous = [archive(first)];
+  updateToolTimeline(next.bubble, next.cards, "tool_start", { ...call, preview: "partial" }, previous);
+  expect(first.cards.r.result.textContent).toBe("partial");
+  updateToolTimeline(next.bubble, next.cards, "tool_result", { ...call, status: "succeeded", preview: "final" }, previous);
+  expect(first.cards.r.result.textContent).toBe("final");
+  expect(Object.keys(next.cards)).toEqual([]);
+});
+
+it("updates an external tool in place and preserves an unreported outcome", () => {
+  const { bubble, cards, stack } = segment();
+  const event = { id: "c1", source: "external", name: "bash" };
+  updateToolTimeline(bubble, cards, "tool_start", event);
+  updateToolTimeline(bubble, cards, "tool_start", { ...event, arguments: { command: "pwd" }, preview: "partial" });
+  expect(cards.c1.result.textContent).toBe("partial");
+  updateToolTimeline(bubble, cards, "tool_result", { ...event, status: "unknown", preview: "Error: subprocess disconnected" });
+  expect(stack.querySelectorAll(".tool-card")).toHaveLength(1);
+  expect(cards.c1.state).toBe("unknown");
+  expect(cards.c1.status.textContent).toBe("结果未知");
+  expect(cards.c1.arguments.textContent).toContain("pwd");
+});
 
 describe("跨消息段工具卡片渲染", () => {
   it.each([

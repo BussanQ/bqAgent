@@ -73,7 +73,6 @@ func (service *Service) materializeFiles(sessionID string, files []FileAttachmen
 		}
 		attachment.Text = utf8.Valid(attachment.Data) && !bytes.ContainsRune(attachment.Data, '\x00')
 		if attachment.Text && len(attachment.Data) > maxAttachmentInlineBytes {
-			attachment.Data = truncateUTF8(attachment.Data, maxAttachmentInlineBytes)
 			attachment.Truncated = true
 		}
 		resolved = append(resolved, attachment)
@@ -179,7 +178,7 @@ func formatAttachmentContext(files []resolvedFileAttachment) string {
 		case !file.Text:
 			context.WriteString("[二进制或非 UTF-8 文件，内容未内联；可通过上述 workspace 路径使用工具读取。]")
 		default:
-			context.Write(file.Data)
+			context.Write(truncateUTF8(file.Data, maxAttachmentInlineBytes))
 			if file.Truncated {
 				context.WriteString("\n[内容已截断；可通过上述 workspace 路径使用 read_file 读取完整内容。]")
 			}

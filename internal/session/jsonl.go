@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	"bqagent/internal/atomicfile"
 	"bqagent/internal/privatefile"
+	"bqagent/internal/transcript"
 )
 
 // Recovery and append must not race: a repaired prefix must never replace an
@@ -115,6 +117,10 @@ func readMessagesJSONL(path string) ([]map[string]any, error) {
 }
 
 func readMessagesJSONLUnlocked(path string) ([]map[string]any, error) {
+	return readMessagesWithOffsets(path, nil)
+}
+
+func readMessagesWithOffsets(path string, offsets *[]int64) ([]map[string]any, error) {
 	content, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -122,7 +128,7 @@ func readMessagesJSONLUnlocked(path string) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	messages := make([]map[string]any, 0)
+	var records transcript.Records
 	for offset, line := 0, 1; offset < len(content); line++ {
 		end := bytes.IndexByte(content[offset:], '\n')
 		terminated := end >= 0
@@ -140,14 +146,71 @@ func readMessagesJSONLUnlocked(path string) ([]map[string]any, error) {
 				if err := preserveIncompleteTail(path, content, offset); err != nil {
 					return nil, err
 				}
-				return messages, nil
+				break
 			}
 			return nil, fmt.Errorf("read %s record %d: %w", path, line, err)
 		}
-		messages = append(messages, message)
+		position := int64(-1)
+		if offsets != nil {
+			position = int64(offset)
+		}
+		records.Add(message, position)
 		offset = end + 1
 	}
+	messages, positions := records.Messages()
+	if offsets != nil {
+		*offsets = positions
+	}
 	return messages, nil
+}
+
+// LoadIndexedMessages lets the WebUI load one attachment from its containing
+// record on demand. A digest in the image URL detects offsets invalidated by
+// transcript compaction.
+func (s *Session) LoadIndexedMessages() ([]map[string]any, []int64, error) {
+	path := s.MessagesPath()
+	mu := jsonlMutex(path)
+	mu.Lock()
+	defer mu.Unlock()
+	var offsets []int64
+	messages, err := readMessagesWithOffsets(path, &offsets)
+	if err != nil {
+		return nil, nil, err
+	}
+	return messages, offsets, nil
+}
+
+func (s *Session) ReadMessageAt(offset int64, maxBytes int64) (map[string]any, error) {
+	path := s.MessagesPath()
+	mu := jsonlMutex(path)
+	mu.Lock()
+	defer mu.Unlock()
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if offset < 0 || maxBytes <= 0 {
+		return nil, os.ErrNotExist
+	}
+	if offset > 0 {
+		var prev [1]byte
+		if _, err := f.ReadAt(prev[:], offset-1); err != nil || prev[0] != '\n' {
+			return nil, os.ErrNotExist
+		}
+	}
+	line, err := bufio.NewReader(io.NewSectionReader(f, offset, maxBytes+1)).ReadBytes('\n')
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	if len(line) == 0 || int64(len(line)) > maxBytes {
+		return nil, os.ErrNotExist
+	}
+	var message map[string]any
+	if err := json.Unmarshal(line, &message); err != nil {
+		return nil, err
+	}
+	return message, nil
 }
 
 func preserveIncompleteTail(path string, content []byte, validEnd int) error {

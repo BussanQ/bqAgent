@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,33 +45,50 @@ const (
 )
 
 type webUIChatRequest struct {
-	TaskRelation     turn.Relation       `json:"task_relation,omitempty"`
-	WorkspaceID      string              `json:"workspace_id,omitempty"`
-	SessionID        string              `json:"session_id"`
-	TurnID           string              `json:"turn_id"`
-	Message          string              `json:"message"`
-	ReasoningEffort  string              `json:"reasoning_effort,omitempty"`
-	Mode             string              `json:"mode,omitempty"`
-	ConversationType string              `json:"conversation_type,omitempty"`
-	Images           []webUIImagePayload `json:"images,omitempty"`
-	Files            []webUIFilePayload  `json:"files,omitempty"`
+	AgentModel           string              `json:"agent_model,omitempty"`
+	AgentEffort          string              `json:"agent_effort,omitempty"`
+	AgentInteractionMode string              `json:"agent_interaction_mode,omitempty"`
+	AgentServiceTier     string              `json:"agent_service_tier,omitempty"`
+	Agent                extagent.AgentName  `json:"agent,omitempty"`
+	TaskRelation         turn.Relation       `json:"task_relation,omitempty"`
+	WorkspaceID          string              `json:"workspace_id,omitempty"`
+	SessionID            string              `json:"session_id"`
+	TurnID               string              `json:"turn_id"`
+	Message              string              `json:"message"`
+	ReasoningEffort      string              `json:"reasoning_effort,omitempty"`
+	Mode                 string              `json:"mode,omitempty"`
+	ConversationType     string              `json:"conversation_type,omitempty"`
+	Images               []webUIImagePayload `json:"images,omitempty"`
+	Files                []webUIFilePayload  `json:"files,omitempty"`
 }
 
 type webUIDoneEvent struct {
-	TurnID           string             `json:"turn_id"`
-	Outcome          turn.Outcome       `json:"outcome"`
-	WorkspaceID      string             `json:"workspace_id,omitempty"`
-	SessionID        string             `json:"session_id"`
-	RunID            string             `json:"run_id,omitempty"`
-	Reply            string             `json:"reply"`
-	ReplyKind        string             `json:"reply_kind,omitempty"`
-	APIType          string             `json:"api_type"`
-	Model            string             `json:"model"`
-	Mode             ChatMode           `json:"mode"`
-	ConversationType ConversationType   `json:"conversation_type"`
-	Group            *GroupInfo         `json:"group,omitempty"`
-	Generation       *GenerationMetrics `json:"generation,omitempty"`
-	PendingInputs    []turnInputPayload `json:"pending_inputs,omitempty"`
+	Fork                      *forkAction        `json:"fork,omitempty"`
+	Rewind                    *rewindAction      `json:"rewind,omitempty"`
+	NextTurnID                string             `json:"next_turn_id,omitempty"`
+	ActiveAgent               extagent.AgentName `json:"active_agent,omitempty"`
+	ReplyAgent                extagent.AgentName `json:"reply_agent,omitempty"`
+	ReplyAgentCommand         string             `json:"reply_agent_command,omitempty"`
+	ReplyAgentModel           string             `json:"reply_agent_model,omitempty"`
+	ReplyItemID               string             `json:"reply_item_id,omitempty"`
+	ReplyAgentEffort          string             `json:"reply_agent_effort,omitempty"`
+	ReplyAgentInteractionMode string             `json:"reply_agent_interaction_mode,omitempty"`
+	ReplyAgentServiceTier     string             `json:"reply_agent_service_tier,omitempty"`
+	ReplyAgentPreferredTier   string             `json:"reply_agent_preferred_tier,omitempty"`
+	TurnID                    string             `json:"turn_id"`
+	Outcome                   turn.Outcome       `json:"outcome"`
+	WorkspaceID               string             `json:"workspace_id,omitempty"`
+	SessionID                 string             `json:"session_id"`
+	RunID                     string             `json:"run_id,omitempty"`
+	Reply                     string             `json:"reply"`
+	ReplyKind                 string             `json:"reply_kind,omitempty"`
+	APIType                   string             `json:"api_type"`
+	Model                     string             `json:"model"`
+	Mode                      ChatMode           `json:"mode"`
+	ConversationType          ConversationType   `json:"conversation_type"`
+	Group                     *GroupInfo         `json:"group,omitempty"`
+	Generation                *GenerationMetrics `json:"generation,omitempty"`
+	PendingInputs             []turnInputPayload `json:"pending_inputs,omitempty"`
 }
 
 // turnInputPayload reports accepted inputs the turn never consumed.
@@ -86,6 +104,9 @@ func pendingInputPayloads(inputs []turn.Input) []turnInputPayload {
 	}
 	payloads := make([]turnInputPayload, 0, len(inputs))
 	for _, input := range inputs {
+		if input.QueueCard != "" {
+			continue
+		}
 		payloads = append(payloads, turnInputPayload{ID: input.ID, Kind: string(input.Kind), Text: input.Text})
 	}
 	return payloads
@@ -179,14 +200,15 @@ type WebUIChannel struct {
 	service    *Service
 	workspaces *WorkspaceRegistry
 	enabled    bool
+	lifetime   context.Context
 }
 
 func NewWebUIChannel(service *Service, enabled bool) *WebUIChannel {
-	return &WebUIChannel{service: service, enabled: enabled}
+	return &WebUIChannel{service: service, enabled: enabled, lifetime: context.Background()}
 }
 
 func NewWebUIChannelWithWorkspaces(service *Service, workspaces *WorkspaceRegistry, enabled bool) *WebUIChannel {
-	return &WebUIChannel{service: service, workspaces: workspaces, enabled: enabled}
+	return &WebUIChannel{service: service, workspaces: workspaces, enabled: enabled, lifetime: context.Background()}
 }
 
 func (channel *WebUIChannel) Name() string {
@@ -206,6 +228,11 @@ func (channel *WebUIChannel) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/favicon.ico", channel.handleFavicon)
 	mux.HandleFunc("/favicon.svg", channel.handleFaviconSVG)
 	mux.HandleFunc("/api/v1/webui/chat", channel.handleStreamChat)
+	mux.HandleFunc("/api/v1/webui/turns", channel.handleWebTurn)
+	mux.HandleFunc("/api/v1/webui/command-queue", channel.handleCommandQueue)
+	mux.HandleFunc("/api/v1/webui/agent-models", channel.handleAgentModels)
+	mux.HandleFunc("/api/v1/webui/rewind", channel.handleRewind)
+	mux.HandleFunc("/api/v1/webui/fork", channel.handleFork)
 	mux.HandleFunc("/api/v1/webui/workspace", channel.handleWorkspaceList)
 	mux.HandleFunc("/api/v1/webui/workspace/config", channel.handleWorkspaceConfigCreate)
 	mux.HandleFunc("/api/v1/webui/workspace/preview", channel.handleWorkspacePreview)
@@ -256,8 +283,7 @@ func (channel *WebUIChannel) resolveService(workspaceID string) (*Service, Works
 	return channel.workspaces.Resolve(workspaceID)
 }
 
-// Start has no work to do: the web UI is purely request-driven.
-func (channel *WebUIChannel) Start(ctx context.Context) {}
+func (channel *WebUIChannel) Start(ctx context.Context) { channel.lifetime = ctx }
 
 func (channel *WebUIChannel) handleIndex(writer http.ResponseWriter, request *http.Request) {
 	// "/" is a subtree match, so it also catches any path not claimed by a more
@@ -343,52 +369,65 @@ func decodeWebUIChatRequest(writer http.ResponseWriter, request *http.Request) (
 			return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: err}
 		}
 	}
-	if len(payload.Images) > maxWebUIImages {
-		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("at most %d images are allowed", maxWebUIImages)}
-	}
-	images := make([]agent.ImageAttachment, 0, len(payload.Images))
-	totalBytes := 0
-	for index, imagePayload := range payload.Images {
-		imageAttachment, err := decodeWebUIImage(imagePayload)
-		if err != nil {
-			return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("image %d: %w", index+1, err)}
-		}
-		totalBytes += len(imageAttachment.Data)
-		if totalBytes > maxWebUITotalImageBytes {
-			return TurnRequest{}, &webUIRequestError{Status: http.StatusRequestEntityTooLarge, Err: fmt.Errorf("decoded image data exceeds %d bytes", maxWebUITotalImageBytes)}
-		}
-		images = append(images, imageAttachment)
-	}
-	if len(payload.Files) > maxWebUIFiles {
-		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("at most %d files are allowed", maxWebUIFiles)}
-	}
-	files := make([]FileAttachment, 0, len(payload.Files))
-	totalFileBytes := 0
-	for index, filePayload := range payload.Files {
-		fileAttachment, err := decodeWebUIFile(filePayload)
-		if err != nil {
-			return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("file %d: %w", index+1, err)}
-		}
-		totalFileBytes += len(fileAttachment.Data)
-		if totalFileBytes > maxWebUITotalFileBytes {
-			return TurnRequest{}, &webUIRequestError{Status: http.StatusRequestEntityTooLarge, Err: fmt.Errorf("decoded file data exceeds %d bytes", maxWebUITotalFileBytes)}
-		}
-		files = append(files, fileAttachment)
+	images, files, err := decodeWebUIAttachments(payload.Images, payload.Files)
+	if err != nil {
+		return TurnRequest{}, err
 	}
 	if strings.TrimSpace(payload.Message) == "" && len(images) == 0 && len(files) == 0 {
 		return TurnRequest{}, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("message, images, or files are required")}
 	}
 	return TurnRequest{
-		WorkspaceID:      strings.TrimSpace(payload.WorkspaceID),
-		SessionID:        strings.TrimSpace(payload.SessionID),
-		TurnID:           strings.TrimSpace(payload.TurnID),
-		Message:          payload.Message,
-		Images:           images,
-		Files:            files,
-		ReasoningEffort:  reasoningEffort,
-		Mode:             mode,
-		ConversationType: ConversationType(strings.TrimSpace(payload.ConversationType)),
+		Agent:                payload.Agent,
+		AgentModel:           payload.AgentModel,
+		AgentEffort:          payload.AgentEffort,
+		AgentServiceTier:     payload.AgentServiceTier,
+		AgentInteractionMode: payload.AgentInteractionMode,
+		WorkspaceID:          strings.TrimSpace(payload.WorkspaceID),
+		SessionID:            strings.TrimSpace(payload.SessionID),
+		TurnID:               strings.TrimSpace(payload.TurnID),
+		Message:              payload.Message,
+		Images:               images,
+		Files:                files,
+		ReasoningEffort:      reasoningEffort,
+		Mode:                 mode,
+		ConversationType:     ConversationType(strings.TrimSpace(payload.ConversationType)),
 	}, nil
+}
+
+func decodeWebUIAttachments(imagePayloads []webUIImagePayload, filePayloads []webUIFilePayload) ([]agent.ImageAttachment, []FileAttachment, error) {
+	if len(imagePayloads) > maxWebUIImages {
+		return nil, nil, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("at most %d images are allowed", maxWebUIImages)}
+	}
+	images := make([]agent.ImageAttachment, 0, len(imagePayloads))
+	totalBytes := 0
+	for index, imagePayload := range imagePayloads {
+		imageAttachment, err := decodeWebUIImage(imagePayload)
+		if err != nil {
+			return nil, nil, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("image %d: %w", index+1, err)}
+		}
+		totalBytes += len(imageAttachment.Data)
+		if totalBytes > maxWebUITotalImageBytes {
+			return nil, nil, &webUIRequestError{Status: http.StatusRequestEntityTooLarge, Err: fmt.Errorf("decoded image data exceeds %d bytes", maxWebUITotalImageBytes)}
+		}
+		images = append(images, imageAttachment)
+	}
+	if len(filePayloads) > maxWebUIFiles {
+		return nil, nil, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("at most %d files are allowed", maxWebUIFiles)}
+	}
+	files := make([]FileAttachment, 0, len(filePayloads))
+	totalFileBytes := 0
+	for index, filePayload := range filePayloads {
+		fileAttachment, err := decodeWebUIFile(filePayload)
+		if err != nil {
+			return nil, nil, &webUIRequestError{Status: http.StatusBadRequest, Err: fmt.Errorf("file %d: %w", index+1, err)}
+		}
+		totalFileBytes += len(fileAttachment.Data)
+		if totalFileBytes > maxWebUITotalFileBytes {
+			return nil, nil, &webUIRequestError{Status: http.StatusRequestEntityTooLarge, Err: fmt.Errorf("decoded file data exceeds %d bytes", maxWebUITotalFileBytes)}
+		}
+		files = append(files, fileAttachment)
+	}
+	return images, files, nil
 }
 
 func decodeWebUIFile(payload webUIFilePayload) (FileAttachment, error) {
@@ -468,7 +507,7 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
 		return
 	}
-	flusher, ok := writer.(http.Flusher)
+	_, ok := writer.(http.Flusher)
 	if !ok {
 		writeError(writer, http.StatusInternalServerError, chatResponse{Error: "streaming is not supported"})
 		return
@@ -489,44 +528,153 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 		writeError(writer, http.StatusNotFound, chatResponse{Error: "workspace not found"})
 		return
 	}
-	writer.Header().Set("Content-Type", "text/event-stream")
-	writer.Header().Set("Cache-Control", "no-cache")
-	writer.Header().Set("Connection", "keep-alive")
-	// Disable proxy buffering (e.g. nginx) so events arrive incrementally.
-	writer.Header().Set("X-Accel-Buffering", "no")
-	writer.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	turnRequest.TurnID = strings.TrimSpace(turnRequest.TurnID)
+	if turnRequest.TurnID == "" {
+		turnRequest.TurnID = turn.NewID()
+	}
+	if !validTurnID(turnRequest.TurnID) {
+		writeError(writer, 400, chatResponse{Error: "invalid turn_id"})
+		return
+	}
+	if agent, args, clear := clearRoute(turnRequest.Message, turnRequest.Agent); clear {
+		channel.handleClear(writer, request, service, turnRequest, agent, args)
+		return
+	}
+	job, ctx, created := channel.registerWebTurn(service, turnRequest)
+	if !created {
+		writeError(writer, 409, chatResponse{Error: "turn_id already exists"})
+		return
+	}
+	go channel.runWebTurn(ctx, service, workspaceInfo, turnRequest, job)
+	job.subscribe(writer, request, 0)
+}
 
-	stream := &sseStream{writer: writer, flusher: flusher}
-	ctx := agent.WithLiveSpeed(request.Context(), func(speed float64) {
-		stream.mu.Lock()
-		defer stream.mu.Unlock()
-		writeSSEEvent(writer, flusher, "speed", map[string]float64{"tokens_per_second": speed})
+func (channel *WebUIChannel) handleWebTurn(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(405)
+		return
+	}
+	q := r.URL.Query()
+	service, _, err := channel.resolveService(q.Get("workspace_id"))
+	if err != nil {
+		writeError(w, 404, chatResponse{Error: "workspace not found"})
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	id := q.Get("turn_id")
+	if id == "" {
+		if q.Get("view") == "context" {
+			s, err := service.store.Open(q.Get("session_id"))
+			if err != nil || !s.Meta().Chat {
+				writeError(w, 404, chatResponse{Error: "conversation not found"})
+				return
+			}
+			status := map[string]any{"context_number": s.ContextNumber(), "turn_id": service.webTurns.active(s.ID())}
+			if name := q.Get("agent"); name != "" {
+				status["context_usage"] = service.externalBroker.SavedContextUsage(s.ID(), extagent.AgentName(name))
+			}
+			writeJSON(w, 200, status)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"turn_id": service.webTurns.active(q.Get("session_id"))})
+		return
+	}
+	job := service.webTurns.get(id)
+	if job == nil {
+		writeError(w, 404, chatResponse{Error: "turn not found"})
+		return
+	}
+	if q.Get("view") == "history" {
+		h, err := job.history(r.Context(), service)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				writeError(w, http.StatusGone, chatResponse{Error: "turn history no longer available"})
+				return
+			}
+			writeError(w, 500, chatResponse{Error: err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"history": h})
+		return
+	}
+	after := 0
+	if cursor := q.Get("after"); cursor != "" {
+		after, err = strconv.Atoi(cursor)
+		if err != nil {
+			writeError(w, 400, chatResponse{Error: "invalid event cursor"})
+			return
+		}
+	}
+	job.subscribe(w, r, after)
+}
+
+func (channel *WebUIChannel) runWebTurn(ctx context.Context, service *Service, workspaceInfo WorkspaceInfo, turnRequest TurnRequest, job *webTurn) {
+	defer func() {
+		if failure := recover(); failure != nil {
+			channel.finishWebTurn(service, workspaceInfo, job, "error", map[string]string{"error": fmt.Sprint(failure), "turn_id": job.id})
+		}
+		job.cancel()
+		job.releaseBaseline()
+		stopExpiry := context.AfterFunc(channel.lifetime, func() { service.webTurns.expire(job) })
+		time.AfterFunc(completedReplayLifetime, func() { stopExpiry(); service.webTurns.expire(job) })
+	}()
+	var attachmentErr error
+	if turnRequest.queuedBlob != "" {
+		attachmentErr = service.loadQueueTurnAttachments(&turnRequest)
+	}
+	var images []webUIImagePayload
+	for _, img := range turnRequest.Images {
+		images = append(images, webUIImagePayload{MIMEType: img.ContentType(), DataBase64: img.Base64()})
+	}
+	var files []webUIFilePayload
+	for _, f := range turnRequest.Files {
+		files = append(files, webUIFilePayload{Name: f.Name, Path: f.Path})
+	}
+	if err := job.publish("turn_start", map[string]any{
+		"turn_id": job.id, "message": turnRequest.Message, "agent": turnRequest.Agent,
+		"agent_model": turnRequest.AgentModel, "agent_effort": turnRequest.AgentEffort, "agent_service_tier": turnRequest.AgentServiceTier, "agent_interaction_mode": turnRequest.AgentInteractionMode,
+		"mode": turnRequest.Mode, "conversation_type": turnRequest.ConversationType, "images": images, "files": files,
+	}); err != nil {
+		return
+	}
+	if attachmentErr != nil {
+		job.bind(service, turnRequest.SessionID)
+		channel.finishWebTurn(service, workspaceInfo, job, "error", map[string]string{"error": "无法读取已排队的附件：" + attachmentErr.Error(), "turn_id": job.id})
+		return
+	}
+	stream := &sseStream{job: job}
+	ctx = agent.WithLiveSpeed(ctx, func(speed float64) {
+		_ = job.publish("speed", map[string]float64{"tokens_per_second": speed})
 	})
-	// WebUI follows the browser request lifetime and the service-wide runaway
-	// valve; the tighter channel budgets are reserved for message delivery paths.
-	response, err := service.HandleTurnWithOptions(ctx, TurnRequest{
-		SessionID:        turnRequest.SessionID,
-		Message:          turnRequest.Message,
-		TurnID:           turnRequest.TurnID,
-		TaskRelation:     turnRequest.TaskRelation,
-		Images:           turnRequest.Images,
-		Files:            turnRequest.Files,
-		ReasoningEffort:  turnRequest.ReasoningEffort,
-		Mode:             turnRequest.Mode,
-		ConversationType: turnRequest.ConversationType,
-	}, TurnOptions{
-		Stream: true,
+	response, err := service.HandleTurnWithOptions(ctx, turnRequest, TurnOptions{
+		Stream:              true,
+		SessionSink:         func(id string) { channel.bindWebTurn(service, job, id) },
+		ExternalTextSink:    func(event ExternalTextEvent) { _ = job.publish("external_text", event) },
+		ExternalPlanSink:    func(event ExternalPlanEvent) { _ = job.publish("external_plan", event) },
+		ExternalSummarySink: func(event ExternalSummaryEvent) { _ = job.publish("external_summary", event) },
+		ExternalContextSink: func(agent extagent.AgentName, usage extagent.ContextUsage) {
+			_ = job.publish("external_context_usage", map[string]any{"agent": agent, "usage": usage})
+		},
+		ExternalCommandSink: func(name extagent.AgentName, command string) {
+			_ = job.publish("external_command", map[string]string{"agent": string(name), "command": command})
+		},
+		InputTarget: func(target extagent.SessionState) {
+			channel.deliverReadyCards(service, job, &target)
+		},
 		MessageSink: func(event turn.Event) {
-			stream.mu.Lock()
-			defer stream.mu.Unlock()
-			writeSSEEvent(writer, flusher, "message_snapshot", event)
+			if event.Kind == "input.applied" && channel.appliedQueueInput(service, job, event) {
+				return
+			}
+			_ = job.publish("message_snapshot", event)
+			if event.Kind == "input.available" && event.Phase == string(turn.Steering) {
+				channel.deliverReadyCards(service, job, nil)
+			}
 		},
 		TokenSink:         sseEventWriter{stream: stream, event: "message"},
 		ProgressWriter:    sseEventWriter{stream: stream, event: "progress"},
 		ToolEventSink:     sseToolEventSink{stream: stream},
 		GroupEventSink:    sseGroupEventSink{stream: stream},
-		ACPPermissionSink: sseACPPermissionSink{stream: stream},
+		ACPPermissionSink: sseACPPermissionSink{stream: stream, resolved: func() { channel.deliverReadyCards(service, job, nil) }},
 		Stage: agent.StageConfig{
 			MaxIterations:     WebUIStageMaxIterations(),
 			Timeout:           WebUIStageTimeout(),
@@ -537,10 +685,10 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			writeSSEEvent(writer, flusher, "stopped", map[string]any{"message": "已停止生成。", "turn_id": response.TurnID, "outcome": response.Outcome, "pending_inputs": pendingInputPayloads(response.PendingInputs)})
+			channel.finishWebTurn(service, workspaceInfo, job, "stopped", map[string]any{"message": "已停止生成。", "turn_id": response.TurnID, "session_id": response.SessionID, "outcome": response.Outcome, "pending_inputs": pendingInputPayloads(response.PendingInputs)})
 			return
 		}
-		writeSSEEvent(writer, flusher, "error", map[string]any{"error": err.Error(), "turn_id": response.TurnID, "outcome": response.Outcome, "pending_inputs": pendingInputPayloads(response.PendingInputs)})
+		channel.finishWebTurn(service, workspaceInfo, job, "error", map[string]any{"error": err.Error(), "turn_id": response.TurnID, "session_id": response.SessionID, "outcome": response.Outcome, "pending_inputs": pendingInputPayloads(response.PendingInputs)})
 		return
 	}
 
@@ -550,9 +698,20 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 			group = &info
 		}
 	}
-	writeSSEEvent(writer, flusher, "done", webUIDoneEvent{
-		WorkspaceID: workspaceInfo.ID,
-		TurnID:      response.TurnID, Outcome: response.Outcome,
+	channel.finishWebTurn(service, workspaceInfo, job, "done", webUIDoneEvent{
+		ActiveAgent:               response.ActiveAgent,
+		ReplyAgent:                response.ReplyAgent,
+		ReplyAgentCommand:         response.ReplyAgentCommand,
+		Rewind:                    response.Rewind,
+		Fork:                      response.Fork,
+		ReplyAgentModel:           response.ReplyAgentModel,
+		ReplyAgentEffort:          response.ReplyAgentEffort,
+		ReplyAgentServiceTier:     response.ReplyAgentServiceTier,
+		ReplyAgentInteractionMode: response.ReplyAgentInteractionMode,
+		ReplyAgentPreferredTier:   response.ReplyAgentPreferredTier,
+		ReplyItemID:               response.ReplyItemID,
+		WorkspaceID:               workspaceInfo.ID,
+		TurnID:                    response.TurnID, Outcome: response.Outcome,
 		SessionID:        response.SessionID,
 		RunID:            response.RunID,
 		Reply:            sanitizeChannelReply(response.Reply),
@@ -568,6 +727,7 @@ func (channel *WebUIChannel) handleStreamChat(writer http.ResponseWriter, reques
 }
 
 type sseStream struct {
+	job     *webTurn
 	mu      sync.Mutex
 	writer  http.ResponseWriter
 	flusher http.Flusher
@@ -587,7 +747,19 @@ type sseGroupEventSink struct {
 }
 
 type sseACPPermissionSink struct {
-	stream *sseStream
+	resolved func()
+	stream   *sseStream
+}
+
+func (sink sseACPPermissionSink) EmitACPPermissionResolution(request extagent.ACPPermissionRequest) {
+	sink.EmitACPPermissionRequest(request)
+	sink.QuestionsSettled()
+}
+
+func (sink sseACPPermissionSink) QuestionsSettled() {
+	if sink.resolved != nil {
+		sink.resolved()
+	}
 }
 
 func (sink sseACPPermissionSink) EmitACPPermissionRequest(request extagent.ACPPermissionRequest) {
@@ -614,6 +786,9 @@ func (sink sseToolEventSink) EmitToolEvent(event agent.ToolEvent) {
 func (stream *sseStream) writeEvent(event string, value any) error {
 	if stream == nil {
 		return io.ErrClosedPipe
+	}
+	if stream.job != nil {
+		return stream.job.publish(event, value)
 	}
 	payload, err := json.Marshal(value)
 	if err != nil {
@@ -652,13 +827,4 @@ func (sink sseEventWriter) Write(data []byte) (int, error) {
 		return 0, err
 	}
 	return len(data), nil
-}
-
-func writeSSEEvent(writer http.ResponseWriter, flusher http.Flusher, event string, payload any) {
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		encoded = []byte("{}")
-	}
-	_, _ = fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event, encoded)
-	flusher.Flush()
 }

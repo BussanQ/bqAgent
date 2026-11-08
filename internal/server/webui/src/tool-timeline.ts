@@ -1,12 +1,16 @@
 import { iconMarkup } from "./icons";
+import { updateEditCard } from "./file-edits";
 import { shouldGroupToolCalls } from "./tool-groups";
 import { applyToolResult, type ToolResultCard, type ToolSegment } from "./tool-status";
 import type { ToolEventPayload } from "./types";
 
 interface ToolCard extends ToolResultCard {
+  edits:HTMLElement;
+  name: HTMLElement;
   arguments: HTMLPreElement;
 }
 export type ToolCards = Record<string, ToolCard>;
+export type ToolTimelineSegment = ToolSegment<ToolCard>;
 interface ToolGroup { root: HTMLDivElement; items: HTMLDivElement; status: HTMLSpanElement }
 export interface ToolTimeline extends HTMLDivElement { toolGroup?: ToolGroup }
 let toolDisclosureSequence = 0;
@@ -35,18 +39,21 @@ export function updateToolGroupSummary(timeline: ToolTimeline, cards: ToolCards)
   var running = 0;
   var failed = 0;
   var killed = 0;
+  var unknown = 0;
   cardList.forEach(function (card) {
     if (card.state === "running") running++;
     if (card.state === "failed") failed++;
     if (card.state === "killed") killed++;
+    if (card.state === "unknown") unknown++;
   });
   group.root.classList.remove("succeeded", "failed");
-  if (running === 0) group.root.classList.add(failed > 0 || killed > 0 ? "failed" : "succeeded");
+  if (running === 0 && !unknown) group.root.classList.add(failed > 0 || killed > 0 ? "failed" : "succeeded");
   var details = [cardList.length + " 次"];
   if (running > 0) details.push(running + " 运行中");
   if (failed > 0) details.push(failed + " 失败");
   if (killed > 0) details.push(killed + " 已终止");
-  if (running === 0 && failed === 0 && killed === 0) details.push("全部完成");
+  if (unknown > 0) details.push(unknown + " 结果未知");
+  if (running === 0 && failed === 0 && killed === 0 && unknown === 0) details.push("全部完成");
   group.status.textContent = details.join("，");
 }
 
@@ -98,15 +105,22 @@ function ensureToolGroup(timeline: ToolTimeline, cards: ToolCards): ToolGroup | 
   return timeline.toolGroup;
 }
 
-export function updateToolTimeline(bubble: HTMLDivElement, cards: ToolCards, eventName: string, payload: ToolEventPayload, previous: ToolSegment[] = []): void {
+export function updateToolTimeline(bubble: HTMLDivElement, cards: ToolCards, eventName: string, payload: ToolEventPayload, previous: ToolTimelineSegment[] = []): void {
   if (!payload) return;
   // Automatic delivery reuses the original call ID, even after its segment
   // closed. Resolve that card before creating a timeline or another card.
   const callID = payload.id;
-  if (eventName === "tool_result" && callID && !cards[callID]) {
+  if ((eventName === "tool_result" || payload.source === "external") && callID && !cards[callID]) {
     var original = previous.find(segment => segment.cards[callID]);
     if (original) {
-      applyToolResult(cards, original.cards[callID], payload, previous);
+      const card = original.cards[callID];
+      if (payload.name) card.name.textContent = payload.name;
+      if (payload.arguments) card.arguments.textContent = JSON.stringify(payload.arguments, null, 2);
+      if (eventName === "tool_result") {
+        applyToolResult(cards, card, payload, previous);
+        updateEditCard(card.edits,payload);
+      }
+      else if (payload.preview && card.state === "running") card.result.textContent = payload.preview;
       var currentTimeline = bubble.parentElement?.querySelector<ToolTimeline>(".tool-timeline");
       if (currentTimeline) updateToolGroupSummary(currentTimeline, cards);
       return;
@@ -175,12 +189,20 @@ export function updateToolTimeline(bubble: HTMLDivElement, cards: ToolCards, eve
     });
     root.appendChild(button);
     root.appendChild(details);
+    const edits=document.createElement("div");
+    edits.className="tool-file-edits"; edits.hidden=true;
+    root.append(edits);
     var group = timeline.toolGroup;
     (group ? group.items : timeline).appendChild(root);
-    card = cards[cardID] = { root: root, status: status, arguments: argumentsPre, result: resultPre, state: "running" };
+    card = cards[cardID] = { root: root, name: name, status: status, arguments: argumentsPre, result: resultPre, state: "running", edits };
     ensureToolGroup(timeline, cards);
   }
   if (payload.arguments) card.arguments.textContent = JSON.stringify(payload.arguments, null, 2);
-  if (eventName === "tool_result") applyToolResult(cards, card, payload, previous);
+  if (payload.name) card.name.textContent = payload.name;
+  if (eventName === "tool_start" && payload.preview) card.result.textContent = payload.preview;
+  if (eventName === "tool_result") {
+    applyToolResult(cards, card, payload, previous);
+    updateEditCard(card.edits,payload);
+  }
   updateToolGroupSummary(timeline, cards);
 }

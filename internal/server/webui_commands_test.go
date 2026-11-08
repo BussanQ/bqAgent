@@ -50,12 +50,12 @@ func TestWebUICommandsFiltersButtonsAndRefreshesWorkspaceSkills(t *testing.T) {
 		return commands
 	}
 	commands := load("first")
-	for _, name := range []string{"/model", "/effort", "/provider", "/run", "/ask", "/clear", "/feedback", "/stop", "/exit", "/help"} {
+	for _, name := range []string{"/model", "/effort", "/provider", "/run", "/ask", "/feedback", "/stop", "/exit", "/help"} {
 		if _, ok := commands[name]; ok {
 			t.Fatalf("redundant command: %s", name)
 		}
 	}
-	for _, name := range []string{"/skill", "/fast", "/memory", "/agent", "/codex", "/claude", "/cursor", "/opencode", "/pi", "/default"} {
+	for _, name := range []string{"/clear", "/skill", "/fast", "/memory", "/agent", "/codex", "/claude", "/cursor", "/opencode", "/pi", "/default"} {
 		if _, ok := commands[name]; !ok {
 			t.Fatalf("missing command: %s", name)
 		}
@@ -101,7 +101,7 @@ func TestWebUIGroupCommandsHideSubagentsAndExternalAgents(t *testing.T) {
 			for _, command := range payload.Commands {
 				found[command.Name] = true
 			}
-			for _, name := range []string{"/agent", "/claude", "/codex", "/cursor", "/opencode", "/pi", "/default"} {
+			for _, name := range []string{"/clear", "/agent", "/claude", "/codex", "/cursor", "/opencode", "/pi", "/default"} {
 				if found[name] != (kind != "group") {
 					t.Fatalf("type=%q command=%s present=%t", kind, name, found[name])
 				}

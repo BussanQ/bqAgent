@@ -61,6 +61,14 @@ export function takePendingAttachmentsForSend(
   pendingFiles: PendingFile[],
   revokeObjectURL: (url: string) => void = (url) => URL.revokeObjectURL(url),
 ): SentAttachments {
+  const sent = snapshotPendingAttachments(pendingImages, pendingFiles);
+  pendingImages.forEach((image) => revokeObjectURL(image.objectURL));
+  pendingImages.length = 0;
+  pendingFiles.length = 0;
+  return sent;
+}
+
+export function snapshotPendingAttachments(pendingImages: PendingImage[], pendingFiles: PendingFile[]): SentAttachments {
   const images = pendingImages
     .filter((image) => !image.loading && image.dataBase64)
     .map((image) => ({ mime_type: image.mimeType, data_base64: image.dataBase64 }));
@@ -70,10 +78,25 @@ export function takePendingAttachmentsForSend(
       ? { path: file.path }
       : { name: file.name, data_base64: file.dataBase64 });
 
-  pendingImages.forEach((image) => revokeObjectURL(image.objectURL));
-  pendingImages.length = 0;
-  pendingFiles.length = 0;
   return { images, files };
+}
+
+export function restorePendingAttachments(sent: Partial<SentAttachments>, newID: () => number) {
+  const images: PendingImage[] = [];
+  try {
+    for (const image of sent.images || []) {
+      const data = Uint8Array.from(atob(image.data_base64), char => char.charCodeAt(0));
+      const objectURL = URL.createObjectURL(new Blob([data], { type: image.mime_type }));
+      images.push({ id: newID(), mimeType: image.mime_type, size: data.byteLength, dataBase64: image.data_base64, loading: false, objectURL });
+    }
+    const files: PendingFile[] = (sent.files || []).map(file => file.path
+      ? { id: newID(), name: file.path.split("/").pop() || file.path, path: file.path, size: 0, kind: "path", loading: false }
+      : { id: newID(), name: file.name || "", size: atob(file.data_base64 || "").length, dataBase64: file.data_base64 || "", kind: "upload", loading: false });
+    return { images, files };
+  } catch (error) {
+    images.forEach(image => URL.revokeObjectURL(image.objectURL));
+    throw error;
+  }
 }
 
 export function showTemporaryError(

@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -61,8 +63,14 @@ func TestConversationHistoryBudgetRolesWorkspaceAndModels(t *testing.T) {
 		t.Fatalf("folded dump leaked into content: %#v", last)
 	}
 
-	if _, err := other.ConversationHistory(saved.ID(), 128); err == nil || !strings.Contains(err.Error(), "another workspace") {
-		t.Fatalf("cross-workspace error = %v", err)
+	if h, err := other.ConversationHistory(saved.ID(), 128); !errors.Is(err, os.ErrNotExist) || len(h.Messages) != 0 {
+		t.Fatalf("foreign workspace directory: history=%v, error=%v", h, err)
+	}
+	if err := os.Rename(saved.Dir(), filepath.Join(agentDir, "sessions", saved.ID())); err != nil {
+		t.Fatal(err)
+	}
+	if h, err := other.ConversationHistory(saved.ID(), 128); !errors.Is(err, session.ErrWorkspaceMismatch) || len(h.Messages) != 0 {
+		t.Fatalf("foreign legacy session: history=%v, error=%v", h, err)
 	}
 	models := service.ModelOptions()
 	if len(models) != 3 || models[0].Alias != "default" || models[1].Alias != "fast" || models[2].ID != "model-direct" {

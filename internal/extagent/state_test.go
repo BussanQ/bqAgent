@@ -80,3 +80,37 @@ func TestStateStoreKeepsGroupParticipantsIndependent(t *testing.T) {
 		t.Fatalf("cleared group state = %#v", cleared)
 	}
 }
+
+func TestSingleChatSwitchKeepsIndependentResumeIDsUntilExplicitReset(t *testing.T) {
+	root := t.TempDir()
+	store := NewStateStore(root)
+	broker := NewBroker(store, nil, nil)
+	defer broker.Close()
+	codex := SessionState{BQSessionID: "chat", Agent: AgentCodex, Transport: TransportAppServer, ExternalSessionID: "thread-1"}
+	pi := SessionState{BQSessionID: "chat", Agent: AgentPi, Transport: TransportCLI, ExternalSessionID: "pi-2"}
+	for _, state := range []SessionState{codex, pi} {
+		if err := store.Save(state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := broker.UseBuiltin("chat"); err != nil {
+		t.Fatal(err)
+	}
+	if active, err := broker.ActiveAgent("chat"); err != nil || active != "" {
+		t.Fatalf("expected built-in, got %q: %v", active, err)
+	}
+	reopened := NewStateStore(root)
+	for _, want := range []SessionState{pi, codex} {
+		if got, err := reopened.stateForAgent("chat", want.Agent); err != nil || got != want {
+			t.Fatalf("resuming %s: state=%+v, error=%v", want.Agent, got, err)
+		}
+	}
+	if err := broker.Clear("chat"); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range []AgentName{AgentPi, AgentCodex} {
+		if got, err := reopened.stateForAgent("chat", agent); err != nil || got.ExternalSessionID != "" {
+			t.Fatalf("reset left resume state for %s: %+v %v", agent, got, err)
+		}
+	}
+}
