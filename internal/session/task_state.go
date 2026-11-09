@@ -14,7 +14,7 @@ import (
 )
 
 func (session *Session) LoadTaskState() (*taskstate.State, error) {
-	data, err := os.ReadFile(filepath.Join(session.dir, "task.json"))
+	data, err := os.ReadFile(filepath.Join(session.ContextDir(), "task.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -40,5 +40,5 @@ func (session *Session) SaveTaskState(state taskstate.State) error {
 	if err != nil {
 		return err
 	}
-	return atomicfile.Write(filepath.Join(session.dir, "task.json"), append(data, '\n'), privatefile.FileMode)
+	return atomicfile.Write(filepath.Join(session.ContextDir(), "task.json"), append(data, '\n'), privatefile.FileMode)
 }

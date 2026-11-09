@@ -1,4 +1,6 @@
 import type { ConversationHistoryTool, ConversationMessage, ToolEventPayload } from "./types";
+import { planVisible } from "./external-plan";
+import { summaryVisible, updateSummary } from "./external-summary";
 import { normalizeToolResult } from "./tool-status";
 
 const COMPLETED_TOOL_ACTIVITY = "Completed tool activity (retain this evidence for later reasoning):";
@@ -35,17 +37,68 @@ export function complexTaskNotice(text: string): string {
   ].join("\n");
 }
 
+function externalHistoryRows(message: ConversationMessage): ConversationMessage[] {
+  if (message.role !== "assistant" || !message.parts?.length) return [message];
+  const rows: ConversationMessage[] = [];
+  const tools = new Map(message.tools?.map(tool => [tool.id, tool]));
+  const row = (content: string): ConversationMessage => ({ role: "assistant", sender: message.sender, external_turn:message.external_turn, ordered: true, content });
+  let group: ConversationMessage | undefined;
+  const summaries = new Map<string, ConversationMessage>();
+  for (const part of message.parts) {
+    if (part.kind === "text") {
+      group = undefined;
+      if (part.text) rows.push(row(part.text));
+    } else if (part.kind === "summary" && part.summary) {
+      const meta = part.summary;
+      let summaryRow = summaries.get(meta.item);
+      if (!summaryRow) {
+        group = undefined;
+        summaryRow = { ...row(""), summary: { sections: new Map(), ended: false } };
+        summaries.set(meta.item, summaryRow);
+        rows.push(summaryRow);
+      }
+      updateSummary(summaryRow.summary!, meta.index, part.text || "", false, meta.ended, meta.truncated);
+    } else if (part.kind === "plan" && part.plan) {
+      group = undefined;
+      if (planVisible(part.plan,part.text || "")) rows.push({ ...row(part.text || ""), plan:part.plan });
+    } else if (part.kind === "prompt" && part.prompt) {
+      group = undefined;
+      rows.push({ ...row(""), prompt: part.prompt });
+    } else if (part.kind === "tool") {
+      const tool = tools.get(part.id);
+      if (!tool) continue;
+      if (!group) { group = row(""); group.tools = []; rows.push(group); }
+      group.tools!.push(tool);
+      tools.delete(part.id);
+    }
+  }
+  if (tools.size) rows.push({ ...row(""), tools: [...tools.values()] });
+  const visible = rows.filter(row => !row.summary || summaryVisible(row.summary));
+  const last = visible.at(-1);
+  if (last) { last.anchor = message.anchor; last.fork = message.fork; }
+  return visible;
+}
+
 export function normalizeHistoryMessages(messages: ConversationMessage[]): ConversationMessage[] {
-  return groupHistoryMessages((messages || []).map(function (message) {
+  return groupHistoryMessages((messages || []).flatMap(externalHistoryRows).map(function (message) {
     if (message.role !== "assistant") {
-      return { role: message.role, content: message.content || "", tools: [], files: message.files ? message.files.slice() : [], sender: message.sender, kind: message.kind };
+      return { role: message.role, ...(message.rewind && { rewind: message.rewind }), ...(message.delivery && { delivery: message.delivery }), content: message.content || "", tools: [], files: message.files ? message.files.slice() : [], images: message.images, sender: message.sender, kind: message.kind };
     }
     const view = historyAssistantView(message);
     return {
       role: "assistant",
+      external_turn:message.external_turn,
+      ...(message.anchor && { anchor: message.anchor }),
+      ...(message.fork && { fork: message.fork }),
+      ordered: message.ordered,
+      prompt: message.prompt,
+      plan: message.plan,
+      summary: message.summary,
       content: view.content,
       tools: (view.tools || []).map(function (tool) {
         return {
+          source: tool.source,
+          edits:tool.edits, turn_id:tool.turn_id,
           id: tool.id,
           name: tool.name || "tool",
           arguments: tool.arguments,
@@ -70,15 +123,25 @@ export function groupHistoryMessages(messages: ConversationMessage[]): Conversat
   const grouped: ConversationMessage[] = [];
   (messages || []).forEach(function (message) {
     const current: ConversationMessage = {
+      ...(message.anchor && { anchor: message.anchor }),
+      ...(message.fork && { fork: message.fork }),
+      ...(message.rewind && { rewind: message.rewind }),
+      ...(message.delivery && { delivery: message.delivery }),
       role: message.role,
+      external_turn:message.external_turn,
+      ordered: message.ordered,
+      prompt: message.prompt,
+      plan: message.plan,
+      summary: message.summary,
       content: message.content || "",
       tools: message.tools ? message.tools.slice() : [],
       files: message.files ? message.files.slice() : [],
+      images: message.images,
       sender: message.sender,
       kind: message.kind,
     };
     const previous = grouped[grouped.length - 1];
-    if (!previous || previous.role !== "assistant" || current.role !== "assistant" || previous.sender !== current.sender || previous.kind !== current.kind) {
+    if (!previous || previous.ordered || current.ordered || previous.anchor || current.anchor || previous.role !== "assistant" || current.role !== "assistant" || previous.sender !== current.sender || previous.kind !== current.kind || previous.external_turn !== current.external_turn) {
       grouped.push(current);
       return;
     }
@@ -98,6 +161,7 @@ export function historyAssistantView(message: ConversationMessage): HistoryAssis
   if (message.tools && message.tools.length) {
     return { content: String(message.content || "").trim(), tools: message.tools.map(historyToolEvent) };
   }
+  if (message.ordered) return {content:message.content,tools:[]};
   return parseCompletedToolActivity(String(message.content || ""));
 }
 
@@ -165,6 +229,8 @@ export function parseCompletedToolActivity(content: string): HistoryAssistantVie
 
 function historyToolEvent(tool: ConversationHistoryTool): ToolEventPayload {
   return normalizeToolResult({
+    source: tool.source,
+    edits:tool.edits, turn_id:tool.turn_id,
     id: tool.id,
     name: tool.name,
     arguments: tool.arguments,

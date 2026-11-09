@@ -6,6 +6,10 @@ import (
 )
 
 func ParseRoute(message string) (agent AgentName, prompt string, explicit bool, err error) {
+	return ParseRouteWithAttachments(message, false)
+}
+
+func ParseRouteWithAttachments(message string, attachments bool) (agent AgentName, prompt string, explicit bool, err error) {
 	message = strings.TrimSpace(message)
 	if message == "" || !strings.HasPrefix(message, "/") {
 		return "", message, false, nil
@@ -16,7 +20,7 @@ func ParseRoute(message string) (agent AgentName, prompt string, explicit bool, 
 	}
 	name := AgentName(strings.ToLower(strings.TrimPrefix(fields[0], "/")))
 	if name == AgentDefault {
-		if len(fields) > 1 {
+		if len(fields) > 1 || attachments {
 			return "", "", true, fmt.Errorf("/%s does not accept a message", AgentDefault)
 		}
 		return AgentDefault, "", true, nil
@@ -30,7 +34,7 @@ func ParseRoute(message string) (agent AgentName, prompt string, explicit bool, 
 	if agent == "" {
 		return "", message, false, nil
 	}
-	if len(fields) == 1 {
+	if len(fields) == 1 && !attachments {
 		return "", "", true, fmt.Errorf("message is required after /%s", agent)
 	}
 	return agent, strings.TrimSpace(strings.TrimPrefix(message, fields[0])), true, nil

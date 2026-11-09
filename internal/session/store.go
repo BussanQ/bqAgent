@@ -32,6 +32,7 @@ const (
 )
 
 type Meta struct {
+	ForkedFrom          *ForkOrigin   `json:"forked_from,omitempty"`
 	LastTurnOutcome     *turn.Outcome `json:"last_turn_outcome,omitempty"`
 	FastMode            bool          `json:"fast_mode,omitempty"`
 	ID                  string        `json:"id"`
@@ -116,9 +117,10 @@ type TranscriptProvenance struct {
 }
 
 type Session struct {
-	store *Store
-	meta  Meta
-	dir   string
+	contexts []ContextBoundary
+	store    *Store
+	meta     Meta
+	dir      string
 }
 
 func NewStore(workspaceRoot string, configured ...Options) *Store {
@@ -214,7 +216,11 @@ func (s *Store) Open(id string) (*Session, error) {
 	} else if filepath.Clean(meta.WorkspaceRoot) != s.workspaceRoot {
 		return nil, fmt.Errorf("%w: session %q belongs to %q, current workspace is %q", ErrWorkspaceMismatch, canonicalID, meta.WorkspaceRoot, s.workspaceRoot)
 	}
-	return &Session{store: s, meta: meta, dir: dir}, nil
+	saved := &Session{store: s, meta: meta, dir: dir}
+	if err := saved.RefreshContexts(); err != nil {
+		return nil, err
+	}
+	return saved, nil
 }
 
 // Delete removes one validated session owned by this store's workspace.
@@ -293,7 +299,7 @@ func (session *Session) Dir() string {
 }
 
 func (session *Session) MessagesPath() string {
-	return filepath.Join(session.Dir(), "messages.jsonl")
+	return filepath.Join(session.ContextDir(), "messages.jsonl")
 }
 
 func (session *Session) OutputPath() string {
@@ -301,13 +307,13 @@ func (session *Session) OutputPath() string {
 }
 
 func (session *Session) CheckpointPath() string {
-	return filepath.Join(session.Dir(), "context_checkpoint.json")
+	return filepath.Join(session.ContextDir(), "context_checkpoint.json")
 }
 
 // WorkingMessagesPath is the full-mode snapshot and the legacy compact path.
 // Compact sessions now persist both the journal and working context in MessagesPath.
 func (session *Session) WorkingMessagesPath() string {
-	return filepath.Join(session.Dir(), "working_messages.jsonl")
+	return filepath.Join(session.ContextDir(), "working_messages.jsonl")
 }
 
 func (session *Session) TranscriptMode() TranscriptMode {

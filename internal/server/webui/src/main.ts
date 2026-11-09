@@ -1,13 +1,25 @@
+import { copyText } from "./clipboard";
+import { TurnFileEdits } from "./file-edits";
+import { renderQueueDelivery } from "./queue-delivery";
+import { ClearContextRequests, clearDivider, clearRefusal, parseClear } from "./clear-context";
+import { requestRewind, rewindButton } from "./rewind";
+import { ForkRequests, forkSourceMarker, replyAnchor } from "./fork";
+import type { SentAttachments } from "./attachments";
+import type { ForkAction, ForkOrigin } from "./types";
+import type { RewindAction } from "./types";
 import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_VALUES, REASONING_EFFORT_LABELS, normalizeReasoningEffort } from "./reasoning-effort";
 import "@awesome.me/webawesome/dist/styles/themes/default.css";
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "./styles.css";
 import { initConversationLayout } from "./conversation-layout";
 import { errorMessage, parseJSONEvent } from "./api";
-import { acpPermissionTitle, formatACPPermissionInput, isRejectPermissionOption } from "./acp-permission";
-import { ATTACHMENT_LIMITS, dataTransferHasFiles, showTemporaryError, splitDroppedFiles, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
+import { hasBlockingPrompt, renderHistoricalPrompt, settleAgentPrompt, showAgentPrompt } from "./acp-permission";
+import { ATTACHMENT_LIMITS, dataTransferHasFiles, restorePendingAttachments, showTemporaryError, snapshotPendingAttachments, splitDroppedFiles, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
 import { complexTaskNotice, formatFirstTokenLatency, formatGenerationSpeed, historyAssistantView, normalizeHistoryMessages } from "./chat-rendering";
 import { chatModePlaceholder, normalizeChatMode } from "./chat-mode";
+import { builtinAgent, SingleAgentPicker } from "./single-agent";
+import { AgentModelPicker, type AgentModelCatalog, type AgentTurnSelection, type ModelPick } from "./agent-models";
+import { AgentPreferenceWrites, clearAgentDraft, readAgentDraft, recordFirstAgentTurn, saveResponderDraft } from "./agent-drafts";
 import { formatConversationTime } from "./conversations";
 import { addableGroupParticipants, canRemoveGroupParticipant, groupMentionQuery, matchingGroupParticipants, normalizeConversationType, replaceGroupMention, shouldCloseCoordinatorSegment, shouldRenderFinalReply, type MentionQuery } from "./group-chat";
 import { byId, eventElement } from "./dom";
@@ -15,18 +27,24 @@ import { createIcon, iconMarkup, setIconButtonLabel } from "./icons";
 import { renderMarkdown } from "./markdown";
 import { waitForModelSelection } from "./model-selection";
 import { initParticleField, redrawParticleField, refreshParticleCapability, refreshParticlePalette } from "./particles";
-import { SSEBuffer, MessageSnapshots } from "./stream";
+import { MessageSnapshots } from "./stream";
+import { renderAgentPlan } from "./external-plan";
+import { renderAgentSummary } from "./external-summary";
+import { ExternalTimelineView, type ExternalPlanEvent, type ExternalSummaryEvent, type ExternalTextEvent } from "./external-timeline";
+import { clearChatViewData, followTurn, readChatDraft, rememberTurn, saveChatDraft, turnBookmark, TurnViewer } from "./turn-replay";
 import { StreamRenderQueue } from "./stream-render";
 import { ContextProgress } from "./context-progress";
+import { AgentContextMeter, type AgentContextUsage } from "./context-usage";
 import { initialTheme } from "./theme";
 import { isTaskUpdatedEvent, renderTaskPanel, TaskProgress } from "./task-progress";
-import { inputKindForKey, isInputAppliedEvent, TURN_INPUT_STATE_LABELS, TurnInputSession, type TurnInputKind } from "./turn-input";
-import { restoredToolPayload, type ToolSegment } from "./tool-status";
-import { updateToolTimeline, updateToolGroupSummary, type ToolCards, type ToolTimeline } from "./tool-timeline";
+import { busyInputActions, inputKindForKey, isInputAppliedEvent, nativeInputOption, TURN_INPUT_STATE_LABELS, TurnInputSession, type TurnInputKind } from "./turn-input";
+import { restoredToolPayload } from "./tool-status";
+import { updateToolTimeline, updateToolGroupSummary, type ToolCards, type ToolTimeline, type ToolTimelineSegment } from "./tool-timeline";
 import type { SentFile, SentImage } from "./attachments";
 import type { ACPPermissionPayload, ChatMode, ConversationHistory, ConversationMessage, ConversationSummary, ConversationsResponse, ConversationType, GenerationMetrics, GroupEventPayload, GroupInfo, MessageSnapshot, PendingFile, PendingInputPayload, PendingImage, ReasoningEffort, ToolEventPayload, WebUIDoneEvent } from "./types";
-import { createSlashCommands } from "./slash-commands";
+import { busyCommandContext, createSlashCommands } from "./slash-commands";
 import { APIClient, isCancellation } from "./api-client";
+import { CommandQueue, type CommandQueueSnapshot } from "./command-queue";
 import { createAuthController } from "./auth-controller";
 import { createProviderController } from "./provider-controller";
 import { createWorkspaceController } from "./workspace-controller";
@@ -44,6 +62,11 @@ import { createDoctorController } from "./doctor-controller";
   const conversationContextMenu = byId<HTMLDivElement>("conversation-context-menu");
   const conversationDelete = byId<HTMLButtonElement>("conversation-delete");
   const input = byId<HTMLTextAreaElement>("input");
+  const agentPicker = new SingleAgentPicker(byId<HTMLSelectElement>("chat-agent"), () => {
+    saveResponderDraft(modelScope(), agentPicker.pendingAgent);
+    refreshAgentControls();
+  });
+  const agentPickerLabel = byId<HTMLLabelElement>("agent-picker");
   const groupBar = byId<HTMLDivElement>("group-bar");
   const groupParticipants = byId<HTMLDivElement>("group-participants");
   const groupMemberControls = byId<HTMLDivElement>("group-member-controls");
@@ -59,6 +82,8 @@ import { createDoctorController } from "./doctor-controller";
   const modeRunBtn = byId<HTMLButtonElement>("mode-run");
   const modeAskBtn = byId<HTMLButtonElement>("mode-ask");
   const uploadFileBtn = byId<HTMLButtonElement>("upload-file");
+  const uploadImageBtn = byId<HTMLButtonElement>("upload-image");
+  const imageInput = byId<HTMLInputElement>("image-input");
   const fileInput = byId<HTMLInputElement>("file-input");
   const serverFilePath = byId<HTMLInputElement>("server-file-path");
   const addServerPathBtn = byId<HTMLButtonElement>("add-server-path");
@@ -75,10 +100,13 @@ import { createDoctorController } from "./doctor-controller";
   const turnInputActions = byId<HTMLElement>("turn-input-actions");
   const steerBtn = byId<HTMLButtonElement>("steer-btn");
   const followUpBtn = byId<HTMLButtonElement>("followup-btn");
+  const queueSendBtn = byId<HTMLButtonElement>("queue-send-btn");
   const composerHints = byId<HTMLElement>("composer-hints");
   const themeToggle = byId<HTMLButtonElement>("theme-toggle");
   const statusEl = byId<HTMLDivElement>("status");
   var conversationLoadID = 0;
+  let listRevision = 0;
+  let listTimer: ReturnType<typeof setTimeout> | undefined;
   var conversationScopeEpoch = 0;
   const taskPanel = byId<HTMLElement>("task-panel");
   function taskScope(): string { return String(conversationScopeEpoch); }
@@ -96,11 +124,18 @@ import { createDoctorController } from "./doctor-controller";
   var currentGroup: GroupInfo | null = null;
   var mentionQuery: MentionQuery | null = null;
   var busy = false;
+  var runningExternalAgent: string | undefined;
+  let runningModelRevision: symbol | undefined;
+  let runningSelection: AgentTurnSelection | undefined;
+  const nativeInputKinds = new Set<TurnInputKind>();
   var streamRender: StreamRenderQueue | null = null;
   window.addEventListener("beforeunload", () => streamRender?.dispose(), { once: true });
+  const viewer = new TurnViewer();
+  let navigation = 0;
   var currentTurnId = "";
   var currentController: AbortController | null = null;
   var stopRequested = false;
+  let webTurnStarted = false, stopOnStart = false;
   var turnInputs: TurnInputSession | null = null;
   var preparingSend = false;
   var pendingImages: PendingImage[] = [];
@@ -108,6 +143,7 @@ import { createDoctorController } from "./doctor-controller";
   var pendingFiles: PendingFile[] = [];
   var pendingFileReads: Promise<void>[] = [];
   var nextAttachmentID = 1;
+  const attachmentPage = createTurnId() + "-";
   var attachmentErrorTimer: ReturnType<typeof setTimeout> | 0 = 0;
   var ATTACHMENT_ERROR_TIMEOUT_MS = 4000;
   var MAX_PENDING_FILES = ATTACHMENT_LIMITS.maxFiles;
@@ -115,6 +151,39 @@ import { createDoctorController } from "./doctor-controller";
   var MAX_PENDING_TOTAL_FILE_BYTES = ATTACHMENT_LIMITS.maxTotalFileBytes;
 
   const api = new APIClient();
+  const contextMeter = new AgentContextMeter(byId<HTMLDetailsElement>("context-usage"));
+  const preferenceAPI = new APIClient();
+  preferenceAPI.onUnauthorized = () => api.onUnauthorized();
+  const preferenceWrites = new AgentPreferenceWrites();
+  let preferenceEpoch = new AbortController();
+  const clearRequests = new ClearContextRequests(api, createTurnId);
+  const forkRequests = new ForkRequests(api,createTurnId);
+  const forkDraftMedia = new Map<string,SentAttachments>();
+  let forkNavigation: { workspace: string; from: string; to: string } | undefined;
+  let renderedContext: { workspace: string; id: string; number: number } | undefined;
+  async function readAgentModels(agent: string, signal: AbortSignal, options?: Record<string, string>): Promise<AgentModelCatalog> {
+    const scope = modelScope();
+    const query = new URLSearchParams({ agent, session_id: sessionId, ...options });
+    const url = workspaceController.workspaceScopedURL("/api/v1/webui/agent-models?" + query);
+    await preferenceWrites.settled(JSON.stringify([workspaceController.currentWorkspace?.id,agent]));
+    const result = await api.json<AgentModelCatalog>(url, { signal });
+    if (!options?.model && !signal.aborted) contextMeter.observe(scope, agent, result.context_usage);
+    return result;
+  }
+  function rememberAgentPick(agent: string, pick: ModelPick): void {
+    const workspace = workspaceController.currentWorkspace?.id, signal = preferenceEpoch.signal;
+    const url = workspaceController.workspaceScopedURL("/api/v1/webui/agent-models?" + new URLSearchParams({ agent, session_id: sessionId }));
+    void preferenceWrites.write(JSON.stringify([workspace,agent]), async () => {
+      await preferenceAPI.json(url, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(pick), signal, keepalive:true });
+    }).catch(error => {
+      if (!isCancellation(error) && workspace === workspaceController.currentWorkspace?.id) setAttachmentError("模型偏好保存失败：" + errorMessage(error));
+    });
+  }
+  const agentModels = new AgentModelPicker(byId("agent-model-controls"), byId("agent-model-select"), byId("agent-model-input"),
+    byId("agent-model-retry"), byId("agent-effort-select"),
+    (agent, signal, model) => readAgentModels(agent, signal, model ? { model } : undefined),
+    (agent, signal) => readAgentModels(agent, signal, { view: "capabilities" }),
+    () => { if (busy) renderTurnInputControls(true); }, rememberAgentPick, byId("agent-service-tier"), byId("agent-interaction-mode"));
   const providerController = createProviderController(api, {
     get statusEl() { return statusEl; },
     get sessionId() { return sessionId; },
@@ -132,10 +201,18 @@ import { createDoctorController } from "./doctor-controller";
     get sessionId() { return sessionId; },
     set sessionId(value) { sessionId = value; },
     get busy() { return busy; },
+    get attachmentsEnabled() { return canAttach(); },
     get pendingFiles() { return pendingFiles; },
     get MAX_PENDING_FILES() { return MAX_PENDING_FILES; },
     get MAX_PENDING_TOTAL_FILE_BYTES() { return MAX_PENDING_TOTAL_FILE_BYTES; },
-    setConversationType: (...args) => setConversationType(...args),
+    setConversationType: (...args) => {
+      void agentPicker.loadWorkspace(loadAvailableGroup).then(refreshAgentControls);
+      if (!sessionId) {
+        agentPicker.restore(undefined, readAgentDraft(modelScope()).responder);
+        input.value = readChatDraft(workspaceController.currentWorkspace?.id || "", "new");
+      }
+      setConversationType(...args);
+    },
     refreshConversations: (...args) => refreshConversations(...args),
     loadRuntimeModel: (...args) => providerController.loadRuntimeModel(...args),
     formatBytes: (...args) => formatBytes(...args),
@@ -146,13 +223,50 @@ import { createDoctorController } from "./doctor-controller";
     setChatMode: (...args) => setChatMode(...args),
     emptyMarkup: (...args) => emptyMarkup(...args),
   });
+  const commandQueue = new CommandQueue(byId("command-queue"), api, {
+    turn: () => currentTurnId,
+    draft: () => input.value,
+    setDraft: text => { input.value = text; persistComposer(); autoGrow(); },
+    chooseBuiltin: () => agentPicker.selectNext(builtinAgent),
+    restoreSelection: (agent, picks) => agentModels.restoreQueuedSelection(agent, picks),
+    newID: createTurnId, notify: setAttachmentError,
+    watch: id => { if (!busy) void restoreTurn(id, conversationLoadID, true); },
+    mediaIDs: () => [...pendingImages, ...pendingFiles].map(item => attachmentPage + item.id),
+    captureMedia: () => {
+      if ([...pendingImages, ...pendingFiles].some(item => item.loading)) throw new Error("正在读取附件，请稍后发送。");
+      return snapshotPendingAttachments(pendingImages,pendingFiles);
+    },
+    removeMedia: ids => {
+      pendingImages = pendingImages.filter(item => {
+        if (!ids.includes(attachmentPage + item.id)) return true;
+        URL.revokeObjectURL(item.objectURL);
+        return false;
+      });
+      pendingFiles = pendingFiles.filter(item => !ids.includes(attachmentPage + item.id));
+      renderPendingAttachments();
+    },
+    restoreMedia: payload => {
+      const restored = restorePendingAttachments(payload, () => nextAttachmentID++);
+      pendingImages.push(...restored.images);
+      pendingFiles.push(...restored.files);
+      renderPendingAttachments();
+    },
+  });
   let explorerInitialized = false;
   const doctorController = createDoctorController(api, url => workspaceController.workspaceScopedURL(url));
   const auth = createAuthController(api, async () => {
+    preferenceAPI.authenticated();
     if (!explorerInitialized) { workspaceController.initializeWorkspaceExplorer(); initParticleField(); explorerInitialized = true; }
     input.disabled = true; sendBtn.disabled = true;
     await workspaceController.initializeWorkspaceSelection(); autoGrow();
   }, () => {
+    preferenceAPI.suspend();
+    preferenceEpoch.abort(); preferenceEpoch = new AbortController();
+    clearChatViewData();
+    contextMeter.configure("", "");
+    forkDraftMedia.clear(); forkNavigation = undefined;
+    commandQueue.reset();
+    agentModels.configure("", "", false);
     slashCommands.close(); doctorController.cancel(); providerController.cancel(); workspaceController.cancel(); currentController?.abort(); conversationLoadID++;
     clearPendingAttachments(); thread.textContent = ""; conversationList.textContent = ""; input.value = "";
     input.disabled = true; sendBtn.disabled = true;
@@ -318,10 +432,10 @@ import { createDoctorController } from "./doctor-controller";
       closeMentionMenu();
     }
     renderGroupBar();
+    refreshAgentControls();
   }
 
   function setNewConversationMenu(open: boolean): void {
-    open = Boolean(open) && !busy;
     conversationNewMenu.hidden = !open;
     conversationNew.setAttribute("aria-expanded", open ? "true" : "false");
   }
@@ -393,6 +507,12 @@ import { createDoctorController } from "./doctor-controller";
       time.className = "conversation-time";
       time.textContent = formatConversationTime(conversation.updated_at);
       button.appendChild(title);
+      if (conversation.active_turn_id) {
+        const label = document.createElement("span");
+        label.className = "conversation-type-badge";
+        label.textContent = "生成中";
+        button.appendChild(label);
+      }
       if (conversation.conversation_type === "group") {
         var badge = document.createElement("span");
         badge.className = "conversation-type-badge";
@@ -437,7 +557,11 @@ import { createDoctorController } from "./doctor-controller";
       conversationLoadID++;
       conversations = conversations.filter(function (item) { return item.id !== conversation.id; });
       if (sessionId === conversation.id) {
+        clearAgentDraft(modelScope());
+        agentPicker.restore();
         workspaceController.setCurrentWorkspaceSession("");
+        agentPicker.restore(undefined, readAgentDraft(modelScope()).responder);
+        input.value = readChatDraft(workspaceController.currentWorkspace?.id || "", "new");
         setChatMode("run");
         setConversationType("default", null);
         clearPendingAttachments();
@@ -457,14 +581,25 @@ import { createDoctorController } from "./doctor-controller";
   }
 
   async function refreshConversations(loadCurrent: boolean): Promise<void> {
-    var loadID = ++conversationLoadID;
+    var loadID = loadCurrent ? ++conversationLoadID : conversationLoadID;
+    const revision = ++listRevision;
+    clearTimeout(listTimer);
     try {
       var response = await api.request(workspaceController.workspaceScopedURL("/api/v1/webui/conversations"), { headers: { "Accept": "application/json" } });
       var payload = await api.readJSON<ConversationsResponse>(response);
       if (!response.ok) throw new Error(payload.error || "读取对话列表失败");
-      if (loadID !== conversationLoadID) return;
+      if (loadID !== conversationLoadID || revision !== listRevision) return;
       conversations = payload.conversations || [];
       renderConversationList();
+      if (conversations.some(c => c.active_turn_id)) {
+        listTimer = setTimeout(() => { if (!api.suspended && !document.hidden) void refreshConversations(false); }, 5000);
+      }
+      if (loadCurrent && !busy) {
+        const workspace = workspaceController.currentWorkspace?.id || "";
+        const bookmarked = turnBookmark(workspace);
+        if (bookmarked && await restoreTurn(bookmarked, loadID)) return;
+        if (loadID !== conversationLoadID) return;
+      }
       if (loadCurrent && sessionId && conversations.some(function (conversation) { return conversation.id === sessionId; })) await openConversation(sessionId);
     } catch (error) { if (isCancellation(error)) return;
       if (loadID !== conversationLoadID) return;
@@ -473,32 +608,24 @@ import { createDoctorController } from "./doctor-controller";
   }
 
   async function openConversation(id: string): Promise<void> {
-    if (busy || !id) return;
+    if (!id || preparingSend || (busy && sessionId === id)) return;
+    const nav = ++navigation;
+    await leaveVisibleTurn();
+    if (nav !== navigation) return;
     conversationScopeEpoch++;
     clearTaskProgress();
     var loadID = ++conversationLoadID;
     statusEl.textContent = "正在读取历史";
     try {
+      const active = await api.json<{turn_id: string}>(workspaceController.workspaceScopedURL("/api/v1/webui/turns?session_id=" + encodeURIComponent(id)));
+      if (loadID !== conversationLoadID) return;
+      if (active.turn_id && await restoreTurn(active.turn_id, loadID)) return;
+      if (loadID !== conversationLoadID) return;
       var response = await api.request(workspaceController.workspaceScopedURL("/api/v1/webui/conversations/" + encodeURIComponent(id)), { headers: { "Accept": "application/json" } });
       var payload = await api.readJSON<ConversationHistory & { error?: string }>(response);
       if (!response.ok) throw new Error(payload.error || "读取历史失败");
       if (loadID !== conversationLoadID) return;
-      workspaceController.setCurrentWorkspaceSession(payload.id || id);
-      setConversationType(payload.conversation_type, payload.group || null);
-      setChatMode(payload.mode);
-      thread.innerHTML = "";
-      taskProgress.restore(payload.task, taskScope());
-      renderTaskPanel(taskPanel, taskProgress.state);
-      normalizeHistoryMessages(payload.messages || []).forEach(function (message) {
-        var bubble = addMessage(message.role, message.sender, message.kind);
-        if (message.role === "assistant") {
-          renderRestoredAssistant(bubble, message);
-        } else {
-          renderUserMessage(bubble, message.content, [], message.files || []);
-        }
-      });
-      if (!payload.messages || !payload.messages.length) thread.innerHTML = emptyMarkup();
-      renderConversationList();
+      renderHistory(payload, id);
       providerController.loadRuntimeModel();
       statusEl.textContent = "已恢复历史会话";
       statusEl.classList.remove("error");
@@ -506,6 +633,106 @@ import { createDoctorController } from "./doctor-controller";
     } catch (error) { if (isCancellation(error)) return;
       statusEl.textContent = errorMessage(error);
       statusEl.classList.add("error");
+    }
+  }
+
+  function persistComposer(): void {
+    saveChatDraft(workspaceController.currentWorkspace?.id || "", sessionId || (currentTurnId ? "turn:" + currentTurnId : "new"), input.value);
+  }
+
+  async function leaveVisibleTurn(): Promise<void> {
+    if (!busy) return;
+    persistComposer();
+    const workspace = workspaceController.currentWorkspace?.id || "";
+    if (turnBookmark(workspace) === currentTurnId) rememberTurn(workspace,"");
+    await viewer.detach();
+  }
+
+  function deliveryBubble(id: string) {
+    return Array.from(thread.querySelectorAll<HTMLElement>("[data-queue-delivery]")).find(bubble => bubble.dataset.queueDelivery === id);
+  }
+
+  function showQueueDelivery(message: ConversationMessage, session: string) {
+    if (!message.delivery) return;
+    const bubble = deliveryBubble(message.delivery.id) || addMessage("user");
+    renderQueueDelivery(bubble,message,(id,index) => workspaceController.workspaceScopedURL("/api/v1/webui/command-queue?" +
+      new URLSearchParams({ session_id:session, id, view:"attachment", source:"handoff", index:String(index) })));
+  }
+
+  function renderHistory(payload: ConversationHistory, id: string, preservePicker = false): void {
+    const sameChat = sessionId === (payload.id || id);
+    const sameContext = sameChat && renderedContext?.number === (payload.context_number || 0);
+    renderedContext = { workspace: workspaceController.currentWorkspace?.id || "", id: payload.id || id, number: payload.context_number || 0 };
+    if (!sameChat) {
+      const ws = workspaceController.currentWorkspace?.id || "", to = payload.id || id;
+      if (forkNavigation?.workspace === ws && forkNavigation.from === sessionId && forkNavigation.to === to) {
+        if ([...pendingImages,...pendingFiles].some(item => item.loading)) throw new Error("附件仍在读取，请稍后从对话列表打开分支");
+        persistComposer();
+        if (pendingImages.length || pendingFiles.length) forkDraftMedia.set(JSON.stringify([ws,sessionId]),snapshotPendingAttachments(pendingImages,pendingFiles));
+      }
+      clearPendingAttachments();
+      const key = JSON.stringify([ws,to]), media = forkDraftMedia.get(key);
+      if (media) {
+        const restored = restorePendingAttachments(media,() => nextAttachmentID++);
+        pendingImages.push(...restored.images); pendingFiles.push(...restored.files);
+        forkDraftMedia.delete(key); renderPendingAttachments();
+      }
+    }
+    workspaceController.setCurrentWorkspaceSession(payload.id || id);
+    input.value = readChatDraft(workspaceController.currentWorkspace?.id || "",sessionId);
+    autoGrow();
+    if (preservePicker && sameContext) agentPicker.observe(payload.active_agent || builtinAgent);
+    else agentPicker.restore(payload.active_agent || builtinAgent, readAgentDraft(modelScope()).responder);
+    setConversationType(payload.conversation_type, payload.group || null);
+    setChatMode(payload.mode);
+    thread.innerHTML = "";
+    taskProgress.restore(payload.task, taskScope());
+    renderTaskPanel(taskPanel, taskProgress.state);
+    const edits=new TurnFileEdits(), turnStacks=new Map<string,HTMLElement>();
+    normalizeHistoryMessages(payload.messages || []).forEach(function (message) {
+      if (message.kind === "context_clear") { thread.append(clearDivider(message.content)); return; }
+      if (message.delivery) { showQueueDelivery(message,id); return; }
+      var bubble = addMessage(message.role, message.sender, message.kind);
+      if (message.role === "assistant") {
+        for (const tool of message.tools || []) {
+          edits.observe(tool);
+          if (tool.turn_id && bubble.parentElement) turnStacks.set(tool.turn_id,bubble.parentElement);
+        }
+        if (message.external_turn && bubble.parentElement) turnStacks.set(message.external_turn,bubble.parentElement);
+        renderRestoredAssistant(bubble, message);
+        if (message.anchor) markReply(bubble,message.anchor,message.fork);
+      } else {
+        const images = (message.images || []).map(key => workspaceController.workspaceScopedURL("/api/v1/webui/conversations/" + encodeURIComponent(id) + "?image=" + encodeURIComponent(key)));
+        const content = images.length ? message.content.replace(/(?:^|\n)\[图片\]$/, "") : message.content;
+        renderUserMessage(bubble, content, [], message.files || [], images);
+        if (message.rewind) addRewindControl(bubble.parentElement!, message.rewind);
+      }
+    });
+    for (const [turn,stack] of turnStacks) edits.render(turn,stack);
+    if (!payload.messages || !payload.messages.length) thread.innerHTML = emptyMarkup();
+    if (payload.forked_from) {
+      const marker = forkSourceMarker(payload.forked_from, origin => void jumpToForkSource(origin));
+      const after = replyAnchor(thread,payload.forked_from.target)?.closest(".msg");
+      if (after) after.after(marker); else thread.prepend(marker);
+    }
+    if (payload.rewind_receipt) addRewindControl(thread, payload.rewind_receipt, true);
+    renderConversationList();
+  }
+
+  async function restoreTurn(id: string, loadID: number, preservePicker = false): Promise<boolean> {
+    const workspace = workspaceController.currentWorkspace?.id || "";
+    const url = workspaceController.workspaceScopedURL("/api/v1/webui/turns?view=history&turn_id=" + encodeURIComponent(id));
+    try {
+      const base = await api.json<{ history: ConversationHistory | null }>(url);
+      if (loadID !== conversationLoadID || busy) return true;
+      if (base.history) renderHistory(base.history, base.history.id || "", preservePicker);
+      else thread.textContent = "";
+      void watchTurn(id, "", undefined);
+      return true;
+    } catch (err) {
+      if (![404,410].includes((err as {status?: number}).status || 0)) throw err;
+      if (turnBookmark(workspace) === id) rememberTurn(workspace, "");
+      return false;
     }
   }
 
@@ -522,107 +749,52 @@ import { createDoctorController } from "./doctor-controller";
     removeEmpty();
     var msg = document.createElement("div");
     msg.className = "msg " + role + " msg-enter";
-    var displaySender = sender || (role === "user" ? "你" : "bqagent");
-    if (role === "assistant" && displaySender !== "bqagent") msg.classList.add("participant");
     if (kind === "error") msg.classList.add("participant-error");
     var avatar = document.createElement("div");
     avatar.className = "avatar";
     avatar.setAttribute("aria-hidden", "true");
-    if (role === "user") avatar.textContent = "你";
-    else if (displaySender !== "bqagent") avatar.textContent = displaySender.slice(0, 2).toUpperCase();
-    else avatar.appendChild(createIcon("bot"));
     var stack = document.createElement("div");
     stack.className = "message-stack";
     var label = document.createElement("div");
     label.className = "message-label";
-    label.textContent = role === "user" ? "你" : (displaySender === "bqagent" && conversationType === "group" ? "bqagent · 调度汇总" : displaySender);
     var bubble = document.createElement("div");
     bubble.className = "bubble";
     msg.appendChild(avatar);
     stack.appendChild(label);
     stack.appendChild(bubble);
     msg.appendChild(stack);
+    setMessageSender(msg, role, sender);
     thread.appendChild(msg);
     if (streamRender) streamRender.schedule();
     else scrollToBottom();
     return bubble;
   }
 
+  function setMessageSender(msg: HTMLElement, role: string, sender?: string): void {
+    const user = role === "user";
+    const name = user ? "你" : sender || builtinAgent;
+    const external = !user && name !== builtinAgent;
+    msg.classList.toggle("participant", external);
+    msg.querySelector(".avatar")!.replaceChildren(user ? "你" : external ? name.slice(0, 2).toUpperCase() : createIcon("bot"));
+    msg.querySelector(".message-label")!.textContent = !user && !external && conversationType === "group" ? "bqagent · 调度汇总" : name;
+  }
+
   function addACPPermissionCard(payload: ACPPermissionPayload, pending: Record<string, HTMLElement>): void {
-    var bubble = addMessage("assistant", payload.agent || "外部 Agent");
-    bubble.classList.add("rendered", "acp-permission-card");
-
-    var heading = document.createElement("strong");
-    heading.className = "acp-permission-heading";
-    heading.textContent = "需要你的权限";
-    bubble.appendChild(heading);
-
-    var title = document.createElement("div");
-    title.className = "acp-permission-title";
-    title.textContent = acpPermissionTitle(payload.tool_call);
-    bubble.appendChild(title);
-
-    var inputText = formatACPPermissionInput(payload.tool_call && payload.tool_call.rawInput);
-    if (inputText) {
-      var inputPreview = document.createElement("pre");
-      inputPreview.className = "acp-permission-input";
-      inputPreview.textContent = inputText;
-      bubble.appendChild(inputPreview);
-    }
-
-    var actions = document.createElement("div");
-    actions.className = "acp-permission-actions";
-    var status = document.createElement("span");
-    status.className = "acp-permission-status";
-    payload.options.forEach(function (option) {
-      var button = document.createElement("button");
-      button.type = "button";
-      button.className = "ui-btn ui-btn-sm " + (isRejectPermissionOption(option.kind) ? "ui-btn-danger" : "ui-btn-primary");
-      button.textContent = option.name;
-      button.addEventListener("click", async function () {
-        var buttons = Array.prototype.slice.call(actions.querySelectorAll<HTMLButtonElement>("button")) as HTMLButtonElement[];
-        buttons.forEach(function (item) { item.disabled = true; });
-        status.textContent = "正在提交…";
-        try {
-          var response = await api.request("/api/v1/webui/acp/permissions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Accept": "application/json" },
-            body: JSON.stringify({
-              workspace_id: workspaceController.currentWorkspace ? workspaceController.currentWorkspace.id : "",
-              request_id: payload.request_id,
-              option_id: option.option_id
-            })
-          });
-          var result = await api.readJSON<{ accepted?: boolean; error?: string }>(response);
-          if (!response.ok || !result.accepted) throw new Error(result.error || "提交权限选择失败");
-          delete pending[payload.request_id];
-          bubble.classList.add("resolved");
-          status.textContent = "已选择：" + option.name;
-        } catch (error) { if (isCancellation(error)) return;
-          buttons.forEach(function (item) { item.disabled = false; });
-          status.textContent = errorMessage(error);
-          status.classList.add("error");
-        }
+    const workspace = workspaceController.currentWorkspace?.id || "";
+    showAgentPrompt(payload, pending, () => addMessage("assistant", payload.agent || "外部 Agent"), async (option, value, answers) => {
+      const response = await api.json<{ accepted?: boolean; error?: string }>("/api/v1/webui/acp/permissions", {
+        method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ workspace_id: workspace, request_id: payload.request_id, option_id: option, value, answers }),
       });
-      actions.appendChild(button);
+      if (!response.accepted) throw new Error(response.error || "提交 Agent 回答失败");
     });
-    bubble.appendChild(actions);
-    bubble.appendChild(status);
-    pending[payload.request_id] = bubble;
   }
 
   function expireACPPermissionCards(pending: Record<string, HTMLElement>): void {
-    Object.keys(pending).forEach(function (requestID) {
-      var bubble = pending[requestID];
-      Array.prototype.forEach.call(bubble.querySelectorAll("button"), function (button: HTMLButtonElement) { button.disabled = true; });
-      var status = bubble.querySelector<HTMLElement>(".acp-permission-status");
-      if (status) status.textContent = "请求已取消或失效";
-      bubble.classList.add("expired");
-      delete pending[requestID];
-    });
+    Object.keys(pending).forEach(id => settleAgentPrompt(pending, id));
   }
 
-  function renderUserMessage(bubble: HTMLDivElement, text: string, images: SentImage[], files: SentFile[]): void {
+  function renderUserMessage(bubble: HTMLDivElement, text: string, images: SentImage[], files: SentFile[], restored: string[] = []): void {
     bubble.textContent = "";
     if (text) {
       var textNode = document.createElement("div");
@@ -630,13 +802,15 @@ import { createDoctorController } from "./doctor-controller";
       textNode.textContent = text;
       bubble.appendChild(textNode);
     }
-    if (images && images.length) {
+    if (images.length || restored.length) {
       var gallery = document.createElement("div");
       gallery.className = "user-images";
-      images.forEach(function (image, index) {
+      const urls = images.map(image => "data:" + image.mime_type + ";base64," + image.data_base64).concat(restored);
+      urls.forEach(function (url, index) {
         var preview = document.createElement("img");
         preview.className = "user-image";
-        preview.src = "data:" + image.mime_type + ";base64," + image.data_base64;
+        if (restored.length) preview.loading = "lazy";
+        preview.src = url;
         preview.alt = "已发送图片 " + (index + 1);
         gallery.appendChild(preview);
       });
@@ -704,7 +878,7 @@ import { createDoctorController } from "./doctor-controller";
       remove.type = "button";
       remove.className = "attachment-remove";
       remove.innerHTML = iconMarkup("x");
-      remove.disabled = busy;
+      remove.disabled = !canAttach();
       remove.setAttribute("aria-label", "删除图片 " + (index + 1));
       remove.addEventListener("click", function () { removePendingImage(image.id); });
       var badge = document.createElement("span");
@@ -734,7 +908,7 @@ import { createDoctorController } from "./doctor-controller";
       remove.type = "button";
       remove.className = "attachment-remove";
       remove.innerHTML = iconMarkup("x");
-      remove.disabled = busy;
+      remove.disabled = !canAttach();
       remove.setAttribute("aria-label", "删除文件 " + file.name);
       remove.addEventListener("click", function () { removePendingFile(file.id); });
       item.appendChild(copy);
@@ -742,10 +916,17 @@ import { createDoctorController } from "./doctor-controller";
       attachmentTray.appendChild(item);
     });
     workspaceController.updateWorkspacePreviewAttachState();
+    if (busy) {
+      refreshModelControls();
+      renderTurnInputControls(true);
+      slashCommands.contextChanged();
+    }
   }
 
+  function canAttach(): boolean { return !busy || (conversationType !== "group" && chatMode === "run"); }
+
   function removePendingImage(id: number): void {
-    if (busy) return;
+    if (!canAttach()) return;
     pendingImages = pendingImages.filter(function (image) {
       if (image.id !== id) return true;
       URL.revokeObjectURL(image.objectURL);
@@ -755,7 +936,7 @@ import { createDoctorController } from "./doctor-controller";
   }
 
   function removePendingFile(id: number): void {
-    if (busy) return;
+    if (!canAttach()) return;
     pendingFiles = pendingFiles.filter(function (file) { return file.id !== id; });
     renderPendingAttachments();
   }
@@ -824,7 +1005,7 @@ import { createDoctorController } from "./doctor-controller";
   }
 
   function addWorkspacePath(value: string, size: number): boolean {
-    if (busy) return false;
+    if (!canAttach()) return false;
     clearAttachmentError();
     value = String(value || "").trim().replace(/\\/g, "/");
     if (!value) {
@@ -856,7 +1037,7 @@ import { createDoctorController } from "./doctor-controller";
   }
 
   function addServerPath(): void {
-    if (busy) return;
+    if (!canAttach()) return;
     var value = serverFilePath.value.trim();
     if (!addWorkspacePath(value, 0)) return;
     serverFilePath.value = "";
@@ -865,15 +1046,18 @@ import { createDoctorController } from "./doctor-controller";
   }
 
   function setAttachmentMenu(open: boolean): void {
-    open = Boolean(open) && !busy;
+    open = Boolean(open) && canAttach();
     if (open) setReasoningEffortMenu(false);
     attachmentMenu.hidden = !open;
     addAttachmentBtn.setAttribute("aria-expanded", open ? "true" : "false");
-    if (open) setTimeout(function () { (chatMode === "ask" ? modeAskBtn : modeRunBtn).focus(); }, 0);
+    if (open) setTimeout(function () { (busy ? uploadImageBtn : chatMode === "ask" ? modeAskBtn : modeRunBtn).focus(); }, 0);
   }
 
   function setChatMode(value: unknown): void {
     chatMode = conversationType === "group" ? "run" : normalizeChatMode(value);
+    thread.querySelectorAll<HTMLButtonElement>(".rewind-action, .fork-action").forEach(button => {
+      button.hidden = chatMode !== "run" || conversationType === "group";
+    });
     [modeRunBtn, modeAskBtn].forEach(function (button) {
       var selected = button.dataset.mode === chatMode;
       button.classList.toggle("selected", selected);
@@ -882,6 +1066,35 @@ import { createDoctorController } from "./doctor-controller";
     input.placeholder = conversationType === "group" ? "群聊模式：无 @ 由 bqagent 处理，@成员可定向交互" : chatModePlaceholder(chatMode);
     addAttachmentBtn.title = chatMode === "ask" ? "Ask 模式与附件" : "Run 模式与附件";
     addAttachmentBtn.setAttribute("aria-label", chatMode === "ask" ? "Ask 模式：选择模式或添加文件" : "Run 模式：选择模式或添加文件");
+    refreshAgentControls();
+  }
+
+  function refreshAgentControls(): void {
+    commandQueue.show(workspaceController.currentWorkspace?.id || "", sessionId);
+    agentPicker.configure(conversationType, chatMode, busy);
+    agentPickerLabel.hidden = conversationType === "group";
+    refreshModelControls();
+    if (busy) renderTurnInputControls(true);
+    slashCommands.contextChanged();
+  }
+
+  function modelScope(): string {
+    const workspace = workspaceController.currentWorkspace?.id || "";
+    return JSON.stringify([workspace, sessionId || null, sessionId ? displayedContextNumber(workspace, sessionId) : 0]);
+  }
+
+  function refreshModelControls(): void {
+    const target = busy ? busyRoute(input.value).agent : agentPicker.externalResponder(input.value.trim());
+    const agent = target === builtinAgent ? undefined : target;
+    const external = !!agent;
+    contextMeter.configure(modelScope(), agent || "", displayedContextNumber(workspaceController.currentWorkspace?.id || "",sessionId));
+    agentModels.configure(modelScope(), agent || "", busy, !!agent && !sessionId && agentPicker.allowsCustomModel(agent));
+    providerController.modelSelect.parentElement!.hidden = external;
+    reasoningEffortControl.hidden = external;
+    if (!busy) {
+      input.placeholder = conversationType === "group" ? "群聊模式：无 @ 由 bqagent 处理，@成员可定向交互"
+        : external ? "给 " + agent + " 发送消息" : chatModePlaceholder(chatMode);
+    }
   }
 
   function setReasoningEffort(value: unknown, persist: boolean): void {
@@ -927,9 +1140,12 @@ import { createDoctorController } from "./doctor-controller";
   }
 
   function renderRestoredAssistant(bubble: HTMLDivElement, message: ConversationMessage): void {
+    if (message.summary) { renderAgentSummary(bubble, message.summary, false); return; }
+    if (message.plan) { renderAgentPlan(bubble,message.plan,message.content); return; }
+    if (message.prompt) { renderHistoricalPrompt(bubble, message.sender || "外部 Agent", message.prompt); return; }
     var view = historyAssistantView(message);
     if (view.tools.length) {
-      var cards: ToolCards = {};
+      var cards: ToolCards = Object.create(null);
       view.tools.forEach(function (tool, index) {
         var payload = restoredToolPayload(tool, index);
         updateToolTimeline(bubble, cards, "tool_call", payload);
@@ -963,20 +1179,21 @@ import { createDoctorController } from "./doctor-controller";
   function setBusy(on: boolean): void {
     if (on) slashCommands.close();
     busy = on;
+    commandQueue.setSendActivity(on, false);
+    refreshAgentControls();
     sendBtn.disabled = !workspaceController.workspaceReady;
     sendBtn.classList.toggle("stop", on);
     sendBtn.title = on ? "停止生成" : "发送";
     sendBtn.setAttribute("aria-label", on ? "停止生成" : "发送");
     input.disabled = !workspaceController.workspaceReady;
-    input.placeholder = on ? "任务进行中：Enter 纠偏，Ctrl/Cmd + Enter 排队为后续任务" : "给 bqagent 发送消息，可粘贴或拖入图片和文件";
-    turnInputActions.hidden = !on;
-    composerHints.textContent = on ? "Enter 纠偏 · Ctrl/Cmd + Enter 排队后续 · 附件暂不支持中途发送" : "Enter 发送 · Shift + Enter 换行 · / 命令 · 支持 Markdown 与附件";
-    addAttachmentBtn.disabled = on;
-    uploadFileBtn.disabled = on;
+    renderTurnInputControls(on);
+    addAttachmentBtn.disabled = !canAttach();
+    uploadFileBtn.disabled = !canAttach();
+    uploadImageBtn.disabled = !canAttach();
     modeRunBtn.disabled = on;
     modeAskBtn.disabled = on;
-    serverFilePath.disabled = on;
-    addServerPathBtn.disabled = on;
+    serverFilePath.disabled = !canAttach();
+    addServerPathBtn.disabled = !canAttach();
     reasoningEffortToggle.disabled = on;
     reasoningEffortRange.disabled = on;
     providerController.modelSelect.disabled = on || providerController.runtimeModelOptions().length === 0;
@@ -1004,27 +1221,8 @@ import { createDoctorController } from "./doctor-controller";
   function autoGrow(): void {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 180) + "px";
-  }
-
-  function copyText(text: string): Promise<void> {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(text);
-    }
-    return new Promise<void>(function (resolve, reject) {
-      var helper = document.createElement("textarea");
-      helper.value = text;
-      helper.style.position = "fixed";
-      helper.style.opacity = "0";
-      document.body.appendChild(helper);
-      helper.select();
-      try {
-        document.execCommand("copy") ? resolve() : reject(new Error("copy failed"));
-      } catch (error) { if (isCancellation(error)) return;
-        reject(error);
-      } finally {
-        helper.remove();
-      }
-    });
+    refreshModelControls();
+    if (busy) renderTurnInputControls(true);
   }
 
   function addMessageMeta(bubble: HTMLDivElement, generation?: GenerationMetrics): void {
@@ -1158,11 +1356,11 @@ import { createDoctorController } from "./doctor-controller";
         if (text.trim() && (pendingImages.length || pendingFiles.length)) {
           setAttachmentError("附件暂不支持中途发送，已保留到下次发送；本次仅发送文字");
         }
-        if (text.trim()) { input.value = ""; autoGrow(); }
+        if (text.trim()) { input.value = ""; persistComposer(); autoGrow(); }
         return text;
       },
       getDraft: function () { return input.value; },
-      setDraft: function (text) { input.value = text; autoGrow(); },
+      setDraft: function (text) { input.value = text; persistComposer(); autoGrow(); },
       renderQueue: function (items) {
         turnInputQueue.textContent = "";
         items.forEach(function (item) {
@@ -1190,14 +1388,129 @@ import { createDoctorController } from "./doctor-controller";
     });
   }
 
-  function submitTurnInput(kind: TurnInputKind): void {
+  function busyRoute(text: string) {
+    return agentPicker.busyContext(text,runningExternalAgent,pendingImages.length + pendingFiles.length > 0);
+  }
+
+  function currentInputActions() {
+    const route = busyRoute(input.value.trimStart());
+    if (parseClear(input.value)) return { ...route, steer: false, followUp: false, queue: undefined };
+    const compact = agentModels.isCompactCommand(route.agent, route.query, agentPicker.supportsCompact(route.agent));
+    const attachments = !!(pendingImages.length || pendingFiles.length);
+    const nextTurnSelection = agentModels.hasNextTurnSelection(route.agent, runningModelRevision, runningSelection);
+    return { ...route, ...busyInputActions(route.query, route.agent, !!route.qualified, runningExternalAgent,
+      nativeInputKinds, compact, attachments, nextTurnSelection) };
+  }
+
+  let preparingQueuePick = false;
+  async function enqueueDraft(): Promise<void> {
+    if (preparingQueuePick || !busy || stopRequested || !currentTurnId) return;
+    const { agent, query, queue } = currentInputActions();
+    if (agent && agent !== builtinAgent && queue === "message") {
+      const text = input.value, turn = currentTurnId;
+      preparingQueuePick = true;
+      try {
+        if (!await agentModels.readyForSend(agent)) return;
+      } finally { preparingQueuePick = false; }
+      const current = currentInputActions();
+      if (!busy || stopRequested || turn !== currentTurnId || text !== input.value || current.agent !== agent || current.queue !== queue) return;
+    }
+    const attachments = pendingImages.length + pendingFiles.length > 0;
+    if (!agent || !queue || (!query.trim() && !attachments)) return;
+    if (attachments && queue === "compact") {
+      setAttachmentError("/compact 不接受附件，请先移除附件。");
+      return;
+    }
+    if (pendingImages.length && agent !== builtinAgent && (agentModels.supportsImages(agent) ?? (!sessionId ? agentPicker.supportsImages(agent) : undefined)) === false) {
+      setAttachmentError(agent + " 的当前接口不支持图片，请移除图片或切换 Agent。");
+      return;
+    }
+    if (queue === "compact" && agent === "codex" && query.trim().toLowerCase() !== "/compact") {
+      setAttachmentError("Codex 的 /compact 不接受附加说明。");
+      return;
+    }
+    if (queue === "message" && !agentModels.validFor(agent)) return;
+    const options = agent === builtinAgent ? { agent_effort: reasoningEffort === "auto" ? undefined : reasoningEffort } : agentModels.queueSelection(agent);
+    void commandQueue.enqueue(agent, queue === "message" ? input.value.trim() : query.trim(), queue === "message" ? options : undefined);
+  }
+
+  async function pickPlanCommand(text: string, view: {query: string; agent?: string; qualified?: boolean}): Promise<boolean> {
+    const scope = modelScope(), active = busy;
+    const result = await agentModels.pickPlanCommand(view.agent,view.query, () => modelScope() === scope && busy === active &&
+      input.value.trim() === text && (busy ? busyRoute(text) : agentPicker.commandContext(text)).agent === view.agent);
+    if (!result) return false;
+    if (result === "stale") return true;
+    if (result === "unknown") {
+      setAttachmentError("未能确认当前 Agent 的规划模式，请刷新模型目录。");
+      return true;
+    }
+    if (result === "unavailable") {
+      setAttachmentError("当前 Agent 接口未提供规划模式。");
+      return true;
+    }
+    if (view.qualified && view.agent) agentPicker.selectNext(view.agent);
+    input.value = "";
+    input.dispatchEvent(new Event("input"));
+    slashCommands.close();
+    statusEl.classList.remove("error");
+    statusEl.textContent = "下一条消息将使用规划模式";
+    return true;
+  }
+
+  async function submitTurnInput(kind: TurnInputKind, nativeOnly = false): Promise<void> {
     if (!busy || !currentTurnId || !turnInputs || stopRequested) return;
-    void turnInputs.submit(kind);
+    const route = busyRoute(input.value.trim());
+    if (route.query.trim() === "/plan" && await pickPlanCommand(input.value.trim(),route)) return;
+    if (!busy || !currentTurnId || !turnInputs || stopRequested) return;
+    const clear = parseClear(input.value);
+    if (clear) { setAttachmentError(clearRefusal(clear.args, chatMode, conversationType, !!(pendingImages.length || pendingFiles.length), true)!); return; }
+    const actions = currentInputActions();
+    if (!nativeOnly && actions.queue && (kind === "follow_up" || !actions.steer)) {
+      enqueueDraft();
+      return;
+    }
+    if (kind === "steering" ? actions.steer : actions.followUp) void turnInputs.submit(kind);
+    else if (input.value.trim()) setAttachmentError("当前回复结束后可以发送这条命令。");
+  }
+
+  function renderTurnInputControls(on: boolean): void {
+    const actions = currentInputActions();
+    turnInputActions.hidden = !on || (!actions.queue && !actions.steer && !actions.followUp);
+    steerBtn.hidden = !actions.steer;
+    followUpBtn.hidden = !actions.followUp;
+    followUpBtn.textContent = runningExternalAgent ? "本轮追加" : "排队后续";
+    followUpBtn.title = runningExternalAgent ? "通过 Agent 原生接口追加到本轮" : "作为后续任务排队 (Ctrl/Cmd + Enter)";
+    queueSendBtn.hidden = !actions.queue;
+    queueSendBtn.disabled = stopRequested || (!actions.query.trim() && !pendingImages.length && !pendingFiles.length) ||
+      [...pendingImages,...pendingFiles].some(item => item.loading);
+    queueSendBtn.textContent = actions.queue === "compact" ? "排队压缩" : "排队发送";
+    if (!on) {
+      composerHints.textContent = "Enter 发送 · Shift + Enter 换行 · / 命令 · 支持 Markdown 与附件";
+    } else if (parseClear(input.value)) {
+      composerHints.textContent = "请先停止或等待回复结束后再清空上下文";
+    } else if (actions.queue === "compact") {
+      composerHints.textContent = "Enter 排队压缩 · Shift + Enter 换行";
+    } else if (actions.queue && !actions.steer) {
+      input.placeholder = "给 " + actions.agent + " 写下一条消息";
+      composerHints.textContent = "Enter 排队发送 · Shift + Enter 换行";
+    } else if (nativeInputKinds.size) {
+      input.placeholder = "给正在回答的 " + runningExternalAgent + " 补充指令";
+      composerHints.textContent = "Enter 纠偏 · Ctrl/Cmd + Enter 排队发送";
+    } else if (runningExternalAgent) {
+      input.placeholder = runningExternalAgent + " 正在回答，可先起草下一条消息";
+      composerHints.textContent = "外部 Agent 回复期间可停止生成";
+    } else {
+      input.placeholder = "任务进行中：Enter 纠偏，Ctrl/Cmd + Enter 排队为后续任务";
+      composerHints.textContent = "Enter 纠偏 · Ctrl/Cmd + Enter 排队后续 · 附件暂不支持中途发送";
+    }
   }
 
   async function stopCurrentTurn(): Promise<void> {
     if (!busy || !currentTurnId || stopRequested) return;
+    const stopping = currentTurnId;
+    const starting = !webTurnStarted;
     stopRequested = true;
+    commandQueue.setStopping(true);
     sendBtn.disabled = true;
     statusEl.textContent = "正在停止";
     try {
@@ -1208,32 +1521,244 @@ import { createDoctorController } from "./doctor-controller";
       });
       if (!response.ok) throw new Error("HTTP " + response.status);
       var result = await api.readJSON<{ stopped: boolean }>(response);
-      if (!result.stopped && currentController) currentController.abort();
-    } catch (_) {
-      if (currentController) currentController.abort();
+      if (currentTurnId !== stopping) return;
+      if (!result.stopped) {
+        stopRequested = false;
+        commandQueue.setStopping(false);
+        sendBtn.disabled = false;
+        statusEl.textContent = "正在读取回合状态";
+        if (starting) {
+          if (webTurnStarted) void stopCurrentTurn();
+          else stopOnStart = true;
+        }
+      }
+    } catch (error) {
+      if (currentTurnId !== stopping) return;
+      stopRequested = false;
+      commandQueue.setStopping(false);
+      sendBtn.disabled = false;
+      setAttachmentError("未能送达停止请求，可再次点击停止：" + errorMessage(error));
     }
+  }
+
+  const clearUpdates = typeof BroadcastChannel === "function" ? new BroadcastChannel("bqagent.context-clear") : undefined;
+  window.addEventListener("beforeunload", () => clearUpdates?.close(), { once:true });
+  function displayedContextNumber(workspace: string, id: string) {
+    return renderedContext?.id === id && renderedContext.workspace === workspace ? renderedContext.number : 0;
+  }
+  async function refreshClearedHistory(workspace: string, id: string) {
+    const nav = navigation, load = conversationLoadID;
+    const visible = () => workspace === (workspaceController.currentWorkspace?.id || "") && id === sessionId &&
+      nav === navigation && load === conversationLoadID && !busy;
+    if (!id || !visible()) return;
+    const history = await api.json<ConversationHistory>(workspaceController.workspaceScopedURL("/api/v1/webui/conversations/" + encodeURIComponent(id)));
+    if (visible() && (history.context_number || 0) >= displayedContextNumber(workspace, id)) {
+      const draft = input.value;
+      renderHistory(history, id, true);
+      input.value = draft; autoGrow(); void commandQueue.refresh(); scrollToBottom();
+    }
+  }
+  clearUpdates?.addEventListener("message", event => {
+    const { workspace, id } = event.data || {};
+    if (typeof workspace === "string" && typeof id === "string") void refreshClearedHistory(workspace, id).catch(() => {});
+  });
+
+  let checkingContext = false;
+  async function checkContextBoundary() {
+    if (checkingContext || busy || preparingSend || api.suspended || document.hidden || !sessionId || conversationType === "group") return;
+    const workspace = workspaceController.currentWorkspace?.id || "", id = sessionId, nav = navigation;
+    checkingContext = true;
+    try {
+      const agent = agentPicker.externalResponder(input.value.trim()), scope = modelScope();
+      const before = agent && contextMeter.captured(scope,agent);
+      const query = new URLSearchParams({view:"context",session_id:id});
+      if (agent) query.set("agent",agent);
+      const state = await api.json<{ context_number: number; turn_id: string; context_usage?:AgentContextUsage }>(workspaceController.workspaceScopedURL(
+        "/api/v1/webui/turns?" + query));
+      if (nav !== navigation || workspace !== (workspaceController.currentWorkspace?.id || "") || id !== sessionId || busy || preparingSend) return;
+      if (state.context_number > displayedContextNumber(workspace, id)) {
+        if (state.turn_id && await restoreTurn(state.turn_id, conversationLoadID, true)) return;
+        await refreshClearedHistory(workspace, id);
+      } else if (agent && !state.turn_id && state.context_number === displayedContextNumber(workspace,id)) {
+        contextMeter.reconcileIdle(scope,agent,before || undefined,state.context_usage);
+      }
+    } catch { /* A visible idle chat checks again after reconnecting. */ }
+    finally { checkingContext = false; }
+  }
+  const contextTimer = window.setInterval(() => void checkContextBoundary(), 10000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) void checkContextBoundary(); });
+  window.addEventListener("beforeunload", () => window.clearInterval(contextTimer), { once:true });
+
+  async function sendClear(text: string, clear: NonNullable<ReturnType<typeof parseClear>>) {
+    const refusal = clearRefusal(clear.args, chatMode, conversationType, !!(pendingImages.length || pendingFiles.length), busy);
+    if (refusal) { setAttachmentError(refusal); return; }
+    const workspace = workspaceController.currentWorkspace?.id || "", id = sessionId, nav = navigation;
+    const original = input.value;
+    const visible = () => nav === navigation && id === sessionId && workspace === (workspaceController.currentWorkspace?.id || "");
+    try {
+      const finish = await clearRequests.clear(workspace, id, text, clear.agent || agentPicker.requestAgent);
+      clearUpdates?.postMessage({ workspace, id });
+      await refreshClearedHistory(workspace,id);
+      if (visible()) {
+        if (input.value === original) { input.value = ""; persistComposer(); autoGrow(); }
+        statusEl.textContent = id ? "上下文已清空" : "当前对话还没有上下文";
+        statusEl.classList.remove("error");
+        finish();
+      }
+    } catch (error) {
+      if (visible() && !isCancellation(error)) setAttachmentError(errorMessage(error));
+    }
+  }
+
+  function addRewindControl(parent: HTMLElement, action: RewindAction, replay = false): void {
+    if (!replay && action.agent === "claude") return;
+    const button = rewindButton(action, replay, () => void rewindMessage(action, replay));
+    button.hidden = chatMode !== "run" || conversationType === "group";
+    parent.append(button);
+  }
+
+  function markReply(bubble: HTMLElement, target: string, fork?: ForkAction): void {
+    const msg = bubble.closest<HTMLElement>(".msg");
+    if (!msg) return;
+    msg.dataset.replyAnchor = target;
+    if (!fork || msg.querySelector(".fork-action")) return;
+    const button = document.createElement("button");
+    button.className = "fork-action";
+    button.type = "button";
+    button.textContent = "从这里创建分支";
+    if (fork.tip) button.dataset.forkTip = "true";
+    button.hidden = chatMode !== "run" || conversationType === "group";
+    button.addEventListener("click", async () => {
+      if (button.disabled || preparingSend) return;
+      const id = sessionId, ws = workspaceController.currentWorkspace?.id || "", nav = navigation;
+      button.disabled = true;
+      button.textContent = "正在创建分支…";
+      try {
+        const child = await forkRequests.create(ws,id,fork);
+        if (ws !== (workspaceController.currentWorkspace?.id || "")) return;
+        if (nav === navigation && id === sessionId) {
+          await openRelatedConversation(child);
+        }
+        void refreshConversations(false);
+      } catch (error) {
+        if (nav === navigation && !isCancellation(error)) setAttachmentError(errorMessage(error));
+      } finally { button.disabled = false; button.textContent = "从这里创建分支"; }
+    });
+    bubble.parentElement?.append(button);
+  }
+
+  async function jumpToForkSource(origin: ForkOrigin): Promise<void> {
+    await openRelatedConversation(origin.session);
+    if (sessionId !== origin.session) return;
+    const anchor = replyAnchor(thread,origin.target);
+    if (!anchor) { statusEl.textContent = "已打开来源聊天，这条回复已不在当前历史中"; return; }
+    anchor.tabIndex = -1;
+    anchor.focus({preventScroll:true});
+    anchor.scrollIntoView({block:"center"});
+  }
+
+  async function openRelatedConversation(id: string): Promise<void> {
+    const relation = { workspace: workspaceController.currentWorkspace?.id || "", from:sessionId, to:id };
+    forkNavigation = relation;
+    try { await openConversation(id); } finally { if (forkNavigation === relation) forkNavigation = undefined; }
+  }
+
+  async function rewindMessage(action: RewindAction, replay: boolean): Promise<void> {
+    if (chatMode !== "run" || conversationType === "group") return;
+    if (busy || preparingSend) { setAttachmentError("请等当前操作结束后再回退。"); return; }
+    const hasDraft = () => Boolean(input.value || pendingImages.length || pendingFiles.length);
+    if (hasDraft()) { setAttachmentError("请先保存或清空输入框中的草稿和附件。"); return; }
+    if (!replay && !action.operation && !window.confirm("回到这条消息发送之前？它和后续回复将从对话移除，原消息和附件将放回输入框。工作区文件会保留当前内容。")) return;
+    const workspace = workspaceController.currentWorkspace?.id || "", id = sessionId, nav = navigation;
+    const visible = () => nav === navigation && id === sessionId && workspace === (workspaceController.currentWorkspace?.id || "");
+    preparingSend = true;
+    try {
+      const draft = await requestRewind(api, workspace, id, action, replay);
+      if (!replay) clearUpdates?.postMessage({ workspace, id });
+      if (!visible()) return;
+      await refreshClearedHistory(workspace, id);
+      if (!visible() || displayedContextNumber(workspace, id) !== draft.context_number) return;
+      if (hasDraft()) { setAttachmentError("回退已完成。保存当前输入后，可点「取回回退草稿」。"); return; }
+      const media = restorePendingAttachments(draft, () => nextAttachmentID++);
+      pendingImages.push(...media.images);
+      pendingFiles.push(...media.files);
+      agentPicker.selectNext(draft.agent || action.agent || "codex");
+      input.value = draft.text;
+      persistComposer(); autoGrow(); renderPendingAttachments(); input.focus();
+      statusEl.textContent = "已恢复原消息，可编辑后发送";
+      statusEl.classList.remove("error");
+    } catch (error) {
+      if (visible() && !isCancellation(error)) setAttachmentError(errorMessage(error));
+    } finally { preparingSend = false; }
   }
 
   async function send(): Promise<void> {
     if (!workspaceController.workspaceReady || busy || preparingSend) return;
     preparingSend = true;
-    var pendingModelSelection = providerController.runtimeModelSelectionPromise;
-    if (!await waitForModelSelection(pendingModelSelection)) {
-      preparingSend = false;
+    const sendScope = modelScope();
+    const clear = parseClear(input.value);
+    if (clear) {
+      slashCommands.close();
+      try { await sendClear(input.value.trim(), clear); } finally { preparingSend = false; }
       return;
     }
-    try {
-      await Promise.all(pendingImageReads.concat(pendingFileReads));
-      pendingImageReads = [];
-      pendingFileReads = [];
-    } catch (_) {
-      pendingImageReads = [];
-      pendingFileReads = [];
+    if (!await commandQueue.reconcileDraft()) { preparingSend = false; return; }
+    await agentPicker.readyForRoute(input.value);
+    if (modelScope() !== sendScope) { preparingSend = false; return; }
+    refreshModelControls();
+    var pendingModelSelection = providerController.runtimeModelSelectionPromise;
+    if (!agentPicker.externalResponder(input.value.trim()) && !await waitForModelSelection(pendingModelSelection)) {
       preparingSend = false;
       return;
     }
     slashCommands.close();
     var text = input.value.trim();
+    const changedToClear = parseClear(text);
+    if (changedToClear) {
+      try { await sendClear(text, changedToClear); } finally { preparingSend = false; }
+      return;
+    }
+    const externalResponder = agentPicker.externalResponder(text);
+    const command = agentPicker.commandContext(text);
+    if (command.query.trim() === "/plan" && await pickPlanCommand(text,command)) {
+      preparingSend = false;
+      return;
+    }
+    const compact = agentModels.isCompactCommand(externalResponder, command.query, agentPicker.supportsCompact(externalResponder));
+    if (compact && (pendingImages.length || pendingFiles.length)) {
+      setAttachmentError("/compact 不接受附件，请先移除附件。");
+      preparingSend = false;
+      return;
+    }
+    if (compact && externalResponder === "codex" && command.query.trim().toLowerCase() !== "/compact") {
+      setAttachmentError("Codex 的 /compact 不接受附加说明。");
+      preparingSend = false;
+      return;
+    }
+    if (!compact && !await agentModels.readyForSend(externalResponder)) {
+      preparingSend = false;
+      return;
+    }
+    try {
+      // More attachments can arrive while a provider refreshes its inventory.
+      while (pendingImageReads.length || pendingFileReads.length) {
+        await Promise.all([...pendingImageReads.splice(0), ...pendingFileReads.splice(0)]);
+      }
+    } catch {
+      preparingSend = false;
+      return;
+    }
+    if (modelScope() !== sendScope || text !== input.value.trim() || externalResponder !== agentPicker.externalResponder(text)) {
+      preparingSend = false;
+      return;
+    }
+    const supportsImages = externalResponder && (agentModels.supportsImages(externalResponder) ??
+      (sessionId ? undefined : agentPicker.supportsImages(externalResponder)));
+    if (externalResponder && pendingImages.length && supportsImages === false) {
+      setAttachmentError(externalResponder + " 的当前接口不支持图片，请移除图片或切换 Agent");
+      preparingSend = false;
+      return;
+    }
     var sentAttachments = takePendingAttachmentsForSend(pendingImages, pendingFiles);
     var sentImages = sentAttachments.images;
     var sentFiles = sentAttachments.files;
@@ -1243,31 +1768,76 @@ import { createDoctorController } from "./doctor-controller";
       return;
     }
 
-    currentTurnId = createTurnId();
-    var inputSession = createTurnInputSession(currentTurnId);
-    turnInputs = inputSession;
-    var pendingFromServer: PendingInputPayload[] = [];
-    currentController = new AbortController();
-    stopRequested = false;
-
-    renderUserMessage(addMessage("user"), text, sentImages, sentFiles);
+    conversationLoadID++;
+    const id = createTurnId();
+    if (!sessionId && conversationType !== "group") recordFirstAgentTurn(modelScope(), id);
+    if (!compact) agentModels.submitted(externalResponder, id);
+    const body = JSON.stringify({
+      workspace_id: workspaceController.currentWorkspace ? workspaceController.currentWorkspace.id : "",
+      message: text,
+      ...agentModels.turnOptions(agentPicker.requestAgent, externalResponder, compact),
+      images: sentImages,
+      files: sentFiles,
+      session_id: sessionId,
+      turn_id: id,
+      mode: chatMode,
+      conversation_type: conversationType,
+      reasoning_effort: reasoningEffort === "auto" ? "" : reasoningEffort
+    });
+    const sentBubble = addMessage("user");
+    sentBubble.dataset.rootTurn = id;
+    renderUserMessage(sentBubble, text, sentImages, sentFiles);
     input.value = "";
+    persistComposer();
     autoGrow();
     renderPendingAttachments();
     clearAttachmentError();
 
-    var bubble: HTMLDivElement | null = conversationType === "group" ? null : addMessage("assistant");
-    var toolCards: ToolCards = {};
+    agentPicker.beginSend(externalResponder);
+    preparingSend = false;
+    await watchTurn(id, text, externalResponder, body);
+  }
+
+  async function watchTurn(id: string, text: string, externalResponder: string | undefined, body?: string): Promise<void> {
+    const nav = navigation, workspace = workspaceController.currentWorkspace?.id || "";
+    const next = await viewer.observe(id, controller => renderTurn(controller, id, text, externalResponder, body));
+    if (next && nav === navigation && workspace === (workspaceController.currentWorkspace?.id || "") && !api.suspended && !busy) {
+      const loaded = await restoreTurn(next, conversationLoadID, true);
+      if (!loaded && nav === navigation && !busy && sessionId) await openConversation(sessionId);
+    } else if (nav === navigation && !api.suspended && !busy) {
+      commandQueue.afterTurn();
+    }
+  }
+
+  async function renderTurn(controller: AbortController, id: string, text: string, externalResponder: string | undefined, body?: string): Promise<string | undefined> {
+    const sentModelRevision = body === undefined ? undefined : agentModels.draftRevision(externalResponder);
+    let nextTurn: string | undefined;
+    const workspace = workspaceController.currentWorkspace?.id || "";
+    rememberTurn(workspace, id);
+    let recoverHistory = "";
+    currentTurnId = id;
+    var inputSession = createTurnInputSession(currentTurnId);
+    turnInputs = inputSession;
+    var pendingFromServer: PendingInputPayload[] = [];
+    currentController = controller;
+    stopRequested = false;
+    webTurnStarted = false;
+    stopOnStart = false;
+
+    runningExternalAgent = externalResponder;
+    runningModelRevision = sentModelRevision;
+    var bubble: HTMLDivElement | null = conversationType === "group" || body === undefined || externalResponder ? null : addMessage("assistant", externalResponder);
+    var toolCards: ToolCards = Object.create(null);
     // Closed segments of this turn only, so background job results can settle
     // cards left running in earlier segments without touching other sessions.
-    var closedToolSegments: ToolSegment[] = [];
+    var closedToolSegments: ToolTimelineSegment[] = [];
     var participantBubbles: Record<string, HTMLDivElement> = Object.create(null) as Record<string, HTMLDivElement>;
     var pendingPermissions: Record<string, HTMLElement> = Object.create(null) as Record<string, HTMLElement>;
     preparingSend = false;
     var caret = document.createElement("span");
     caret.className = "caret";
     function ensureCoordinatorBubble(): HTMLDivElement {
-      if (!bubble) bubble = addMessage("assistant", "bqagent");
+      if (!bubble) bubble = addMessage("assistant", runningExternalAgent || "bqagent");
       bubble.classList.add("is-streaming");
       if (!caret.parentElement) bubble.appendChild(caret);
       return bubble;
@@ -1281,6 +1851,20 @@ import { createDoctorController } from "./doctor-controller";
     var contextProgress = new ContextProgress(() => addMessage("assistant", "bqagent"));
     var renders = new StreamRenderQueue(main);
     streamRender = renders;
+    const fileEdits=new TurnFileEdits();
+    let editTurn="";
+    const native = new ExternalTimelineView(sender => {
+      if (bubble) closeCoordinatorSegment();
+      return addMessage("assistant", sender);
+    }, (target, value, streaming) => {
+      renders.schedule(target, () => {
+        target.classList.toggle("is-streaming", streaming);
+        target.classList.toggle("rendered", !streaming);
+        if (streaming) target.textContent = value;
+        else renderReply(target, value);
+      });
+    }, (target,plan,text) => renders.schedule(target, () => renderAgentPlan(target,plan,text)),
+       (target,view) => renders.schedule(target, () => renderAgentSummary(target,view)));
     function queueText(target: HTMLDivElement, text: string, notice = false): void {
       renders.schedule(target, () => {
         caret.remove();
@@ -1302,7 +1886,7 @@ import { createDoctorController } from "./doctor-controller";
       if (!bubble) {
         streamed = "";
         progress = "";
-        toolCards = {};
+        toolCards = Object.create(null);
         return;
       }
       clearStreamingState(bubble);
@@ -1319,196 +1903,288 @@ import { createDoctorController } from "./doctor-controller";
       bubble = null;
       streamed = "";
       progress = "";
-      toolCards = {};
+      toolCards = Object.create(null);
     }
 
     setBusy(true);
     try {
-      var res = await api.request("/api/v1/webui/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspace_id: workspaceController.currentWorkspace ? workspaceController.currentWorkspace.id : "",
-          message: text,
-          images: sentImages,
-          files: sentFiles,
-          session_id: sessionId,
-          turn_id: currentTurnId,
-          mode: chatMode,
-          conversation_type: conversationType,
-          reasoning_effort: reasoningEffort === "auto" ? "" : reasoningEffort
-        }),
-        signal: currentController.signal
+      const signal = currentController.signal;
+      const streamURL = workspaceController.workspaceScopedURL("/api/v1/webui/turns?compact=1&turn_id=" + encodeURIComponent(id));
+      const start = body === undefined ? undefined : () => api.request("/api/v1/webui/chat?compact=1", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body, signal,
       });
-      if (!res.ok || !res.body) {
-        var errorText = "";
-        try { errorText = await res.text(); } catch (_) {}
-        throw new Error("HTTP " + res.status + (errorText ? ": " + errorText : ""));
-      }
-
-      var reader = res.body.getReader();
-      var decoder = new TextDecoder();
-      var eventBuffer = new SSEBuffer();
-      var finished = false;
-
-      while (true) {
-        var chunk = await reader.read();
-        if (chunk.done) break;
-        var events = eventBuffer.push(decoder.decode(chunk.value, { stream: true }));
-        for (var eventIndex = 0; eventIndex < events.length; eventIndex++) {
-          if (finished) break;
-          var evt = events[eventIndex];
-          if (evt.event === "done" || evt.event === "stopped" || evt.event === "error") renders.flush();
-          if (evt.event === "message_snapshot") {
-            var snapshot = parseJSONEvent<MessageSnapshot>(evt.data);
-            if (isTaskUpdatedEvent(snapshot)) {
-              if (taskProgress.apply(snapshot, streamTaskScope, streamTurnId)) renderTaskPanel(taskPanel, taskProgress.state);
-            } else if (isInputAppliedEvent(snapshot)) {
-              closeCoordinatorSegment();
-              inputSession.onApplied(snapshot);
-            } else if (snapshots.apply(snapshot) && snapshots.latest) {
-              streamed = snapshots.latest.text;
-              var snapshotBubble = ensureCoordinatorBubble();
-              queueText(snapshotBubble, streamed);
+      for await (const evt of followTurn(start, cursor => api.request(streamURL + "&after=" + cursor, {signal}), signal,
+        () => { statusEl.textContent = "连接中断，正在接回原回合"; })) {
+        if (statusEl.textContent === "连接中断，正在接回原回合") statusEl.textContent = "已重新连接，正在生成";
+        if (evt.event === "turn_start") {
+          webTurnStarted = true;
+          thread.querySelectorAll("[data-fork-tip]").forEach(button => button.remove());
+          if (stopOnStart) { stopOnStart = false; void stopCurrentTurn(); }
+          const initial = parseJSONEvent<AgentTurnSelection & { message: string; mode?: string; conversation_type?: ConversationType;
+            images?: SentImage[]; files?: SentFile[] }>(evt.data);
+          runningSelection = { agent: initial.agent, agent_model: initial.agent_model, agent_effort: initial.agent_effort,
+            agent_service_tier: initial.agent_service_tier, agent_interaction_mode: initial.agent_interaction_mode };
+          if (body === undefined) {
+            text = initial.message || "";
+            if (initial.agent) agentPicker.observe(initial.agent);
+            if (initial.conversation_type) setConversationType(initial.conversation_type, currentGroup);
+            if (initial.mode) setChatMode(initial.mode);
+            runningExternalAgent = agentPicker.externalResponder(text, initial.agent || agentPicker.reportedAgent);
+            refreshModelControls();
+            renderTurnInputControls(true);
+            const sentBubble = addMessage("user");
+            sentBubble.dataset.rootTurn = id;
+            renderUserMessage(sentBubble, text, initial.images || [], initial.files || []);
+          }
+          continue;
+        }
+        if (evt.event === "turn_session") {
+          const bound = parseJSONEvent<{ session_id: string }>(evt.data);
+          if (bound.session_id && sessionId !== bound.session_id) {
+            const newChat = !sessionId;
+            const bindPicks = newChat && (body !== undefined || readAgentDraft(modelScope()).firstTurn === id);
+            const draft = input.value || readChatDraft(workspace, "turn:" + id);
+            workspaceController.setCurrentWorkspaceSession(bound.session_id);
+            if (bindPicks) agentModels.bindDraft(modelScope());
+            refreshModelControls();
+            input.value = draft;
+            persistComposer();
+            saveChatDraft(workspace, "turn:" + id, "");
+          }
+          commandQueue.show(workspace,sessionId);
+          void refreshConversations(false);
+          continue;
+        }
+        if (evt.event === "external_context_usage") {
+          const {agent,usage} = parseJSONEvent<{agent:string; usage:AgentContextUsage}>(evt.data);
+          contextMeter.observe(modelScope(), agent, usage);
+          continue;
+        }
+        if (evt.event === "command_queue") { commandQueue.apply(workspace,parseJSONEvent<CommandQueueSnapshot>(evt.data)); continue; }
+        if (evt.event === "queue_error") { setAttachmentError(parseJSONEvent<{error:string}>(evt.data).error); continue; }
+        if (evt.event === "queue_delivery") {
+          native.boundary(); closeCoordinatorSegment();
+          showQueueDelivery(parseJSONEvent<ConversationMessage>(evt.data),sessionId);
+          continue;
+        }
+        if (evt.event === "queued_input_applied") {
+          const sent = parseJSONEvent<{id:string;message:string;images?:SentImage[];files?:SentFile[]}>(evt.data);
+          deliveryBubble(sent.id)?.closest(".msg")?.remove();
+          native.boundary(); closeCoordinatorSegment();
+          renderUserMessage(addMessage("user"), sent.message || "", sent.images || [], sent.files || []);
+          continue;
+        }
+        if (evt.event === "input_queued") {
+          inputSession.onQueued(parseJSONEvent<PendingInputPayload>(evt.data));
+          continue;
+        }
+        if (evt.event === "done" || evt.event === "stopped" || evt.event === "error") renders.flush();
+        if (evt.event === "message_snapshot" || evt.event === "message_patch") {
+          var snapshot = evt.event === "message_patch"
+            ? snapshots.expand(parseJSONEvent<MessageSnapshot & {base_seq: number}>(evt.data))
+            : parseJSONEvent<MessageSnapshot>(evt.data);
+          if (isTaskUpdatedEvent(snapshot)) {
+            if (taskProgress.apply(snapshot, streamTaskScope, streamTurnId)) renderTaskPanel(taskPanel, taskProgress.state);
+          } else if (snapshot.kind === "input.available") {
+            const option = nativeInputOption(snapshot, streamTurnId);
+            if (option && !stopRequested) {
+              runningExternalAgent = option.agent;
+              nativeInputKinds.add(option.kind);
+              renderTurnInputControls(true);
             }
-          } else if (evt.event === "tool_start" || evt.event === "tool_result") {
-            var toolPayload = parseJSONEvent<ToolEventPayload>(evt.data);
-            if (toolPayload.name !== "consult_group_agent") updateToolTimeline(ensureCoordinatorBubble(), toolCards, evt.event, toolPayload, closedToolSegments);
-          } else if (evt.event === "acp_permission") {
-            var permission = parseJSONEvent<ACPPermissionPayload>(evt.data);
-            addACPPermissionCard(permission, pendingPermissions);
-          } else if (evt.event === "participant_start" || evt.event === "participant_message" || evt.event === "participant_error") {
-            var groupEvent = parseJSONEvent<GroupEventPayload>(evt.data);
-            if (shouldCloseCoordinatorSegment(evt.event)) closeCoordinatorSegment();
-            var participantBubble = participantBubbles[groupEvent.call_id];
-            if (!participantBubble) {
-              participantBubble = addMessage("assistant", groupEvent.participant, evt.event === "participant_error" ? "error" : "message");
-              participantBubbles[groupEvent.call_id] = participantBubble;
-            }
-            if (evt.event === "participant_start") {
-              participantBubble.classList.add("notice", "is-streaming");
-              participantBubble.textContent = "正在思考并处理共享工作区…";
-            } else if (evt.event === "participant_message") {
-              participantBubble.classList.remove("notice", "is-streaming");
-              participantBubble.classList.add("rendered");
-              renderReply(participantBubble, groupEvent.content || "");
-            } else {
-              participantBubble.classList.remove("notice", "is-streaming");
-              participantBubble.classList.add("rendered", "error");
-              renderReply(participantBubble, "执行失败：" + (groupEvent.error || "未知错误"));
-            }
-          } else if (evt.event === "done") {
-            finished = true;
-            var done = parseJSONEvent<WebUIDoneEvent>(evt.data);
-            pendingFromServer = done.pending_inputs || [];
-            if (done.session_id) {
-              workspaceController.setCurrentWorkspaceSession(done.session_id);
-            }
-            if (done.model) {
-              providerController.invalidateRuntimeModel();
-              providerController.updateRuntimeModel(done.api_type, done.model, providerController.providerSettingsState.active_provider);
-            }
-            setConversationType(done.conversation_type, done.group || currentGroup);
-            setChatMode(done.mode);
-            refreshConversations(false);
-            if (!shouldRenderFinalReply(done.conversation_type, done.reply_kind)) {
-              caret.remove();
-              if (bubble) {
-                var directMessage = bubble.closest(".msg");
-                if (directMessage) directMessage.remove();
-              }
-              bubble = null;
-              continue;
-            }
-            var finalBubble = ensureCoordinatorBubble();
-            clearStreamingState(finalBubble);
-            finalBubble.classList.add("rendered");
-            var finalReply = typeof done.reply === "string" ? done.reply : "";
-            if (!finalReply.trim()) {
-              finalBubble.classList.add("error");
-              finalBubble.textContent = "出错：服务端未返回有效回复";
-              statusEl.textContent = "回复无效";
-              statusEl.classList.remove("busy");
-              statusEl.classList.add("error");
-            } else {
-              renderReply(finalBubble, finalReply + (done.outcome?.notice ? "\n\n> " + done.outcome.notice : ""));
-              addMessageMeta(finalBubble, done.generation);
-              addMessageControls(finalBubble, done.run_id || "", finalReply);
-            }
-          } else if (evt.event === "stopped") {
-            finished = true;
-            pendingFromServer = parseJSONEvent<{ pending_inputs?: PendingInputPayload[] }>(evt.data).pending_inputs || [];
-            expireACPPermissionCards(pendingPermissions);
-            var stoppedBubble = ensureCoordinatorBubble();
-            clearStreamingState(stoppedBubble);
+          } else if (isInputAppliedEvent(snapshot)) {
+            if (snapshot.turn_id === streamTurnId) inputSession.onApplied(snapshot, () => { native.boundary(); closeCoordinatorSegment(); });
+          } else if (snapshots.apply(snapshot) && snapshots.latest) {
+            streamed = snapshots.latest.text;
+            var snapshotBubble = ensureCoordinatorBubble();
+            queueText(snapshotBubble, streamed);
+          }
+        } else if (evt.event === "external_command") {
+          const event = parseJSONEvent<{agent:string; command:string}>(evt.data);
+          if (event.command === "compact") {
+            runningExternalAgent = event.agent;
+            statusEl.textContent = event.agent + " 正在压缩当前会话…";
+          }
+        } else if (evt.event === "external_summary") {
+          const event = parseJSONEvent<ExternalSummaryEvent>(evt.data);
+          runningExternalAgent = event.agent;
+          native.summary(event);
+        } else if (evt.event === "external_plan") {
+          const event = parseJSONEvent<ExternalPlanEvent>(evt.data);
+          runningExternalAgent = event.agent;
+          native.plan(event);
+        } else if (evt.event === "external_text") {
+          const event = parseJSONEvent<ExternalTextEvent>(evt.data);
+          runningExternalAgent = event.agent;
+          native.text(event);
+        } else if (evt.event === "tool_start" || evt.event === "tool_result") {
+          var toolPayload = parseJSONEvent<ToolEventPayload>(evt.data);
+          if (toolPayload.turn_id && toolPayload.source==="external") {
+            editTurn=toolPayload.turn_id; fileEdits.observe(toolPayload);
+          }
+          if (conversationType !== "group" && toolPayload.source === "external" && toolPayload.id) {
+            const sender = toolPayload.sender || runningExternalAgent || "外部 Agent";
+            runningExternalAgent = sender;
+            native.tool(evt.event, toolPayload, sender);
+          } else if (conversationType !== "group" || toolPayload.name !== "consult_group_agent") {
+            updateToolTimeline(ensureCoordinatorBubble(), toolCards, evt.event, toolPayload, closedToolSegments);
+          }
+        } else if (evt.event === "acp_permission") {
+          var permission = parseJSONEvent<ACPPermissionPayload>(evt.data);
+          if (!permission.expired && !permission.selected) native.boundary();
+          addACPPermissionCard(permission, pendingPermissions);
+          commandQueue.setSendActivity(true,hasBlockingPrompt(pendingPermissions));
+        } else if (evt.event === "participant_start" || evt.event === "participant_message" || evt.event === "participant_error") {
+          var groupEvent = parseJSONEvent<GroupEventPayload>(evt.data);
+          if (shouldCloseCoordinatorSegment(evt.event)) closeCoordinatorSegment();
+          var participantBubble = participantBubbles[groupEvent.call_id];
+          if (!participantBubble) {
+            participantBubble = addMessage("assistant", groupEvent.participant, evt.event === "participant_error" ? "error" : "message");
+            participantBubbles[groupEvent.call_id] = participantBubble;
+          }
+          if (evt.event === "participant_start") {
+            participantBubble.classList.add("notice", "is-streaming");
+            participantBubble.textContent = "正在思考并处理共享工作区…";
+          } else if (evt.event === "participant_message") {
+            participantBubble.classList.remove("notice", "is-streaming");
+            participantBubble.classList.add("rendered");
+            renderReply(participantBubble, groupEvent.content || "");
+          } else {
+            participantBubble.classList.remove("notice", "is-streaming");
+            participantBubble.classList.add("rendered", "error");
+            renderReply(participantBubble, "执行失败：" + (groupEvent.error || "未知错误"));
+          }
+        } else if (evt.event === "done") {
+          var done = parseJSONEvent<WebUIDoneEvent>(evt.data);
+          if (done.rewind) {
+            const root = Array.from(thread.querySelectorAll<HTMLElement>("[data-root-turn]")).find(el => el.dataset.rootTurn === id);
+            if (root) addRewindControl(root.parentElement!, done.rewind);
+          } else {
+            thread.querySelectorAll(".msg .rewind-action").forEach(button => button.remove());
+          }
+          nextTurn = done.next_turn_id;
+          pendingFromServer = done.pending_inputs || [];
+          if (text.toLowerCase() === "/default" && done.mode === "run" && done.conversation_type !== "group") {
+            contextMeter.configure("", "");
+            clearAgentDraft(modelScope());
+            agentModels.configure("", "", busy);
+          }
+          agentModels.confirm(done.reply_agent, done.reply_agent_model, done.reply_agent_effort, done.reply_agent_command, sentModelRevision, id,
+            done.reply_agent_service_tier, done.reply_agent_preferred_tier, done.reply_agent_interaction_mode);
+          if (done.session_id) {
+            workspaceController.setCurrentWorkspaceSession(done.session_id);
+          }
+          if (done.model) {
+            providerController.invalidateRuntimeModel();
+            providerController.updateRuntimeModel(done.api_type, done.model, providerController.providerSettingsState.active_provider);
+          }
+          setConversationType(done.conversation_type, done.group || currentGroup);
+          agentPicker.observe(done.active_agent || builtinAgent);
+          if (!agentPicker.pendingAgent || agentPicker.pendingAgent === (done.active_agent || builtinAgent)) saveResponderDraft(modelScope());
+          setChatMode(done.mode);
+          refreshConversations(false);
+          if (!shouldRenderFinalReply(done.conversation_type, done.reply_kind)) {
             caret.remove();
-            stoppedBubble.classList.add("rendered", "notice");
-            var stoppedReply = streamed ? streamed + "\n\n> 已停止生成。" : "已停止生成。";
-            renderReply(stoppedBubble, stoppedReply);
-            addMessageControls(stoppedBubble, "", streamed);
-            statusEl.textContent = "已停止";
-            statusEl.classList.remove("busy", "error");
-          } else if (evt.event === "error") {
-            finished = true;
-            expireACPPermissionCards(pendingPermissions);
-            var errorBubble = ensureCoordinatorBubble();
-            clearStreamingState(errorBubble);
-            var errPayload = parseJSONEvent<{ error?: string; pending_inputs?: PendingInputPayload[] }>(evt.data);
-            pendingFromServer = errPayload.pending_inputs || [];
-            errorBubble.classList.add("error");
-            errorBubble.textContent = "出错：" + (errPayload.error || "未知错误");
-            statusEl.textContent = "请求失败";
+            if (bubble) {
+              var directMessage = bubble.closest(".msg");
+              if (directMessage) directMessage.remove();
+            }
+            bubble = null;
+            continue;
+          }
+          const nativeFinal = native.finish();
+          renders.flush();
+          const finalPlan = native.planBubble(done.reply_item_id);
+          var finalBubble = finalPlan || nativeFinal?.bubble || ensureCoordinatorBubble();
+          if (conversationType !== "group") setMessageSender(finalBubble.closest<HTMLElement>(".msg")!, "assistant", done.reply_agent);
+          clearStreamingState(finalBubble);
+          if (done.fork) markReply(finalBubble,done.fork.target,done.fork);
+          finalBubble.classList.add("rendered");
+          var finalReply = typeof done.reply === "string" ? done.reply : "";
+          if (!finalReply.trim()) {
+            finalBubble.classList.add("error");
+            finalBubble.textContent = "出错：服务端未返回有效回复";
+            statusEl.textContent = "回复无效";
             statusEl.classList.remove("busy");
             statusEl.classList.add("error");
-          } else if (evt.event === "speed") {
-            // 服务端在生成满 1 秒后推送当前调用速率（约每 3 秒一次），调用结束时推送
-            // 与 done 一致的值；0 表示撤销此前的实时值。
-            var liveSpeed = formatGenerationSpeed(parseJSONEvent<{ tokens_per_second?: number }>(evt.data).tokens_per_second);
-            if (busy) statusEl.textContent = liveSpeed ? "处理中 · " + liveSpeed : "处理中";
-          } else if (evt.event === "progress") {
-            var progressPayload = parseJSONEvent<{ message?: string }>(evt.data);
-            if (progressPayload.message) {
-              // Handle compaction before the ordinary progress visibility filters.
-              var contextNotice = contextProgress.apply(progressPayload.message);
-              if (!contextNotice && conversationType !== "group" && !streamed) {
-                var progressBubble = ensureCoordinatorBubble();
-                progress = progressPayload.message;
-                queueText(progressBubble, progress, true);
-              }
-            }
           } else {
-            var payload = parseJSONEvent<{ delta?: string }>(evt.data);
-            if (payload.delta && !snapshots.latest) {
-              var streamBubble = ensureCoordinatorBubble();
-              streamed += payload.delta;
-              queueText(streamBubble, streamed);
+            if (finalPlan && done.outcome?.notice) {
+              const notice = document.createElement("p");
+              notice.textContent = done.outcome.notice;
+              finalPlan.append(notice);
+            } else if (!finalPlan && (!nativeFinal || done.outcome?.notice)) {
+              renderReply(finalBubble, (nativeFinal?.text || finalReply) + (done.outcome?.notice ? "\n\n> " + done.outcome.notice : ""));
+            }
+            addMessageMeta(finalBubble, done.generation);
+            addMessageControls(finalBubble, done.run_id || "", finalReply);
+          }
+        } else if (evt.event === "stopped") {
+          const stopped = parseJSONEvent<{ session_id?: string; pending_inputs?: PendingInputPayload[]; next_turn_id?: string }>(evt.data);
+          nextTurn = stopped.next_turn_id;
+          pendingFromServer = stopped.pending_inputs || [];
+          if (stopped.session_id) { workspaceController.setCurrentWorkspaceSession(stopped.session_id); refreshConversations(false); }
+          expireACPPermissionCards(pendingPermissions);
+          const stoppedItem = native.finish();
+          renders.flush();
+          var stoppedBubble = stoppedItem?.text === "已停止生成。" ? stoppedItem.bubble : ensureCoordinatorBubble();
+          clearStreamingState(stoppedBubble);
+          caret.remove();
+          stoppedBubble.classList.add("rendered", "notice");
+          var stoppedReply = streamed ? streamed + "\n\n> 已停止生成。" : "已停止生成。";
+          renderReply(stoppedBubble, stoppedReply);
+          addMessageControls(stoppedBubble, "", streamed);
+          statusEl.textContent = "已停止";
+          statusEl.classList.remove("busy", "error");
+        } else if (evt.event === "error") {
+          expireACPPermissionCards(pendingPermissions);
+          var errPayload = parseJSONEvent<{ error?: string; session_id?: string; pending_inputs?: PendingInputPayload[]; next_turn_id?: string }>(evt.data);
+          nextTurn = errPayload.next_turn_id;
+          const failedItem = native.finish();
+          renders.flush();
+          var errorBubble = failedItem && failedItem.text === "执行失败：" + errPayload.error ? failedItem.bubble : ensureCoordinatorBubble();
+          clearStreamingState(errorBubble);
+          caret.remove();
+          if (errPayload.session_id) { workspaceController.setCurrentWorkspaceSession(errPayload.session_id); refreshConversations(false); }
+          pendingFromServer = errPayload.pending_inputs || [];
+          errorBubble.classList.add("error");
+          errorBubble.textContent = (streamed ? streamed + "\n\n" : "") + "出错：" + (errPayload.error || "未知错误");
+          statusEl.textContent = "请求失败";
+          statusEl.classList.remove("busy");
+          statusEl.classList.add("error");
+        } else if (evt.event === "speed") {
+          // 服务端在生成满 1 秒后推送当前调用速率（约每 3 秒一次），调用结束时推送
+          // 与 done 一致的值；0 表示撤销此前的实时值。
+          var liveSpeed = formatGenerationSpeed(parseJSONEvent<{ tokens_per_second?: number }>(evt.data).tokens_per_second);
+          if (busy) statusEl.textContent = liveSpeed ? "处理中 · " + liveSpeed : "处理中";
+        } else if (evt.event === "progress") {
+          var progressPayload = parseJSONEvent<{ message?: string }>(evt.data);
+          if (progressPayload.message) {
+            // Handle compaction before the ordinary progress visibility filters.
+            var contextNotice = contextProgress.apply(progressPayload.message);
+            if (!contextNotice && conversationType !== "group" && !streamed && !native.used) {
+              var progressBubble = ensureCoordinatorBubble();
+              progress = progressPayload.message;
+              queueText(progressBubble, progress, true);
             }
           }
-          renders.schedule();
+        } else {
+          var payload = parseJSONEvent<{ delta?: string }>(evt.data);
+          if (payload.delta && !snapshots.latest && !native.used) {
+            var streamBubble = ensureCoordinatorBubble();
+            streamed += payload.delta;
+            queueText(streamBubble, streamed);
+          }
         }
-        if (finished) {
-          void reader.cancel().catch(() => {});
-          break;
-        }
+        renders.schedule();
       }
       renders.flush();
-      eventBuffer.push(decoder.decode());
-      finished = finished || eventBuffer.terminal;
-
-      if (!finished) {
-        var incompleteBubble = ensureCoordinatorBubble();
-        clearStreamingState(incompleteBubble);
-        caret.remove();
-        incompleteBubble.classList.add("rendered", "error");
-        var incompleteReply = streamed
-          ? streamed + "\n\n> 响应在完成事件到达前中断。"
-          : "出错：响应未正常完成。";
-        renderReply(incompleteBubble, incompleteReply);
-        statusEl.textContent = "响应中断";
-        statusEl.classList.remove("busy");
-        statusEl.classList.add("error");
-      }
-    } catch (err) { if (isCancellation(err) && api.suspended) return;
+      const lastStack=thread.lastElementChild?.querySelector<HTMLElement>(".message-stack");
+      if (editTurn && lastStack) fileEdits.render(editTurn,lastStack);
+      if (turnBookmark(workspace) === id) rememberTurn(workspace, "");
+    } catch (err) { if (viewer.leaving(id) || (isCancellation(err) && api.suspended)) return;
+      const status = (err as {status?: number}).status;
+      if (status && status >= 400 && status < 500 && turnBookmark(workspace) === id) rememberTurn(workspace, "");
+      if (status === 404 && sessionId) recoverHistory = sessionId;
       renders.flush();
       expireACPPermissionCards(pendingPermissions);
       var caughtBubble = ensureCoordinatorBubble();
@@ -1527,26 +2203,41 @@ import { createDoctorController } from "./doctor-controller";
         statusEl.classList.add("error");
       }
     } finally {
+      native.finish();
       contextProgress.finish();
       if (!api.suspended) renders.flush();
       renders.dispose();
       streamRender = null;
       clearStreamingState(bubble);
-      inputSession.finish(pendingFromServer);
+      if (!viewer.leaving(id) && !api.suspended) inputSession.finish(pendingFromServer);
+      else { turnInputQueue.replaceChildren(); turnInputQueue.hidden = true; }
+      runningExternalAgent = undefined;
+      runningModelRevision = undefined;
+      runningSelection = undefined;
+      nativeInputKinds.clear();
       setBusy(false);
       currentTurnId = "";
       currentController = null;
       stopRequested = false;
       workspaceController.refreshWorkspaceTree();
+      if (recoverHistory && !api.suspended) void openConversation(recoverHistory);
     }
+    return nextTurn;
   }
 
-  function newChat(type: ConversationType = "default"): void {
-    if (busy) return;
+  async function newChat(type: ConversationType = "default"): Promise<void> {
+    if (preparingSend) return;
+    const nav = ++navigation;
+    await leaveVisibleTurn();
+    if (nav !== navigation) return;
+    conversationLoadID++;
     conversationScopeEpoch++;
     slashCommands.close();
     setNewConversationMenu(false);
     workspaceController.setCurrentWorkspaceSession("");
+    input.value = readChatDraft(workspaceController.currentWorkspace?.id || "", "new");
+    autoGrow();
+    agentPicker.restore(undefined, type === "group" ? undefined : readAgentDraft(modelScope()).responder);
     setChatMode("run");
     setConversationType(type, type === "group" ? { scheduler: "bqagent", participants: [{ id: "bqagent", name: "bqagent", kind: "builtin", available: true }] } : null);
     clearPendingAttachments();
@@ -1573,7 +2264,8 @@ import { createDoctorController } from "./doctor-controller";
     if (busy) stopCurrentTurn(); else send();
   });
   steerBtn.addEventListener("click", function () { submitTurnInput("steering"); });
-  followUpBtn.addEventListener("click", function () { submitTurnInput("follow_up"); });
+  followUpBtn.addEventListener("click", function () { submitTurnInput("follow_up", true); });
+  queueSendBtn.addEventListener("click", enqueueDraft);
   conversationNew.addEventListener("click", function () { setNewConversationMenu(Boolean(conversationNewMenu.hidden)); });
   conversationNewMenu.addEventListener("click", function (event) {
     var option = eventElement(event.target)?.closest<HTMLButtonElement>("[data-conversation-type]");
@@ -1607,8 +2299,13 @@ import { createDoctorController } from "./doctor-controller";
     setAttachmentMenu(false);
     fileInput.click();
   });
+  uploadImageBtn.addEventListener("click", () => { setAttachmentMenu(false); imageInput.click(); });
+  imageInput.addEventListener("change", () => {
+    if (canAttach() && imageInput.files?.length) addClipboardImages(Array.from(imageInput.files));
+    imageInput.value = "";
+  });
   fileInput.addEventListener("change", function () {
-    if (fileInput.files && fileInput.files.length) addLocalFiles(fileInput.files);
+    if (canAttach() && fileInput.files && fileInput.files.length) addLocalFiles(fileInput.files);
     fileInput.value = "";
   });
   addServerPathBtn.addEventListener("click", addServerPath);
@@ -1689,13 +2386,25 @@ import { createDoctorController } from "./doctor-controller";
     if (option && option.dataset.participant) chooseMention(option.dataset.participant);
   });
   const slashCommands = createSlashCommands(api, input, byId<HTMLDivElement>("slash-command-menu"), {
-    url: () => workspaceController.workspaceScopedURL("/api/v1/webui/commands?conversation_type=" + conversationType),
-    disabled: () => busy || preparingSend || !workspaceController.workspaceReady,
+    url: () => workspaceController.workspaceScopedURL("/api/v1/webui/commands?conversation_type=" + conversationType + "&mode=" + chatMode),
+    context: () => {
+      if (busy) {
+        const view = busyRoute(input.value);
+        return busyCommandContext(view, agentModels.isCompactCommand(view.agent, "/compact", agentPicker.supportsCompact(view.agent)),
+          !!agentModels.supportsInteractionMode(view.agent,"plan"));
+      }
+      const view = agentPicker.commandContext(input.value);
+      if (!view.agent) return view;
+      const query = new URLSearchParams({ agent: view.agent, session_id: sessionId, conversation_type: conversationType, mode: chatMode });
+      if (view.qualified) query.set("qualified", "1");
+      return { ...view, nativeURL: workspaceController.workspaceScopedURL("/api/v1/webui/commands?" + query) };
+    },
+    disabled: () => stopRequested || preparingSend || !workspaceController.workspaceReady,
     onComplete: () => { autoGrow(); closeMentionMenu(); },
   });
   input.addEventListener("input", function () { autoGrow(); renderMentionMenu(); });
   input.addEventListener("paste", function (event) {
-    if (busy || !event.clipboardData || !event.clipboardData.items) return;
+    if (!canAttach() || !event.clipboardData || !event.clipboardData.items) return;
     var files: File[] = [];
     Array.prototype.forEach.call(event.clipboardData.items, function (item) {
       if (item.kind === "file" && item.type.indexOf("image/") === 0) {
@@ -1720,12 +2429,12 @@ import { createDoctorController } from "./doctor-controller";
       if (!dataTransferHasFiles(event.dataTransfer)) return;
       event.preventDefault();
       dragDepth++;
-      setDropActive(!busy);
+      setDropActive(canAttach());
     });
     composer.addEventListener("dragover", function (event) {
       if (!dataTransferHasFiles(event.dataTransfer)) return;
       event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? "none" : "copy";
+      if (event.dataTransfer) event.dataTransfer.dropEffect = canAttach() ? "copy" : "none";
     });
     composer.addEventListener("dragleave", function () {
       dragDepth = Math.max(0, dragDepth - 1);
@@ -1736,13 +2445,20 @@ import { createDoctorController } from "./doctor-controller";
       event.preventDefault();
       dragDepth = 0;
       setDropActive(false);
-      if (busy || !event.dataTransfer) return;
+      if (!canAttach() || !event.dataTransfer) return;
       var dropped = splitDroppedFiles(event.dataTransfer.files);
       if (dropped.images.length) addClipboardImages(dropped.images);
       if (dropped.files.length) addLocalFiles(dropped.files);
       input.focus();
     });
   }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && !api.suspended) {
+      void commandQueue.refresh();
+      if (conversations.some(c => c.active_turn_id)) void refreshConversations(false);
+    }
+  });
+  input.addEventListener("input", persistComposer);
   input.addEventListener("keydown", function (e) {
     if (e.defaultPrevented) return;
     if (!mentionMenu.hidden) {

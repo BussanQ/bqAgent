@@ -12,6 +12,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"bqagent/internal/media"
 )
 
 // ACPClientFactory creates a client whose subprocess lifetime is bound to ctx.
@@ -24,15 +27,28 @@ const (
 )
 
 type stdioACPClient struct {
-	cmd                  *exec.Cmd
-	stdin                io.WriteCloser
-	responses            map[string]chan rpcEnvelope
-	loadSessionSupported bool
-	nextID               int64
-	mu                   sync.Mutex
-	writeMu              sync.Mutex
-	collectors           map[string]*strings.Builder
-	permissionHandler    acpPermissionHandler
+	cmd                    *exec.Cmd
+	stdin                  io.WriteCloser
+	responses              map[string]chan rpcEnvelope
+	loadSessionSupported   bool
+	imagePromptsSupported  bool
+	closeSessionSupported  bool
+	deleteSessionSupported bool
+	forkSessionSupported   bool
+	modelSessionID         string
+	usageSessionID         string
+	contextReading         *ContextUsage
+	modelOptions           acpModels
+	modelsChanged          chan struct{}
+	commandReports         map[string][]NativeCommand
+	commandsChanged        chan struct{}
+	nextID                 int64
+	mu                     sync.Mutex
+	writeMu                sync.Mutex
+	collectors             map[string]*strings.Builder
+	plans                  map[string]*PlanUpdate
+	activity               map[string]ActivitySink
+	permissionHandler      acpPermissionHandler
 }
 
 type rpcEnvelope struct {
@@ -44,10 +60,14 @@ type rpcEnvelope struct {
 }
 
 type rpcError struct {
+	Code    int    `json:"code,omitempty"`
 	Message string `json:"message"`
 }
 
 type acpPermissionParams struct {
+	published  func()
+	receipt    *permissionReceipt
+	Dialog     *AgentDialog          `json:"-"`
 	SessionID  string                `json:"sessionId"`
 	ToolCall   json.RawMessage       `json:"toolCall"`
 	Options    []ACPPermissionOption `json:"-"`
@@ -58,9 +78,18 @@ type acpPermissionParams struct {
 	} `json:"options"`
 }
 
+// Native prompts publish their disposition only after the originating RPC
+// writer confirms the decision. Other adapters resolve at user submission.
+type permissionReceipt struct {
+	revoked atomic.Bool
+	publish func(delivered bool)
+}
+
 type acpPermissionOutcome struct {
-	Outcome  string `json:"outcome"`
-	OptionID string `json:"optionId,omitempty"`
+	Answers  []QuestionAnswer `json:"-"`
+	Value    *string          `json:"-"`
+	Outcome  string           `json:"outcome"`
+	OptionID string           `json:"optionId,omitempty"`
 }
 
 type acpPermissionHandler func(acpPermissionParams) acpPermissionOutcome
@@ -112,7 +141,15 @@ func (c *stdioACPClient) Initialize(ctx context.Context) error {
 	}
 	var result struct {
 		AgentCapabilities struct {
-			LoadSession bool `json:"loadSession"`
+			LoadSession        bool `json:"loadSession"`
+			PromptCapabilities struct {
+				Image bool `json:"image"`
+			} `json:"promptCapabilities"`
+			SessionCapabilities struct {
+				Close  *struct{} `json:"close"`
+				Delete *struct{} `json:"delete"`
+				Fork   *struct{} `json:"fork"`
+			} `json:"sessionCapabilities"`
 		} `json:"agentCapabilities"`
 	}
 	if len(response.Result) > 0 {
@@ -121,12 +158,18 @@ func (c *stdioACPClient) Initialize(ctx context.Context) error {
 		}
 	}
 	c.loadSessionSupported = result.AgentCapabilities.LoadSession
+	c.imagePromptsSupported = result.AgentCapabilities.PromptCapabilities.Image
+	c.closeSessionSupported = result.AgentCapabilities.SessionCapabilities.Close != nil
+	c.deleteSessionSupported = result.AgentCapabilities.SessionCapabilities.Delete != nil
+	c.forkSessionSupported = result.AgentCapabilities.SessionCapabilities.Fork != nil
 	return nil
 }
 
 func (c *stdioACPClient) LoadSessionSupported() bool {
 	return c != nil && c.loadSessionSupported
 }
+
+func (c *stdioACPClient) SupportsImages() bool { return c.imagePromptsSupported }
 
 func (c *stdioACPClient) NewSession(ctx context.Context, cwd string) (string, error) {
 	response, err := c.request(ctx, "session/new", map[string]any{
@@ -145,6 +188,7 @@ func (c *stdioACPClient) NewSession(ctx context.Context, cwd string) (string, er
 	if strings.TrimSpace(result.SessionID) == "" {
 		return "", fmt.Errorf("acp session/new returned empty sessionId")
 	}
+	c.rememberModels(result.SessionID, response.Result)
 	return result.SessionID, nil
 }
 
@@ -167,25 +211,54 @@ func (c *stdioACPClient) LoadSession(ctx context.Context, sessionID, cwd string)
 		return "", err
 	}
 	if strings.TrimSpace(result.SessionID) == "" {
-		return sessionID, nil
+		result.SessionID = sessionID
 	}
+	c.rememberModels(result.SessionID, response.Result)
 	return result.SessionID, nil
 }
 
 func (c *stdioACPClient) Prompt(ctx context.Context, sessionID, prompt string) (string, error) {
+	return c.promptWithImages(ctx, sessionID, prompt, nil)
+}
+
+func (c *stdioACPClient) promptWithImages(ctx context.Context, sessionID, prompt string, images []media.Image) (string, error) {
+	if len(images) > 0 && !c.SupportsImages() {
+		return "", fmt.Errorf("ACP Agent 未声明图片输入能力")
+	}
+	blocks := make([]map[string]any, 0, len(images)+1)
+	if prompt != "" || len(images) == 0 {
+		blocks = append(blocks, map[string]any{"type": "text", "text": prompt})
+	}
+	for _, image := range images {
+		blocks = append(blocks, map[string]any{"type": "image", "mimeType": image.ContentType(), "data": image.Base64()})
+	}
 	c.mu.Lock()
 	c.collectors[sessionID] = &strings.Builder{}
+	sink := ActivitySinkFromContext(ctx)
+	var replay *ContextUsage
+	if sink != nil {
+		if c.activity == nil {
+			c.activity = make(map[string]ActivitySink)
+		}
+		c.activity[sessionID] = sink
+		if c.usageSessionID == sessionID {
+			replay = c.contextReading
+		}
+	}
 	c.mu.Unlock()
+	if replay != nil {
+		sink(Activity{NativeSession: sessionID, ContextUsage: replay})
+	}
 	defer func() {
 		c.mu.Lock()
 		delete(c.collectors, sessionID)
+		delete(c.plans, sessionID)
+		delete(c.activity, sessionID)
 		c.mu.Unlock()
 	}()
 	_, err := c.request(ctx, "session/prompt", map[string]any{
 		"sessionId": sessionID,
-		"prompt": []map[string]any{
-			{"type": "text", "text": prompt},
-		},
+		"prompt":    blocks,
 	})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -196,7 +269,12 @@ func (c *stdioACPClient) Prompt(ctx context.Context, sessionID, prompt string) (
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if collector, ok := c.collectors[sessionID]; ok {
-		return strings.TrimSpace(collector.String()), nil
+		if reply := strings.TrimSpace(collector.String()); reply != "" {
+			return reply, nil
+		}
+		if p := c.plans[sessionID]; p != nil {
+			return p.Plan.ReplyText(p.Text), nil
+		}
 	}
 	return "", nil
 }
@@ -255,7 +333,7 @@ func (c *stdioACPClient) request(ctx context.Context, method string, params any)
 		return rpcEnvelope{}, ctx.Err()
 	case response := <-responseCh:
 		if response.Error != nil {
-			return rpcEnvelope{}, errors.New(response.Error.Message)
+			return response, errors.New(response.Error.Message)
 		}
 		return response, nil
 	}
@@ -384,26 +462,80 @@ func (c *stdioACPClient) handleSessionUpdate(raw json.RawMessage) {
 	var payload struct {
 		SessionID string `json:"sessionId"`
 		Update    struct {
-			SessionUpdate string          `json:"sessionUpdate"`
-			Content       json.RawMessage `json:"content"`
+			Size, Used                      *int64
+			AvailableCommands               []commandInfo   `json:"availableCommands"`
+			Entries                         []acpPlanEntry  `json:"entries"`
+			SessionUpdate                   string          `json:"sessionUpdate"`
+			MessageID                       string          `json:"messageId"`
+			Content                         json.RawMessage `json:"content"`
+			ToolCallID, Title, Status, Kind string
+			RawInput, RawOutput             json.RawMessage
 		} `json:"update"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return
 	}
-	// ACP uses session/update for thoughts, tool activity, and extension-defined
-	// updates too. Only agent_message_chunk is user-visible assistant output.
-	if payload.Update.SessionUpdate != "agent_message_chunk" {
+	if payload.Update.SessionUpdate == "available_commands_update" {
+		c.rememberCommands(payload.SessionID, payload.Update.AvailableCommands)
 		return
 	}
-	text := extractACPText(payload.Update.Content)
-	if strings.TrimSpace(text) == "" {
+	if payload.Update.SessionUpdate == "config_option_update" {
+		var params struct{ Update json.RawMessage }
+		if json.Unmarshal(raw, &params) == nil {
+			c.rememberModels(payload.SessionID, params.Update)
+		}
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if collector := c.collectors[payload.SessionID]; collector != nil {
-		collector.WriteString(text)
+	sink := c.activity[payload.SessionID]
+	collector := c.collectors[payload.SessionID]
+	var event Activity
+	switch payload.Update.SessionUpdate {
+	case "usage_update":
+		size, used := payload.Update.Size, payload.Update.Used
+		if size != nil && *size > 0 && used != nil && *used >= 0 {
+			u := &ContextUsage{Window: *size, Used: *used, Estimated: true, Captured: time.Now().UnixMicro()}
+			if c.contextReading != nil {
+				u.Captured = max(u.Captured, c.contextReading.Captured+1)
+			}
+			if c.modelSessionID == payload.SessionID {
+				u.Model = c.modelOptions.Selected
+			}
+			c.usageSessionID, c.contextReading = payload.SessionID, u
+			event = Activity{NativeSession: payload.SessionID, ContextUsage: u}
+		}
+	case "plan":
+		if collector != nil && payload.Update.Entries != nil {
+			event.Plan = acpSteps(payload.Update.Entries)
+			if c.plans == nil {
+				c.plans = make(map[string]*PlanUpdate)
+			}
+			c.plans[payload.SessionID] = event.Plan
+		}
+	case "agent_message_chunk":
+		if collector != nil {
+			event.TextID = payload.Update.MessageID
+			event.Text = extractACPText(payload.Update.Content)
+			collector.WriteString(event.Text)
+		}
+	case "tool_call", "tool_call_update":
+		if sink != nil {
+			update := payload.Update
+			event = Activity{CallID: update.ToolCallID, Name: firstNonEmpty(update.Title, update.Kind), Status: "running", Input: activityInput(update.RawInput), Output: firstNonEmpty(activityOutput(update.RawOutput), extractACPText(update.Content))}
+			event.Edits = acpFileEdits(update.Content)
+			switch update.Status {
+			case "completed":
+				event.Status = "succeeded"
+			case "failed":
+				event.Status = "failed"
+			case "cancelled":
+				event.Status = "killed"
+			}
+		}
+	}
+	c.mu.Unlock()
+	if sink != nil && (event.Text != "" || event.CallID != "" || event.Plan != nil || event.ContextUsage != nil) {
+		sink(event)
 	}
 }
 

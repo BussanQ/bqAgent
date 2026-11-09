@@ -7,19 +7,30 @@ import (
 	"strings"
 
 	apptrace "bqagent/internal/trace"
+	"bqagent/internal/transcript"
 )
 
 const (
+	ExternalToolsMessageKey   = transcript.ExternalToolsKey
 	CompletedToolActivityLead = "Completed tool activity (retain this evidence for later reasoning):"
 	completedToolResultLead   = "Completed tool result:"
 	assistantNoteLead         = "Assistant note: "
 	callsLead                 = "Calls: "
 )
 
+// DisplayToolArguments gives externally reported calls the same redaction
+// and size limits as tools executed by the built-in agent.
+func DisplayToolArguments(args map[string]any) map[string]any {
+	return boundedToolEventArguments(args)
+}
+
 var completedToolResultHeader = regexp.MustCompile(`(?m)^Result ([^\n:]*):\n`)
 
 type HistoryTool struct {
+	Edits *transcript.FileEdits `json:"edits,omitempty"`
 	apptrace.ToolExecution
+	TurnID    string         `json:"turn_id,omitempty"`
+	Source    string         `json:"source,omitempty"`
 	ID        string         `json:"id,omitempty"`
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments,omitempty"`

@@ -2,15 +2,19 @@ import type { SSEEvent } from "./types";
 
 export function parseSSE(raw: string): SSEEvent {
   let event = "message";
+  let id: number | undefined;
   const dataLines: string[] = [];
   raw.replace(/\r\n/g, "\n").split("\n").forEach((line) => {
     if (line.startsWith("event:")) {
       event = line.slice(6).trim();
+    } else if (/^id: *[1-9]\d*$/.test(line)) {
+      const n = Number(line.slice(3).trim());
+      if (Number.isSafeInteger(n)) id = n;
     } else if (line.startsWith("data:")) {
       dataLines.push(line.slice(5).replace(/^ /, ""));
     }
   });
-  return { event, data: dataLines.join("\n") };
+  return { event, data: dataLines.join("\n"), ...(id === undefined ? {} : { id }) };
 }
 
 export function narrowJSONObject<T extends object>(value: unknown, context = "JSON response"): T {

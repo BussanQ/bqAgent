@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,8 +181,8 @@ func TestCLIAdapterPersistsCodexResumeID(t *testing.T) {
 func TestCLIAdapterIncludesCodexFlagsOnResume(t *testing.T) {
 	root := t.TempDir()
 	argsLog := filepath.Join(root, "args.log")
+	t.Setenv("BQ_TEST_CODEX_ARGS_LOG", argsLog)
 	spec := helperSpec(t, "cli-codex")
-	spec.Args = append(spec.Args, argsLog)
 	adapter := CLIAdapter{}
 
 	_, err := adapter.SendTurn(context.Background(), spec, SessionState{
@@ -676,7 +677,7 @@ func TestBrokerClearRemovesSessionBinding(t *testing.T) {
 		t.Fatalf("Clear returned error: %v", err)
 	}
 
-	agent, prompt, explicit, err := broker.Resolve("hello", "session-1")
+	agent, prompt, explicit, err := broker.Resolve("hello", "session-1", "", false)
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
@@ -937,6 +938,13 @@ func TestExternalHelperProcess(t *testing.T) {
 		runHelperCLICodex(os.Args[4:])
 	case "cli-codex-fail":
 		runHelperCLICodexFail()
+	case "cli-codex-summary", "cli-codex-summary-only":
+		fmt.Println(`{"type":"thread.started","thread_id":"summary-thread"}`)
+		fmt.Println(`{"type":"item.updated","item":{"id":"r","type":"reasoning","text":"draft","content":["private raw"]}}`)
+		fmt.Println(`{"type":"item.completed","item":{"id":"r","type":"reasoning","text":"public summary","encrypted_content":"private encrypted"}}`)
+		if mode == "cli-codex-summary" {
+			fmt.Println(`{"type":"item.completed","item":{"id":"m","type":"agent_message","text":"final answer"}}`)
+		}
 	case "cli-claude":
 		runHelperCLIClaude()
 	case "acp-good":
@@ -1002,11 +1010,10 @@ func runHelperCLIClaude() {
 	_, _ = os.Stdout.WriteString(`{"result":"claude reply","session_id":"claude-session-1"}`)
 }
 
-func runHelperCLICodex(extra []string) {
-	if len(extra) > 0 {
-		_ = os.WriteFile(extra[0], []byte(strings.Join(os.Args[4:], "\n")+"\n"), 0o644)
+func runHelperCLICodex(args []string) {
+	if path := os.Getenv("BQ_TEST_CODEX_ARGS_LOG"); path != "" {
+		_ = os.WriteFile(path, []byte(strings.Join(args, "\n")+"\n"), 0o644)
 	}
-	args := os.Args[4:]
 	outputPath := ""
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == "--output-last-message" {

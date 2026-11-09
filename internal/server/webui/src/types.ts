@@ -1,3 +1,5 @@
+import type { SummarySection, SummaryView } from "./external-summary";
+
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "max";
 export type ChatMode = "run" | "ask";
 export type ConversationType = "default" | "group";
@@ -8,6 +10,7 @@ export interface GroupParticipant {
   kind: string;
   available: boolean;
   transport?: string;
+  supports_images?: boolean;
 }
 
 export interface GroupInfo {
@@ -47,6 +50,7 @@ export interface StatusResponse {
 }
 
 export interface ConversationSummary {
+  active_turn_id?: string;
   id: string;
   title: string;
   status: string;
@@ -55,6 +59,9 @@ export interface ConversationSummary {
 }
 
 export interface ConversationHistoryTool {
+  edits?: FileEdits;
+  turn_id?: string;
+  source?: string;
   id?: string;
   name: string;
   arguments?: Record<string, unknown>;
@@ -68,13 +75,54 @@ export interface ConversationHistoryTool {
   truncated?: boolean;
 }
 
+export interface AgentPlan {
+  mode: "steps" | "proposal";
+  steps?: { text: string; status: string; priority?: string }[];
+}
+
+export interface PromptQuestion {
+  id: string;
+  title: string;
+  header?: string;
+  multi_select?: boolean;
+  options?: { id: string; label: string; description?: string; selected?: boolean }[];
+}
+
+export interface QuestionAnswer {
+  question_id: string;
+  option_ids: string[];
+  other?: string;
+}
+
+export interface HistoricalPrompt {
+  questions?: PromptQuestion[];
+  detail?: string;
+  header?: string;
+  options?: { label: string; description?: string }[];
+  title: string;
+  method?: string;
+  state: string;
+  choice?: string;
+}
+
 export interface ConversationMessage {
+  external_turn?: string;
+  anchor?: string;
+  fork?: ForkAction;
+  rewind?: RewindAction;
+  delivery?: { id: string; state: "unknown" | "returned"; attachments?: {kind: "image" | "file"; name?:string; path?:string}[] };
+  parts?: { kind: string; id: string; text?: string; prompt?: HistoricalPrompt; plan?: AgentPlan; summary?: SummarySection }[];
+  summary?: SummaryView;
+  plan?: AgentPlan;
+  prompt?: HistoricalPrompt;
+  ordered?: boolean;
+  images?: string[];
   role: string;
   content: string;
   tools?: ConversationHistoryTool[];
   files?: ConversationHistoryFile[];
   sender?: string;
-  kind?: "message" | "error";
+  kind?: "message" | "error" | "context_clear" | "queue_delivery";
 }
 
 export interface ConversationHistoryFile {
@@ -106,6 +154,10 @@ export interface TaskState {
 }
 
 export interface ConversationHistory {
+  forked_from?: ForkOrigin | null;
+  rewind_receipt?: RewindAction | null;
+  context_number?: number;
+  active_agent?: string;
   id?: string;
   task?: TaskState | null;
   mode?: ChatMode;
@@ -205,7 +257,7 @@ export interface MessageSnapshot {
   turn_id: string;
   item_id: string;
   seq: number;
-  kind: "message.updated" | "message.completed" | "input.applied" | "task.updated";
+  kind: "message.updated" | "message.completed" | "input.available" | "input.applied" | "task.updated";
   phase: string;
   text: string;
 }
@@ -217,6 +269,18 @@ export interface PendingInputPayload {
 }
 
 export interface WebUIDoneEvent {
+  fork?: ForkAction;
+  rewind?: RewindAction;
+  next_turn_id?: string;
+  active_agent?: string;
+  reply_agent?: string;
+  reply_agent_model?: string;
+  reply_agent_effort?: string;
+  reply_agent_service_tier?: string;
+  reply_agent_interaction_mode?: string;
+  reply_agent_preferred_tier?: string;
+  reply_agent_command?: string;
+  reply_item_id?: string;
   pending_inputs?: PendingInputPayload[];
   turn_id?: string;
   outcome?: TurnOutcome;
@@ -233,6 +297,16 @@ export interface WebUIDoneEvent {
   generation?: GenerationMetrics;
 }
 
+export interface RewindAction {
+  agent?: "codex" | "claude";
+  target: string;
+  expected_context: number;
+  operation?: string;
+}
+
+export interface ForkAction { target: string; expected_context: number; tip?: boolean }
+export interface ForkOrigin { session: string; epoch: number; target: string }
+
 export interface GroupEventPayload {
   kind: string;
   call_id: string;
@@ -242,12 +316,17 @@ export interface GroupEventPayload {
 }
 
 export interface ACPPermissionOption {
+  description?: string;
   option_id: string;
   name: string;
   kind: "allow_once" | "allow_always" | "reject_once" | "reject_always" | string;
 }
 
 export interface ACPPermissionToolCall {
+  source?: string;
+  server?: string;
+  tool?: string;
+  detail?: string;
   toolCallId?: string;
   title?: string;
   kind?: string;
@@ -256,6 +335,9 @@ export interface ACPPermissionToolCall {
 }
 
 export interface ACPPermissionPayload {
+  dialog?: { method: "select" | "confirm" | "input" | "editor" | "question"; title: string; header?: string; message?: string; placeholder?: string; prefill?: string; free_text?: boolean; secret?: boolean; nonblocking?: boolean; questions?: PromptQuestion[] };
+  expired?: boolean;
+  selected?: string;
   request_id: string;
   session_id: string;
   agent: string;
@@ -265,6 +347,10 @@ export interface ACPPermissionPayload {
 }
 
 export interface ToolEventPayload {
+  edits?: FileEdits;
+  turn_id?: string;
+  sender?: string;
+  source?: string;
   kind?: string;
   id?: string;
   seq?: number;
@@ -280,6 +366,13 @@ export interface ToolEventPayload {
   truncated?: boolean;
   preview?: string;
 }
+
+export interface EditLine { kind:"add"|"del"|"context"|"content"|"gap"; text?:string; old?:number; new?:number }
+export interface EditFile {
+  path:string; old_path?:string; kind:"added"|"deleted"|"edited"|"renamed"|"written";
+  lines?:EditLine[]; added:number; removed:number; partial?:boolean; snippet?:boolean;
+}
+export interface FileEdits { files:EditFile[] | null; partial?:boolean }
 
 export interface PendingImage {
   id: number;
@@ -346,6 +439,7 @@ export interface ConversationsResponse {
 }
 
 export interface SSEEvent {
+  id?: number;
   event: string;
   data: string;
 }

@@ -1,4 +1,16 @@
 export type TurnInputKind = "steering" | "follow_up";
+
+// An explicit route addresses the next turn. Native inputs belong only to
+// the running agent, and have no per-message model or effort field.
+export function busyInputActions(query: string, receiver: string | undefined, qualified: boolean,
+  running: string | undefined, kinds: ReadonlySet<TurnInputKind>, compact: boolean, attachments = false, nextTurnSelection = false) {
+  const native = !compact && !qualified && !attachments && !nextTurnSelection && receiver === running;
+  return {
+    steer: native && (!running || kinds.has("steering")),
+    followUp: native && (!running || kinds.has("follow_up")),
+    queue: receiver && (compact || !query.trimStart().startsWith("/")) ? (compact ? "compact" : "message") : undefined,
+  };
+}
 export type TurnInputState = "sending" | "queued" | "applied" | "unconsumed" | "failed";
 
 export interface TurnInputItem {
@@ -32,6 +44,12 @@ export function inputKindForKey(event: TurnInputKeyEvent): TurnInputKind | null 
 
 export function isInputAppliedEvent(event: { kind: string }): boolean {
   return event.kind === "input.applied";
+}
+
+export function nativeInputOption(event: { kind: string; phase: string; turn_id: string; text: string }, turnId: string): { agent: string; kind: TurnInputKind } | undefined {
+  if (event.kind === "input.available" && event.turn_id === turnId && event.text && (event.phase === "steering" || event.phase === "follow_up")) {
+    return { agent: event.text, kind: event.phase };
+  }
 }
 
 export const TURN_INPUT_STATE_LABELS: Record<TurnInputState, string> = {
@@ -166,6 +184,8 @@ export interface TurnInputHost {
 export class TurnInputSession {
   readonly tracker = new TurnInputTracker();
   private readonly scope: string;
+  private readonly renderedInputs = new Set<string>();
+  private readonly restoredItems = new Set<string>();
 
   constructor(readonly turnId: string, readonly workspaceId: string, private readonly host: TurnInputHost) {
     this.scope = host.scope();
@@ -176,11 +196,13 @@ export class TurnInputSession {
   }
 
   private render(): void {
-    this.host.renderQueue(this.tracker.queued());
+    if (this.sameScope()) this.host.renderQueue(this.tracker.queued());
   }
 
   private restore(items: TurnInputItem[], notice: string): void {
+    items = items.filter(item => !this.restoredItems.has(item.localId));
     if (!items.length) return;
+    items.forEach(item => this.restoredItems.add(item.localId));
     if (!this.sameScope()) {
       this.host.notify("会话已切换，" + items.length + " 条未发送的输入未恢复");
       return;
@@ -209,21 +231,34 @@ export class TurnInputSession {
     } catch (error) {
       failure = "输入发送失败：" + (error instanceof Error ? error.message : String(error));
     }
-    if (failure) {
+    if (failure && item.state === "sending") {
       this.tracker.failed(item);
       this.restore([item], failure);
     }
     this.render();
   }
 
+  onQueued(event: PendingTurnInput): void {
+    if (!event.id || this.renderedInputs.has(event.id) || (event.kind !== "steering" && event.kind !== "follow_up")) return;
+    if (this.tracker.items.some(item => item.id === event.id)) return;
+    const item = this.tracker.items.find(row => row.state === "sending" && !row.id && row.kind === event.kind && row.text === event.text)
+      || this.tracker.add(event.kind, event.text);
+    this.tracker.accepted(item, event.id);
+    this.render();
+  }
+
   // Handles an input.applied snapshot: renders the user boundary exactly once.
-  onApplied(event: { item_id: string; phase: string; text: string }): void {
+  onApplied(event: { item_id: string; phase: string; text: string }, beforeRender?: () => void): void {
+    if (!event.item_id || this.renderedInputs.has(event.item_id)) return;
+    this.renderedInputs.add(event.item_id);
+    beforeRender?.();
     const item = this.tracker.applied(event.item_id, event.phase, event.text);
     this.host.renderApplied(item ? item.kind : event.phase, item ? item.text : event.text);
     this.render();
   }
 
   finish(pending: PendingTurnInput[] = []): void {
+    pending.forEach(input => this.onQueued(input));
     this.restore(this.tracker.finish(pending), "有输入未被消费，已恢复到输入框");
     this.render();
   }

@@ -1,21 +1,27 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
 	"net/http"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"bqagent/internal/agent"
+	"bqagent/internal/extagent"
 	"bqagent/internal/session"
 	"bqagent/internal/taskstate"
+	"bqagent/internal/transcript"
 )
 
 type conversationListItem struct {
+	ActiveTurnID     string           `json:"active_turn_id,omitempty"`
 	ID               string           `json:"id"`
 	Title            string           `json:"title"`
 	Status           string           `json:"status"`
@@ -24,12 +30,19 @@ type conversationListItem struct {
 }
 
 type conversationMessage struct {
-	Role    string              `json:"role"`
-	Content string              `json:"content"`
-	Tools   []agent.HistoryTool `json:"tools,omitempty"`
-	Files   []conversationFile  `json:"files,omitempty"`
-	Sender  string              `json:"sender,omitempty"`
-	Kind    string              `json:"kind,omitempty"`
+	ExternalTurn string              `json:"external_turn,omitempty"`
+	Anchor       string              `json:"anchor,omitempty"`
+	Fork         *forkAction         `json:"fork,omitempty"`
+	Rewind       *rewindAction       `json:"rewind,omitempty"`
+	Delivery     *queueDelivery      `json:"delivery,omitempty"`
+	Parts        []transcript.Part   `json:"parts,omitempty"`
+	Images       []string            `json:"images,omitempty"`
+	Role         string              `json:"role"`
+	Content      string              `json:"content"`
+	Tools        []agent.HistoryTool `json:"tools,omitempty"`
+	Files        []conversationFile  `json:"files,omitempty"`
+	Sender       string              `json:"sender,omitempty"`
+	Kind         string              `json:"kind,omitempty"`
 }
 
 type conversationFile struct {
@@ -41,15 +54,52 @@ type conversationFile struct {
 // terminal and web clients. Raw tool and system messages are omitted; compact
 // tool summaries are returned as structured Tools.
 type ConversationHistoryMessage struct {
-	Role    string              `json:"role"`
-	Content string              `json:"content"`
-	Tools   []agent.HistoryTool `json:"tools,omitempty"`
-	Sender  string              `json:"sender,omitempty"`
-	Kind    string              `json:"kind,omitempty"`
+	ExternalTurn string      `json:"external_turn,omitempty"`
+	Anchor       string      `json:"anchor,omitempty"`
+	Fork         *forkAction `json:"fork,omitempty"`
+	submission   string
+	Rewind       *rewindAction       `json:"rewind,omitempty"`
+	Delivery     *queueDelivery      `json:"delivery,omitempty"`
+	Parts        []transcript.Part   `json:"parts,omitempty"`
+	Images       []string            `json:"-"`
+	Role         string              `json:"role"`
+	Content      string              `json:"content"`
+	Tools        []agent.HistoryTool `json:"tools,omitempty"`
+	Sender       string              `json:"sender,omitempty"`
+	Kind         string              `json:"kind,omitempty"`
+}
+
+type historyToolPosition struct{ message, tool int }
+
+// A correction can arrive while a native tool is running. Later snapshots
+// update its first card, even across user messages. Older unscoped records
+// are independent because a provider may reuse its call IDs in later turns.
+func mergeExternalToolSnapshots(messages []ConversationHistoryMessage, index map[[2]string]historyToolPosition, tools []agent.HistoryTool) []agent.HistoryTool {
+	var added []agent.HistoryTool
+	for _, tool := range tools {
+		if tool.TurnID != "" && tool.ID != "" {
+			key := [2]string{tool.TurnID, tool.ID}
+			if pos, ok := index[key]; ok {
+				if pos.message == len(messages) {
+					added[pos.tool] = tool
+				} else {
+					messages[pos.message].Tools[pos.tool] = tool
+				}
+				continue
+			}
+			index[key] = historyToolPosition{len(messages), len(added)}
+		}
+		added = append(added, tool)
+	}
+	return added
 }
 
 // ConversationHistory is a read-only view of a persisted chat session.
 type ConversationHistory struct {
+	ForkedFrom       *session.ForkOrigin
+	RewindReceipt    *rewindAction
+	ContextNumber    int
+	ActiveAgent      extagent.AgentName
 	ID               string
 	Title            string
 	Mode             ChatMode
@@ -81,6 +131,7 @@ func (handler *handler) handleConversations(writer http.ResponseWriter, request 
 		return
 	}
 	items := make([]conversationListItem, 0, len(metas))
+	active := service.webTurns.runningSessions()
 	for _, meta := range metas {
 		title := strings.TrimSpace(meta.Task)
 		if title == "" {
@@ -89,7 +140,7 @@ func (handler *handler) handleConversations(writer http.ResponseWriter, request 
 		if runes := []rune(title); len(runes) > 48 {
 			title = string(runes[:48]) + "…"
 		}
-		items = append(items, conversationListItem{ID: meta.ID, Title: title, Status: string(meta.Status), UpdatedAt: meta.UpdatedAt, ConversationType: storedConversationType(meta.ConversationType)})
+		items = append(items, conversationListItem{ID: meta.ID, ActiveTurnID: active[meta.ID], Title: title, Status: string(meta.Status), UpdatedAt: meta.UpdatedAt, ConversationType: storedConversationType(meta.ConversationType)})
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"conversations": items})
 }
@@ -101,6 +152,10 @@ func (handler *handler) handleConversationHistory(writer http.ResponseWriter, re
 		writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
 		return
 	}
+	if request.URL.Query().Has("image") {
+		serveConversationImage(writer, request, service, id)
+		return
+	}
 	if request.Method == http.MethodDelete {
 		handler.deleteConversation(writer, service, id)
 		return
@@ -109,7 +164,7 @@ func (handler *handler) handleConversationHistory(writer http.ResponseWriter, re
 		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
 		return
 	}
-	history, err := service.ConversationHistory(id, 0)
+	history, err := service.conversationHistory(id, 0, true)
 	if errors.Is(err, os.ErrNotExist) {
 		writeError(writer, http.StatusNotFound, chatResponse{Error: "conversation not found"})
 		return
@@ -123,23 +178,33 @@ func (handler *handler) handleConversationHistory(writer http.ResponseWriter, re
 		writeError(writer, http.StatusBadRequest, chatResponse{Error: err.Error()})
 		return
 	}
+	writeJSON(writer, http.StatusOK, webHistoryPayload(history))
+}
+
+func webHistoryPayload(history ConversationHistory) map[string]any {
 	webMessages := make([]conversationMessage, 0, len(history.Messages))
 	for _, message := range history.Messages {
 		content := message.Content
 		var files []conversationFile
-		if message.Role == "user" {
+		if message.Role == "user" && message.Delivery == nil {
 			content, files = splitHistoryAttachments(content)
 		}
 		webMessages = append(webMessages, conversationMessage{
-			Role:    message.Role,
-			Content: content,
-			Tools:   message.Tools,
-			Files:   files,
-			Sender:  message.Sender,
-			Kind:    message.Kind,
+			ExternalTurn: message.ExternalTurn,
+			Anchor:       message.Anchor, Fork: message.Fork,
+			Rewind:   message.Rewind,
+			Delivery: message.Delivery,
+			Parts:    message.Parts,
+			Role:     message.Role,
+			Content:  content,
+			Tools:    message.Tools,
+			Files:    files,
+			Images:   message.Images,
+			Sender:   message.Sender,
+			Kind:     message.Kind,
 		})
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"id": history.ID, "title": history.Title, "mode": history.Mode, "conversation_type": history.ConversationType, "group": history.Group, "task": history.Task, "messages": webMessages})
+	return map[string]any{"id": history.ID, "context_number": history.ContextNumber, "forked_from": history.ForkedFrom, "rewind_receipt": history.RewindReceipt, "title": history.Title, "mode": history.Mode, "active_agent": history.ActiveAgent, "conversation_type": history.ConversationType, "group": history.Group, "task": history.Task, "messages": webMessages}
 }
 
 func splitHistoryAttachments(content string) (string, []conversationFile) {
@@ -222,6 +287,10 @@ func parseHistoryAttachmentTail(tail string) ([]conversationFile, bool) {
 // oversized newest message is truncated (arguments/results first, then text)
 // only in this returned view; the persisted session is never modified.
 func (service *Service) ConversationHistory(id string, maxBytes int) (ConversationHistory, error) {
+	return service.conversationHistory(id, maxBytes, false)
+}
+
+func (service *Service) conversationHistory(id string, maxBytes int, includeImageRefs bool) (ConversationHistory, error) {
 	canonicalID, err := session.CanonicalID(id)
 	if err != nil {
 		return ConversationHistory{}, err
@@ -232,17 +301,146 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 	if err != nil {
 		return ConversationHistory{}, err
 	}
-	messages, err := saved.LoadMessages()
+	var messages []map[string]any
+	var offsets []int64
+	if includeImageRefs {
+		messages, offsets, err = saved.LoadIndexedMessages()
+	} else {
+		messages, err = saved.LoadMessages()
+	}
 	if err != nil {
 		return ConversationHistory{}, conversationHistoryLoadError{err: fmt.Errorf("load conversation history: %w", err)}
 	}
+	return service.projectConversationHistory(saved, messages, offsets, maxBytes, includeImageRefs, nil)
+}
+
+func (service *Service) projectConversationHistory(saved *session.Session, messages []map[string]any, offsets []int64, maxBytes int, includeImageRefs bool, snapshot *webTurn) (ConversationHistory, error) {
+	var err error
+	conversationType := storedConversationType(saved.Meta().ConversationType)
+	var cutoff time.Time
+	if snapshot != nil {
+		cutoff = snapshot.baseAt
+	}
+	filtered := []ConversationHistoryMessage{}
+	for i := 0; i < saved.ContextNumber(); i++ {
+		if saved.BoundaryAfter(i).RewindTo != "" {
+			continue
+		}
+		previous, _ := saved.ContextAt(i)
+		var rows []map[string]any
+		var positions []int64
+		if includeImageRefs {
+			rows, positions, err = previous.LoadIndexedMessages()
+		} else {
+			rows, err = previous.LoadMessages()
+		}
+		if err != nil {
+			return ConversationHistory{}, conversationHistoryLoadError{err: err}
+		}
+		filtered = append(filtered, service.withQueueHandoffs(previous, projectContextMessages(previous, rows, positions, includeImageRefs), cutoff, false)...)
+		filtered = append(filtered, ConversationHistoryMessage{Role: "assistant", Kind: "context_clear", Content: "上下文已清空"})
+	}
+	current := projectContextMessages(saved, messages, offsets, includeImageRefs)
+	if includeImageRefs && conversationType != ConversationTypeGroup && storedChatMode(saved.Meta().CurrentMode) == ChatModeRun {
+		annotateForks(saved, current, messages, snapshot == nil)
+	}
+	var active extagent.SessionState
+	if snapshot == nil && conversationType != ConversationTypeGroup {
+		active, err = service.externalBroker.ActiveSession(saved.ID())
+		if err != nil {
+			return ConversationHistory{}, conversationHistoryLoadError{err: err}
+		}
+		canRewind := active.Agent == extagent.AgentCodex && active.Transport == extagent.TransportAppServer
+		if includeImageRefs && canRewind && storedChatMode(saved.Meta().CurrentMode) == ChatModeRun {
+			annotateRewindTargets(saved, messages, current, active)
+		}
+	}
+	filtered = append(filtered, service.withQueueHandoffs(saved, current, cutoff, snapshot == nil)...)
+	var task *taskstate.State
+	if service.taskToolEnabled {
+		task, err = saved.LoadTaskState()
+		if err != nil {
+			return ConversationHistory{}, conversationHistoryLoadError{err: fmt.Errorf("load conversation task: %w", err)}
+		}
+	}
+	result := ConversationHistory{ForkedFrom: saved.Meta().ForkedFrom, ID: saved.ID(), ContextNumber: saved.ContextNumber(), Title: saved.Meta().Task, Mode: storedChatMode(saved.Meta().CurrentMode), ConversationType: conversationType, Task: task, Messages: filtered}
+	if includeImageRefs && snapshot == nil && saved.ContextNumber() > 0 {
+		epoch := saved.ContextNumber() - 1
+		if b := saved.BoundaryAfter(epoch); b.RewindTo != "" {
+			result.RewindReceipt = &rewindAction{Agent: extagent.AgentName(b.Agent), Target: b.RewindTo, Epoch: epoch, Operation: b.Operation}
+		}
+	}
+	if conversationType == ConversationTypeGroup {
+		if config, configErr := saved.LoadGroupConfig(); configErr == nil {
+			info := groupInfo(config, service)
+			result.Group = &info
+		}
+	} else if snapshot != nil {
+		result.ActiveAgent = snapshot.baseAgent
+	} else {
+		result.ActiveAgent = active.Agent
+	}
+	if maxBytes <= 0 || historyBytes(filtered) <= maxBytes {
+		return result, nil
+	}
+	selected := make([]ConversationHistoryMessage, 0, len(filtered))
+	used := 0
+	for index := len(filtered) - 1; index >= 0; index-- {
+		message := filtered[index]
+		size := historyMessageBytes(message)
+		if used+size > maxBytes {
+			if len(selected) == 0 {
+				selected = append(selected, truncateHistoryMessage(message, maxBytes))
+				result.Omitted = index
+			} else {
+				result.Omitted = index + 1
+			}
+			break
+		}
+		selected = append(selected, message)
+		used += size
+	}
+	for left, right := 0, len(selected)-1; left < right; left, right = left+1, right-1 {
+		selected[left], selected[right] = selected[right], selected[left]
+	}
+	result.Messages = selected
+	return result, nil
+}
+
+func projectContextMessages(saved *session.Session, messages []map[string]any, offsets []int64, includeImageRefs bool) []ConversationHistoryMessage {
 	conversationType := storedConversationType(saved.Meta().ConversationType)
 	filtered := make([]ConversationHistoryMessage, 0, len(messages))
 	pendingGroupCalls := map[string]string{}
 	pendingTools := map[string]pendingHistoryTool{}
-	for _, message := range messages {
+	externalTools := map[[2]string]historyToolPosition{}
+	for index, message := range messages {
 		role, _ := message["role"].(string)
 		content := conversationMessageText(message["content"])
+		if h, ok := transcript.ReadExternalHistory(message[transcript.ExternalHistoryKey]); ok && role == "assistant" {
+			var tools []agent.HistoryTool
+			if raw := message[agent.ExternalToolsMessageKey]; raw != nil {
+				data, _ := json.Marshal(raw)
+				_ = json.Unmarshal(data, &tools)
+				tools = mergeExternalToolSnapshots(filtered, externalTools, tools)
+			}
+			if len(h.Parts) > 0 || len(tools) > 0 {
+				sender, _ := message["name"].(string)
+				filtered = append(filtered, ConversationHistoryMessage{Anchor: h.ID, ExternalTurn: h.TurnID, Role: role, Sender: sender, Content: content, Tools: tools, Parts: h.Parts})
+			}
+			continue
+		}
+		if raw, ok := message[agent.ExternalToolsMessageKey]; ok && role == "assistant" {
+			var tools []agent.HistoryTool
+			data, err := json.Marshal(raw)
+			if err == nil && json.Unmarshal(data, &tools) == nil && len(tools) > 0 {
+				sender, _ := message["name"].(string)
+				tools = mergeExternalToolSnapshots(filtered, externalTools, tools)
+				if len(tools) > 0 || content != "" {
+					filtered = append(filtered, ConversationHistoryMessage{Role: role, Sender: sender, Content: content, Tools: tools})
+				}
+				continue
+			}
+		}
 		ordinaryCalls := []agent.ToolCall{}
 		if role == "assistant" {
 			for _, call := range historyToolCalls(message) {
@@ -337,48 +535,25 @@ func (service *Service) ConversationHistory(id string, maxBytes int) (Conversati
 			continue
 		}
 		if (role == "user" || role == "assistant") && strings.TrimSpace(content) != "" {
-			filtered = append(filtered, ConversationHistoryMessage{Role: role, Sender: groupHistorySender(conversationType, role), Content: content})
-		}
-	}
-	var task *taskstate.State
-	if service.taskToolEnabled {
-		task, err = saved.LoadTaskState()
-		if err != nil {
-			return ConversationHistory{}, conversationHistoryLoadError{err: fmt.Errorf("load conversation task: %w", err)}
-		}
-	}
-	result := ConversationHistory{ID: saved.ID(), Title: saved.Meta().Task, Mode: storedChatMode(saved.Meta().CurrentMode), ConversationType: conversationType, Task: task, Messages: filtered}
-	if conversationType == ConversationTypeGroup {
-		if config, configErr := saved.LoadGroupConfig(); configErr == nil {
-			info := groupInfo(config, service)
-			result.Group = &info
-		}
-	}
-	if maxBytes <= 0 || historyBytes(filtered) <= maxBytes {
-		return result, nil
-	}
-	selected := make([]ConversationHistoryMessage, 0, len(filtered))
-	used := 0
-	for index := len(filtered) - 1; index >= 0; index-- {
-		message := filtered[index]
-		size := historyMessageBytes(message)
-		if used+size > maxBytes {
-			if len(selected) == 0 {
-				selected = append(selected, truncateHistoryMessage(message, maxBytes))
-				result.Omitted = index
-			} else {
-				result.Omitted = index + 1
+			sender := groupHistorySender(conversationType, role)
+			if role == "assistant" && conversationType != ConversationTypeGroup {
+				sender, _ = message["name"].(string)
 			}
-			break
+			item := ConversationHistoryMessage{Role: role, Sender: sender, Content: content}
+			if includeImageRefs && role == "user" {
+				item.submission, _ = message[transcript.SubmissionKey].(string)
+				item.Images = conversationImageRefs(message, offsets[index], saved.ContextNumber())
+			}
+			filtered = append(filtered, item)
 		}
-		selected = append(selected, message)
-		used += size
 	}
-	for left, right := 0, len(selected)-1; left < right; left, right = left+1, right-1 {
-		selected[left], selected[right] = selected[right], selected[left]
+	for _, pos := range externalTools {
+		call := &filtered[pos.message].Tools[pos.tool]
+		if call.Status == "running" {
+			call.Status = "unknown"
+		}
 	}
-	result.Messages = selected
-	return result, nil
+	return filtered
 }
 
 type pendingHistoryTool struct {
@@ -438,7 +613,34 @@ func historyBytes(messages []ConversationHistoryMessage) int {
 }
 
 func historyMessageBytes(message ConversationHistoryMessage) int {
-	total := len(message.Role) + len(message.Content) + len(message.Sender) + len(message.Kind)
+	total := len(message.Role) + len(message.Content) + len(message.Sender) + len(message.Kind) + len(message.ExternalTurn)
+	if d := message.Delivery; d != nil {
+		total += len(d.ID) + len(d.State)
+		for _, file := range d.Attachments {
+			total += len(file.Kind) + len(file.Name) + len(file.Path) + len(file.MIME)
+		}
+	}
+	for _, part := range message.Parts {
+		total += len(part.ID) + len(part.Kind) + len(part.Text)
+		if p := part.Summary; p != nil {
+			total += len(p.Item) + 8
+		}
+		if p := part.Plan; p != nil {
+			total += len(p.Mode)
+			for _, step := range p.Steps {
+				total += len(step.Text) + len(step.Status) + len(step.Priority)
+			}
+		}
+		if p := part.Prompt; p != nil {
+			total += len(p.Title) + len(p.Method) + len(p.State) + len(p.Choice) + len(p.Header) + len(p.Detail)
+			if len(p.Questions) > 0 {
+				total += historyValueBytes(p.Questions)
+			}
+			for _, option := range p.Options {
+				total += len(option.Label) + len(option.Description)
+			}
+		}
+	}
 	for _, tool := range message.Tools {
 		total += historyToolBytes(tool)
 	}
@@ -446,7 +648,11 @@ func historyMessageBytes(message ConversationHistoryMessage) int {
 }
 
 func historyToolBytes(tool agent.HistoryTool) int {
-	return len(tool.ID) + len(tool.Name) + len(tool.Status) + len(tool.Result) + historyValueBytes(tool.Arguments)
+	size := len(tool.ID) + len(tool.TurnID) + len(tool.Name) + len(tool.Status) + len(tool.Result) + historyValueBytes(tool.Arguments)
+	if tool.Edits != nil {
+		size += historyValueBytes(tool.Edits)
+	}
+	return size
 }
 
 func historyValueBytes(value any) int {
@@ -470,7 +676,78 @@ func truncateHistoryMessage(message ConversationHistoryMessage, budget int) Conv
 	if historyMessageBytes(message) <= budget {
 		return message
 	}
+	// Preserve the ordered answer and tool references before dropping a
+	// message's entire timeline to fit the history response.
+	if slices.ContainsFunc(message.Parts, func(p transcript.Part) bool {
+		return p.Summary != nil || p.Prompt != nil && (p.Prompt.Detail != "" || len(p.Prompt.Questions) > 0)
+	}) {
+		message.Parts = slices.Clone(message.Parts)
+		over := historyMessageBytes(message) - budget
+		for i := len(message.Parts) - 1; i >= 0 && over > 0; i-- {
+			part := &message.Parts[i]
+			if part.Prompt != nil && len(part.Prompt.Questions) > 0 {
+				p := *part.Prompt
+				p.Questions = slices.Clone(p.Questions)
+				for j := len(p.Questions) - 1; j >= 0 && over > 0; j-- {
+					q := &p.Questions[j]
+					before := historyValueBytes(q)
+					var selected []transcript.PromptOption
+					for _, opt := range q.Options {
+						if opt.Selected {
+							opt.Description = ""
+							selected = append(selected, opt)
+						}
+					}
+					q.Options = selected
+					over -= before - historyValueBytes(q)
+				}
+				part.Prompt = &p
+			}
+			if part.Prompt != nil && part.Prompt.Detail != "" {
+				p := *part.Prompt
+				size := len(p.Detail)
+				p.Detail = truncateHistoryText(p.Detail, max(0, size-over))
+				over -= size - len(p.Detail)
+				part.Prompt = &p
+			}
+			if part.Summary == nil || part.Text == "" {
+				continue
+			}
+			preview := historyUTF8Prefix(part.Text, max(0, len(part.Text)-over))
+			over -= len(part.Text) - len(preview)
+			part.Text = preview
+			meta := *part.Summary
+			meta.Truncated = true
+			part.Summary = &meta
+		}
+		if over <= 0 {
+			return message
+		}
+		message.Parts = slices.DeleteFunc(message.Parts, func(p transcript.Part) bool { return p.Summary != nil })
+		if historyMessageBytes(message) <= budget {
+			return message
+		}
+	}
+	message.Parts = nil
+	if message.Delivery != nil {
+		info := *message.Delivery
+		info.Attachments = nil
+		message.Delivery = &info
+		if historyMessageBytes(message)-len(message.Content) > budget {
+			message.Delivery = nil
+			message.Kind = ""
+		}
+	}
 	message.Tools = cloneHistoryTools(message.Tools)
+	for i := range message.Tools {
+		if message.Tools[i].Edits != nil {
+			message.Tools[i].Edits = nil
+			message.Tools[i].Truncated = true
+			if historyMessageBytes(message) <= budget {
+				return message
+			}
+		}
+	}
 	for index := range message.Tools {
 		if len(message.Tools[index].Arguments) == 0 {
 			continue
@@ -496,7 +773,7 @@ func truncateHistoryMessage(message ConversationHistoryMessage, budget int) Conv
 	if historyMessageBytes(message) <= budget {
 		return message
 	}
-	message.Content = truncateHistoryText(message.Content, max(0, budget-len(message.Role)))
+	message.Content = truncateHistoryText(message.Content, max(0, budget-(historyMessageBytes(message)-len(message.Content))))
 	return message
 }
 
@@ -553,6 +830,32 @@ func (handler *handler) deleteConversation(writer http.ResponseWriter, service *
 		writeError(writer, http.StatusNotFound, chatResponse{Error: "conversation not found"})
 		return
 	}
+	gate, err := saved.OpenContextLock(true)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, session.ErrContextBusy) {
+			status = http.StatusConflict
+		}
+		writeError(writer, status, chatResponse{Error: err.Error()})
+		return
+	}
+	defer gate.Close()
+	service.webTurns.queueMu.Lock()
+	defer service.webTurns.queueMu.Unlock()
+	// Coordinate deletion with dispatch, including a queue owned by a different
+	// server using this workspace. Damaged queue metadata can still be deleted.
+	alreadyOwned := service.webTurns.queueLeases[canonicalID] != nil
+	if err := service.webTurns.ownQueue(saved, context.Background()); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errQueueOwned) {
+			status = http.StatusConflict
+		}
+		writeError(writer, status, chatResponse{Error: err.Error()})
+		return
+	}
+	if !alreadyOwned {
+		defer service.webTurns.releaseQueue(canonicalID)
+	}
 	if service.externalBroker != nil {
 		var clearErr error
 		if storedConversationType(saved.Meta().ConversationType) == ConversationTypeGroup {
@@ -565,10 +868,15 @@ func (handler *handler) deleteConversation(writer http.ResponseWriter, service *
 			return
 		}
 	}
+	service.webTurns.forgetSession(canonicalID)
 	if err := service.store.Delete(canonicalID); err != nil {
 		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
 		return
 	}
+	service.webTurns.releaseQueue(canonicalID)
+	_ = os.Remove(filepath.Join(filepath.Dir(saved.Dir()), queueLockName(saved)))
+	_ = gate.Close()
+	_ = os.Remove(gate.Name())
 	writeJSON(writer, http.StatusOK, map[string]any{"deleted": true, "id": canonicalID})
 }
 

@@ -15,6 +15,7 @@ var ErrTurnNotFound = errors.New("turn not found")
 type activeTurnEntry struct {
 	cancel context.CancelFunc
 	inputs *turn.InputQueue
+	steer  func(turn.Input) error
 }
 
 type activeTurnRegistry struct {
@@ -92,6 +93,20 @@ func (registry *activeTurnRegistry) Stop(turnID string) bool {
 	return true
 }
 
+// The native prompt installs a handler only after turn/start succeeds. Its
+// closure is bound to that exact prompt and expires when it ends.
+func (registry *activeTurnRegistry) setNativeSteering(turnID string, inputs *turn.InputQueue, send func(turn.Input) error) bool {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	entry, ok := registry.turns[turnID]
+	if !ok || entry.inputs != inputs {
+		return false
+	}
+	entry.steer = send
+	registry.turns[turnID] = entry
+	return true
+}
+
 // AddInput queues input without taking any session lock. It returns
 // ErrTurnNotFound for unknown turns and turn.ErrInputClosed once the turn has
 // stopped accepting input.
@@ -101,10 +116,31 @@ func (registry *activeTurnRegistry) AddInput(turnID string, input turn.Input) er
 		return ErrTurnNotFound
 	}
 	registry.mu.Lock()
-	queue := registry.turns[turnID].inputs
+	entry := registry.turns[turnID]
 	registry.mu.Unlock()
-	if queue == nil {
+	if entry.steer != nil {
+		return entry.steer(input)
+	}
+	if entry.inputs == nil {
 		return ErrTurnNotFound
 	}
-	return queue.Add(input)
+	return entry.inputs.Add(input)
+}
+
+// Capture the running turn's actual input handler at admission. An external
+// turn without a native handler cannot consume the built-in input queue.
+func (registry *activeTurnRegistry) queueCardHandler(id string, builtin bool) func(turn.Input) error {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	entry := registry.turns[id]
+	if builtin && entry.inputs != nil {
+		return func(input turn.Input) error {
+			err := entry.inputs.Add(input)
+			if errors.Is(err, turn.ErrInputClosed) {
+				return errors.Join(err, turn.ErrInputRejected)
+			}
+			return err
+		}
+	}
+	return entry.steer
 }

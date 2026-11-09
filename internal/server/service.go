@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -103,6 +104,7 @@ type Service struct {
 	memoryStore               *appmemory.Store
 	globalMemoryStore         *appmemory.Store
 	activeTurns               *activeTurnRegistry
+	webTurns                  *webTurnRegistry
 	taskToolEnabled           bool
 }
 
@@ -113,7 +115,12 @@ type FileAttachment struct {
 }
 
 type TurnRequest struct {
-	TaskRelation turn.Relation `json:"task_relation,omitempty"`
+	queuedCompact       bool
+	queuedMessage       bool
+	queuedBinding       string
+	queuedTierInherited bool
+	queuedBlob          string
+	TaskRelation        turn.Relation `json:"task_relation,omitempty"`
 	// WorkspaceID routes WebUI control requests to a workspace-specific service.
 	// A Service itself ignores this field after routing.
 	WorkspaceID string `json:"workspace_id,omitempty"`
@@ -135,6 +142,13 @@ type TurnRequest struct {
 	ReasoningEffort agent.ReasoningEffort `json:"reasoning_effort,omitempty"`
 	// Mode selects the session capability profile. Empty defaults to run mode.
 	Mode ChatMode `json:"mode,omitempty"`
+	// Agent selects the responder for a single chat turn without modifying its text.
+	// An empty selection follows the session route; "bqagent" uses the built-in model.
+	Agent                extagent.AgentName `json:"agent,omitempty"`
+	AgentModel           string             `json:"agent_model,omitempty"`
+	AgentEffort          string             `json:"agent_effort,omitempty"`
+	AgentInteractionMode string             `json:"agent_interaction_mode,omitempty"`
+	AgentServiceTier     string             `json:"agent_service_tier,omitempty"`
 	// ConversationType selects ordinary one-to-one chat or a coordinated group.
 	// It is only authoritative when creating a new session.
 	ConversationType ConversationType `json:"conversation_type,omitempty"`
@@ -171,18 +185,29 @@ type CacheMetrics struct {
 }
 
 type TurnResponse struct {
-	APIType          agent.APIType      `json:"api_type,omitempty"`
-	TurnID           string             `json:"turn_id"`
-	Outcome          turn.Outcome       `json:"outcome"`
-	SessionID        string             `json:"session_id"`
-	Reply            string             `json:"reply"`
-	ReplyKind        string             `json:"reply_kind,omitempty"`
-	RunID            string             `json:"run_id,omitempty"`
-	Model            string             `json:"model,omitempty"`
-	Mode             ChatMode           `json:"mode"`
-	ConversationType ConversationType   `json:"conversation_type"`
-	Generation       *GenerationMetrics `json:"generation,omitempty"`
-	Streamed         bool               `json:"-"`
+	Fork                      *forkAction        `json:"fork,omitempty"`
+	Rewind                    *rewindAction      `json:"rewind,omitempty"`
+	ActiveAgent               extagent.AgentName `json:"active_agent,omitempty"`
+	ReplyAgent                extagent.AgentName `json:"reply_agent,omitempty"`
+	ReplyAgentCommand         string             `json:"reply_agent_command,omitempty"`
+	ReplyAgentModel           string             `json:"reply_agent_model,omitempty"`
+	ReplyItemID               string             `json:"reply_item_id,omitempty"`
+	ReplyAgentEffort          string             `json:"reply_agent_effort,omitempty"`
+	ReplyAgentInteractionMode string             `json:"reply_agent_interaction_mode,omitempty"`
+	ReplyAgentServiceTier     string             `json:"reply_agent_service_tier,omitempty"`
+	ReplyAgentPreferredTier   string             `json:"reply_agent_preferred_tier,omitempty"`
+	APIType                   agent.APIType      `json:"api_type,omitempty"`
+	TurnID                    string             `json:"turn_id"`
+	Outcome                   turn.Outcome       `json:"outcome"`
+	SessionID                 string             `json:"session_id"`
+	Reply                     string             `json:"reply"`
+	ReplyKind                 string             `json:"reply_kind,omitempty"`
+	RunID                     string             `json:"run_id,omitempty"`
+	Model                     string             `json:"model,omitempty"`
+	Mode                      ChatMode           `json:"mode"`
+	ConversationType          ConversationType   `json:"conversation_type"`
+	Generation                *GenerationMetrics `json:"generation,omitempty"`
+	Streamed                  bool               `json:"-"`
 	// PendingInputs are accepted mid-turn inputs the agent never consumed, so
 	// callers can restore them as drafts.
 	PendingInputs []turn.Input `json:"pending_inputs,omitempty"`
@@ -231,22 +256,28 @@ func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *Generation
 }
 
 type TurnOptions struct {
+	InputTarget func(extagent.SessionState)
 	// Inputs lets the caller (e.g. the TUI) own the turn input queue. When nil,
 	// a queue from the context is reused, otherwise a new one is created.
 	Inputs      *turn.InputQueue
 	MessageSink turn.Sink
 	// SessionSink observes the canonical session before model work starts.
 	// Callers must keep it nonblocking.
-	SessionSink       func(string)
-	OutputWriter      io.Writer
-	ProgressWriter    io.Writer
-	TokenSink         io.Writer
-	ToolEventSink     agent.ToolEventSink
-	GroupEventSink    GroupEventSink
-	ACPPermissionSink extagent.ACPPermissionSink
-	Stream            bool
-	MaxIterations     int
-	Stage             agent.StageConfig
+	SessionSink         func(string)
+	OutputWriter        io.Writer
+	ProgressWriter      io.Writer
+	TokenSink           io.Writer
+	ToolEventSink       agent.ToolEventSink
+	GroupEventSink      GroupEventSink
+	ACPPermissionSink   extagent.ACPPermissionSink
+	ExternalTextSink    func(ExternalTextEvent)
+	ExternalPlanSink    func(ExternalPlanEvent)
+	ExternalSummarySink func(ExternalSummaryEvent)
+	ExternalContextSink func(extagent.AgentName, extagent.ContextUsage)
+	ExternalCommandSink func(extagent.AgentName, string)
+	Stream              bool
+	MaxIterations       int
+	Stage               agent.StageConfig
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -307,6 +338,7 @@ func NewService(options ServiceOptions) *Service {
 		memoryStore:               options.MemoryStore,
 		globalMemoryStore:         options.GlobalMemoryStore,
 		activeTurns:               newActiveTurnRegistry(),
+		webTurns:                  &webTurnRegistry{},
 		taskToolEnabled:           options.TaskToolEnabled,
 	}
 	service.llm.Store(service.llmConfiguration)
@@ -361,6 +393,21 @@ func (service *Service) StopTurn(turnID string) bool {
 	if service == nil || service.activeTurns == nil {
 		return false
 	}
+	if reg := service.webTurns; reg != nil {
+		reg.queueMu.Lock()
+		defer reg.queueMu.Unlock()
+		if j := reg.get(turnID); j != nil && !j.ended() {
+			j.stopRequested = true
+			j.queueResumed = false
+			if err := reg.pauseQueueForStop(service, j); err != nil {
+				log.Printf("pause WebUI command queue: %v", err)
+				_ = j.publish("queue_error", map[string]string{"error": "无法保存队列暂停状态：" + err.Error()})
+			}
+			service.activeTurns.Stop(turnID)
+			j.cancel()
+			return true
+		}
+	}
 	return service.activeTurns.Stop(turnID)
 }
 
@@ -377,9 +424,17 @@ func (service *Service) AddTurnInput(turnID string, kind turn.InputKind, text st
 	if text == "" {
 		return turn.Input{}, fmt.Errorf("input text is required")
 	}
+	if _, _, clear := clearRoute(text, ""); clear && service.webTurns != nil && service.webTurns.get(turnID) != nil {
+		return turn.Input{}, session.ErrContextBusy
+	}
 	input := turn.Input{ID: turn.NewID(), Kind: kind, Text: text}
 	if err := service.activeTurns.AddInput(turnID, input); err != nil {
 		return turn.Input{}, err
+	}
+	if service.webTurns != nil {
+		if job := service.webTurns.get(turnID); job != nil {
+			_ = job.publish("input_queued", input)
+		}
 	}
 	return input, nil
 }
@@ -506,6 +561,16 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	}()
 
 	message := strings.TrimSpace(request.Message)
+	if request.queuedMessage && (request.SessionID == "" || !validQueuedText(request.Agent, message, len(request.Images)+len(request.Files) > 0)) {
+		return TurnResponse{}, fmt.Errorf("无效的排队文本或接收者")
+	}
+	if request.queuedCompact {
+		name, text, explicit, parseErr := extagent.ParseRoute(message)
+		if parseErr != nil || !explicit || name != request.Agent || request.SessionID == "" ||
+			(name != extagent.AgentCodex && name != extagent.AgentPi && name != extagent.AgentClaude) || extagent.ParseCompactCommand(text, false) == nil {
+			return TurnResponse{}, fmt.Errorf("无效的排队压缩命令")
+		}
+	}
 	if isStopCommand(message) {
 		mode := ChatModeRun
 		conversationType := ConversationTypeDefault
@@ -522,7 +587,8 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			}
 		}
 		reply := service.stopProcessGroupReply(request.PeerKey, request.SessionID)
-		return TurnResponse{SessionID: strings.TrimSpace(request.SessionID), Reply: reply, Mode: mode, ConversationType: conversationType}, nil
+		active, _ := service.externalBroker.ActiveAgent(strings.TrimSpace(request.SessionID))
+		return TurnResponse{SessionID: strings.TrimSpace(request.SessionID), Reply: reply, Mode: mode, ConversationType: conversationType, ActiveAgent: active}, nil
 	}
 	if message == "" && len(request.Images) == 0 && len(request.Files) == 0 {
 		return TurnResponse{}, fmt.Errorf("message or attachments are required")
@@ -582,12 +648,31 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		unlock := service.locker.Lock(sessionID)
 		defer unlock()
 	}
+	var lockedSession bool
 	effectiveModel := service.model
 	mode := ChatModeRun
 	if sessionID != "" {
 		savedSession, openErr := service.store.Open(sessionID)
+		if request.queuedCompact || request.queuedMessage {
+			if err := ctx.Err(); err != nil {
+				return TurnResponse{}, err
+			}
+			if openErr != nil {
+				return TurnResponse{}, openErr
+			}
+			meta := savedSession.Meta()
+			if !meta.Chat || storedChatMode(meta.CurrentMode) != ChatModeRun || storedConversationType(meta.ConversationType) == ConversationTypeGroup {
+				return TurnResponse{}, fmt.Errorf("排队内容需要原来的 Run 单聊会话")
+			}
+		}
 		switch {
 		case openErr == nil:
+			gate, gateErr := savedSession.OpenContextLock(false)
+			if gateErr != nil {
+				return TurnResponse{}, gateErr
+			}
+			defer gate.Close()
+			lockedSession = true
 			effectiveModel = service.effectiveModel(savedSession)
 			mode = storedChatMode(savedSession.Meta().CurrentMode)
 			conversationType = storedConversationType(savedSession.Meta().ConversationType)
@@ -616,6 +701,19 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if conversationType == ConversationTypeGroup && mode != ChatModeRun {
 		return TurnResponse{}, fmt.Errorf("群聊会话仅支持 Run 模式")
 	}
+	if request.Agent != "" {
+		if conversationType == ConversationTypeGroup {
+			return TurnResponse{}, fmt.Errorf("群聊请使用 @成员名 选择 Agent")
+		}
+		if request.Agent != builtinChatAgent {
+			if !slices.Contains(extagent.SupportedAgents(), request.Agent) {
+				return TurnResponse{}, fmt.Errorf("未知的单聊 Agent：%s", request.Agent)
+			}
+			if _, modeCommand := chatModeCommand(message); mode == ChatModeAsk && !modeCommand {
+				return TurnResponse{}, errors.New(askModeBlockedCommandReply())
+			}
+		}
+	}
 	if conversationType == ConversationTypeGroup && len(groupConfig.Participants) == 0 {
 		groupConfig = newGroupConfig(service.GroupParticipants())
 	}
@@ -627,6 +725,22 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	stablePrompt = promptForChatMode(stablePrompt, mode)
 	if conversationType == ConversationTypeGroup {
 		stablePrompt = promptForGroup(stablePrompt, groupConfig)
+	}
+	if !lockedSession {
+		// Acquire the same cross-process lock before preparing the first prompt.
+		// A missing requested ID follows the existing fresh-session behavior.
+		fresh, createErr := service.store.Create(*createOptions)
+		if createErr != nil {
+			return TurnResponse{}, createErr
+		}
+		sessionID = fresh.ID()
+		unlock := service.locker.Lock(sessionID)
+		defer unlock()
+		gate, gateErr := fresh.OpenContextLock(false)
+		if gateErr != nil {
+			return TurnResponse{}, gateErr
+		}
+		defer gate.Close()
 	}
 	conversation, err := appruntime.PrepareConversationWithPrompt(service.store, sessionID, createOptions, stablePrompt, func() (string, error) {
 		return service.currentSessionContext(effectiveText, initialSessionContext)
@@ -677,6 +791,9 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			response.Model = service.effectiveModel(conversation.Session)
 			response.Mode = storedChatMode(conversation.Session.Meta().CurrentMode)
 			response.ConversationType = storedConversationType(conversation.Session.Meta().ConversationType)
+			if response.ConversationType != ConversationTypeGroup && err == nil {
+				response.ActiveAgent, err = service.externalBroker.ActiveAgent(conversation.Session.ID())
+			}
 		}
 	}()
 	effectiveModel = service.effectiveModel(conversation.Session)
@@ -825,7 +942,8 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		markConversationFailed(conversation, attachmentErr)
 		return TurnResponse{}, attachmentErr
 	}
-	modelMessage += formatAttachmentContext(resolvedFiles)
+	attachmentContext := formatAttachmentContext(resolvedFiles)
+	modelMessage += attachmentContext
 	// Slash commands (other than skill invocations) are handled without the
 	// core agent loop, so nothing would ever consume queued input.
 	if skillInvocation == nil && strings.HasPrefix(message, "/") {
@@ -838,7 +956,13 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			"args":  skillInvocation.Args,
 		})
 	}
-	if err := conversation.AddUserMessageWithImages(modelMessage, request.Images); err != nil {
+	var submission string
+	if conversationType != ConversationTypeGroup && mode == ChatModeRun && skillInvocation == nil {
+		if agent, _, _, err := service.externalBroker.Resolve(message, conversation.Session.ID(), request.Agent, len(request.Images)+len(request.Files) > 0); err == nil && (agent == extagent.AgentCodex || agent == extagent.AgentClaude || agent == extagent.AgentOpenCode) {
+			submission = turn.NewID()
+		}
+	}
+	if err := conversation.AddSubmission(modelMessage, request.Images, submission); err != nil {
 		writeTurnError(turnErrorWriter, err)
 		markConversationFailed(conversation, err)
 		return TurnResponse{}, err
@@ -949,16 +1073,19 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 		}
 	}
 
-	if conversationType != ConversationTypeGroup && mode == ChatModeRun && service.externalBroker != nil && skillInvocation == nil {
-		routedAgent, routedPrompt, _, routeErr := service.externalBroker.Resolve(message, conversation.Session.ID())
+	if conversationType != ConversationTypeGroup && mode == ChatModeRun && skillInvocation == nil {
+		routedAgent, routedPrompt, _, routeErr := service.externalBroker.Resolve(message, conversation.Session.ID(), request.Agent, len(request.Images)+len(request.Files) > 0)
+		if routedAgent == builtinChatAgent {
+			routeErr = service.externalBroker.UseBuiltin(conversation.Session.ID())
+			routedAgent = ""
+		}
 		if routeErr != nil {
 			writeTurnError(turnErrorWriter, routeErr)
 			markConversationFailed(conversation, routeErr)
 			return TurnResponse{}, routeErr
 		}
 		if routedAgent != "" {
-			// External agents do not consume the core input queue; reject input
-			// now (409 closed) instead of accepting it and never applying it.
+			// A native prompt can install its own steering handler once ready.
 			inputs.Close()
 		}
 		if routedAgent == extagent.AgentDefault {
@@ -983,37 +1110,111 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 			return TurnResponse{SessionID: conversation.Session.ID(), Reply: reply, RunID: runID}, nil
 		}
 		if routedAgent != "" {
+			var model, effort, serviceTier, interactionMode string
+			if routedAgent == request.Agent {
+				model = request.AgentModel
+				effort = request.AgentEffort
+				serviceTier = request.AgentServiceTier
+				interactionMode = request.AgentInteractionMode
+			}
+			timeline := &externalTimeline{tokens: options.TokenSink, sink: options.ToolEventSink, textSink: options.ExternalTextSink, planSink: options.ExternalPlanSink, summarySink: options.ExternalSummarySink}
+			compact := extagent.ParseCompactCommand(routedPrompt, len(request.Images)+len(request.Files) > 0)
+			if compact != nil {
+				compact.NativeOnly = request.queuedCompact
+			}
+			if compact != nil && options.ExternalCommandSink != nil {
+				compact.Started = func() { options.ExternalCommandSink(routedAgent, "compact") }
+			}
+			steering := timeline.steering(service.activeTurns, turnID, inputs, options.MessageSink, conversation, routedAgent)
+			if steering != nil {
+				steering.Target = options.InputTarget
+			}
+			var rewind *rewindAction
+			if compact == nil && submission != "" && routedAgent == extagent.AgentCodex {
+				if steering == nil {
+					steering = &extagent.TurnSteering{}
+				}
+				point, pointErr := beginRewindPoint(conversation.Session, request.Message)
+				if pointErr != nil {
+					log.Printf("prepare %s rewind point: %v", routedAgent, pointErr)
+				} else {
+					prefix := conversation.Messages[:len(conversation.Messages)-1]
+					steering.Started = func(state extagent.SessionState, nativeTurn string) {
+						if err := point.save(conversation.Session, submission, state, nativeTurn, resolvedFiles, prefix); err != nil {
+							log.Printf("save %s rewind point: %v", routedAgent, err)
+						} else {
+							rewind = &rewindAction{Agent: routedAgent, Target: submission, Epoch: conversation.Session.ContextNumber()}
+						}
+					}
+				}
+			}
+			var report func(extagent.ContextUsage)
+			if options.ExternalContextSink != nil {
+				report = func(u extagent.ContextUsage) { options.ExternalContextSink(routedAgent, u) }
+			}
 			result, err := service.externalBroker.SendTurn(ctx, extagent.TurnRequest{
-				BQSessionID:    conversation.Session.ID(),
-				Agent:          routedAgent,
-				Prompt:         routedPrompt,
-				CWD:            service.workspaceRoot,
-				PermissionSink: options.ACPPermissionSink,
+				ContextUsage:          report,
+				ExpectedSession:       request.queuedBinding,
+				Compact:               compact,
+				Steering:              steering,
+				Images:                request.Images,
+				Activity:              timeline.observe,
+				Model:                 model,
+				Effort:                effort,
+				ServiceTier:           serviceTier,
+				InteractionMode:       interactionMode,
+				InheritTierPreference: request.queuedTierInherited,
+				BQSessionID:           conversation.Session.ID(),
+				Agent:                 routedAgent,
+				Prompt:                routedPrompt + attachmentContext,
+				CWD:                   service.workspaceRoot,
+				PermissionSink:        timeline.permissions(options.ACPPermissionSink),
 			})
+			historyTools, partial := timeline.finish()
 			if err != nil {
+				notice := "执行失败：" + err.Error()
+				if errors.Is(err, context.Canceled) {
+					notice = "已停止生成。"
+				}
+				content := strings.TrimSpace(partial + "\n\n" + notice)
+				if saveErr := timeline.recordReply(content, historyTools, notice); saveErr != nil {
+					err = errors.Join(err, saveErr)
+				} else {
+					conversation.Messages = agent.BoundWorkingMessages(conversation.Messages, service.context)
+					err = errors.Join(err, conversation.SaveWorkingContext())
+				}
+
+				writeTurnError(turnErrorWriter, err)
+				markConversationFailed(conversation, err)
+				return TurnResponse{SessionID: conversation.Session.ID(), ReplyAgent: routedAgent}, err
+			}
+			if err := timeline.recordReply(result.Reply, historyTools, ""); err != nil {
 				writeTurnError(turnErrorWriter, err)
 				markConversationFailed(conversation, err)
 				return TurnResponse{}, err
 			}
-			assistantMessage := map[string]any{"role": "assistant", "content": result.Reply}
-			if err := conversation.Session.RecordMessage(assistantMessage); err != nil {
-				writeTurnError(turnErrorWriter, err)
-				markConversationFailed(conversation, err)
-				return TurnResponse{}, err
-			}
-			conversation.Messages = append(conversation.Messages, assistantMessage)
 			if err := service.completeConversation(conversation); err != nil {
 				writeTurnError(turnErrorWriter, err)
 				return TurnResponse{}, err
 			}
 			writeTurnReply(logWriter, result.Reply, false)
+			var fork *forkAction
+			if rewind != nil || result.ForkTip && submission != "" {
+				fork, err = saveReplyCheckpoint(conversation.Session, timeline.segment, submission, result, conversation.Messages)
+				if err != nil {
+					log.Printf("save %s fork point: %v", routedAgent, err)
+				}
+			}
 			if runRecorder != nil {
 				_ = runRecorder.Event("external_agent", map[string]any{"agent": routedAgent, "transport": result.State.Transport, "external_session_id": result.State.ExternalSessionID})
 			}
-			return TurnResponse{SessionID: conversation.Session.ID(), Reply: result.Reply, RunID: runID}, nil
+			return TurnResponse{SessionID: conversation.Session.ID(), Reply: result.Reply, ReplyAgent: routedAgent, ReplyAgentCommand: result.Command, ReplyAgentModel: result.State.Model, ReplyAgentEffort: result.State.Effort, ReplyAgentServiceTier: result.State.ServiceTier, ReplyAgentInteractionMode: result.State.InteractionMode, ReplyAgentPreferredTier: result.State.PreferredServiceTier, ReplyItemID: timeline.replyItemID, RunID: runID, Rewind: rewind, Fork: fork}, nil
 		}
 	}
 
+	if options.InputTarget != nil && mode == ChatModeRun && conversationType != ConversationTypeGroup {
+		options.InputTarget(extagent.SessionState{Agent: builtinChatAgent, Model: effectiveModel, Effort: string(request.ReasoningEffort)})
+	}
 	functions := service.functionsForTurn(request.PeerKey, conversation.Session.ID())
 	definitions := append([]tools.Definition(nil), service.toolDefinitions...)
 	mcpDefinitions, mcpFunctions := service.mcp.Snapshot()

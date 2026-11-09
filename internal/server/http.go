@@ -15,7 +15,7 @@ import (
 	"bqagent/internal/agent"
 	"bqagent/internal/extagent"
 	"bqagent/internal/globalconfig"
-
+	"bqagent/internal/session"
 	"bqagent/internal/turn"
 )
 
@@ -52,9 +52,11 @@ type chatResponse struct {
 }
 
 type acpPermissionResponseRequest struct {
-	WorkspaceID string `json:"workspace_id,omitempty"`
-	RequestID   string `json:"request_id"`
-	OptionID    string `json:"option_id"`
+	Answers     []extagent.QuestionAnswer `json:"answers,omitempty"`
+	Value       *string                   `json:"value,omitempty"`
+	WorkspaceID string                    `json:"workspace_id,omitempty"`
+	RequestID   string                    `json:"request_id"`
+	OptionID    string                    `json:"option_id"`
 }
 
 type statusResponse struct {
@@ -119,7 +121,7 @@ func (handler *handler) handleACPPermissionResponse(writer http.ResponseWriter, 
 		writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
 		return
 	}
-	if err := service.RespondACPPermission(payload.RequestID, payload.OptionID); err != nil {
+	if err := service.externalBroker.RespondPromptWithAnswers(payload.RequestID, payload.OptionID, payload.Value, payload.Answers); err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, extagent.ErrPermissionNotFound) {
 			status = http.StatusGone
@@ -334,7 +336,7 @@ func (handler *handler) handleTurnInput(writer http.ResponseWriter, request *htt
 		writeJSON(writer, http.StatusOK, turnInputResponse{Status: "accepted", ID: input.ID, Kind: string(input.Kind), Text: input.Text})
 	case errors.Is(err, ErrTurnNotFound):
 		writeJSON(writer, http.StatusNotFound, turnInputResponse{Status: "notfound", Error: "turn not found"})
-	case errors.Is(err, turn.ErrInputClosed):
+	case errors.Is(err, turn.ErrInputClosed), errors.Is(err, session.ErrContextBusy):
 		writeJSON(writer, http.StatusConflict, turnInputResponse{Status: "closed", Error: err.Error()})
 	default:
 		reject(err.Error())

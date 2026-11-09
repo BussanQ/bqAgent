@@ -212,6 +212,7 @@
           <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg>
         </button>
         <input id="file-input" type="file" multiple hidden>
+        <input id="image-input" type="file" accept="image/png,image/jpeg,image/gif" multiple hidden>
         <div class="attachment-menu" id="attachment-menu" role="dialog" aria-label="选择模式或添加文件" hidden>
           <div class="attachment-menu-heading">模式</div>
           <div class="chat-mode-options" role="radiogroup" aria-label="对话模式">
@@ -227,6 +228,10 @@
             </button>
           </div>
           <div class="attachment-menu-separator" aria-hidden="true"></div>
+          <button class="attachment-menu-action" id="upload-image" type="button">
+            <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-upload"></use></svg>
+            <span><strong>添加图片</strong><span>PNG、JPEG 或 GIF</span></span>
+          </button>
           <button class="attachment-menu-action" id="upload-file" type="button">
             <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-upload"></use></svg>
             <span><strong>上传本地文件</strong><span>保存到当前会话的 workspace</span></span>
@@ -242,6 +247,7 @@
       <div class="composer-content">
         <div class="attachment-tray" id="attachment-tray" aria-label="待发送附件" hidden></div>
         <div class="attachment-error" id="attachment-error" role="status" aria-live="polite"></div>
+        <div class="turn-input-queue" id="command-queue" aria-label="待发送队列" aria-live="polite" hidden></div>
         <div class="turn-input-queue" id="turn-input-queue" aria-label="已排队的输入" aria-live="polite" hidden></div>
         <div class="input-shell">
           <textarea id="input" rows="1" placeholder="给 bqagent 发送消息，可粘贴或拖入图片和文件" autofocus></textarea>
@@ -252,6 +258,17 @@
       <div class="model-controls" aria-label="模型选择">
         <wa-select id="model-select" title="模型" label="选择 Provider 和模型" placement="top" size="s"></wa-select>
       </div>
+      <details id="agent-model-controls" aria-label="外部 Agent 模型设置" hidden>
+        <summary title="模型设置"><span class="agent-model-name">模型</span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></summary>
+        <div class="agent-model-panel">
+          <label>模型<select id="agent-model-select" aria-label="外部 Agent 模型"></select></label>
+          <label>自定义模型<input id="agent-model-input" aria-label="自定义模型 ID" placeholder="模型 ID" autocomplete="off" spellcheck="false" hidden></label>
+          <label>交互模式<select id="agent-interaction-mode" aria-label="Agent 执行或规划模式" title="交互模式 · 下一条消息生效" hidden></select></label>
+          <label>推理强度<select id="agent-effort-select" aria-label="外部 Agent 推理强度" title="推理强度" hidden></select></label>
+          <label>服务档位<select id="agent-service-tier" aria-label="Codex 服务档位" title="Codex 服务档位 · 下一条消息生效" hidden></select></label>
+          <button type="button" id="agent-model-retry" aria-label="重新读取 Agent 模型" hidden>刷新</button>
+        </div>
+      </details>
       <div class="reasoning-effort" id="reasoning-effort">
         <button class="reasoning-effort-trigger" id="reasoning-effort-toggle" type="button" title="推理强度" aria-label="推理强度：高" aria-expanded="false" aria-controls="reasoning-effort-menu">
           <span id="reasoning-effort-label">高</span>
@@ -273,6 +290,16 @@
       </button>
     </div>
     <div class="composer-meta">
+      <label class="agent-picker" id="agent-picker">对话 Agent
+        <select id="chat-agent" aria-label="单聊对话 Agent"><option value="bqagent">bqagent</option></select>
+      </label>
+      <details class="context-usage" id="context-usage" hidden>
+        <summary><span class="context-ring" aria-hidden="true"></span>上下文 <span data-percent></span></summary>
+        <div class="context-usage-info">
+          <strong data-title></strong><span data-count></span>
+          <span data-compact hidden></span><ul data-categories hidden></ul>
+        </div>
+      </details>
       <button class="global-settings" id="provider-settings-trigger" type="button" title="模型 Provider 设置" aria-label="打开模型 Provider 设置">
         <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-settings"></use></svg>
         <span>设置</span>
@@ -280,6 +307,7 @@
       <span class="turn-input-actions" id="turn-input-actions" hidden>
         <button class="turn-input-btn" id="steer-btn" type="button" title="发送给正在运行的任务，用于纠偏 (Enter)">纠偏</button>
         <button class="turn-input-btn" id="followup-btn" type="button" title="作为后续任务排队，当前任务结束后处理 (Ctrl/Cmd + Enter)">排队后续</button>
+        <button class="turn-input-btn" id="queue-send-btn" type="button" title="当前回复结束后发送 (Ctrl/Cmd + Enter)" hidden>排队发送</button>
       </span>
       <span class="composer-hints" id="composer-hints">Enter 发送 · Shift + Enter 换行 · / 命令 · 支持 Markdown 与附件</span>
     </div>

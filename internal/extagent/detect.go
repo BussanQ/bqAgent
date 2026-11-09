@@ -32,13 +32,17 @@ func Detect(ctx context.Context, config Config, factory ACPClientFactory) map[Ag
 		if looksExecutable(cfg.ACP.Command) {
 			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			client, err := factory(probeCtx, cfg.ACP, config.WorkspaceRoot)
+			var images bool
 			if err == nil {
 				err = client.Initialize(probeCtx)
+				if capability, ok := client.(interface{ SupportsImages() bool }); ok {
+					images = capability.SupportsImages()
+				}
 				_ = client.Close()
 			}
 			cancel()
 			if err == nil {
-				result.ACP = &AgentTransport{Agent: agent, Kind: TransportACP, Command: cfg.ACP}
+				result.ACP = &AgentTransport{Agent: agent, Kind: TransportACP, Command: cfg.ACP, ACPImages: images}
 			} else {
 				result.StartupError = err.Error()
 			}

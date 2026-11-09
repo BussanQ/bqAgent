@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"bqagent/internal/transcript"
 	"bqagent/internal/turn"
 )
 
@@ -20,6 +21,9 @@ func (a *Agent) appendTurnInputs(ctx context.Context, messages []map[string]any,
 			content = input.Text
 		}
 		message := map[string]any{"role": "user", "content": content}
+		if input.QueueCard != "" {
+			message[transcript.ExternalInputKey] = input.ID
+		}
 		if err := a.recordMessages(message); err != nil {
 			if queue := turn.Inputs(ctx); queue != nil {
 				queue.Restore(inputs[i:])

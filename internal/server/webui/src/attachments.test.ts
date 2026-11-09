@@ -1,8 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dataTransferHasFiles, showTemporaryError, splitDroppedFiles, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
+import { dataTransferHasFiles, restorePendingAttachments, showTemporaryError, snapshotPendingAttachments, splitDroppedFiles, takePendingAttachmentsForSend, validateFileAttachment, validateImageAttachment } from "./attachments";
 
 describe("附件限制", () => {
   afterEach(() => vi.useRealTimers());
+
+  it("还原撤回的图片和空文件，并在排队确认前保留附件", () => {
+    let id = 0;
+    const create = vi.spyOn(URL,"createObjectURL").mockReturnValue("blob:queued");
+    try {
+      const payload = { images:[{mime_type:"image/png",data_base64:btoa("abc")}],files:[{name:"empty.md",data_base64:""}] };
+      const result = restorePendingAttachments(payload,() => ++id);
+      expect(result.images[0]).toMatchObject({id:1,size:3,objectURL:"blob:queued",loading:false});
+      expect(result.files[0]).toMatchObject({id:2,size:0,kind:"upload",name:"empty.md",loading:false});
+      expect(snapshotPendingAttachments(result.images,result.files)).toEqual(payload);
+      expect(result.images).toHaveLength(1);
+      expect(result.files).toHaveLength(1);
+    } finally { create.mockRestore(); }
+  });
 
   it("限制图片类型、单张大小、数量和合计大小", () => {
     expect(validateImageAttachment(4, 0, { type: "image/png", size: 1 })).toContain("4 张");

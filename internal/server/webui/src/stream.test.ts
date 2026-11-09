@@ -48,3 +48,13 @@ describe("后台消息快照", () => {
     expect(messages.items.get("progress")?.text).toBe("正在检查");
   });
 });
+
+it("expands resumed message patches against the last matching snapshot", () => {
+  const snapshots = new MessageSnapshots("t");
+  const first = { turn_id: "t", item_id: "m", seq: 1, kind: "message.updated" as const, phase: "draft", text: "先读" };
+  snapshots.apply(first);
+  const patch = { ...first, base_seq: 1, seq: 3, text: "文件" };
+  expect(snapshots.expand(patch).text).toBe("先读文件");
+  expect(() => snapshots.expand({ ...patch, base_seq: 2 })).toThrow();
+  expect(() => snapshots.expand({ ...patch, turn_id: "other" })).toThrow();
+});

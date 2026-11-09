@@ -61,6 +61,9 @@ func (s *Store) sessionIDs() ([]string, error) {
 			return nil, err
 		}
 		for _, entry := range entries {
+			if entry.Name() == forkOperationsDir {
+				continue
+			}
 			if !entry.IsDir() || seen[entry.Name()] {
 				continue
 			}

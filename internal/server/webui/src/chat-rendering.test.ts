@@ -123,6 +123,16 @@ describe("历史工具摘要解析", () => {
     expect(view.tools[0]).toMatchObject({ id: "call-1", name: "memory", preview: "saved" });
   });
 
+  it("保留历史用户消息的图片引用且不合并到后续回复", () => {
+    const refs = ["42.1.abc", "42.2.def"];
+    const messages = normalizeHistoryMessages([
+      { role: "user", content: "比较两张图\n[图片]", images: refs },
+      { role: "assistant", sender: "pi", content: "第二张有变化。" },
+    ]);
+    expect(messages[0].images).toEqual(refs);
+    expect(messages[1].images).toBeUndefined();
+  });
+
   it("保留历史用户消息的文件附件", () => {
     const messages = normalizeHistoryMessages([{
       role: "user",
