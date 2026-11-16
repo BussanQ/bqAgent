@@ -53,7 +53,7 @@ func TestWebUITaskSnapshotPublishesPersistedState(t *testing.T) {
 
 func TestConversationHistoryRestoresTaskOutsideTranscriptBudget(t *testing.T) {
 	service := NewService(ServiceOptions{TaskToolEnabled: true, WorkspaceRoot: t.TempDir(), AgentDir: filepath.Join(t.TempDir(), ".agent")})
-	saved, err := service.store.Create(session.CreateOptions{Task: "任务恢复", Chat: true})
+	saved, err := service.store.Create(session.CreateOptions{CreatedVia: webUIChannelName, Task: "任务恢复", Chat: true})
 	if err != nil {
 		t.Fatal(err)
 	}

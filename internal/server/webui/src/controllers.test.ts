@@ -27,8 +27,12 @@ describe("extracted controllers",()=>{
       if(url==="/api/v1/webui/workspaces")return new Response(JSON.stringify({roots:[{id:"r",name:"root",path:"/root"},{id:"s",name:"second",path:"/second"}],default:{id:"w",root_id:"r",name:"workspace",path:"/root",relative_path:""}}));
       return new Response('{"entries":[],"next_offset":null}');
     }));
-    const deps:WorkspaceDependencies={onSwitch:()=>{},thread:document.getElementById("thread") as HTMLDivElement,input:document.getElementById("input") as HTMLTextAreaElement,sendBtn:document.getElementById("send") as HTMLButtonElement,statusEl:document.getElementById("status") as HTMLDivElement,sessionId:"",busy:false,attachmentsEnabled:true,pendingFiles:[],MAX_PENDING_FILES:5,MAX_PENDING_TOTAL_FILE_BYTES:6000000,setConversationType:()=>{},refreshConversations:async()=>{},loadRuntimeModel:async()=>{},formatBytes:String,pathBaseName:value=>value,clearPendingAttachments:()=>{},addWorkspacePath:()=>true,setAttachmentMenu:()=>{},setChatMode:()=>{},emptyMarkup:()=>""};
+    localStorage.setItem("bqagent.webui.workspace-sessions", JSON.stringify({w:"old-chat"}));
+    const refreshConversations = vi.fn(async () => {});
+    const deps:WorkspaceDependencies={onSwitch:()=>{},thread:document.getElementById("thread") as HTMLDivElement,input:document.getElementById("input") as HTMLTextAreaElement,sendBtn:document.getElementById("send") as HTMLButtonElement,statusEl:document.getElementById("status") as HTMLDivElement,sessionId:"",busy:false,attachmentsEnabled:true,pendingFiles:[],MAX_PENDING_FILES:5,MAX_PENDING_TOTAL_FILE_BYTES:6000000,setConversationType:()=>{},refreshConversations,loadRuntimeModel:async()=>{},formatBytes:String,pathBaseName:value=>value,clearPendingAttachments:()=>{},addWorkspacePath:()=>true,setAttachmentMenu:()=>{},setChatMode:()=>{},emptyMarkup:()=>""};
     const controller=createWorkspaceController(api,deps);await controller.initializeWorkspaceSelection();
+    expect(deps.sessionId).toBe("");
+    expect(refreshConversations).toHaveBeenCalledWith(true, "old-chat");
     document.getElementById("workspace-select")!.click();const select=document.getElementById("workspace-picker-root") as HTMLSelectElement;select.value="s";select.dispatchEvent(new Event("change"));
     pending[1](new Response('{"path":"","absolute_path":"/new","directories":[],"next_offset":null}'));
     await vi.waitFor(()=>expect(document.getElementById("workspace-picker-path")!.textContent).toBe("/new"));

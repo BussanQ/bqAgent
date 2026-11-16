@@ -96,6 +96,7 @@ func mergeExternalToolSnapshots(messages []ConversationHistoryMessage, index map
 
 // ConversationHistory is a read-only view of a persisted chat session.
 type ConversationHistory struct {
+	createdViaWebUI  bool
 	ForkedFrom       *session.ForkOrigin
 	RewindReceipt    *rewindAction
 	ContextNumber    int
@@ -115,6 +116,11 @@ type conversationHistoryLoadError struct{ err error }
 func (loadErr conversationHistoryLoadError) Error() string { return loadErr.err.Error() }
 func (loadErr conversationHistoryLoadError) Unwrap() error { return loadErr.err }
 
+func isWebUIChat(meta session.Meta) bool {
+	// Before creation channels were recorded, only the WebUI could create a fork.
+	return meta.Chat && (meta.CreatedVia == webUIChannelName || (meta.CreatedVia == "" && meta.ForkedFrom != nil))
+}
+
 func (handler *handler) handleConversations(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet {
 		writeError(writer, http.StatusMethodNotAllowed, chatResponse{Error: "method not allowed"})
@@ -125,14 +131,18 @@ func (handler *handler) handleConversations(writer http.ResponseWriter, request 
 		writeError(writer, http.StatusNotFound, chatResponse{Error: err.Error()})
 		return
 	}
-	metas, err := service.store.List(100)
+	metas, err := service.store.List(0)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, chatResponse{Error: err.Error()})
 		return
 	}
-	items := make([]conversationListItem, 0, len(metas))
+	const limit = 100
+	items := make([]conversationListItem, 0, min(len(metas), limit))
 	active := service.webTurns.runningSessions()
 	for _, meta := range metas {
+		if !isWebUIChat(meta) {
+			continue
+		}
 		title := strings.TrimSpace(meta.Task)
 		if title == "" {
 			title = "新会话"
@@ -141,6 +151,9 @@ func (handler *handler) handleConversations(writer http.ResponseWriter, request 
 			title = string(runes[:48]) + "…"
 		}
 		items = append(items, conversationListItem{ID: meta.ID, ActiveTurnID: active[meta.ID], Title: title, Status: string(meta.Status), UpdatedAt: meta.UpdatedAt, ConversationType: storedConversationType(meta.ConversationType)})
+		if len(items) == limit {
+			break
+		}
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"conversations": items})
 }
@@ -165,7 +178,7 @@ func (handler *handler) handleConversationHistory(writer http.ResponseWriter, re
 		return
 	}
 	history, err := service.conversationHistory(id, 0, true)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || (err == nil && !history.createdViaWebUI) {
 		writeError(writer, http.StatusNotFound, chatResponse{Error: "conversation not found"})
 		return
 	}
@@ -363,7 +376,7 @@ func (service *Service) projectConversationHistory(saved *session.Session, messa
 			return ConversationHistory{}, conversationHistoryLoadError{err: fmt.Errorf("load conversation task: %w", err)}
 		}
 	}
-	result := ConversationHistory{ForkedFrom: saved.Meta().ForkedFrom, ID: saved.ID(), ContextNumber: saved.ContextNumber(), Title: saved.Meta().Task, Mode: storedChatMode(saved.Meta().CurrentMode), ConversationType: conversationType, Task: task, Messages: filtered}
+	result := ConversationHistory{createdViaWebUI: isWebUIChat(saved.Meta()), ForkedFrom: saved.Meta().ForkedFrom, ID: saved.ID(), ContextNumber: saved.ContextNumber(), Title: saved.Meta().Task, Mode: storedChatMode(saved.Meta().CurrentMode), ConversationType: conversationType, Task: task, Messages: filtered}
 	if includeImageRefs && snapshot == nil && saved.ContextNumber() > 0 {
 		epoch := saved.ContextNumber() - 1
 		if b := saved.BoundaryAfter(epoch); b.RewindTo != "" {

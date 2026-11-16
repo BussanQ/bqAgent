@@ -256,6 +256,8 @@ func generationMetricsFromAgent(metrics agent.TurnGenerationMetrics) *Generation
 }
 
 type TurnOptions struct {
+	// Set by the channel only when creating a session.
+	createdVia  string
 	InputTarget func(extagent.SessionState)
 	// Inputs lets the caller (e.g. the TUI) own the turn input queue. When nil,
 	// a queue from the context is reused, otherwise a new one is created.
@@ -717,7 +719,7 @@ func (service *Service) HandleTurnWithOptions(ctx context.Context, request TurnR
 	if conversationType == ConversationTypeGroup && len(groupConfig.Participants) == 0 {
 		groupConfig = newGroupConfig(service.GroupParticipants())
 	}
-	createOptions := &session.CreateOptions{Task: effectiveText, Chat: true, ConversationType: persistedConversationType(conversationType)}
+	createOptions := &session.CreateOptions{CreatedVia: options.createdVia, Task: effectiveText, Chat: true, ConversationType: persistedConversationType(conversationType)}
 	stablePrompt, initialSessionContext, err := service.currentPromptSnapshot(effectiveModel)
 	if err != nil {
 		return TurnResponse{}, err

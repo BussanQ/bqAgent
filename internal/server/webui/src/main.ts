@@ -193,7 +193,12 @@ import { createDoctorController } from "./doctor-controller";
     setChatMode: (...args) => setChatMode(...args),
   });
   const workspaceController = createWorkspaceController(api, {
-    onSwitch() { slashCommands.close(); api.abort(); providerController.cancel(); conversationLoadID++; conversationScopeEpoch++; clearTaskProgress(); },
+    onSwitch() {
+      slashCommands.close(); api.abort(); providerController.cancel();
+      conversationLoadID++; conversationScopeEpoch++; clearTaskProgress();
+      conversations = [];
+      renderConversationList();
+    },
     get thread() { return thread; },
     get input() { return input; },
     get sendBtn() { return sendBtn; },
@@ -580,7 +585,7 @@ import { createDoctorController } from "./doctor-controller";
     }
   }
 
-  async function refreshConversations(loadCurrent: boolean): Promise<void> {
+  async function refreshConversations(loadCurrent: boolean, savedSession = ""): Promise<void> {
     var loadID = loadCurrent ? ++conversationLoadID : conversationLoadID;
     const revision = ++listRevision;
     clearTimeout(listTimer);
@@ -600,7 +605,9 @@ import { createDoctorController } from "./doctor-controller";
         if (bookmarked && await restoreTurn(bookmarked, loadID)) return;
         if (loadID !== conversationLoadID) return;
       }
-      if (loadCurrent && sessionId && conversations.some(function (conversation) { return conversation.id === sessionId; })) await openConversation(sessionId);
+      if (loadCurrent && savedSession && conversations.some(conversation => conversation.id === savedSession)) {
+        await openConversation(savedSession);
+      }
     } catch (error) { if (isCancellation(error)) return;
       if (loadID !== conversationLoadID) return;
       conversationList.innerHTML = '<div class="conversation-list-state">读取历史失败</div>';

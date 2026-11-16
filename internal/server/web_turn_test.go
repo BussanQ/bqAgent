@@ -45,7 +45,7 @@ func TestWebUITurnDisconnectReplayAndStop(t *testing.T) {
 			b := extagent.NewBroker(extagent.NewStateStore(root), map[extagent.AgentName]extagent.DetectionResult{extagent.AgentPi: {Preferred: &extagent.AgentTransport{Agent: extagent.AgentPi, Kind: extagent.TransportACP}}}, func(context.Context, extagent.CommandSpec, string) (extagent.ACPClient, error) { return client, nil })
 			defer b.Close()
 			s := NewService(ServiceOptions{WorkspaceRoot: root, ExternalBroker: b})
-			prior, err := s.store.Create(session.CreateOptions{Chat: true})
+			prior, err := s.store.Create(session.CreateOptions{Chat: true, CreatedVia: webUIChannelName})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -158,7 +158,7 @@ func TestWebTurnLargeReplayAndSessionDeletion(t *testing.T) {
 
 func TestWebTurnBaselineSurvivesTranscriptReplacement(t *testing.T) {
 	s := NewService(ServiceOptions{WorkspaceRoot: t.TempDir()})
-	saved, err := s.store.Create(session.CreateOptions{Chat: true})
+	saved, err := s.store.Create(session.CreateOptions{Chat: true, CreatedVia: webUIChannelName})
 	if err != nil {
 		t.Fatal(err)
 	}

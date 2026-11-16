@@ -582,11 +582,84 @@ func TestWebUIProviderModelsUsesSavedEncryptedKey(t *testing.T) {
 	}
 }
 
+func TestWebUIRecognizesLegacyForksWithoutGuessingOtherChatOrigins(t *testing.T) {
+	fork := &session.ForkOrigin{Session: "parent"}
+	for _, tc := range []struct {
+		meta session.Meta
+		want bool
+	}{
+		{session.Meta{Chat: true, ForkedFrom: fork}, true},
+		{session.Meta{Chat: true, ConversationType: "group"}, false},
+		{session.Meta{Chat: true, CreatedVia: "terminal", ForkedFrom: fork}, false},
+		{session.Meta{Chat: true, CreatedVia: webUIChannelName, ConversationType: "group"}, true},
+	} {
+		if got := isWebUIChat(tc.meta); got != tc.want {
+			t.Errorf("isWebUIChat(%+v) = %v, want %v", tc.meta, got, tc.want)
+		}
+	}
+}
+
+func TestWebUIListsOnlyItsOwnConversationsAcrossClients(t *testing.T) {
+	root := t.TempDir()
+	opts := ServiceOptions{WorkspaceRoot: root, SystemPrompt: "test"}
+	service := NewService(opts)
+	ch := NewWebUIChannel(service, true)
+	webTurn := func(id string) string {
+		t.Helper()
+		body, err := json.Marshal(webUIChatRequest{SessionID: id, Message: "/ask"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/webui/chat", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		ch.handleStreamChat(w, req)
+		_, tail, ok := strings.Cut(w.Body.String(), "event: done\ndata: ")
+		var done webUIDoneEvent
+		if !ok || json.Unmarshal([]byte(tail), &done) != nil || done.SessionID == "" {
+			t.Fatalf("chat response: %s", w.Body)
+		}
+		return done.SessionID
+	}
+
+	webID := webTurn("")
+	other, err := service.HandleTurn(t.Context(), TurnRequest{Message: "/ask"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id := webTurn(other.SessionID); id != other.SessionID {
+		t.Fatalf("continued %q, want %q", id, other.SessionID)
+	}
+	// Newer sessions from other channels must not consume the 100 WebUI slots.
+	for i := 0; i < 100; i++ {
+		if _, err := service.store.Create(session.CreateOptions{Chat: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h := &handler{service: NewService(opts)}
+	w := httptest.NewRecorder()
+	h.handleConversations(w, httptest.NewRequest(http.MethodGet, "/api/v1/webui/conversations", nil))
+	var list struct{ Conversations []conversationListItem }
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || w.Code != http.StatusOK ||
+		len(list.Conversations) != 1 || list.Conversations[0].ID != webID {
+		t.Fatalf("reopened WebUI list: %d %s", w.Code, w.Body)
+	}
+	w = httptest.NewRecorder()
+	h.handleConversationHistory(w, httptest.NewRequest(http.MethodGet, "/api/v1/webui/conversations/"+other.SessionID, nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("non-WebUI history: %d", w.Code)
+	}
+	if _, err := h.service.ConversationHistory(other.SessionID, 0); err != nil {
+		t.Fatalf("shared history: %v", err)
+	}
+}
+
 func TestWebUIConversationListAndHistory(t *testing.T) {
 	agentDir := filepath.Join(t.TempDir(), ".agent")
 	root := t.TempDir()
 	service := NewService(ServiceOptions{WorkspaceRoot: root, AgentDir: agentDir})
-	saved, err := service.store.Create(session.CreateOptions{Task: "梳理项目结构", Chat: true})
+	saved, err := service.store.Create(session.CreateOptions{CreatedVia: webUIChannelName, Task: "梳理项目结构", Chat: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,7 +676,7 @@ func TestWebUIConversationListAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := NewService(ServiceOptions{WorkspaceRoot: t.TempDir(), AgentDir: agentDir})
-	if _, err := other.store.Create(session.CreateOptions{Task: "其他工作区", Chat: true}); err != nil {
+	if _, err := other.store.Create(session.CreateOptions{CreatedVia: webUIChannelName, Task: "其他工作区", Chat: true}); err != nil {
 		t.Fatal(err)
 	}
 
