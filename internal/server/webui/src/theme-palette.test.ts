@@ -58,3 +58,36 @@ describe("day theme transitions", () => {
     }
   });
 });
+
+it.each(["light", "dark"])("keeps dropdown labels and selection indicators legible in %s mode", theme => {
+  const colors = palette(`:root[data-theme="${theme}"]`);
+  for (const surface of ["--select-bg", "--select-active"]) {
+    const background = color(colors[surface]);
+    for (const label of ["--text", "--text-soft"]) {
+      expect(contrast(color(colors[label]), background), label).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(contrast(color(colors["--signal"]), background), "selection indicator").toBeGreaterThanOrEqual(3);
+  }
+});
+
+it("draws a themed scrollbar thumb on both dropdown scrolling surfaces", () => {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(css);
+  function styleRules(rules: CSSRuleList): CSSStyleRule[] {
+    return Array.from(rules).flatMap(rule => {
+      if (rule instanceof CSSStyleRule) return [rule];
+      return "cssRules" in rule ? styleRules((rule as CSSGroupingRule).cssRules) : [];
+    });
+  }
+  const styles = styleRules(sheet.cssRules);
+  const styleFor = (selector: string) => styles.find(rule =>
+    rule.selectorText.split(/,\s*/).includes(selector),
+  )?.style;
+  const thumb = "#model-select::part(listbox)::-webkit-scrollbar-thumb";
+  expect(styleFor(thumb)?.background).toContain("var(--text-muted)");
+  expect(styleFor(thumb)?.borderRadius).toBe("999px");
+  expect(styleFor(thumb + ":active")?.backgroundColor).toBe("var(--signal)");
+  const picker = styles.find(rule => rule.selectorText === ".select-field::picker(select)");
+  expect(picker?.style.scrollbarWidth).toBe("thin");
+  expect(picker?.style.scrollbarColor).toBe("var(--text-muted) transparent");
+});

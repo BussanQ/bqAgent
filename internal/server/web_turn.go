@@ -202,6 +202,9 @@ func (j *webTurn) history(ctx context.Context, svc *Service) (map[string]any, er
 	if j.baseSession == nil {
 		return nil, nil
 	}
+	if !isWebUIChat(j.baseSession.Meta()) {
+		return nil, os.ErrNotExist
+	}
 	var records transcript.Records
 	if j.baseSize > 0 {
 		file := j.baseFile

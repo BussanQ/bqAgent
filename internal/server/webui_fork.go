@@ -263,6 +263,7 @@ func forkConversation(ctx context.Context, svc *Service, req forkRequest, native
 		return "", 409, errors.New("OpenCode 只能从最新完成的回复创建分支")
 	}
 	meta := point.Meta
+	meta.CreatedVia = webUIChannelName
 	title := []rune(strings.TrimSpace(s.Meta().Task))
 	if len(title) > 45 {
 		title = title[:45]

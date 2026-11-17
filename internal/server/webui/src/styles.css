@@ -787,15 +787,7 @@
   .workspace-picker-header strong { flex: 1 1 auto; font-size: 14px; }
   .workspace-picker-footer { justify-content: flex-end; border-top: 1px solid var(--line); }
   .workspace-picker-body { min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; }
-  .workspace-picker-root {
-    width: 100%;
-    min-height: 38px;
-    padding: 0 10px;
-    border: 1px solid var(--line);
-    border-radius: 9px;
-    color: var(--text);
-    background: var(--panel);
-  }
+  .workspace-picker-root { width: 100%; }
   .workspace-picker-path { display: flex; align-items: center; gap: 8px; }
   .workspace-picker-path code {
     min-width: 0;
@@ -976,7 +968,6 @@
     font-weight: 650;
   }
   .provider-field input,
-  .provider-field select,
   .provider-model-toolbar input,
   .provider-model-manual input {
     width: 100%;
@@ -989,7 +980,6 @@
     outline: none;
   }
   .provider-field input:focus,
-  .provider-field select:focus,
   .provider-model-toolbar input:focus,
   .provider-model-manual input:focus {
     border-color: var(--signal);
@@ -1777,8 +1767,64 @@
   .attachment-path-add { flex: 0 0 auto; padding: 7px 10px; border-color: rgba(var(--signal-rgb),.3); border-radius: 8px; color: var(--signal); background: var(--surface-hover); font-size: 11px; }
   .reasoning-effort { position: relative; flex: 0 0 auto; margin-bottom: 5px; }
   .model-controls { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 3px; margin-bottom: 5px; }
-  .provider-field select option, .provider-list option { color: var(--text); background: var(--select-bg); }
-  .provider-field select option:checked, .provider-list option:checked { color: var(--text); background: var(--select-active); }
+  /* Keep the native control for change events, keyboard navigation and touch pickers. */
+  .select-field {
+    appearance: none;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 38px;
+    padding: 5px 30px 5px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: conic-gradient(from -45deg at 50% 100%, var(--text-muted) 90deg, transparent 0)
+      right 10px center / 10px 5px no-repeat var(--select-bg);
+    color: var(--text);
+    font: inherit;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: border-color .15s ease;
+  }
+  .select-field:enabled:hover { border-color: var(--line-strong); }
+  .select-field:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+  .select-field:disabled { opacity: .55; cursor: not-allowed; }
+  .select-field option { color: var(--text); background-color: var(--select-bg); }
+  .select-field option:disabled { color: var(--text-muted); }
+  .select-field option:checked { background-color: var(--select-active); }
+
+  @supports (appearance: base-select) and selector(::picker(select)) {
+    @media (pointer: fine) and (forced-colors: none) {
+      .select-field, .select-field::picker(select) { appearance: base-select; }
+      .select-field::picker-icon { display: none; }
+      .select-field:enabled:open {
+        border-color: var(--signal);
+        background-image: conic-gradient(from 135deg at 50% 0, var(--signal) 90deg, transparent 0);
+      }
+      .select-field::picker(select) {
+        max-width: calc(100vw - 24px);
+        max-height: min(360px, 50vh);
+        margin-block: 4px;
+        overflow: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--text-muted) transparent;
+        padding: 4px;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        background: var(--select-bg);
+        box-shadow: var(--overlay-shadow);
+      }
+      .select-field option {
+        padding: 7px 9px;
+        border-radius: 6px;
+        overflow-wrap: anywhere;
+      }
+      .select-field option:enabled:not(:checked):hover { background-color: var(--surface-hover); }
+      .select-field option:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+      .select-field option::checkmark { color: var(--signal); }
+    }
+  }
+  @media (forced-colors: active) {
+    .select-field { appearance: auto; background-image: none; }
+  }
   #model-select {
     display: inline-block;
     width: auto;
@@ -1788,13 +1834,13 @@
     --wa-form-control-height: 36px;
     --wa-form-control-padding-inline: 8px;
     --wa-form-control-border-width: 1px;
-    --wa-form-control-border-color: transparent;
-    --wa-form-control-background-color: transparent;
-    --wa-form-control-border-radius: 10px;
+    --wa-form-control-border-color: var(--line);
+    --wa-form-control-background-color: var(--select-bg);
+    --wa-form-control-border-radius: 8px;
     --wa-form-control-value-color: var(--text-soft);
     --wa-form-control-value-font-weight: 650;
     --wa-form-control-value-line-height: 1;
-    --wa-color-focus: var(--line-strong);
+    --wa-color-focus: var(--signal);
     --wa-color-surface-raised: var(--panel-strong);
     --wa-color-surface-border: var(--line-strong);
     --wa-color-text-normal: var(--text);
@@ -1803,14 +1849,43 @@
     --wa-shadow-m: var(--overlay-shadow);
   }
   #model-select::part(form-control-label) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-  #model-select::part(combobox) { width: auto; min-width: 0; border-color: transparent; box-shadow: none; }
-  #model-select::part(display-input) { width: auto; min-width: 0; max-width: 276px; field-sizing: content; color: var(--text-soft); font-size: 13px; font-weight: 650; text-align: right; text-overflow: ellipsis; }
+  #model-select::part(combobox) { width: auto; min-width: 0; }
+  #model-select::part(display-input) { width: auto; min-width: 0; max-width: 276px; field-sizing: content; color: var(--text-soft); font-size: 13px; font-weight: 650; text-align: start; text-overflow: ellipsis; }
   #model-select::part(expand-icon) { width: 12px; color: var(--text-soft); }
-  #model-select:not([disabled]):hover::part(combobox), #model-select[open]::part(combobox) { border-color: var(--line); background: var(--surface-hover); }
+  #model-select:where(:not([disabled])):hover::part(combobox) { border-color: var(--line-strong); }
+  #model-select[open]::part(combobox) { border-color: var(--signal); }
   #model-select:not([disabled]):hover::part(display-input), #model-select[open]::part(display-input) { color: var(--text); }
-  #model-select::part(listbox) { min-width: min(320px, calc(100vw - 32px)); max-height: min(420px, calc(100vh - 120px)); padding: 6px; color: var(--text); background: var(--panel-strong); border-color: var(--line-strong); border-radius: 12px; box-shadow: var(--overlay-shadow); }
-  #model-select .model-provider-heading { padding: 8px 10px 5px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
-  #model-select wa-option { border-radius: 8px; color: var(--text-soft); font-size: 12px; --current-text-color: var(--text); }
+  #model-select::part(listbox) { min-width: min(320px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: min(420px, calc(100vh - 120px)); padding: 5px; color: var(--text); background: var(--panel-strong); border-color: var(--line-strong); border-radius: 12px; box-shadow: var(--overlay-shadow); }
+  /* Style the scrolling surfaces themselves, including the listbox inside wa-select. */
+  @media (forced-colors: none) {
+    #model-select::part(listbox) { scrollbar-width: thin; scrollbar-color: var(--text-muted) transparent; }
+    @supports selector(::part(listbox)::-webkit-scrollbar) {
+      /* Non-auto standard properties would override the custom scrollbar parts. */
+      #model-select::part(listbox) { scrollbar-width: auto; scrollbar-color: auto; }
+      #model-select::part(listbox)::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+      #model-select::part(listbox)::-webkit-scrollbar-track { margin: 6px; background: transparent; }
+      #model-select::part(listbox)::-webkit-scrollbar-thumb {
+        border: 2px solid transparent;
+        border-radius: 999px;
+        background: var(--text-muted) padding-box;
+      }
+      #model-select::part(listbox)::-webkit-scrollbar-thumb:hover,
+      #model-select::part(listbox)::-webkit-scrollbar-thumb:active { background-color: var(--signal); }
+      #model-select::part(listbox)::-webkit-scrollbar-button { display: none; }
+    }
+  }
+  #model-select .model-provider-heading { display: block; overflow-wrap: anywhere; padding: 8px 10px 5px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+  #model-select wa-option {
+    padding-block: 7px;
+    border-radius: 6px;
+    color: var(--text-soft);
+    font-size: 12px;
+    --wa-color-neutral-fill-normal: var(--surface-hover);
+    --wa-form-control-activated-color: var(--select-active);
+    --current-text-color: var(--text);
+  }
+  #model-select wa-option[aria-selected="true"] { color: var(--text); background: var(--select-active); }
+  #model-select wa-option:state(current) { outline: 1px solid var(--signal); outline-offset: -1px; }
   #model-select wa-option::part(checked-icon) { color: var(--signal); }
   #model-select wa-option::part(label) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .reasoning-effort-trigger { height: 36px; min-width: 50px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border-color: transparent; border-radius: 10px; color: var(--text-soft); background: transparent; font-size: 13px; }
@@ -1854,7 +1929,7 @@
   .fork-origin button { color: var(--text-muted); font-size: 12px; }
   .msg[data-reply-anchor]:focus { outline: 2px solid var(--signal); outline-offset: 3px; }
   .agent-picker { display: inline-flex; align-items: center; gap: 6px; margin-inline: 8px; }
-  .agent-picker select { font: inherit; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px; background: var(--panel-strong); }
+  .agent-picker select { min-height: 28px; max-width: min(32ch, 60vw); padding-block: 2px; }
   .context-usage { position: relative; display: inline-block; margin-inline: 4px; vertical-align: middle; color: var(--text-soft); }
   .context-usage[hidden] { display: none; }
   .context-usage summary { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; list-style: none; }
@@ -1868,13 +1943,13 @@
   #agent-model-controls { flex: 0 1 auto; min-width: 0; max-width: 32%; margin-bottom: 5px; }
   #agent-model-controls summary {
     display: flex; align-items: center; gap: 5px; height: 36px; padding: 0 9px;
-    border: 1px solid transparent; border-radius: 10px; color: var(--text-soft);
+    border: 1px solid var(--line); border-radius: 8px; color: var(--text-soft); background: var(--select-bg);
     font-size: 13px; font-weight: 600; list-style: none; cursor: pointer;
   }
   #agent-model-controls summary::-webkit-details-marker { display: none; }
-  #agent-model-controls summary:hover, #agent-model-controls[open] summary {
-    background: var(--surface-hover); border-color: var(--line); color: var(--text);
-  }
+  #agent-model-controls summary:hover { border-color: var(--line-strong); color: var(--text); }
+  #agent-model-controls[open] summary { border-color: var(--signal); color: var(--text); }
+  #agent-model-controls summary:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
   .agent-model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #agent-model-controls summary svg { flex: none; width: 12px; height: 12px; }
   #agent-model-controls[open] summary svg { transform: rotate(180deg); }
@@ -1886,7 +1961,8 @@
   }
   .agent-model-panel label { display: grid; grid-template-columns: 5em minmax(0, 1fr); align-items: center; gap: 6px; color: var(--text-muted); }
   .agent-model-panel label:has(> [hidden]) { display: none; }
-  .agent-model-panel select, .agent-model-panel input { width: 100%; min-width: 0; padding: 6px; font: inherit; color: var(--text); background: var(--panel-strong); border: 1px solid var(--line); border-radius: 8px; }
+  .agent-model-panel select { width: 100%; min-height: 32px; }
+  .agent-model-panel input { width: 100%; min-width: 0; padding: 6px; font: inherit; color: var(--text); background: var(--panel-strong); border: 1px solid var(--line); border-radius: 8px; }
   .agent-model-panel button { justify-self: end; padding: 4px 9px; border-radius: 8px; color: var(--text-soft); font-size: 12px; }
   .composer:has(> #agent-model-controls:not([hidden])) #input::placeholder { white-space: nowrap; }
   .composer:has(> #agent-model-controls:not([hidden])) .attachment-error:empty { display: none; }

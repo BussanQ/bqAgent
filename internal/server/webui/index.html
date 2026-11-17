@@ -261,11 +261,11 @@
       <details id="agent-model-controls" aria-label="外部 Agent 模型设置" hidden>
         <summary title="模型设置"><span class="agent-model-name">模型</span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></summary>
         <div class="agent-model-panel">
-          <label>模型<select id="agent-model-select" aria-label="外部 Agent 模型"></select></label>
+          <label>模型<select class="select-field" id="agent-model-select" aria-label="外部 Agent 模型"></select></label>
           <label>自定义模型<input id="agent-model-input" aria-label="自定义模型 ID" placeholder="模型 ID" autocomplete="off" spellcheck="false" hidden></label>
-          <label>交互模式<select id="agent-interaction-mode" aria-label="Agent 执行或规划模式" title="交互模式 · 下一条消息生效" hidden></select></label>
-          <label>推理强度<select id="agent-effort-select" aria-label="外部 Agent 推理强度" title="推理强度" hidden></select></label>
-          <label>服务档位<select id="agent-service-tier" aria-label="Codex 服务档位" title="Codex 服务档位 · 下一条消息生效" hidden></select></label>
+          <label>交互模式<select class="select-field" id="agent-interaction-mode" aria-label="Agent 执行或规划模式" title="交互模式 · 下一条消息生效" hidden></select></label>
+          <label>推理强度<select class="select-field" id="agent-effort-select" aria-label="外部 Agent 推理强度" title="推理强度" hidden></select></label>
+          <label>服务档位<select class="select-field" id="agent-service-tier" aria-label="Codex 服务档位" title="Codex 服务档位 · 下一条消息生效" hidden></select></label>
           <button type="button" id="agent-model-retry" aria-label="重新读取 Agent 模型" hidden>刷新</button>
         </div>
       </details>
@@ -291,7 +291,7 @@
     </div>
     <div class="composer-meta">
       <label class="agent-picker" id="agent-picker">对话 Agent
-        <select id="chat-agent" aria-label="单聊对话 Agent"><option value="bqagent">bqagent</option></select>
+        <select class="select-field" id="chat-agent" aria-label="单聊对话 Agent"><option value="bqagent">bqagent</option></select>
       </label>
       <details class="context-usage" id="context-usage" hidden>
         <summary><span class="context-ring" aria-hidden="true"></span>上下文 <span data-percent></span></summary>
@@ -324,7 +324,7 @@
         </button>
       </div>
       <div class="workspace-picker-body">
-        <select class="workspace-picker-root" id="workspace-picker-root" aria-label="允许访问的根目录"></select>
+        <select class="workspace-picker-root select-field" id="workspace-picker-root" aria-label="允许访问的根目录"></select>
         <div class="workspace-picker-path">
           <button class="ui-btn ui-btn-outline ui-btn-icon" id="workspace-picker-up" type="button" title="上级目录" aria-label="上级目录"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-arrow-up"></use></svg></button>
           <code id="workspace-picker-path"></code>
@@ -382,7 +382,7 @@
               </div>
             </div>
             <div class="provider-settings-grid">
-              <label class="provider-field">API 协议<select id="provider-api-type"><option value="openai">OpenAI Chat Completions</option><option value="openai-response">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option></select></label>
+              <label class="provider-field">API 协议<select class="select-field" id="provider-api-type"><option value="openai">OpenAI Chat Completions</option><option value="openai-response">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option></select></label>
               <label class="provider-field">Base URL<input id="provider-base-url" type="url" placeholder="https://api.example.com/v1" spellcheck="false" autocomplete="off"></label>
               <div class="provider-field wide">
                 <div class="provider-field-label">
@@ -421,7 +421,7 @@
                 <span>添加</span>
               </button>
             </div>
-            <label class="provider-field">默认模型<select id="provider-default-model"></select></label>
+            <label class="provider-field">默认模型<select class="select-field" id="provider-default-model"></select></label>
           </section>
           <p class="provider-settings-note" id="provider-local-notice">API Key 使用本机随机主密钥、随机盐及 AES-256-GCM 加密后保存到 ~/.agent/config.json，页面不会读取已保存的 Key。</p>
         </div>

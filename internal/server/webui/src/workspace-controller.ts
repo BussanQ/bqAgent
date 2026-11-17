@@ -19,7 +19,7 @@ export interface WorkspaceDependencies {
   MAX_PENDING_FILES: number;
   MAX_PENDING_TOTAL_FILE_BYTES: number;
   setConversationType: (value: unknown, group?: GroupInfo | null) => void;
-  refreshConversations: (loadCurrent: boolean) => Promise<void>;
+  refreshConversations: (loadCurrent: boolean, savedSession: string) => Promise<void>;
   loadRuntimeModel: () => Promise<void>;
   formatBytes: (bytes: number) => string;
   pathBaseName: (value: string) => string;
@@ -116,7 +116,8 @@ export function createWorkspaceController(api: APIClient, deps: WorkspaceDepende
     workspaceCurrentName.textContent = info.name || "工作区";
     workspaceCurrentPath.textContent = info.path || "";
     workspaceCurrentPath.title = info.path || "";
-    deps.sessionId = workspaceSessions[info.id] || "";
+    const savedSession = workspaceSessions[info.id] || "";
+    if (changed) deps.sessionId = "";
     deps.setConversationType("default", null);
     workspaceReady = true;
     deps.input.disabled = false;
@@ -131,13 +132,13 @@ export function createWorkspaceController(api: APIClient, deps: WorkspaceDepende
       deps.clearPendingAttachments();
       deps.setAttachmentMenu(false);
       deps.thread.innerHTML = deps.emptyMarkup();
-      deps.statusEl.textContent = deps.sessionId ? "已切换，继续上次会话" : "已切换工作区";
+      deps.statusEl.textContent = "已切换工作区";
       deps.statusEl.classList.remove("error", "busy");
     }
     resetWorkspaceExplorer();
     loadWorkspaceDirectory("", false, false);
     deps.loadRuntimeModel();
-    deps.refreshConversations(true);
+    deps.refreshConversations(true, savedSession);
   }
 
   async function initializeWorkspaceSelection(): Promise<void> {

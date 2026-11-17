@@ -96,7 +96,7 @@ func (s *Store) CreateFork(f ForkOrigin, meta Meta, prepare func(*Session, strin
 			return nil, err
 		}
 		now := time.Now().UTC()
-		next := &Session{store: s, dir: stage, meta: Meta{ID: id, WorkspaceRoot: s.workspaceRoot, Chat: true, ForkedFrom: &f, Task: meta.Task,
+		next := &Session{store: s, dir: stage, meta: Meta{ID: id, WorkspaceRoot: s.workspaceRoot, Chat: true, ForkedFrom: &f, Task: meta.Task, CreatedVia: meta.CreatedVia,
 			CurrentMode: meta.CurrentMode, CurrentModel: meta.CurrentModel, FastMode: meta.FastMode, Status: StatusCompleted,
 			PromptSchemaVersion: meta.PromptSchemaVersion, PromptStableHash: meta.PromptStableHash, PromptMessageCount: meta.PromptMessageCount,
 			CreatedAt: now, UpdatedAt: now}}

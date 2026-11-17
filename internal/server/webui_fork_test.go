@@ -110,6 +110,9 @@ func TestWebUIConversationForkCopiesFinishedReplyAndReturnsToSource(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
+			if child.Meta().CreatedVia != webUIChannelName {
+				t.Fatalf("fork creation channel = %q", child.Meta().CreatedVia)
+			}
 			if task, err := child.LoadTaskState(); err != nil || task.Goal != "at cut" {
 				t.Fatal(task, err)
 			}

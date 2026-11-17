@@ -32,6 +32,7 @@ const (
 )
 
 type Meta struct {
+	CreatedVia          string        `json:"created_via,omitempty"`
 	ForkedFrom          *ForkOrigin   `json:"forked_from,omitempty"`
 	LastTurnOutcome     *turn.Outcome `json:"last_turn_outcome,omitempty"`
 	FastMode            bool          `json:"fast_mode,omitempty"`
@@ -136,6 +137,7 @@ func NewStore(workspaceRoot string, configured ...Options) *Store {
 }
 
 type CreateOptions struct {
+	CreatedVia       string
 	Task             string
 	Background       bool
 	Chat             bool
@@ -161,6 +163,7 @@ func (s *Store) Create(options CreateOptions) (*Session, error) {
 			ID:               id,
 			WorkspaceRoot:    s.workspaceRoot,
 			Task:             options.Task,
+			CreatedVia:       options.CreatedVia,
 			Background:       options.Background,
 			Chat:             options.Chat,
 			ConversationType: strings.TrimSpace(options.ConversationType),

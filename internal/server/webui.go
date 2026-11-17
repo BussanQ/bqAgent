@@ -30,6 +30,7 @@ import (
 )
 
 const (
+	webUIChannelName = "webui"
 	// WebUI turns run until completion by default. Positive WEBUI_STAGE_*
 	// overrides can opt back into persisted stage checkpoints.
 	defaultWebUIStageTimeout       time.Duration = 0
@@ -212,7 +213,7 @@ func NewWebUIChannelWithWorkspaces(service *Service, workspaces *WorkspaceRegist
 }
 
 func (channel *WebUIChannel) Name() string {
-	return "webui"
+	return webUIChannelName
 }
 
 func (channel *WebUIChannel) Enabled() bool {
@@ -647,6 +648,7 @@ func (channel *WebUIChannel) runWebTurn(ctx context.Context, service *Service, w
 		_ = job.publish("speed", map[string]float64{"tokens_per_second": speed})
 	})
 	response, err := service.HandleTurnWithOptions(ctx, turnRequest, TurnOptions{
+		createdVia:          webUIChannelName,
 		Stream:              true,
 		SessionSink:         func(id string) { channel.bindWebTurn(service, job, id) },
 		ExternalTextSink:    func(event ExternalTextEvent) { _ = job.publish("external_text", event) },
