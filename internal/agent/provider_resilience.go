@@ -324,8 +324,6 @@ func promptCacheUnsupportedError(err *ProviderError) bool {
 	}
 	text := strings.ToLower(err.Message)
 	cacheField := strings.Contains(text, "prompt_cache_key") ||
-		strings.Contains(text, "prompt_cache_options") ||
-		strings.Contains(text, "prompt_cache_breakpoint") ||
 		strings.Contains(text, "cache_control") ||
 		strings.Contains(text, "cache control") || strings.Contains(text, "prompt cache")
 	if !cacheField {

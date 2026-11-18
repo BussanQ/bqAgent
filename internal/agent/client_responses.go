@@ -16,16 +16,15 @@ import (
 )
 
 type openAIResponseRequest struct {
-	ServiceTier        string                           `json:"service_tier,omitempty"`
-	Model              string                           `json:"model"`
-	Input              []any                            `json:"input"`
-	Tools              []openAIResponseTool             `json:"tools,omitempty"`
-	ToolChoice         string                           `json:"tool_choice,omitempty"`
-	Text               map[string]any                   `json:"text,omitempty"`
-	Reasoning          *openAIResponseReasoning         `json:"reasoning,omitempty"`
-	PromptCacheKey     string                           `json:"prompt_cache_key,omitempty"`
-	PromptCacheOptions *openAIPromptCacheRequestOptions `json:"prompt_cache_options,omitempty"`
-	Stream             bool                             `json:"stream,omitempty"`
+	ServiceTier    string                   `json:"service_tier,omitempty"`
+	Model          string                   `json:"model"`
+	Input          []any                    `json:"input"`
+	Tools          []openAIResponseTool     `json:"tools,omitempty"`
+	ToolChoice     string                   `json:"tool_choice,omitempty"`
+	Text           map[string]any           `json:"text,omitempty"`
+	Reasoning      *openAIResponseReasoning `json:"reasoning,omitempty"`
+	PromptCacheKey string                   `json:"prompt_cache_key,omitempty"`
+	Stream         bool                     `json:"stream,omitempty"`
 }
 
 type openAIResponseReasoning struct {
@@ -461,9 +460,8 @@ func (c *Client) createOpenAIResponseStream(ctx context.Context, model string, m
 func buildOpenAIResponseRequest(model string, messages []map[string]any, definitions []tools.Definition, options ChatCompletionOptions, stream bool) (openAIResponseRequest, error) {
 	request := openAIResponseRequest{
 		ServiceTier: options.ServiceTier,
-		Model:       model, Input: openAIResponseInput(messages, options.PromptCache), Stream: stream,
-		PromptCacheKey:     openAIPromptCacheKey(options.PromptCache),
-		PromptCacheOptions: openAIPromptCacheRequest(options.PromptCache),
+		Model:       model, Input: openAIResponseInput(messages), Stream: stream,
+		PromptCacheKey: openAIPromptCacheKey(options.PromptCache),
 	}
 	if options.DisableTools {
 		request.ToolChoice = "none"
@@ -488,9 +486,9 @@ func buildOpenAIResponseRequest(model string, messages []map[string]any, definit
 	return request, nil
 }
 
-func openAIResponseInput(messages []map[string]any, cache PromptCacheOptions) []any {
+func openAIResponseInput(messages []map[string]any) []any {
 	input := make([]any, 0, len(messages))
-	for index, message := range messages {
+	for _, message := range messages {
 		role, _ := message["role"].(string)
 		switch role {
 		case "tool":
@@ -520,9 +518,6 @@ func openAIResponseInput(messages []map[string]any, cache PromptCacheOptions) []
 			}
 		case "system", "developer", "user":
 			content := openAIResponseContent(message["content"])
-			if cache.Enabled && cache.ExplicitBreakpoint && index == cache.StableMessageCount-1 {
-				content = openAITextContentWithBreakpoint(content, "input_text")
-			}
 			input = append(input, map[string]any{"role": role, "content": content})
 		}
 	}

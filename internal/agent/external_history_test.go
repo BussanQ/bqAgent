@@ -17,8 +17,8 @@ func TestExternalSummaryIsNotSentAsConversationContent(t *testing.T) {
 	}
 	_, anthropic, _ := anthropicMessages(messages, PromptCacheOptions{})
 	for name, request := range map[string]any{
-		"chat":      openAIChatMessagesWithCache(messages, PromptCacheOptions{}),
-		"responses": openAIResponseInput(messages, PromptCacheOptions{}),
+		"chat":      chatMessagesWithoutResponseMetadata(messages),
+		"responses": openAIResponseInput(messages),
 		"anthropic": anthropic,
 	} {
 		encoded, err := json.Marshal(request)
@@ -30,12 +30,12 @@ func TestExternalSummaryIsNotSentAsConversationContent(t *testing.T) {
 
 func TestChatRequestsOmitExternalTimelineWithoutMutatingHistory(t *testing.T) {
 	root := map[string]any{"role": "user", "content": "same", transcript.SubmissionKey: "root-id"}
-	user := openAIChatMessagesWithCache([]map[string]any{root}, PromptCacheOptions{})
+	user := chatMessagesWithoutResponseMetadata([]map[string]any{root})
 	if user[0][transcript.SubmissionKey] != nil || root[transcript.SubmissionKey] != "root-id" || user[0]["content"] != "same" {
 		t.Fatal(user, root)
 	}
 	message := map[string]any{"role": "assistant", "name": "pi", "content": "final", transcript.ExternalHistoryKey: transcript.ExternalHistory{ID: "s", Parts: []transcript.Part{{Kind: "text", ID: "i", Text: "private commentary"}}}, ExternalToolsMessageKey: []HistoryTool{{Name: "Edit", Result: "private log", Edits: &transcript.FileEdits{Files: []transcript.EditFile{{Path: "file", Lines: []transcript.EditLine{{Kind: "add", Text: "private diff"}}}}}}}}
-	wire := openAIChatMessagesWithCache([]map[string]any{message}, PromptCacheOptions{})
+	wire := chatMessagesWithoutResponseMetadata([]map[string]any{message})
 	if wire[0][transcript.ExternalHistoryKey] != nil || message[transcript.ExternalHistoryKey] == nil {
 		t.Fatal("presentation metadata leaked or was mutated")
 	}

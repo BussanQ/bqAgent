@@ -61,39 +61,6 @@ func TestProviderPromptCacheRequestShapes(t *testing.T) {
 	definitions := tools.Definitions()[:2]
 	prompt := NewFrozenPromptSnapshot("stable instructions", "session memory")
 
-	t.Run("responses gpt-5.6", func(t *testing.T) {
-		options := ChatCompletionOptions{}
-		options.PromptCache = buildPromptCacheOptions(APITypeOpenAIResponse, "gpt-5.6-sol", prompt, definitions, options)
-		request, err := buildOpenAIResponseRequest("gpt-5.6-sol", messages, definitions, options, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if request.PromptCacheKey == "" || request.PromptCacheOptions == nil || request.PromptCacheOptions.Mode != "implicit" {
-			t.Fatalf("responses cache fields = %#v", request)
-		}
-		assertOpenAIBreakpoint(t, request.Input[0])
-		encodedSecond, _ := json.Marshal(request.Input[1])
-		if strings.Contains(string(encodedSecond), "prompt_cache_breakpoint") {
-			t.Fatalf("session context unexpectedly has explicit breakpoint: %s", encodedSecond)
-		}
-	})
-
-	t.Run("responses older model", func(t *testing.T) {
-		options := ChatCompletionOptions{}
-		options.PromptCache = buildPromptCacheOptions(APITypeOpenAIResponse, "gpt-5.5", prompt, definitions, options)
-		request, err := buildOpenAIResponseRequest("gpt-5.5", messages, definitions, options, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if request.PromptCacheKey == "" || request.PromptCacheOptions != nil {
-			t.Fatalf("older-model cache fields = %#v", request)
-		}
-		encoded, _ := json.Marshal(request.Input[0])
-		if strings.Contains(string(encoded), "prompt_cache_breakpoint") {
-			t.Fatalf("older model received explicit breakpoint: %s", encoded)
-		}
-	})
-
 	t.Run("anthropic", func(t *testing.T) {
 		options := ChatCompletionOptions{}
 		options.PromptCache = buildPromptCacheOptions(APITypeAnthropic, "claude-sonnet", prompt, definitions, options)
@@ -113,56 +80,71 @@ func TestProviderPromptCacheRequestShapes(t *testing.T) {
 	})
 }
 
-func TestOpenAIChatPromptCacheFieldsAndUsage(t *testing.T) {
-	var body map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(writer, `{"choices":[{"message":{"role":"assistant","content":"done"}}],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":60,"cache_write_tokens":25}}}`)
-	}))
-	defer server.Close()
-
+func TestOpenAIPromptCacheKeyOnly(t *testing.T) {
+	const model = "gpt-5.6"
 	messages := []map[string]any{{"role": "system", "content": "stable"}, {"role": "user", "content": "hello"}}
-	prompt := NewFrozenPromptSnapshot("stable", "")
-	options := ChatCompletionOptions{}
-	options.PromptCache = buildPromptCacheOptions(APITypeOpenAI, "gpt-5.6", prompt, nil, options)
-	client := NewClient("", server.URL, server.Client())
-	message, err := client.CreateChatCompletionWithOptions(context.Background(), "gpt-5.6", messages, nil, options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if body["prompt_cache_key"] == nil || body["prompt_cache_options"] == nil {
-		t.Fatalf("chat request = %#v, want cache key and options", body)
-	}
-	requestMessages, _ := body["messages"].([]any)
-	assertOpenAIBreakpoint(t, requestMessages[0])
-	if message.Usage.CachedPromptTokens != 60 || message.Usage.CacheWritePromptTokens != 25 || !message.Usage.CacheUsageAvailable {
-		t.Fatalf("usage = %#v", message.Usage)
+	for _, api := range []APIType{APITypeOpenAI, APITypeOpenAIResponse} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", api, stream), func(t *testing.T) {
+				options := ChatCompletionOptions{}
+				options.PromptCache = buildPromptCacheOptions(api, model, NewFrozenPromptSnapshot("stable", ""), nil, options)
+				client := NewClientWithAPIType("", "https://cache.test/v1", api, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					body, err := io.ReadAll(req.Body)
+					if err != nil {
+						return nil, err
+					}
+					var fields struct {
+						Key string `json:"prompt_cache_key"`
+					}
+					if err := json.Unmarshal(body, &fields); err != nil {
+						return nil, err
+					}
+					if fields.Key == "" || fields.Key != options.PromptCache.Key || strings.Contains(string(body), `"prompt_cache_breakpoint"`) || strings.Contains(string(body), `"prompt_cache_options"`) {
+						t.Fatalf("unexpected prompt cache fields in request: %s", body)
+					}
+					reply := providerJSONSuccess(api, "done")
+					if stream {
+						reply = providerStreamSuccess(api, "done")
+					} else if api == APITypeOpenAI {
+						reply = `{"choices":[{"message":{"role":"assistant","content":"done"}}],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":60,"cache_write_tokens":25}}}`
+					}
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(reply)), Header: make(http.Header)}, nil
+				})})
+				var message AssistantMessage
+				var err error
+				if stream {
+					message, err = client.CreateChatCompletionStreamWithOptions(context.Background(), model, messages, nil, options, nil)
+				} else {
+					message, err = client.CreateChatCompletionWithOptions(context.Background(), model, messages, nil, options)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if message.Request.CacheMode != "implicit" {
+					t.Fatalf("cache mode = %q", message.Request.CacheMode)
+				}
+				if !stream && api == APITypeOpenAI && (message.Usage.CachedPromptTokens != 60 || message.Usage.CacheWritePromptTokens != 25 || !message.Usage.CacheUsageAvailable) {
+					t.Fatalf("usage = %#v", message.Usage)
+				}
+			})
+		}
 	}
 }
 
 func TestPromptCacheUnknownFieldRetriesOnceAndCachesEndpointDowngrade(t *testing.T) {
 	var cacheFields []bool
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	client := NewClient("", "https://cache.test/v1", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(request.Body)
 		if err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
-		hasCache := strings.Contains(string(body), "prompt_cache_")
-		cacheFields = append(cacheFields, hasCache)
-		writer.Header().Set("Content-Type", "application/json")
+		cacheFields = append(cacheFields, strings.Contains(string(body), `"prompt_cache_key"`))
+		status, reply := http.StatusOK, providerJSONSuccess(APITypeOpenAI, "done")
 		if len(cacheFields) == 1 {
-			writer.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(writer, `{"error":{"message":"Unknown field prompt_cache_options"}}`)
-			return
+			status, reply = http.StatusBadRequest, `{"error":{"message":"Unknown field prompt_cache_key"}}`
 		}
-		fmt.Fprint(writer, `{"choices":[{"message":{"role":"assistant","content":"done"}}]}`)
-	}))
-	defer server.Close()
-
-	client := NewClient("", server.URL, server.Client())
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(reply)), Header: make(http.Header)}, nil
+	})})
 	prompt := NewFrozenPromptSnapshot("stable", "")
 	options := ChatCompletionOptions{}
 	options.PromptCache = buildPromptCacheOptions(APITypeOpenAI, "gpt-5.6", prompt, nil, options)
@@ -209,23 +191,6 @@ func TestPromptCacheDoesNotRetryUnrelatedRequestError(t *testing.T) {
 	}
 	if client.capabilities.disabled(promptCacheCapabilityKey) {
 		t.Fatal("unrelated 400 disabled prompt caching for endpoint")
-	}
-}
-
-func assertOpenAIBreakpoint(t *testing.T, raw any) {
-	t.Helper()
-	message, ok := raw.(map[string]any)
-	if !ok {
-		t.Fatalf("message = %#v", raw)
-	}
-	content, ok := message["content"].([]any)
-	if !ok || len(content) == 0 {
-		t.Fatalf("message content = %#v", message["content"])
-	}
-	block, _ := content[len(content)-1].(map[string]any)
-	breakpoint, _ := block["prompt_cache_breakpoint"].(map[string]any)
-	if breakpoint["mode"] != "explicit" {
-		t.Fatalf("content block = %#v, want explicit cache breakpoint", block)
 	}
 }
 

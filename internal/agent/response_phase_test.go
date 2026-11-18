@@ -41,14 +41,14 @@ func TestResponsesPreserveOrderedItemsAndPhase(t *testing.T) {
 			}
 			history := []map[string]any{restored, {"role": "tool", "tool_call_id": "call_1", "content": "contents"}, {"role": "user", "content": "continue"}}
 			bounded := BoundWorkingMessages(history, ContextConfig{Enabled: false})
-			input := openAIResponseInput(bounded, PromptCacheOptions{})
+			input := openAIResponseInput(bounded)
 			encoded, _ = json.Marshal(input)
 			var actual []map[string]any
 			_ = json.Unmarshal(encoded, &actual)
 			if len(actual) != 5 || actual[0]["encrypted_content"] != "opaque" || actual[1]["phase"] != "commentary" || actual[2]["call_id"] != "call_1" || actual[3]["type"] != "function_call_output" || actual[4]["role"] != "user" {
 				t.Fatalf("replay=%s", encoded)
 			}
-			chat := openAIChatMessagesWithCache(bounded, PromptCacheOptions{})
+			chat := chatMessagesWithoutResponseMetadata(bounded)
 			if chat[0]["response_items"] != nil || chat[0]["phase"] != nil || restored["phase"] != "commentary" {
 				t.Fatal("metadata leaked or source mutated")
 			}
@@ -71,7 +71,7 @@ data: {"type":"response.completed","response":{"status":"completed"}}
 	if err != nil || message.Phase != "commentary" || message.FinalContent() != "working" {
 		t.Fatalf("message=%+v err=%v", message, err)
 	}
-	encoded, _ := json.Marshal(openAIResponseInput([]map[string]any{message.RequestMessage()}, PromptCacheOptions{}))
+	encoded, _ := json.Marshal(openAIResponseInput([]map[string]any{message.RequestMessage()}))
 	if !strings.Contains(string(encoded), "working") || !strings.Contains(string(encoded), "commentary") {
 		t.Fatalf("replay=%s", encoded)
 	}
@@ -87,7 +87,7 @@ func TestResponsesSeparateFinalAnswerFromCommentary(t *testing.T) {
 	if message.FinalContent() != "done" || len(responseItemsFromMessage(message.RequestMessage())) != 2 {
 		t.Fatalf("message=%+v", message)
 	}
-	input := openAIResponseInput([]map[string]any{{"role": "assistant", "phase": "commentary", "content": "legacy"}, {"role": "user", "content": "go", "phase": "commentary"}}, PromptCacheOptions{})
+	input := openAIResponseInput([]map[string]any{{"role": "assistant", "phase": "commentary", "content": "legacy"}, {"role": "user", "content": "go", "phase": "commentary"}})
 	if input[0].(map[string]any)["phase"] != "commentary" || input[1].(map[string]any)["phase"] != nil {
 		t.Fatalf("input=%v", input)
 	}
