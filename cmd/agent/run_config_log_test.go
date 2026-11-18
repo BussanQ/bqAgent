@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,15 +18,13 @@ func TestBackgroundSessionLogsRunConfigWithoutAutoMemory(t *testing.T) {
 	if err := os.MkdirAll(memoryDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`))
-	}))
-	defer server.Close()
+	baseURL := stubForegroundHTTP(t, func(writer http.ResponseWriter, _ *http.Request) {
+		writeChatCompletionStream(writer, "done")
+	})
 	getenv := func(key string) string {
 		switch key {
 		case "OPENAI_BASE_URL":
-			return server.URL
+			return baseURL
 		case "LLM_MODEL":
 			return "test-model"
 		}

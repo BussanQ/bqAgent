@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,19 +27,17 @@ func TestRunUsesExplicitHelloTask(t *testing.T) {
 	var seenRequest struct {
 		Messages []map[string]any `json:"messages"`
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	baseURL := stubForegroundHTTP(t, func(writer http.ResponseWriter, request *http.Request) {
 		if err := json.NewDecoder(request.Body).Decode(&seenRequest); err != nil {
 			t.Fatalf("failed to decode request: %v", err)
 		}
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`))
-	}))
-	defer server.Close()
+		writeChatCompletionStream(writer, "done")
+	})
 
 	getenv := func(key string) string {
 		switch key {
 		case "OPENAI_BASE_URL":
-			return server.URL
+			return baseURL
 		case "LLM_MODEL":
 			return "test-model"
 		default:
@@ -67,14 +66,137 @@ func TestRunUsesExplicitHelloTask(t *testing.T) {
 	if !strings.Contains(stdout.String(), "[Model] request=chat") {
 		t.Fatalf("stdout = %q, want model timing log", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "[Agent] done") {
-		t.Fatalf("stdout = %q, want agent log", stdout.String())
+	if !strings.Contains(stdout.String(), "stream=true") {
+		t.Fatalf("stdout = %q, want stream=true in the model timing log", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "[Turn] iterations=1 duration=") {
 		t.Fatalf("stdout = %q, want turn timing log", stdout.String())
 	}
 	if !strings.HasSuffix(stdout.String(), "done\n") {
 		t.Fatalf("stdout = %q, want final result", stdout.String())
+	}
+}
+
+type foregroundTestTransport func(*http.Request) (*http.Response, error)
+
+func (f foregroundTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	defer req.Body.Close()
+	return f(req)
+}
+
+func stubForegroundHTTP(t *testing.T, handler http.HandlerFunc) string {
+	t.Helper()
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	http.DefaultTransport = foregroundTestTransport(func(req *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		handler(recorder, req)
+		return recorder.Result(), nil
+	})
+	return "https://provider.test/v1"
+}
+
+func writeChatCompletionStream(w http.ResponseWriter, reply string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", reply)
+}
+
+func TestRunForegroundStreamsAndPrintsFinalReplyOnce(t *testing.T) {
+	for _, protocol := range []struct {
+		apiType string
+		path    string
+		events  []string
+	}{
+		{
+			apiType: "openai",
+			path:    "/v1/chat/completions",
+			events: []string{
+				`{"choices":[{"delta":{"content":"final response "}}]}`,
+				`{"choices":[{"delta":{"content":"from stream"},"finish_reason":"stop"}]}`,
+				`[DONE]`,
+			},
+		},
+		{
+			apiType: "openai-response",
+			path:    "/v1/responses",
+			events: []string{
+				`{"type":"response.output_text.delta","delta":"final response "}`,
+				`{"type":"response.output_text.delta","delta":"from stream"}`,
+				`{"type":"response.completed","response":{"status":"completed"}}`,
+			},
+		},
+		{
+			apiType: "anthropic",
+			path:    "/v1/messages",
+			events: []string{
+				`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+				`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"final response "}}`,
+				`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"from stream"}}`,
+				`{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`,
+				`{"type":"message_stop"}`,
+			},
+		},
+	} {
+		t.Run(protocol.apiType, func(t *testing.T) {
+			assertForegroundStreamsAndPrintsFinalReplyOnce(t, protocol.apiType, protocol.path, protocol.events)
+		})
+	}
+}
+
+func assertForegroundStreamsAndPrintsFinalReplyOnce(t *testing.T, apiType, path string, events []string) {
+	t.Helper()
+	const reply = "final response from stream"
+	var calls int
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	http.DefaultTransport = foregroundTestTransport(func(req *http.Request) (*http.Response, error) {
+		calls++
+		var payload struct {
+			Stream bool `json:"stream"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			return nil, err
+		}
+		if req.URL.Path != path || !payload.Stream {
+			t.Errorf("provider request path = %q, stream = %t, want %s with streaming", req.URL.Path, payload.Stream, path)
+			return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader("expected streaming"))}, nil
+		}
+		stream := "data: " + strings.Join(events, "\n\ndata: ") + "\n\n"
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(stream)),
+		}, nil
+	})
+	root, home := t.TempDir(), t.TempDir()
+	env := map[string]string{
+		"HOME":                       home,
+		"USERPROFILE":                home,
+		"LLM_BASE_URL":               "https://provider.test/v1",
+		"LLM_API_TYPE":               apiType,
+		"LLM_MODEL":                  "test-model",
+		"CONTEXT_MANAGEMENT_ENABLED": "false",
+	}
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps(context.Background(), nil, &stdout, &stderr, []string{"Run the task"}, func(key string) string { return env[key] }, runDeps{
+		getwd: func() (string, error) { return root, nil },
+	})
+	if code != 0 || calls != 1 {
+		t.Fatalf("exit code = %d, provider calls = %d, want 0 and 1; stderr=%q", code, calls, stderr.String())
+	}
+	if text := stdout.String(); strings.Count(text, reply) != 1 || !strings.HasSuffix(text, reply+"\n") {
+		t.Fatalf("stdout = %q, want one final reply at the end", text)
+	}
+	logs, err := filepath.Glob(filepath.Join(home, ".agent", "sessions", session.WorkspaceDirectoryName(root), "*", "output.log"))
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("session output logs = %v, %v, want one log", logs, err)
+	}
+	log, err := os.ReadFile(logs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(log); strings.Count(text, reply) != 1 || !strings.HasSuffix(text, reply+"\n") {
+		t.Fatalf("session log = %q, want one final reply at the end", text)
 	}
 }
 
@@ -91,7 +213,7 @@ func TestRunSingleTaskUsesSavedProvider(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var requestCount int
 			var requestedModel string
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			baseURL := stubForegroundHTTP(t, func(writer http.ResponseWriter, request *http.Request) {
 				requestCount++
 				var payload struct {
 					Model string `json:"model"`
@@ -100,10 +222,8 @@ func TestRunSingleTaskUsesSavedProvider(t *testing.T) {
 					t.Fatalf("decode request: %v", err)
 				}
 				requestedModel = payload.Model
-				writer.Header().Set("Content-Type", "application/json")
-				_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`))
-			}))
-			defer server.Close()
+				writeChatCompletionStream(writer, "done")
+			})
 
 			home := t.TempDir()
 			agentDir := filepath.Join(home, ".agent")
@@ -114,7 +234,7 @@ func TestRunSingleTaskUsesSavedProvider(t *testing.T) {
 					ID:           "saved",
 					Name:         "Saved Provider",
 					APIType:      "openai",
-					BaseURL:      server.URL,
+					BaseURL:      baseURL,
 					Models:       []string{"saved-model"},
 					DefaultModel: "saved-model",
 				}},
@@ -163,19 +283,17 @@ func TestRunJoinsArgumentsIntoSingleTask(t *testing.T) {
 	var seenRequest struct {
 		Messages []map[string]any `json:"messages"`
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	baseURL := stubForegroundHTTP(t, func(writer http.ResponseWriter, request *http.Request) {
 		if err := json.NewDecoder(request.Body).Decode(&seenRequest); err != nil {
 			t.Fatalf("failed to decode request: %v", err)
 		}
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
-	}))
-	defer server.Close()
+		writeChatCompletionStream(writer, "ok")
+	})
 
 	getenv := func(key string) string {
 		switch key {
 		case "OPENAI_BASE_URL":
-			return server.URL
+			return baseURL
 		default:
 			return ""
 		}
@@ -193,16 +311,15 @@ func TestRunJoinsArgumentsIntoSingleTask(t *testing.T) {
 }
 
 func TestRunWritesErrorsToStderr(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	baseURL := stubForegroundHTTP(t, func(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(http.StatusBadGateway)
 		_, _ = writer.Write([]byte(`{"error":"upstream failed"}`))
-	}))
-	defer server.Close()
+	})
 
 	getenv := func(key string) string {
 		switch key {
 		case "OPENAI_BASE_URL":
-			return server.URL
+			return baseURL
 		default:
 			return ""
 		}
@@ -235,16 +352,14 @@ func TestRunLoadsDotEnvFromWorkspaceRoot(t *testing.T) {
 		Model    string           `json:"model"`
 		Messages []map[string]any `json:"messages"`
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	baseURL := stubForegroundHTTP(t, func(writer http.ResponseWriter, request *http.Request) {
 		if err := json.NewDecoder(request.Body).Decode(&seenRequest); err != nil {
 			t.Fatalf("failed to decode request: %v", err)
 		}
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`))
-	}))
-	defer server.Close()
+		writeChatCompletionStream(writer, "done")
+	})
 
-	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("OPENAI_BASE_URL="+server.URL+"\nOPENAI_MODEL=dotenv-model\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("OPENAI_BASE_URL="+baseURL+"\nOPENAI_MODEL=dotenv-model\n"), 0o644); err != nil {
 		t.Fatalf("failed to rewrite .env: %v", err)
 	}
 
@@ -269,7 +384,7 @@ func TestRunLoadsDotEnvFromWorkspaceRoot(t *testing.T) {
 	if len(seenRequest.Messages) < 2 || seenRequest.Messages[len(seenRequest.Messages)-1]["content"] != "hello" {
 		t.Fatalf("messages = %#v, want hello request", seenRequest.Messages)
 	}
-	if exported["OPENAI_BASE_URL"] != server.URL || exported["OPENAI_MODEL"] != "dotenv-model" {
+	if exported["OPENAI_BASE_URL"] != baseURL || exported["OPENAI_MODEL"] != "dotenv-model" {
 		t.Fatalf("exported environment = %#v, want dotenv values", exported)
 	}
 }

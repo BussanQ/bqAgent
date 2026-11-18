@@ -57,6 +57,7 @@ func TestBuildPromptSectionsLayersCoreRepositoryAndEnvironment(t *testing.T) {
 		t.Fatalf("stable prompt must start with core instructions: %q", stable)
 	}
 	for _, want := range []string{
+		"When edits to different files are already known and independent, emit their edit_file calls in the same response. Wait for a tool result when a later edit depends on it. Verify the batch together.",
 		"# Repository Instructions\nFrom AGENTS.md at the workspace root.",
 		"Only run targeted tests.",
 		"# Environment\nOS: macOS (darwin/arm64)",

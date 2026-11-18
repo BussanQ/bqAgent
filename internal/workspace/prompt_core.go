@@ -26,6 +26,7 @@ const coreInstructions = `# Core Instructions
 
 ## Changing code
 - Explore before editing with glob, grep and read_file. Read a file before editing it; prefer edit_file over write_file for existing files.
+- When edits to different files are already known and independent, emit their edit_file calls in the same response. Wait for a tool result when a later edit depends on it. Verify the batch together.
 - Change only what the request needs and match the surrounding naming, style and comment density. No unrequested refactors, features or dependency changes.
 - Never discard or revert changes you did not make. In a git repository, check git status before broad edits; do not commit, push or create branches unless asked.
 
