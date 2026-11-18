@@ -304,7 +304,7 @@ index b1785f5..a3d0b9b 100644
      ...(hostBackend && { runsHostProgram: (home) => hostBackend.pins(home) }),
 diff --git a/src/main/acp/session/acp-structured-bqagent.test.ts b/src/main/acp/session/acp-structured-bqagent.test.ts
 new file mode 100644
-index 0000000..ed2c16a
+index 0000000..9a8a6fc
 --- /dev/null
 +++ b/src/main/acp/session/acp-structured-bqagent.test.ts
 @@ -0,0 +1,169 @@
@@ -383,7 +383,7 @@ index 0000000..ed2c16a
 +    model: 'model-a',
 +    reportedPermissionMode: 'own'
 +  })
-+  expect(rig.started().link.handle).toEqual({
++  expect(rig.started().link?.handle).toEqual({
 +    transport: 'acp',
 +    agent: 'bqagent',
 +    nativeId: 'acp-session-1'
@@ -555,6 +555,52 @@ index 827e1e7..8a19bdc 100644
    muse: true,
    jcode: true,
    kiro: false // A .jsonl sidecar supplies messages.
+diff --git a/src/main/ai-vault/parse-cache/session-scanner-parse-cache-agents.test.ts b/src/main/ai-vault/parse-cache/session-scanner-parse-cache-agents.test.ts
+index 2159fc3..0134554 100644
+--- a/src/main/ai-vault/parse-cache/session-scanner-parse-cache-agents.test.ts
++++ b/src/main/ai-vault/parse-cache/session-scanner-parse-cache-agents.test.ts
+@@ -46,6 +46,15 @@ async function candidateFor(
+   }
+ }
+ 
++it('returns no transcript for a bqagent native-chat history candidate', async () => {
++  const candidate: SessionFileCandidate = {
++    agent: 'bqagent',
++    file: { path: 'bqagent-session', mtimeMs: 0, modifiedAt: '1970-01-01T00:00:00Z' },
++    codexHome: null
++  }
++  await expect(parseAgentSessionFileCached(candidate, process.platform)).resolves.toBeNull()
++})
++
+ describe('codex-specific resume behavior', () => {
+   it('picks up a session_index title that appears after the transcript was cached', async () => {
+     const root = await makeTempDir()
+diff --git a/src/main/ai-vault/parse-cache/session-scanner-parse-cache.ts b/src/main/ai-vault/parse-cache/session-scanner-parse-cache.ts
+index 511e171..77db261 100644
+--- a/src/main/ai-vault/parse-cache/session-scanner-parse-cache.ts
++++ b/src/main/ai-vault/parse-cache/session-scanner-parse-cache.ts
+@@ -77,6 +77,7 @@ function resumableStateFactoryFor(
+         : null
+     case 'antigravity':
+       return (messages) => createAntigravitySessionResumeState(candidate.file, messages)
++    case 'bqagent':
+     case 'devin':
+     case 'grok':
+     case 'hermes':
+diff --git a/src/main/ai-vault/parsing/session-scanner-agent-parser.ts b/src/main/ai-vault/parsing/session-scanner-agent-parser.ts
+index 7be307b..3abfc17 100644
+--- a/src/main/ai-vault/parsing/session-scanner-agent-parser.ts
++++ b/src/main/ai-vault/parsing/session-scanner-agent-parser.ts
+@@ -83,6 +83,9 @@ export async function parseAgentSessionFile(
+   onSkippedRecords?: (records: SkippedTranscriptRecord[]) => void
+ ): Promise<AiVaultSession | null> {
+   switch (candidate.agent) {
++    case 'bqagent':
++      // bqagent history comes from structured sessions and has no transcript file parser.
++      return null
+     case 'qoder':
+       return parseQoderSessionFile(candidate.file, platform, messages)
+     case 'codebuddy':
 diff --git a/src/main/ai-vault/scope/session-scope-cwd.ts b/src/main/ai-vault/scope/session-scope-cwd.ts
 index 649a271..6d24f1f 100644
 --- a/src/main/ai-vault/scope/session-scope-cwd.ts
@@ -569,10 +615,11 @@ index 649a271..6d24f1f 100644
      return summary ? grokSessionCwd(summary) : null
 diff --git a/src/main/bqagent/bqagent-acp-launch-spec.test.ts b/src/main/bqagent/bqagent-acp-launch-spec.test.ts
 new file mode 100644
-index 0000000..49f95d3
+index 0000000..e4c3c4d
 --- /dev/null
 +++ b/src/main/bqagent/bqagent-acp-launch-spec.test.ts
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,65 @@
++import { homedir } from 'node:os'
 +import { expect, it } from 'vitest'
 +import { acpLaunchSpecFor } from '../acp/launch/acp-launch-registry'
 +import { acpStructuredAgentDefinition } from '../acp/session/acp-structured-agent-definitions'
@@ -604,17 +651,19 @@ index 0000000..49f95d3
 +it('pins bqagent to the OS user home while retaining the launch environment', async () => {
 +  const variable = 'HOME'
 +  const homePath = process.platform === 'win32' ? 'C:\\Users\\bq-user' : '/home/bq-user'
-+  const home = await BQAGENT_LAUNCH_SPEC.account.resolve({
-+    launchEnv: { [variable]: homePath, USERPROFILE: '/other-home' },
-+    stateDirectory: '/unused-orca-state'
-+  })
++  const resolveHome = (launchEnv: NodeJS.ProcessEnv) =>
++    BQAGENT_LAUNCH_SPEC.account.resolve({ launchEnv, stateDirectory: '/unused-orca-state' })
++  const home = await resolveHome({ HOME: homePath, USERPROFILE: '/other-home' })
 +  expect(home).toEqual({ variable, path: homePath })
-+  expect(
-+    await BQAGENT_LAUNCH_SPEC.account.resolve({
-+      launchEnv: { USERPROFILE: homePath },
-+      stateDirectory: '/unused-orca-state'
-+    })
-+  ).toEqual({ variable: 'HOME', path: homePath })
++  expect(await resolveHome({ USERPROFILE: homePath })).toEqual({ variable, path: homePath })
++  expect(await resolveHome({ HOME: 'relative', USERPROFILE: ` ${homePath} ` })).toEqual({
++    variable,
++    path: homePath
++  })
++  expect(await resolveHome({ HOME: ' ', USERPROFILE: 'relative' })).toEqual({
++    variable,
++    path: homedir()
++  })
 +  expect(
 +    BQAGENT_LAUNCH_SPEC.account.environment(home, {
 +      PATH: '/user/bin',
@@ -637,10 +686,12 @@ index 0000000..49f95d3
 +})
 diff --git a/src/main/bqagent/bqagent-acp-launch-spec.ts b/src/main/bqagent/bqagent-acp-launch-spec.ts
 new file mode 100644
-index 0000000..6d6b399
+index 0000000..a60985d
 --- /dev/null
 +++ b/src/main/bqagent/bqagent-acp-launch-spec.ts
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,42 @@
++import { homedir } from 'node:os'
++import { resolveAbsoluteDirOverride } from '../../shared/file-access/absolute-dir-override'
 +import type { AcpLaunchSpec } from '../acp/launch/acp-launch-contract'
 +import { GENERIC_ACP_DIALECT } from '../acp/acp-dialects/acp-dialect'
 +import { directoryAccountBinding } from '../acp/launch/acp-account-binding'
@@ -655,10 +706,16 @@ index 0000000..6d6b399
 +  dialect: GENERIC_ACP_DIALECT,
 +  loginCommand: [],
 +  // bqagent reads ~/.agent through the OS user home, with no separate account-home override.
-+  account: directoryAccountBinding(
-+    'HOME',
-+    (homePath, env) => env.USERPROFILE?.trim() || homePath
-+  ),
++  account: {
++    ...directoryAccountBinding('HOME', (homePath) => homePath),
++    resolve: async ({ launchEnv }) => ({
++      variable: 'HOME',
++      path:
++        resolveAbsoluteDirOverride(launchEnv.HOME, '') ||
++        resolveAbsoluteDirOverride(launchEnv.USERPROFILE, '') ||
++        homedir()
++    })
++  },
 +  installDirectories: () => [],
 +  ownApprovalMode: true,
 +  imagePrompts: false,
@@ -757,13 +814,19 @@ index 0000000..0a644d2
 +})
 diff --git a/src/main/bqagent/bqagent-plugin-harness.ts b/src/main/bqagent/bqagent-plugin-harness.ts
 new file mode 100644
-index 0000000..5db5cc0
+index 0000000..c6451f9
 --- /dev/null
 +++ b/src/main/bqagent/bqagent-plugin-harness.ts
-@@ -0,0 +1,49 @@
-+import type { PluginService } from '../plugins/plugin-service'
+@@ -0,0 +1,55 @@
++import type { PluginCapabilityKind } from '../../shared/plugins/capabilities/plugin-capabilities'
++import type { PluginManifest } from '../../shared/plugins/manifest/plugin-manifest'
 +
-+type HarnessInventory = Pick<PluginService, 'getDiscovered' | 'getGrantedCapabilities' | 'whenReady'>
++interface HarnessInventory {
++  getDiscovered(): readonly ({ pluginKey: string; manifest: PluginManifest } | { error: string })[]
++  getGrantedCapabilities(pluginKey: string): readonly PluginCapabilityKind[] | null
++  whenReady(): Promise<void>
++}
++
 +let inventory: () => HarnessInventory | null = () => null
 +
 +/** Only the composition root supplies the executing host's inventory. CLI-only hosts fail closed. */
@@ -953,7 +1016,7 @@ index 92ddfc0..4842f69 100644
  
  export async function detectInstalledAgentsWithShellPathHydration(
 diff --git a/src/main/runtime/agent-session/installation/structured-agent-runtime-metadata.ts b/src/main/runtime/agent-session/installation/structured-agent-runtime-metadata.ts
-index 2c3f0c2..7e0b1ab 100644
+index ad36409..0c61f4e 100644
 --- a/src/main/runtime/agent-session/installation/structured-agent-runtime-metadata.ts
 +++ b/src/main/runtime/agent-session/installation/structured-agent-runtime-metadata.ts
 @@ -1,5 +1,6 @@
@@ -1224,6 +1287,61 @@ index 40365ac..dba8536 100644
      {
        id: 'aider',
        label: translate('auto.lib.agent.catalog.b32627f09b', 'Aider'),
+diff --git a/src/renderer/src/runtime/hosted-terminals/creation/agent-launch/agent-resume-host-authority-capability.ts b/src/renderer/src/runtime/hosted-terminals/creation/agent-launch/agent-resume-host-authority-capability.ts
+index 78c7563..f490278 100644
+--- a/src/renderer/src/runtime/hosted-terminals/creation/agent-launch/agent-resume-host-authority-capability.ts
++++ b/src/renderer/src/runtime/hosted-terminals/creation/agent-launch/agent-resume-host-authority-capability.ts
+@@ -1,6 +1,7 @@
+ import type { ResumableTuiAgent } from '../../../../../../shared/agent-session/lifecycle/agent-session-resume'
+ import type { TuiAgent } from '../../../../../../shared/agent-launch/catalog/tui-agent'
+ import {
++  AGENT_SESSION_BQAGENT_RESUME_RUNTIME_CAPABILITY,
+   AGENT_SESSION_KIMI_RESUME_RUNTIME_CAPABILITY,
+   AGENT_SESSION_CURSOR_RESUME_RUNTIME_CAPABILITY,
+   AGENT_SESSION_QODER_RESUME_RUNTIME_CAPABILITY,
+@@ -21,6 +22,7 @@ import type { RuntimeCapability } from '../../../../../../shared/remote-runtime/
+ const RESUME_HOST_AUTHORITY_CAPABILITY_BY_AGENT = {
+   // These shipped inside agent-session.host-authority.v1's enum, so the generic probe covers them.
+   claude: undefined,
++  bqagent: AGENT_SESSION_BQAGENT_RESUME_RUNTIME_CAPABILITY,
+   codebuddy: AGENT_SESSION_CODEBUDDY_RESUME_RUNTIME_CAPABILITY,
+   codex: undefined,
+   cursor: AGENT_SESSION_CURSOR_RESUME_RUNTIME_CAPABILITY,
+diff --git a/src/renderer/src/runtime/hosted-terminals/creation/agent-launch/bqagent-resume-host-authority.test.ts b/src/renderer/src/runtime/hosted-terminals/creation/agent-launch/bqagent-resume-host-authority.test.ts
+new file mode 100644
+index 0000000..05d1bda
+--- /dev/null
++++ b/src/renderer/src/runtime/hosted-terminals/creation/agent-launch/bqagent-resume-host-authority.test.ts
+@@ -0,0 +1,29 @@
++import { expect, it, vi } from 'vitest'
++import { RUNTIME_CAPABILITIES } from '../../../../../../shared/remote-runtime/protocol/protocol-version'
++import { runtimeEnvironmentSupportsCapability } from '../../../rpc/compatibility/runtime-capability-proof'
++import { agentResumeHostAuthorityCapability } from './agent-resume-host-authority-capability'
++import { runRemoteAgentSessionLaunch } from './remote-agent-session-launch'
++
++vi.mock('../../../rpc/compatibility/runtime-capability-proof', () => ({
++  runtimeEnvironmentSupportsCapability: vi.fn()
++}))
++vi.mock('../../../rpc/compatibility/runtime-protocol-compat', () => ({
++  isRuntimeCompatBlockError: () => false
++}))
++
++it('routes bqagent resume to legacy on an older host and to host authority on a patched host', async () => {
++  const resume = () =>
++    runRemoteAgentSessionLaunch({
++      environmentId: 'paired',
++      hostAuthorityCapability: agentResumeHostAuthorityCapability('bqagent'),
++      hostAuthority: async () => 'host',
++      legacy: async () => 'legacy'
++    })
++  const advertised = new Set<string>(RUNTIME_CAPABILITIES)
++  vi.mocked(runtimeEnvironmentSupportsCapability).mockImplementation(async (_, capability) =>
++    advertised.has(capability)
++  )
++  await expect(resume()).resolves.toBe('host')
++  advertised.delete('agent-session.bqagent-resume.v1')
++  await expect(resume()).resolves.toBe('legacy')
++})
 diff --git a/src/shared/agent-launch/catalog/tui-agent-config.ts b/src/shared/agent-launch/catalog/tui-agent-config.ts
 index c954fd5..f53d725 100644
 --- a/src/shared/agent-launch/catalog/tui-agent-config.ts
@@ -1251,6 +1369,18 @@ index f52e0f8..a25b772 100644
    'mistral-vibe': 'Mistral Vibe',
    'qwen-code': 'Qwen Code',
    rovo: 'Rovo Dev',
+diff --git a/src/shared/agent-launch/catalog/tui-agent-selection.ts b/src/shared/agent-launch/catalog/tui-agent-selection.ts
+index 8fb0bcf..3f7d760 100644
+--- a/src/shared/agent-launch/catalog/tui-agent-selection.ts
++++ b/src/shared/agent-launch/catalog/tui-agent-selection.ts
+@@ -25,6 +25,7 @@ export const TUI_AGENT_AUTO_PICK_ORDER = [
+   'prime-agent',
+   'gemini',
+   'antigravity',
++  'bqagent',
+   'aider',
+   'goose',
+   'amp',
 diff --git a/src/shared/agent-launch/catalog/tui-agent.ts b/src/shared/agent-launch/catalog/tui-agent.ts
 index 62de3a8..88ea5e4 100644
 --- a/src/shared/agent-launch/catalog/tui-agent.ts
@@ -1263,6 +1393,29 @@ index 62de3a8..88ea5e4 100644
    | 'mistral-vibe'
    | 'qwen-code'
    | 'rovo' // Rovo Dev
+diff --git a/src/shared/agent-launch/picker/agent-launch-picker-bqagent.test.ts b/src/shared/agent-launch/picker/agent-launch-picker-bqagent.test.ts
+new file mode 100644
+index 0000000..2729f08
+--- /dev/null
++++ b/src/shared/agent-launch/picker/agent-launch-picker-bqagent.test.ts
+@@ -0,0 +1,17 @@
++import { expect, it } from 'vitest'
++import { buildNewTabAgentMenuRows } from './agent-launch-picker-rows'
++
++it('offers detected bqagent as chat only when the host registers it', () => {
++  const host = {
++    settings: { agentDefaultSurface: 'chat' },
++    detectedOnHost: ['bqagent'],
++    hostChatAnswer: () => 'yes',
++    chatProgram: () => 'available'
++  } satisfies Omit<Parameters<typeof buildNewTabAgentMenuRows>[0], 'chatAgents'>
++  expect(buildNewTabAgentMenuRows({ ...host, chatAgents: ['bqagent'] })).toEqual([
++    { kind: 'chat', agent: 'bqagent' }
++  ])
++  expect(buildNewTabAgentMenuRows({ ...host, chatAgents: [] })).toEqual([
++    { kind: 'cli', agent: 'bqagent' }
++  ])
++})
 diff --git a/src/shared/agent-launch/startup/agent-resume-argv.ts b/src/shared/agent-launch/startup/agent-resume-argv.ts
 index f5f5aae..212f4bb 100644
 --- a/src/shared/agent-launch/startup/agent-resume-argv.ts
@@ -1288,6 +1441,27 @@ index 7b1f4ca..8083505 100644
    'muse',
    'zcode',
    'dsh',
+diff --git a/src/shared/agent-session/lifecycle/resume/agent-session-resume-runtime-capabilities.ts b/src/shared/agent-session/lifecycle/resume/agent-session-resume-runtime-capabilities.ts
+index a2a5328..7ad39c3 100644
+--- a/src/shared/agent-session/lifecycle/resume/agent-session-resume-runtime-capabilities.ts
++++ b/src/shared/agent-session/lifecycle/resume/agent-session-resume-runtime-capabilities.ts
+@@ -1,6 +1,8 @@
+ // Probe before Kimi host-authority resume: older ensureAgentSession enums reject it with invalid_argument, which launch fallback cannot retry.
+ export const AGENT_SESSION_CURSOR_RESUME_RUNTIME_CAPABILITY =
+   'agent-session.cursor-resume.v1' as const
++export const AGENT_SESSION_BQAGENT_RESUME_RUNTIME_CAPABILITY =
++  'agent-session.bqagent-resume.v1' as const
+ export const AGENT_SESSION_KIMI_RESUME_RUNTIME_CAPABILITY = 'agent-session.kimi-resume.v1' as const
+ export const AGENT_SESSION_OPENCODE2_RESUME_RUNTIME_CAPABILITY =
+   'agent-session.opencode2-resume.v1' as const
+@@ -21,6 +23,7 @@ export const AGENT_SESSION_ZCODE_RESUME_RUNTIME_CAPABILITY =
+   'agent-session.zcode-resume.v1' as const
+ 
+ export const AGENT_SESSION_RESUME_RUNTIME_CAPABILITIES = [
++  AGENT_SESSION_BQAGENT_RESUME_RUNTIME_CAPABILITY,
+   AGENT_SESSION_KIMI_RESUME_RUNTIME_CAPABILITY,
+   AGENT_SESSION_CURSOR_RESUME_RUNTIME_CAPABILITY,
+   AGENT_SESSION_OPENCODE2_RESUME_RUNTIME_CAPABILITY,
 diff --git a/src/shared/agent-status/identity/agent-kind.ts b/src/shared/agent-status/identity/agent-kind.ts
 index 36dd6cc..0c6345e 100644
 --- a/src/shared/agent-status/identity/agent-kind.ts
@@ -1300,6 +1474,91 @@ index 36dd6cc..0c6345e 100644
    'mistral-vibe': 'mistral-vibe',
    'qwen-code': 'qwen-code',
    rovo: 'rovo',
+diff --git a/src/shared/agent-status/presentation/agent-type-icon-agent.test.ts b/src/shared/agent-status/presentation/agent-type-icon-agent.test.ts
+new file mode 100644
+index 0000000..c2f50ed
+--- /dev/null
++++ b/src/shared/agent-status/presentation/agent-type-icon-agent.test.ts
+@@ -0,0 +1,9 @@
++import { expect, it } from 'vitest'
++import { agentTypeToIconAgent } from './agent-type-icon-agent'
++
++it('retains the bqagent identity of a restart recovery row', () => {
++  expect(agentTypeToIconAgent('bqagent')).toBe('bqagent')
++  expect(agentTypeToIconAgent('dsb')).toBe('dsb')
++  expect(agentTypeToIconAgent('unknown')).toBeNull()
++  expect(agentTypeToIconAgent('toString')).toBeNull()
++})
+diff --git a/src/shared/agent-status/presentation/agent-type-icon-agent.ts b/src/shared/agent-status/presentation/agent-type-icon-agent.ts
+index 795915e..206fa6a 100644
+--- a/src/shared/agent-status/presentation/agent-type-icon-agent.ts
++++ b/src/shared/agent-status/presentation/agent-type-icon-agent.ts
+@@ -2,64 +2,12 @@ import type { AgentType } from '../contracts/agent-status-types'
+ import type { TerminalAgent } from '../identity/terminal-agent'
+ import { isTuiAgent } from '../../agent-launch/catalog/tui-agent-config'
+ 
+-const ICONABLE_AGENT_TYPES: Record<TerminalAgent, true> = {
+-  claude: true,
+-  'claude-agent-teams': true,
+-  codebuddy: true,
+-  openclaude: true,
+-  codex: true,
+-  autohand: true,
+-  opencode: true,
+-  opencode2: true,
+-  'mimo-code': true,
+-  pi: true,
+-  omp: true,
+-  'prime-agent': true,
+-  qoder: true,
+-  'qoder-cn': true,
+-  gemini: true,
+-  antigravity: true,
+-  aider: true,
+-  goose: true,
+-  amp: true,
+-  kilo: true,
+-  kiro: true,
+-  crush: true,
+-  aug: true,
+-  cline: true,
+-  codebuff: true,
+-  freebuff: true,
+-  'command-code': true,
+-  continue: true,
+-  cursor: true,
+-  droid: true,
+-  kimi: true,
+-  'mistral-vibe': true,
+-  'qwen-code': true,
+-  rovo: true,
+-  hermes: true,
+-  openclaw: true,
+-  copilot: true,
+-  grok: true,
+-  devin: true,
+-  ante: true,
+-  trae: true,
+-  muse: true,
+-  zcode: true,
+-  dsh: true,
+-  dsb: true,
+-  jcode: true
+-}
+-
+ // Why: return null (not a 'claude' fallback) for unknown so Codex panes don't flash the Claude icon before the hook fires.
+ export function agentTypeToIconAgent(
+   agentType: AgentType | null | undefined
+ ): TerminalAgent | null {
+-  if (!agentType || agentType === 'unknown') {
+-    return null
+-  }
+   if (agentType === 'dsb') {
+     return 'dsb'
+   }
+-  return isTuiAgent(agentType) && Object.hasOwn(ICONABLE_AGENT_TYPES, agentType) ? agentType : null
++  return isTuiAgent(agentType) ? agentType : null
+ }
 diff --git a/src/shared/ai-vault/contracts/ai-vault-types.ts b/src/shared/ai-vault/contracts/ai-vault-types.ts
 index 008a7eb..b847bfe 100644
 --- a/src/shared/ai-vault/contracts/ai-vault-types.ts

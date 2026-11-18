@@ -2,7 +2,7 @@
 
 [插件目录](./bqagent/) 包含 `orca-plugin.json`。它向 Orca 声明一个本地 ACP Agent，启动命令为 `bqagent --acp`。启用后，可在原生 ChatUI 发送消息、查看流式回复和工具卡片、停止回合、切换模型或恢复会话。bqagent 按自己的策略自动执行工具。
 
-**宿主要求**：Orca 官方格式 v2 把 `contributes.agentHarnesses` 保留为空数组。需要先使用支持这项声明的 Orca 构建。仓库提供针对 `stablyai/orca@48e78a6d5df89f28956892486d6ef164617366c2` 的[宿主兼容补丁](./host/agent-harness.patch)。补丁中的适配器支持 bqagent，插件清单及 Orca 记录的授权决定它能否用于 ChatUI。
+**宿主要求**：Orca v1.4.262 的官方插件格式将 `contributes.agentHarnesses` 保留为空数组。请在该标签（`13619bc1c1f07bf10af2aba61def9a4cc532e108`）上应用[宿主兼容补丁](./host/agent-harness.patch)并构建 Orca。补丁提供 bqagent 适配器，插件清单及 Orca 记录的授权决定它能否用于 ChatUI。
 
 ## 安装插件
 
@@ -30,15 +30,15 @@
 ```sh
 git clone --no-checkout https://github.com/stablyai/orca.git /path/to/orca
 cd /path/to/orca
-git checkout --detach 48e78a6d5df89f28956892486d6ef164617366c2
+git checkout --detach v1.4.262
 git apply --check /path/to/bqAgent/plugins/orca/host/agent-harness.patch
 git apply /path/to/bqAgent/plugins/orca/host/agent-harness.patch
 pnpm install --frozen-lockfile
 pnpm -C mobile install --frozen-lockfile
-pnpm dev
+pnpm run build:desktop
 ```
 
-固定基线的构建依赖见 Orca 的 `.github/CONTRIBUTING.md` 与 `docs/development.md`。桌面发行构建可按平台运行 `pnpm build:mac`、`pnpm build:linux` 或 `pnpm build:win`。
+已在 macOS arm64 上用 Node.js 24 和 pnpm 12.14.0 验证上述桌面构建，产物位于 `out/`。请保留 Git checkout，构建脚本会读取 `HEAD`。开发时可运行 `pnpm dev` 启动 Orca。各平台的依赖和发行包构建步骤见该标签的 `.github/CONTRIBUTING.md` 与 `docs/development.md`。
 
 ## 会话与权限
 
