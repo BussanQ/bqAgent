@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 2,
+  "id": "bqagent",
+  "name": "bqagent",
+  "version": "1.0.0",
+  "description": "Use the installed bqagent CLI in Orca native chat through ACP. bqagent runs its tools automatically.",
+  "execution": "declarative",
+  "engines": { "orca": ">=1.4.248" },
+  "capabilities": [{ "kind": "agent:launch" }],
+  "contributes": {
+    "agentHarnesses": [{ "id": "bqagent", "command": "bqagent", "args": ["--acp"] }]
+  }
+}

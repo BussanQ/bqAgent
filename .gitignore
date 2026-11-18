@@ -14,6 +14,7 @@ bqagent.exe~
 .idea
 bqagent-linux*
 bqagent
+!/plugins/orca/bqagent/
 .DS_Store
 internal/server/webui/node_modules/
 internal/server/webui/dist/

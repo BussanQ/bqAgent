@@ -1,0 +1,1734 @@
+diff --git a/docs/reference/plugin-authoring.md b/docs/reference/plugin-authoring.md
+index 7784fec..4a4b727 100644
+--- a/docs/reference/plugin-authoring.md
++++ b/docs/reference/plugin-authoring.md
+@@ -719,6 +719,27 @@ already granted, the same way an editor's extensions update. Turn the setting of
+ update. An update that needs approval is not installed: the current version keeps running and the
+ plugin shows **Update needs review**.
+ 
++## Native ACP harness
++
++On a build with bqAgent support, the following `orca-plugin.json` can be the only file in a plugin directory:
++
++```json
++{
++  "manifestVersion": 2,
++  "id": "bqagent",
++  "name": "bqAgent",
++  "version": "1.0.0",
++  "engines": { "orca": ">=1.4.248" },
++  "execution": "declarative",
++  "capabilities": [{ "kind": "agent:launch" }],
++  "contributes": {
++    "agentHarnesses": [{ "id": "bqagent", "command": "bqagent", "args": ["--acp"] }]
++  }
++}
++```
++
++Run `orca plugin install <directory>` and review the requested grant before approving its fingerprint. The host needs a separately installed `bqagent` executable.
++
+ ## Planned contribution points
+ 
+ These `contributes` keys are reserved: a manifest may list them only as empty arrays until
+@@ -727,7 +748,6 @@ arbitrary plugin UI:
+ 
+ - `taskSources`: issue and task providers such as Asana, Linear or Jira, filled by a worker.
+ - `connections`: account providers with a host-run sign-in.
+-- `agentHarnesses`: new coding-agent harnesses described as data.
+ - `sidebarCards`: declarative left-sidebar cards whose values a worker updates.
+ - `mcpServers`: MCP server definitions offered to the agents Orca launches.
+ - `skills`: agent skills shipped as files.
+diff --git a/docs/reference/plugin-catalog.md b/docs/reference/plugin-catalog.md
+index a1fa80d..e9b5f84 100644
+--- a/docs/reference/plugin-catalog.md
++++ b/docs/reference/plugin-catalog.md
+@@ -108,7 +108,7 @@ One thing the release adds to Orca.
+ 
+ | Field | Type | Required | Since | Description |
+ | --- | --- | --- | --- | --- |
+-| `kind` | `"panels"` \| `"commands"` \| `"events"` \| `"hooks"` \| `"languagePacks"` \| `"keybindings"` \| `"vmRecipes"` \| `"themes"` \| `"terminalThemes"` \| `"iconThemes"` \| `"fonts"` \| `"syntaxes"` \| `"customEditors"` \| `"newFiles"` \| `"settings"` \| `"statusBarItems"` | yes | 1.4.245 | Contribution point. Example: `"themes"` |
++| `kind` | `"panels"` \| `"commands"` \| `"events"` \| `"hooks"` \| `"languagePacks"` \| `"keybindings"` \| `"vmRecipes"` \| `"themes"` \| `"terminalThemes"` \| `"iconThemes"` \| `"fonts"` \| `"syntaxes"` \| `"customEditors"` \| `"newFiles"` \| `"settings"` \| `"statusBarItems"` \| `"agentHarnesses"` | yes | 1.4.245 | Contribution point. Example: `"themes"` |
+ | `name` | string | yes | 1.4.245 | What the item is called in Orca. Example: `"Dusk"` |
+ | `detail` | string | no | 1.4.245 | Extra context, such as file extensions. |
+ 
+diff --git a/docs/reference/plugin-manifest.md b/docs/reference/plugin-manifest.md
+index fd039f4..c2a90ed 100644
+--- a/docs/reference/plugin-manifest.md
++++ b/docs/reference/plugin-manifest.md
+@@ -46,7 +46,7 @@ Add `"$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schem
+ | `contributes.newFiles` | [NewFileContribution](#newfilecontribution)[] | no | 1.4.245 | Untitled files the user can create from the + menu and the command palette. At most 16. |
+ | `contributes.settings` | [SettingContribution](#settingcontribution)[] | no | 1.4.246 | Settings Orca shows under the plugin in Settings; code reads them with `settings.get` (`settings:own`). At most 64. |
+ | `contributes.statusBarItems` | [StatusBarItemContribution](#statusbaritemcontribution)[] | no | 1.4.248 | Items in the status bar; pressing one runs its `command`, and a worker changes them with `statusBar.update`. With `main`, the worker runs for as long as the plugin is enabled. At most 8. |
+-| `contributes.agentHarnesses` | any[] | no | 1.4.245 | Reserved for coding-agent harness definitions; must be empty until their format is defined. |
++| `contributes.agentHarnesses` | object[] | no | 1.4.248 | Native ACP harness on builds with bqagent support. Requires plugin id `bqagent`, format 2, `declarative` execution and the `agent:launch` capability. At most 1. |
+ | `contributes.skills` | any[] | no | 1.4.245 | Reserved for agent skills; must be empty until their format is defined. |
+ | `contributes.mcpServers` | any[] | no | 1.4.245 | Reserved for MCP server definitions; must be empty until their format is defined. |
+ | `contributes.taskSources` | any[] | no | 1.4.245 | Reserved for task sources; must be empty until their format is defined. |
+@@ -258,7 +258,7 @@ One screenshot of the plugin in use.
+ - **`terminal:send` needs `trusted-worker`.** Panels get no host method that types into a terminal, so Orca refuses the capability on any other profile instead of asking the user to grant something the plugin can never use.
+ - **New fields, contribution points and values are additive.** They arrive with a `Since` version; nothing else changes. `manifestVersion` rises only if an existing field changes meaning.
+ - **Deprecation.** A field to be removed is marked deprecated here and keeps working for at least one release; it is removed only together with a higher `engines.orca` requirement, and its name is never reused.
+-- **Reserved contribution points.** `contributes.agentHarnesses`, `skills`, `mcpServers`, `taskSources`, `connections` and `sidebarCards` are held for planned features and must stay empty until their format is defined. Each will arrive as an additive point with its own `Since`, without a new manifest format. `skills` and `mcpServers` keep the meaning agent-plugin formats such as Claude Code's give them; `agents` stays unclaimed because those formats use it for subagent files.
++- **Reserved contribution points.** `contributes.skills`, `mcpServers`, `taskSources`, `connections` and `sidebarCards` are held for planned features and must stay empty until their format is defined. Each will arrive as an additive point with its own `Since`, without a new manifest format. `skills` and `mcpServers` keep the meaning agent-plugin formats such as Claude Code's give them; `agents` stays unclaimed because those formats use it for subagent files.
+ 
+ ## Planned contribution points
+ 
+@@ -266,7 +266,6 @@ Each reserved point is planned as declared data that Orca renders and enforces,
+ 
+ - `taskSources`: Issue and task providers such as Asana, Linear or Jira, declared as data that a worker fills with tasks.
+ - `connections`: Account providers with a host-run sign-in, so a plugin never handles credentials itself.
+-- `agentHarnesses`: New coding-agent harnesses described as data: how to launch them and read their status.
+ - `sidebarCards`: Declarative left-sidebar cards with fixed layouts whose values a worker updates.
+ - `mcpServers`: MCP server definitions that Orca offers to the agents it launches.
+ - `skills`: Agent skills shipped as files that Orca installs for the agents it launches.
+diff --git a/docs/schemas/plugins/orca-catalog.v2.schema.json b/docs/schemas/plugins/orca-catalog.v2.schema.json
+index e0e030b..02e51b5 100644
+--- a/docs/schemas/plugins/orca-catalog.v2.schema.json
++++ b/docs/schemas/plugins/orca-catalog.v2.schema.json
+@@ -574,7 +574,8 @@
+             "customEditors",
+             "newFiles",
+             "settings",
+-            "statusBarItems"
++            "statusBarItems",
++            "agentHarnesses"
+           ],
+           "description": "Contribution point.",
+           "x-orca-since": "1.4.245",
+diff --git a/docs/schemas/plugins/orca-plugin.v2.schema.json b/docs/schemas/plugins/orca-plugin.v2.schema.json
+index 7b52810..4e1ea63 100644
+--- a/docs/schemas/plugins/orca-plugin.v2.schema.json
++++ b/docs/schemas/plugins/orca-plugin.v2.schema.json
+@@ -346,11 +346,39 @@
+           }
+         },
+         "agentHarnesses": {
+-          "description": "Reserved for coding-agent harness definitions; must be empty until their format is defined.",
+-          "x-orca-since": "1.4.245",
+-          "maxItems": 0,
++          "default": [],
++          "description": "Native ACP harness on builds with bqagent support. Requires plugin id `bqagent`, format 2, `declarative` execution and the `agent:launch` capability. At most 1.",
++          "x-orca-since": "1.4.248",
++          "maxItems": 1,
+           "type": "array",
+-          "items": {}
++          "items": {
++            "type": "object",
++            "properties": {
++              "id": {
++                "type": "string",
++                "const": "bqagent"
++              },
++              "command": {
++                "type": "string",
++                "const": "bqagent"
++              },
++              "args": {
++                "minItems": 1,
++                "maxItems": 1,
++                "type": "array",
++                "items": {
++                  "type": "string",
++                  "const": "--acp"
++                }
++              }
++            },
++            "required": [
++              "id",
++              "command",
++              "args"
++            ],
++            "additionalProperties": false
++          }
+         },
+         "skills": {
+           "description": "Reserved for agent skills; must be empty until their format is defined.",
+@@ -1665,5 +1693,58 @@
+       "additionalProperties": false,
+       "description": "One screenshot of the plugin in use."
+     }
++  },
++  "if": {
++    "required": [
++      "contributes"
++    ],
++    "properties": {
++      "contributes": {
++        "required": [
++          "agentHarnesses"
++        ],
++        "properties": {
++          "agentHarnesses": {
++            "minItems": 1
++          }
++        }
++      }
++    }
++  },
++  "then": {
++    "required": [
++      "capabilities"
++    ],
++    "properties": {
++      "id": {
++        "const": "bqagent"
++      },
++      "execution": {
++        "const": "declarative"
++      },
++      "capabilities": {
++        "contains": {
++          "properties": {
++            "kind": {
++              "const": "agent:launch"
++            }
++          }
++        }
++      }
++    },
++    "not": {
++      "anyOf": [
++        {
++          "required": [
++            "main"
++          ]
++        },
++        {
++          "required": [
++            "pluginApi"
++          ]
++        }
++      ]
++    }
+   }
+ }
+diff --git a/src/main/acp/launch/acp-launch-contract.ts b/src/main/acp/launch/acp-launch-contract.ts
+index 134c16e..fea1582 100644
+--- a/src/main/acp/launch/acp-launch-contract.ts
++++ b/src/main/acp/launch/acp-launch-contract.ts
+@@ -52,6 +52,10 @@ export type AcpLaunchSpec = {
+   installDirectories(input: { env: Readonly<Record<string, string>>; homePath: string }): string[]
+   /** Installed only on request; takes precedence over PATH and excludes `minimumVersions`. */
+   managedRuntime?: ManagedRuntime
++  /** Only the agent's own approval policy is available; Orca neither selects modes nor approves tools. */
++  ownApprovalMode?: true
++  /** Disable image prompts even before initialize narrows the advertised capabilities. */
++  imagePrompts?: false
+   /** Agent-enforced modes; Orca does not answer its permission requests. */
+   permissionModeConfig?: {
+     values: { ask: string } & Partial<Record<AgentChatPermissionMode, string>>
+diff --git a/src/main/acp/launch/acp-launch-registry.ts b/src/main/acp/launch/acp-launch-registry.ts
+index 6718f2b..7fbc37d 100644
+--- a/src/main/acp/launch/acp-launch-registry.ts
++++ b/src/main/acp/launch/acp-launch-registry.ts
+@@ -29,6 +29,7 @@ import { OMP_TRANSCRIPT_IMPORT } from '../../omp/omp-transcript-import'
+ import { ANTIGRAVITY_LAUNCH_SPEC } from '../../antigravity/antigravity-acp-launch-spec'
+ import { COPILOT_LAUNCH_SPEC } from '../../copilot/copilot-acp-launch-spec'
+ import { KIMI_LAUNCH_SPEC } from '../../kimi/kimi-acp-launch-spec'
++import { BQAGENT_LAUNCH_SPEC } from '../../bqagent/bqagent-acp-launch-spec'
+ import { CURSOR_LAUNCH_SPEC } from '../../cursor/cursor-acp-launch-spec'
+ import type { AcpLaunchSpec } from './acp-launch-contract'
+ 
+@@ -160,6 +161,7 @@ export const ACP_LAUNCH_SPECS: readonly AcpLaunchSpec[] = [
+   ANTIGRAVITY_LAUNCH_SPEC,
+   COPILOT_LAUNCH_SPEC,
+   KIMI_LAUNCH_SPEC,
++  BQAGENT_LAUNCH_SPEC,
+   CURSOR_LAUNCH_SPEC
+ ]
+ 
+diff --git a/src/main/acp/session/acp-structured-acquire.ts b/src/main/acp/session/acp-structured-acquire.ts
+index ff757a6..fbbcc7a 100644
+--- a/src/main/acp/session/acp-structured-acquire.ts
++++ b/src/main/acp/session/acp-structured-acquire.ts
+@@ -68,6 +68,11 @@ export async function acquireAcpStructuredSession(input: {
+   const launch = await prepareAcpStructuredLaunch(deps, acquire, closedBeforeSpawn)
+   // The chat's account home pins its backend.
+   const { spec } = launch
++  if (spec.ownApprovalMode && acquire.permissionMode && acquire.permissionMode !== 'own') {
++    throw new AgentSessionPreSpawnError(
++      new Error(`${agentName} only supports its own approval policy`)
++    )
++  }
+   let session: childState.AcpStructuredChild | null = null
+   // Use a slot so closure writes do not conflict with control-flow narrowing.
+   const slot: {
+@@ -93,6 +98,11 @@ export async function acquireAcpStructuredSession(input: {
+   const connect = spec.privateTempDirectory
+     ? await acpPrivateTempConnect(deps, closedBeforeSpawn)
+     : deps.connect
++  try {
++    deps.assertCanStartWork?.()
++  } catch (error) {
++    throw new AgentSessionPreSpawnError(error)
++  }
+   const connection = connect(
+     {
+       command: launch.command,
+@@ -108,6 +118,9 @@ export async function acquireAcpStructuredSession(input: {
+       retryBusyPrompts: spec.agent === 'omp',
+       ...(spec.signIn ? { signIn: spec.signIn } : {}),
+       onPermission: (request, context) => {
++        if (spec.ownApprovalMode) {
++          return { outcome: { outcome: 'cancelled' } }
++        }
+         if (!childState.isAcpReadySession(session) || !session.turns?.acceptsRequests) {
+           // Nobody can answer during Stop, a steer or teardown.
+           return { outcome: { outcome: 'cancelled' } }
+@@ -156,7 +169,9 @@ export async function acquireAcpStructuredSession(input: {
+       }
+     }
+   )
+-  if (!spec.permissionModeConfig) {
++  if (spec.ownApprovalMode) {
++    options.applied.set('permissionMode', 'own')
++  } else if (!spec.permissionModeConfig) {
+     options.applied.set('permissionMode', launch.fullAccess ? 'full-access' : 'ask')
+   }
+   // From here, cancellation closes this connection even before exit is proven.
+diff --git a/src/main/acp/session/acp-structured-agent-definitions.ts b/src/main/acp/session/acp-structured-agent-definitions.ts
+index b1785f5..a3d0b9b 100644
+--- a/src/main/acp/session/acp-structured-agent-definitions.ts
++++ b/src/main/acp/session/acp-structured-agent-definitions.ts
+@@ -33,9 +33,9 @@ export function acpStructuredAgentDefinition(spec: AcpLaunchSpec): StructuredAge
+       threadGoal: false,
+       contextUsage: true,
+       // Narrowed by each agent's advertised startup capabilities.
+-      imagePrompts: true,
++      imagePrompts: spec.imagePrompts !== false,
+       steering: 'queue',
+-      approvalEnforcement: 'orca'
++      approvalEnforcement: spec.ownApprovalMode ? 'provider' : 'orca'
+     },
+     ...(managedRuntime && { managedRuntime: () => managedRuntime.pin() !== null }),
+     ...(hostBackend && { runsHostProgram: (home) => hostBackend.pins(home) }),
+diff --git a/src/main/acp/session/acp-structured-bqagent.test.ts b/src/main/acp/session/acp-structured-bqagent.test.ts
+new file mode 100644
+index 0000000..ed2c16a
+--- /dev/null
++++ b/src/main/acp/session/acp-structured-bqagent.test.ts
+@@ -0,0 +1,169 @@
++import { afterEach, expect, it } from 'vitest'
++import { BQAGENT_LAUNCH_SPEC } from '../../bqagent/bqagent-acp-launch-spec'
++import {
++  closeProviderTimelineRigs,
++  SESSION
++} from '../../native-chat/agent-session-timeline/provider-timeline-assembler-test-support'
++import {
++  openAcpAdapterRig,
++  PROVIDER_SESSION,
++  sendHello
++} from './testing/acp-structured-adapter.test-support'
++
++const models = {
++  currentModelId: 'model-a',
++  availableModels: [
++    { modelId: 'model-a', name: 'Model A' },
++    { modelId: 'model-b', name: 'Model B' }
++  ]
++}
++
++const configOptions = [
++  {
++    id: 'model',
++    name: 'Model',
++    category: 'model',
++    type: 'select',
++    currentValue: 'model-a',
++    options: [
++      { value: 'model-a', name: 'Model A' },
++      { value: 'model-b', name: 'Model B' }
++    ]
++  }
++]
++
++afterEach(closeProviderTimelineRigs)
++
++it.each([false, true])('opens bqagent with own approvals (resume=%s)', async (resume) => {
++  const rig = await openAcpAdapterRig({
++    spec: BQAGENT_LAUNCH_SPEC,
++    launch: {
++      resume: resume
++        ? {
++            sessionId: PROVIDER_SESSION,
++            key: 'acp:bqagent:acp-session-1',
++            mayBeUnsaved: async () => false,
++            lossKeys: []
++          }
++        : null
++    },
++    script: (agent) => {
++      agent.on('session/set_config_option', (frame) =>
++        agent.reply(frame, {
++          configOptions: [{ ...configOptions[0], currentValue: 'model-b' }]
++        })
++      )
++      agent.on('session/new', (frame) =>
++        agent.reply(frame, { sessionId: PROVIDER_SESSION, models, configOptions })
++      )
++      agent.on('session/load', (frame) => {
++        agent.notify('session/update', {
++          sessionId: PROVIDER_SESSION,
++          update: {
++            sessionUpdate: 'agent_message_chunk',
++            content: { type: 'text', text: 'previous answer' }
++          }
++        })
++        agent.reply(frame, { models, configOptions })
++      })
++    }
++  })
++  await rig.acquire()
++  expect(rig.started().reportedOptions).toMatchObject({
++    model: 'model-a',
++    reportedPermissionMode: 'own'
++  })
++  expect(rig.started().link.handle).toEqual({
++    transport: 'acp',
++    agent: 'bqagent',
++    nativeId: 'acp-session-1'
++  })
++  expect(rig.sent('session/set_config_option')).toEqual([])
++  expect(rig.sent('session/resume')).toEqual([])
++  if (resume) {
++    expect(rig.sent('session/load')[0].params).toMatchObject({ sessionId: 'acp-session-1' })
++    expect(rig.sent('session/new')).toEqual([])
++    expect(await rig.rig.rows()).toEqual([])
++  }
++  expect(
++    await rig.adapter.setOption({ sessionId: SESSION, fence: 1, key: 'model', value: 'model-b' })
++  ).toEqual({ model: 'model-b' })
++  expect(rig.sent('session/set_config_option')[0].params).toMatchObject({
++    configId: 'model',
++    value: 'model-b'
++  })
++  await rig.adapter.closeSession(SESSION)
++})
++
++it('uses set_model when bqagent only advertises models', async () => {
++  const rig = await openAcpAdapterRig({
++    spec: BQAGENT_LAUNCH_SPEC,
++    script: (agent) => {
++      agent.on('session/new', (frame) =>
++        agent.reply(frame, { sessionId: PROVIDER_SESSION, models })
++      )
++      agent.on('session/set_model', (frame) => agent.reply(frame, {}))
++    }
++  })
++  await rig.acquire()
++  expect(
++    await rig.adapter.setOption({ sessionId: SESSION, fence: 1, key: 'model', value: 'model-b' })
++  ).toEqual({ model: 'model-b' })
++  expect(rig.sent('session/set_model')[0].params).toMatchObject({ modelId: 'model-b' })
++  await rig.adapter.closeSession(SESSION)
++})
++
++it('rejects revoked bqagent work before spawn and before a subsequent prompt', async () => {
++  let approved = false
++  const rig = await openAcpAdapterRig({
++    spec: BQAGENT_LAUNCH_SPEC,
++    deps: {
++      assertCanStartWork: () => {
++        if (!approved) {
++          throw new Error('grant revoked')
++        }
++      }
++    }
++  })
++  await expect(rig.acquire()).rejects.toThrow('grant revoked')
++  expect(rig.spawned).toEqual([])
++  approved = true
++  await rig.acquire()
++  approved = false
++  await expect(sendHello(rig, 'revoked-turn')).rejects.toThrow('grant revoked')
++  expect(rig.sent('session/prompt')).toEqual([])
++  await rig.adapter.closeSession(SESSION)
++})
++
++it.each(['ask', 'full-access'] as const)('rejects bqagent %s before spawning', async (mode) => {
++  const rig = await openAcpAdapterRig({ spec: BQAGENT_LAUNCH_SPEC })
++  await expect(rig.acquire({ permissionMode: mode })).rejects.toThrow(
++    'bqagent only supports its own approval policy'
++  )
++  expect(rig.spawned).toEqual([])
++})
++
++it.each([false, true])(
++  'cancels unexpected bqagent permission requests without manual approval (fullAccess=%s)',
++  async (fullAccess) => {
++    const rig = await openAcpAdapterRig({ spec: BQAGENT_LAUNCH_SPEC, launch: { fullAccess } })
++    await rig.acquire({ permissionMode: 'own' })
++    await sendHello(rig, 'bq-turn')
++    const prompt = await rig.frame('session/prompt')
++    const { agent } = rig.child()
++    expect(
++      await agent.request(9, 'session/request_permission', {
++        sessionId: PROVIDER_SESSION,
++        toolCall: { toolCallId: 'call-1', title: 'Write file' },
++        options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
++      })
++    ).toMatchObject({ result: { outcome: { outcome: 'cancelled' } } })
++    expect((await rig.rig.rows()).filter((row) => row.body.kind === 'approval')).toEqual([])
++    agent.on('session/cancel', () => agent.reply(prompt, { stopReason: 'cancelled' }))
++    await expect(rig.adapter.cancelTurn({ sessionId: SESSION, fence: 1 })).resolves.toEqual({
++      cancelled: true
++    })
++    expect(rig.sent('session/cancel')[0].params).toMatchObject({ sessionId: 'acp-session-1' })
++    await rig.adapter.closeSession(SESSION)
++  }
++)
+diff --git a/src/main/acp/session/acp-structured-session-adapter-deps.ts b/src/main/acp/session/acp-structured-session-adapter-deps.ts
+index 7fd9dc6..8902917 100644
+--- a/src/main/acp/session/acp-structured-session-adapter-deps.ts
++++ b/src/main/acp/session/acp-structured-session-adapter-deps.ts
+@@ -22,6 +22,8 @@ export const ACP_OPTION_WRITE_TIMEOUT_MS = 30_000
+ 
+ export type AcpStructuredSessionAdapterDeps = {
+   spec: AcpLaunchSpec
++  /** Revalidate plugin consent at the last synchronous spawn or prompt boundary. */
++  assertCanStartWork?: () => void
+   textTaskLaunch?: AcpLaunchInvocationDeps
+   atRestCommands?: StructuredAgentSessionAtRestCommands
+   /** Sealed with the reservation's spawn token. */
+diff --git a/src/main/acp/session/acp-structured-session-adapter.ts b/src/main/acp/session/acp-structured-session-adapter.ts
+index 678ab3b..35c2fc9 100644
+--- a/src/main/acp/session/acp-structured-session-adapter.ts
++++ b/src/main/acp/session/acp-structured-session-adapter.ts
+@@ -99,6 +99,7 @@ export class AcpStructuredSessionAdapter implements SessionAdapter {
+     this.children.endings.retire(sessionId, generation)
+ 
+   async dispatch(input: Parameters<SessionAdapter['dispatch']>[0]): Promise<DispatchOutcome> {
++    this.deps.assertCanStartWork?.()
+     const lost = this.children.sessions.get(input.sessionId)
+     if (lost && lost.journalClosed !== null) {
+       // Protocol loss prevents dispatch even before exit is proven.
+@@ -133,13 +134,14 @@ export class AcpStructuredSessionAdapter implements SessionAdapter {
+       input.signal?.throwIfAborted()
+       await input.beforeDispatch?.()
+       input.signal?.throwIfAborted()
+-      const commit = fallback.admitting(() =>
+-        session.turns.dispatch({
++      const commit = fallback.admitting(() => {
++        this.deps.assertCanStartWork?.()
++        return session.turns.dispatch({
+           clientMessageId: input.clientMessageId,
+           prompt,
+           requestedAt: input.requestedAt ?? this.now()
+         })
+-      )
++      })
+       await admitStructuredAgentSessionInput(input.admitFreshInput, commit)
+       // Admission precedes provider confirmation of the send.
+       return { state: 'admitted' }
+diff --git a/src/main/agent-launch/agent-launch-mode.ts b/src/main/agent-launch/agent-launch-mode.ts
+index b796f4c..f8e40b4 100644
+--- a/src/main/agent-launch/agent-launch-mode.ts
++++ b/src/main/agent-launch/agent-launch-mode.ts
+@@ -6,6 +6,7 @@ import type {
+   AgentLaunchModeReceipt
+ } from '../../shared/agent-launch/contracts/agent-launch-intent'
+ import { RUNTIME_CAPABILITIES } from '../../shared/remote-runtime/protocol/protocol-version'
++import { assertHostAgentHarnessEnabled } from '../bqagent/bqagent-plugin-harness'
+ import { STRUCTURED_AGENT_RUNTIME_METADATA } from '../runtime/agent-session/installation/structured-agent-runtime-metadata'
+ import {
+   nativeChatPreferenceFor,
+@@ -112,6 +113,10 @@ export function decideAgentLaunchMode(args: {
+   const vocabulary = args.vocabulary ?? DEFAULT_LAUNCH_VOCABULARY
+   // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: an unrecognized agent name is handled rather than trusted; the registered-agent check rejects it and the launch downgrades to a terminal.
+   const agent = placement.agent as TuiAgent
++  if (agent === 'bqagent' && !placement.on) {
++    // An unavailable native harness must not silently launch a terminal as a fallback.
++    assertHostAgentHarnessEnabled(agent)
++  }
+   if (surface === 'terminal' && !args.terminalOnly) {
+     return {
+       mode: 'terminal',
+diff --git a/src/main/ai-vault-search/indexing/session-search-index-consumer.ts b/src/main/ai-vault-search/indexing/session-search-index-consumer.ts
+index 827e1e7..8a19bdc 100644
+--- a/src/main/ai-vault-search/indexing/session-search-index-consumer.ts
++++ b/src/main/ai-vault-search/indexing/session-search-index-consumer.ts
+@@ -41,6 +41,7 @@ export const SELF_CONTAINED_TRANSCRIPT_AGENTS = {
+   cline: false, // A .messages.json sidecar supplies messages.
+   devin: false, // sessions.db supplies metadata.
+   kimi: false, // agents/main/wire.jsonl supplies messages.
++  bqagent: false, // No native transcript scanner; chats retain their Orca journal.
+   muse: true,
+   jcode: true,
+   kiro: false // A .jsonl sidecar supplies messages.
+diff --git a/src/main/ai-vault/scope/session-scope-cwd.ts b/src/main/ai-vault/scope/session-scope-cwd.ts
+index 649a271..6d24f1f 100644
+--- a/src/main/ai-vault/scope/session-scope-cwd.ts
++++ b/src/main/ai-vault/scope/session-scope-cwd.ts
+@@ -119,6 +119,7 @@ export const AI_VAULT_SCOPE_CWD_SOURCES: Record<AiVaultAgent, SessionScopeCwdSou
+   openclaw: SESSION_HEADER,
+   droid: head((record) => (record.type === 'session_start' ? record.cwd : undefined)),
+   gemini: { kind: 'none' },
++  bqagent: { kind: 'none' },
+   grok: document((content) => {
+     const summary = jsonRecord(content)
+     return summary ? grokSessionCwd(summary) : null
+diff --git a/src/main/bqagent/bqagent-acp-launch-spec.test.ts b/src/main/bqagent/bqagent-acp-launch-spec.test.ts
+new file mode 100644
+index 0000000..49f95d3
+--- /dev/null
++++ b/src/main/bqagent/bqagent-acp-launch-spec.test.ts
+@@ -0,0 +1,62 @@
++import { expect, it } from 'vitest'
++import { acpLaunchSpecFor } from '../acp/launch/acp-launch-registry'
++import { acpStructuredAgentDefinition } from '../acp/session/acp-structured-agent-definitions'
++import { acpModelListingForRelease } from '../acp/discovery/acp-model-discovery-policy'
++import { isTuiAgent, TUI_AGENT_CONFIG } from '../../shared/agent-launch/catalog/tui-agent-config'
++import { newChatPermissionModeForSettings } from '../../shared/agent-launch/permissions/agent-chat-permission-mode'
++import { agentPermissionChoices } from '../../shared/agent-launch/permissions/tui-agent-permission-choice'
++import { BQAGENT_LAUNCH_SPEC } from './bqagent-acp-launch-spec'
++
++it('registers bqagent chat with its own approvals and without unsupported capabilities', () => {
++  const spec = acpLaunchSpecFor('bqagent')!
++  expect(isTuiAgent(spec.agent)).toBe(true)
++  expect(spec.args({ fullAccess: false, pluginDir: null })).toEqual(['--acp'])
++  expect(TUI_AGENT_CONFIG.bqagent.launchCmd).toBe('bqagent')
++  expect(acpStructuredAgentDefinition(spec).capabilities).toMatchObject({
++    approvalEnforcement: 'provider',
++    imagePrompts: false,
++    compact: false,
++    rewind: false
++  })
++  expect(acpStructuredAgentDefinition(spec).capabilities.fork).toBeUndefined()
++  expect(agentPermissionChoices('bqagent')).toEqual(['own'])
++  expect(
++    newChatPermissionModeForSettings('bqagent', { agentPermissionDefault: 'ask' })
++  ).toBeNull()
++  expect(acpModelListingForRelease(spec.modelDiscovery, null)).toBeNull()
++})
++
++it('pins bqagent to the OS user home while retaining the launch environment', async () => {
++  const variable = 'HOME'
++  const homePath = process.platform === 'win32' ? 'C:\\Users\\bq-user' : '/home/bq-user'
++  const home = await BQAGENT_LAUNCH_SPEC.account.resolve({
++    launchEnv: { [variable]: homePath, USERPROFILE: '/other-home' },
++    stateDirectory: '/unused-orca-state'
++  })
++  expect(home).toEqual({ variable, path: homePath })
++  expect(
++    await BQAGENT_LAUNCH_SPEC.account.resolve({
++      launchEnv: { USERPROFILE: homePath },
++      stateDirectory: '/unused-orca-state'
++    })
++  ).toEqual({ variable: 'HOME', path: homePath })
++  expect(
++    BQAGENT_LAUNCH_SPEC.account.environment(home, {
++      PATH: '/user/bin',
++      API_KEY: 'test-key',
++      [variable]: '/changed-home'
++    })
++  ).toEqual({ PATH: '/user/bin', API_KEY: 'test-key', [variable]: homePath })
++})
++
++it('recognizes bqagent native resume ids without inventing continue support', () => {
++  const history = BQAGENT_LAUNCH_SPEC.sessionHistory
++  expect(history.parseResumeArgs(['--resume', 'native-session-7'])).toEqual({
++    target: 'native-session-7'
++  })
++  expect(history.parseResumeArgs(['--resume=native-session-7'])).toEqual({
++    target: 'native-session-7'
++  })
++  expect(history.parseResumeArgs(['--continue'])).toBeNull()
++  expect(history.parseResumeArgs(['--acp'])).toBeNull()
++})
+diff --git a/src/main/bqagent/bqagent-acp-launch-spec.ts b/src/main/bqagent/bqagent-acp-launch-spec.ts
+new file mode 100644
+index 0000000..6d6b399
+--- /dev/null
++++ b/src/main/bqagent/bqagent-acp-launch-spec.ts
+@@ -0,0 +1,34 @@
++import type { AcpLaunchSpec } from '../acp/launch/acp-launch-contract'
++import { GENERIC_ACP_DIALECT } from '../acp/acp-dialects/acp-dialect'
++import { directoryAccountBinding } from '../acp/launch/acp-account-binding'
++import { resumeInvocationFromOptions } from '../native-chat/conversation-adoption/structured-agent-cli-conversations'
++
++export const BQAGENT_LAUNCH_SPEC: AcpLaunchSpec = {
++  agent: 'bqagent',
++  command: 'bqagent',
++  ignoreAgentCommandSetting: true,
++  args: () => ['--acp'],
++  env: {},
++  dialect: GENERIC_ACP_DIALECT,
++  loginCommand: [],
++  // bqagent reads ~/.agent through the OS user home, with no separate account-home override.
++  account: directoryAccountBinding(
++    'HOME',
++    (homePath, env) => env.USERPROFILE?.trim() || homePath
++  ),
++  installDirectories: () => [],
++  ownApprovalMode: true,
++  imagePrompts: false,
++  modelDiscovery: {
++    kind: 'unavailable',
++    reason: 'bqagent reports models in live chats; discovery cannot delete its persistent sessions.'
++  },
++  keepsEverySession: true,
++  transcriptImport: null,
++  sessionHistory: {
++    rowAgents: ['bqagent'],
++    rowSessionId: (link) => link.handle.nativeId,
++    parseResumeArgs: (args) =>
++      resumeInvocationFromOptions(args, { targetless: [], markers: ['--resume'] })
++  }
++}
+diff --git a/src/main/bqagent/bqagent-plugin-harness.test.mjs b/src/main/bqagent/bqagent-plugin-harness.test.mjs
+new file mode 100644
+index 0000000..0a644d2
+--- /dev/null
++++ b/src/main/bqagent/bqagent-plugin-harness.test.mjs
+@@ -0,0 +1,74 @@
++import assert from 'node:assert/strict'
++import { afterEach, test } from 'node:test'
++import {
++  assertHostAgentHarnessEnabled,
++  bindAgentHarnessInventory,
++  hostAgentHarnessEnabled,
++  waitForAgentHarnessDiscovery
++} from './bqagent-plugin-harness.ts'
++import { StructuredAgentRegistry } from '../native-chat/agent-session-wire/providers/structured-agent-registry.ts'
++
++const harness = { id: 'bqagent', command: 'bqagent', args: ['--acp'] }
++const declaration = (pluginKey, id = 'bqagent', entries = [harness]) => ({
++  pluginKey,
++  manifest: { id, contributes: { agentHarnesses: entries } }
++})
++afterEach(() => bindAgentHarnessInventory(() => null))
++
++test('a live host registry admits an approved harness and refuses it after revocation', async () => {
++  const installed = declaration('local.bqagent')
++  const grants = new Map()
++  const plugins = []
++  let ready = false
++  bindAgentHarnessInventory(() => ({
++    whenReady: async () => { ready = true },
++    getDiscovered: () => plugins,
++    getGrantedCapabilities: (key) => grants.get(key) ?? null
++  }))
++  const registration = (agent) => ({ definition: { agent, capabilities: {} }, adapter: {} })
++  const bq = registration('bqagent')
++  const grok = registration('grok')
++  const registry = new StructuredAgentRegistry([bq, grok], hostAgentHarnessEnabled)
++  await waitForAgentHarnessDiscovery()
++  assert.equal(ready, true)
++  assert.deepEqual(registry.definitions(), [grok.definition])
++  plugins.push(installed)
++  grants.set('other.bqagent', ['agent:launch'])
++  assert.equal(registry.registration('bqagent'), null)
++  grants.set(installed.pluginKey, ['agent:read'])
++  assert.equal(registry.registration('bqagent'), null)
++  grants.set(installed.pluginKey, ['agent:launch'])
++  assert.equal(registry.registration('bqagent'), bq)
++  assert.doesNotThrow(() => assertHostAgentHarnessEnabled('bqagent'))
++  grants.delete(installed.pluginKey)
++  assert.equal(registry.capabilities('bqagent'), null)
++  assert.throws(() => assertHostAgentHarnessEnabled('bqagent'), /approve/)
++  grants.set(installed.pluginKey, ['agent:launch'])
++  plugins.length = 0
++  assert.equal(registry.registration('bqagent'), null)
++  assert.equal(registry.registration('grok'), grok)
++})
++
++test('approval cannot activate another ID, invalid manifest, command or argument list', () => {
++  for (const candidate of [
++    { pluginKey: 'local.bqagent', error: 'invalid' },
++    declaration('local.other', 'other'),
++    declaration('local.bqagent', 'bqagent', []),
++    ...[
++      { ...harness, id: 'other' },
++      { ...harness, command: '/tmp/bqagent' },
++      { ...harness, args: ['--acp', '--extra'] },
++      { ...harness, args: [] },
++      { ...harness, args: null }
++    ].map((row) => declaration('local.bqagent', 'bqagent', [row]))
++  ]) {
++    bindAgentHarnessInventory(() => ({
++      getDiscovered: () => [candidate],
++      getGrantedCapabilities: () => ['agent:launch']
++    }))
++    assert.equal(hostAgentHarnessEnabled('bqagent'), false)
++  }
++  bindAgentHarnessInventory(() => null)
++  assert.equal(hostAgentHarnessEnabled('bqagent'), false)
++  assert.equal(hostAgentHarnessEnabled('grok'), true)
++})
+diff --git a/src/main/bqagent/bqagent-plugin-harness.ts b/src/main/bqagent/bqagent-plugin-harness.ts
+new file mode 100644
+index 0000000..5db5cc0
+--- /dev/null
++++ b/src/main/bqagent/bqagent-plugin-harness.ts
+@@ -0,0 +1,49 @@
++import type { PluginService } from '../plugins/plugin-service'
++
++type HarnessInventory = Pick<PluginService, 'getDiscovered' | 'getGrantedCapabilities' | 'whenReady'>
++let inventory: () => HarnessInventory | null = () => null
++
++/** Only the composition root supplies the executing host's inventory. CLI-only hosts fail closed. */
++export function bindAgentHarnessInventory(read: () => HarnessInventory | null): void {
++  inventory = read
++}
++
++/** The first registered-agent response is cached by clients for the lifetime of this runtime. */
++export async function waitForAgentHarnessDiscovery(): Promise<void> {
++  await inventory()?.whenReady()
++}
++
++/** Match a reviewed declaration to a host-owned spec. Never execute manifest command text. */
++export function hostAgentHarnessEnabled(agent: string): boolean {
++  if (agent !== 'bqagent') {
++    return true
++  }
++  const service = inventory()
++  if (!service) {
++    return false
++  }
++  return service.getDiscovered().some((plugin) => {
++    if (!('manifest' in plugin) || plugin.manifest.id !== 'bqagent') {
++      return false
++    }
++    const harnesses = plugin.manifest.contributes?.agentHarnesses
++    const harness = harnesses?.[0]
++    return (
++      harnesses?.length === 1 &&
++      harness?.id === 'bqagent' &&
++      harness.command === 'bqagent' &&
++      Array.isArray(harness.args) &&
++      harness.args.length === 1 &&
++      harness.args[0] === '--acp' &&
++      service.getGrantedCapabilities(plugin.pluginKey)?.includes('agent:launch') === true
++    )
++  })
++}
++
++export function assertHostAgentHarnessEnabled(agent: string): void {
++  if (!hostAgentHarnessEnabled(agent)) {
++    throw new Error(
++      'Enable the bqagent plugin and approve its agent:launch permission to use bqagent chat.'
++    )
++  }
++}
+diff --git a/src/main/native-chat/agent-session-wire/providers/structured-agent-registry.ts b/src/main/native-chat/agent-session-wire/providers/structured-agent-registry.ts
+index ade5c44..f6f41e3 100644
+--- a/src/main/native-chat/agent-session-wire/providers/structured-agent-registry.ts
++++ b/src/main/native-chat/agent-session-wire/providers/structured-agent-registry.ts
+@@ -27,7 +27,13 @@ function requiredAdapterMethods(
+ export class StructuredAgentRegistry {
+   private readonly byAgent: ReadonlyMap<string, StructuredAgentRegistration>
+ 
+-  constructor(registrations: readonly StructuredAgentRegistration[]) {
++  private readonly enabled: (agent: string) => boolean
++
++  constructor(
++    registrations: readonly StructuredAgentRegistration[],
++    enabled: (agent: string) => boolean = () => true
++  ) {
++    this.enabled = enabled
+     const byAgent = new Map<string, StructuredAgentRegistration>()
+     for (const registration of registrations) {
+       const { agent, capabilities } = registration.definition
+@@ -48,19 +54,22 @@ export class StructuredAgentRegistry {
+   }
+ 
+   registration(agent: string): StructuredAgentRegistration | null {
+-    return this.byAgent.get(agent) ?? null
++    return this.enabled(agent) ? (this.byAgent.get(agent) ?? null) : null
+   }
+ 
++  /** Include retained adapters so revoke never strands a child awaiting cleanup. */
+   registrations(): readonly StructuredAgentRegistration[] {
+     return [...this.byAgent.values()]
+   }
+ 
+   definition(agent: string): StructuredAgentDefinition | null {
+-    return this.byAgent.get(agent)?.definition ?? null
++    return this.registration(agent)?.definition ?? null
+   }
+ 
+   definitions(): readonly StructuredAgentDefinition[] {
+-    return this.registrations().map((registration) => registration.definition)
++    return this.registrations()
++      .map(({ definition }) => definition)
++      .filter(({ agent }) => this.enabled(agent))
+   }
+ 
+   /** Live sessions may narrow declared capabilities, never widen them. */
+diff --git a/src/main/preflight/bqagent-detection.test.ts b/src/main/preflight/bqagent-detection.test.ts
+new file mode 100644
+index 0000000..4bd02ca
+--- /dev/null
++++ b/src/main/preflight/bqagent-detection.test.ts
+@@ -0,0 +1,39 @@
++import { afterEach, expect, it, vi } from 'vitest'
++import { detectInstalledAgents } from './installed-agent-detection'
++import { detectAgentCommandsOnHost } from './agent-command-detection'
++import { hostAgentHarnessEnabled } from '../bqagent/bqagent-plugin-harness'
++
++vi.mock('./agent-command-detection', () => ({ detectAgentCommandsOnHost: vi.fn() }))
++vi.mock('../ipc/command-path/agent-detection-shell-path', () => ({
++  hydrateShellPathForAgentDetection: vi.fn()
++}))
++vi.mock('../bqagent/bqagent-plugin-harness', () => ({
++  hostAgentHarnessEnabled: vi.fn(),
++  waitForAgentHarnessDiscovery: vi.fn()
++}))
++
++afterEach(() => {
++  vi.resetAllMocks()
++})
++
++it('probes bqagent only with host approval and never counts an alternate command', async () => {
++  let enabled = false
++  const binary = 'alternate-binary'
++  vi.mocked(hostAgentHarnessEnabled).mockImplementation((id) => id !== 'bqagent' || enabled)
++  const probe = vi.mocked(detectAgentCommandsOnHost)
++  probe.mockResolvedValue(new Set(['grok', 'bqagent', binary]))
++  const options = { agentCmdOverrides: { bqagent: binary } }
++  expect(await detectInstalledAgents(undefined, options)).toContain('grok')
++  expect(probe.mock.calls[0][0]).not.toContain('bqagent')
++  enabled = true
++  expect(await detectInstalledAgents(undefined, options)).toContain('bqagent')
++  expect(probe.mock.calls[1][0]).toContain('bqagent')
++  expect(probe.mock.calls[1][0]).not.toContain(binary)
++  probe.mockResolvedValue(new Set([binary]))
++  expect(await detectInstalledAgents(undefined, options)).not.toContain('bqagent')
++  probe.mockImplementationOnce(async () => {
++    enabled = false
++    return new Set(['bqagent'])
++  })
++  expect(await detectInstalledAgents()).not.toContain('bqagent')
++})
+diff --git a/src/main/preflight/installed-agent-detection.ts b/src/main/preflight/installed-agent-detection.ts
+index 92ddfc0..4842f69 100644
+--- a/src/main/preflight/installed-agent-detection.ts
++++ b/src/main/preflight/installed-agent-detection.ts
+@@ -1,5 +1,9 @@
+ // orca skills loads detection outside Electron; exclude integration-client dependencies.
+ import { homedir } from 'node:os'
++import {
++  hostAgentHarnessEnabled,
++  waitForAgentHarnessDiscovery
++} from '../bqagent/bqagent-plugin-harness'
+ import path from 'node:path'
+ import {
+   getTuiAgentDetectionProbeCommands,
+@@ -30,6 +34,9 @@ function activeDetectionCommands(
+   options?: InstalledAgentDetectionOptions
+ ): TuiAgentDetectionCommand[] {
+   const disabled = new Set(normalizeDisabledTuiAgents(options?.disabledTuiAgents))
++  if (!hostAgentHarnessEnabled('bqagent')) {
++    disabled.add('bqagent')
++  }
+   if (disabled.size === 0) {
+     return KNOWN_TUI_AGENT_DETECTION_COMMANDS
+   }
+@@ -72,6 +79,10 @@ function overrideProbeCommands(
+   const platform = runtime === 'wsl' ? 'linux' : process.platform
+   const supported = commands.filter((command) => !isDetectionUnsupportedInRuntime(command, runtime))
+   for (const id of new Set(supported.map((command) => command.id))) {
++    // The bqagent grant covers only the host-owned command on PATH.
++    if (id === 'bqagent') {
++      continue
++    }
+     const token = overrideExecutableToken(overrides[id], platform)
+     if (!token) {
+       continue
+@@ -98,6 +109,7 @@ export async function detectInstalledAgents(
+   options?: InstalledAgentDetectionOptions
+ ): Promise<string[]> {
+   const runtime = getPreflightWslTarget(context) ? 'wsl' : process.platform
++  await waitForAgentHarnessDiscovery()
+   const commands = activeDetectionCommands(options)
+   // Why: a CLI outside PATH (e.g. agy in a custom install dir) is reachable only through its override.
+   const overrides = overrideProbeCommands(commands, options?.agentCmdOverrides, runtime)
+@@ -118,7 +130,7 @@ export async function detectInstalledAgents(
+       detected.push(id)
+     }
+   }
+-  return detected
++  return detected.filter(hostAgentHarnessEnabled)
+ }
+ 
+ export async function detectInstalledAgentsWithShellPathHydration(
+diff --git a/src/main/runtime/agent-session/installation/structured-agent-runtime-metadata.ts b/src/main/runtime/agent-session/installation/structured-agent-runtime-metadata.ts
+index 2c3f0c2..7e0b1ab 100644
+--- a/src/main/runtime/agent-session/installation/structured-agent-runtime-metadata.ts
++++ b/src/main/runtime/agent-session/installation/structured-agent-runtime-metadata.ts
+@@ -1,5 +1,6 @@
+ import { agentSessionAccountHome } from '../../../../shared/agent-session/lifecycle/accounts/agent-session-account-home'
+ import { applyStructuredCodexWorkspaceTrust } from '../../../agent-launch/trust/agent-workspace-trust-spawn'
++import { hostAgentHarnessEnabled } from '../../../bqagent/bqagent-plugin-harness'
+ import { ACP_LAUNCH_SPECS } from '../../../acp/launch/acp-launch-registry'
+ import type { AcpLaunchSpec } from '../../../acp/launch/acp-launch-contract'
+ import { acpStructuredAgentDefinition } from '../../../acp/session/acp-structured-agent-definitions'
+@@ -189,10 +190,19 @@ export const STRUCTURED_AGENT_RUNTIME_CATALOG: readonly StructuredAgentRuntimeCa
+ export const STRUCTURED_AGENT_RUNTIME_METADATA: readonly StructuredAgentRuntimeMetadata[] =
+   STRUCTURED_AGENT_RUNTIME_CATALOG.map(({ metadata }) => metadata)
+ 
++export function enabledStructuredAgentMetadata(): readonly StructuredAgentRuntimeMetadata[] {
++  return STRUCTURED_AGENT_RUNTIME_METADATA.filter(({ definition }) =>
++    hostAgentHarnessEnabled(definition.agent)
++  )
++}
++
+ /** The metadata of `agent`, without constructing its adapter or installing the host. */
+ export function structuredAgentRuntimeMetadata(
+   agent: string
+ ): StructuredAgentRuntimeMetadata | null {
++  if (!hostAgentHarnessEnabled(agent)) {
++    return null
++  }
+   return (
+     STRUCTURED_AGENT_RUNTIME_METADATA.find(({ definition }) => definition.agent === agent) ?? null
+   )
+diff --git a/src/main/runtime/agent-session/installation/structured-agent-runtime-registrations.ts b/src/main/runtime/agent-session/installation/structured-agent-runtime-registrations.ts
+index 439dc5a..faf1f65 100644
+--- a/src/main/runtime/agent-session/installation/structured-agent-runtime-registrations.ts
++++ b/src/main/runtime/agent-session/installation/structured-agent-runtime-registrations.ts
+@@ -20,6 +20,10 @@ import type { AcpSavedSessionReads } from '../../../acp/session/acp-structured-r
+ import { createAcpAgentConnection } from '../../../acp/process/acp-agent-connection'
+ import { createOpenCodeAcpConnection } from '../../../opencode/acp/opencode-acp-connection'
+ import { acpStructuredLaunchPart } from '../../../acp/launch/acp-structured-launch-resolution'
++import {
++  assertHostAgentHarnessEnabled,
++  hostAgentHarnessEnabled
++} from '../../../bqagent/bqagent-plugin-harness'
+ import { AcpStructuredSessionAdapter } from '../../../acp/session/acp-structured-session-adapter'
+ import { PI_RPC_RUNTIME_REGISTRATION } from '../../../pi/rpc-runtime-registration'
+ import {
+@@ -192,6 +196,9 @@ function createAcpAdapter(
+       readLaunch: composeStructuredLaunchRead(definition, sources, part),
+       dataDirectory: deps.stateDirectory,
+       resolveLaunchArgs: () => deps.resolveLaunchArgs(spec.agent),
++      ...(spec.agent === 'bqagent'
++        ? { assertCanStartWork: () => assertHostAgentHarnessEnabled(spec.agent) }
++        : {}),
+       connect:
+         deps.openAcpConnection ??
+         (spec.agent === 'opencode' || spec.agent === 'opencode2'
+@@ -230,6 +237,9 @@ export const STRUCTURED_AGENT_RUNTIME_REGISTRATIONS: readonly StructuredAgentRun
+ export function structuredAgentRuntimeRegistration(
+   agent: string
+ ): StructuredAgentRuntimeRegistration | null {
++  if (!hostAgentHarnessEnabled(agent)) {
++    return null
++  }
+   return (
+     STRUCTURED_AGENT_RUNTIME_REGISTRATIONS.find(({ definition }) => definition.agent === agent) ??
+     null
+diff --git a/src/main/runtime/agent-session/installation/structured-agent-session-host-assembly.ts b/src/main/runtime/agent-session/installation/structured-agent-session-host-assembly.ts
+index 5db871d..6e451b3 100644
+--- a/src/main/runtime/agent-session/installation/structured-agent-session-host-assembly.ts
++++ b/src/main/runtime/agent-session/installation/structured-agent-session-host-assembly.ts
+@@ -1,5 +1,6 @@
+ // Loaded on first host install: the host, router and every provider adapter stay out of startup.
+ 
++import { hostAgentHarnessEnabled } from '../../../bqagent/bqagent-plugin-harness'
+ import { bindAtRestCommandContexts } from '../../../native-chat/agent-session-wire/options/at-rest-command-context'
+ import { StructuredAgentSessionHost } from '../../../native-chat/agent-session-wire/host/structured-agent-session-host'
+ import { StructuredAgentSessionAdapterRouter } from '../../../native-chat/agent-session-wire/providers/structured-agent-session-adapter-router'
+@@ -59,7 +60,7 @@ export async function installOnJournal(
+   const registrations = STRUCTURED_AGENT_RUNTIME_REGISTRATIONS.map(
+     ({ definition, createAdapter }) => ({ definition, adapter: createAdapter(context) })
+   )
+-  const agents = new StructuredAgentRegistry(registrations)
++  const agents = new StructuredAgentRegistry(registrations, hostAgentHarnessEnabled)
+   const adapter = new StructuredAgentSessionAdapterRouter(agents, async () => {
+     await Promise.all(registrations.map((registration) => registration.adapter.closeAll()))
+   })
+diff --git a/src/main/runtime/agent-session/launch/structured-agent-availability.ts b/src/main/runtime/agent-session/launch/structured-agent-availability.ts
+index 23a4d5f..c3fb10a 100644
+--- a/src/main/runtime/agent-session/launch/structured-agent-availability.ts
++++ b/src/main/runtime/agent-session/launch/structured-agent-availability.ts
+@@ -15,7 +15,7 @@ import {
+   type LaunchEnvironmentSettings
+ } from './structured-agent-launch-support'
+ import {
+-  STRUCTURED_AGENT_RUNTIME_METADATA,
++  enabledStructuredAgentMetadata,
+   structuredAgentRuntimeMetadata
+ } from '../installation/structured-agent-runtime-metadata'
+ import type { StructuredAgentRuntimeMetadata } from '../installation/structured-agent-runtime-registration-types'
+@@ -149,7 +149,7 @@ export function installStructuredAgentAvailability(
+       .catch(() => undefined)
+       .then(() =>
+         Promise.all(
+-          STRUCTURED_AGENT_RUNTIME_METADATA.map(
++          enabledStructuredAgentMetadata().map(
+             async (agent): Promise<AgentSessionAgentAvailability> => ({
+               ...(await observeHostAgent(agent, runtime)),
+               chatProgram: await observeChatProgram(agent, runtime)
+diff --git a/src/main/runtime/rpc/methods/structured-sessions/catalog/structured-agent-session-agents.ts b/src/main/runtime/rpc/methods/structured-sessions/catalog/structured-agent-session-agents.ts
+index b533b81..2b4fbb7 100644
+--- a/src/main/runtime/rpc/methods/structured-sessions/catalog/structured-agent-session-agents.ts
++++ b/src/main/runtime/rpc/methods/structured-sessions/catalog/structured-agent-session-agents.ts
+@@ -9,7 +9,11 @@ import {
+   AGENT_SESSION_AVAILABILITY_METHOD,
+   type AgentSessionAvailabilityFrame
+ } from '../../../../../../shared/agent-session/agent-discovery/agent-session-agent-availability'
+-import { STRUCTURED_AGENT_RUNTIME_METADATA } from '../../../../agent-session/installation/structured-agent-runtime-metadata'
++import {
++  hostAgentHarnessEnabled,
++  waitForAgentHarnessDiscovery
++} from '../../../../../bqagent/bqagent-plugin-harness'
++import { enabledStructuredAgentMetadata } from '../../../../agent-session/installation/structured-agent-runtime-metadata'
+ import { defineMethod, defineStreamingMethod } from '../../../core'
+ import { requireStructuredCapability } from '../creation/structured-agent-session-gate'
+ import {
+@@ -28,11 +32,12 @@ export const STRUCTURED_AGENT_SESSION_AGENTS_METHODS = [
+     name: AGENT_SESSION_AGENTS_METHOD,
+     permission: 'workspace',
+     params: AgentsParams,
+-    // Read build-time registrations without installing the host, matching createSupport.
++    // Resolve the live plugin inventory before a client caches its first host roster.
+     handler: async (_params, ctx): Promise<AgentSessionAgentsResult> => {
+       requireStructuredCapability(ctx)
++      await waitForAgentHarnessDiscovery()
+       return {
+-        agents: STRUCTURED_AGENT_RUNTIME_METADATA.filter(({ definition }) =>
++        agents: enabledStructuredAgentMetadata().filter(({ definition }) =>
+           clientReadsStructuredSessionAgent(ctx, definition.agent)
+         ).map(({ definition }) => ({
+           agent: definition.agent,
+@@ -58,7 +63,9 @@ export const STRUCTURED_AGENT_SESSION_AGENTS_METHODS = [
+         const frame: AgentSessionAvailabilityFrame = {
+           type: 'availability',
+           // Expose only agents the client can open.
+-          agents: agents.filter(({ agent }) => clientReadsStructuredSessionAgent(ctx, agent))
++          agents: agents.filter(
++            ({ agent }) => hostAgentHarnessEnabled(agent) && clientReadsStructuredSessionAgent(ctx, agent)
++          )
+         }
+         emit(frame)
+       })
+diff --git a/src/main/startup/plugin-startup/main-process-plugins.ts b/src/main/startup/plugin-startup/main-process-plugins.ts
+index 6f34b76..ad7f5ae 100644
+--- a/src/main/startup/plugin-startup/main-process-plugins.ts
++++ b/src/main/startup/plugin-startup/main-process-plugins.ts
+@@ -1,4 +1,9 @@
+ import { join } from 'node:path'
++import {
++  bindAgentHarnessInventory,
++  hostAgentHarnessEnabled
++} from '../../bqagent/bqagent-plugin-harness'
++import { notifyAgentsRefreshedOnHost } from '../../preflight/agents-refreshed-on-host'
+ import { PluginImageCache } from '../../plugins/media/plugin-image-cache'
+ import { installPluginImageProtocolHandler } from '../../plugins/media/plugin-image-protocol'
+ import { getPluginDesktopFrameServices } from '../../plugins/panels/desktop-actions/plugin-frame-desktop-services'
+@@ -127,6 +132,7 @@ export async function initializeMainProcessPlugins(runtime: OrcaRuntimeService):
+     editorTypography: bindPluginEditorTypography(store, () => state.pluginService),
+     bundledPluginRoot
+   })
++  bindAgentHarnessInventory(() => state.pluginService)
+   const pluginService = state.pluginService
+   const pluginAutoUpdater = new PluginAutoUpdater({
+     pluginService,
+@@ -269,7 +275,13 @@ export async function initializeMainProcessPlugins(runtime: OrcaRuntimeService):
+       )
+     state.pluginKillListService.syncPeriodicRefresh(true)
+   }
++  let harnessEnabled = false
+   state.pluginService.onChanged((event) => {
++    const enabled = hostAgentHarnessEnabled('bqagent')
++    if (enabled !== harnessEnabled) {
++      harnessEnabled = enabled
++      notifyAgentsRefreshedOnHost()
++    }
+     if (
+       event.contentPacksChanged &&
+       setMainPluginLanguagePacks(
+diff --git a/src/renderer/src/components/plugins/presentation/plugin-access-profile.ts b/src/renderer/src/components/plugins/presentation/plugin-access-profile.ts
+index 84943b8..ff88f22 100644
+--- a/src/renderer/src/components/plugins/presentation/plugin-access-profile.ts
++++ b/src/renderer/src/components/plugins/presentation/plugin-access-profile.ts
+@@ -45,6 +45,7 @@ export function pluginPageExecutionProfile({
+ export type PluginTrust = {
+   /** Its own process with full access. */
+   worker: boolean
++  agentHarness: boolean
+   /** Commands, shortcuts, recipes or agent instructions that act under your authority. */
+   declarative: boolean
+   /** Publisher code drawing a view inside Orca (a panel or an editor); trusted, not sandboxed. */
+@@ -62,7 +63,7 @@ type PluginKnownPoints = ReadonlySet<PluginContributionPoint> | null
+ 
+ export function pluginPointsFromManifest(manifest: PluginManifest): Set<PluginContributionPoint> {
+   return new Set(
+-    PLUGIN_CONTRIBUTION_POINTS.filter((point) => manifest.contributes[point].length > 0)
++    PLUGIN_CONTRIBUTION_POINTS.filter((point) => (manifest.contributes[point]?.length ?? 0) > 0)
+   )
+ }
+ 
+@@ -109,6 +110,7 @@ export function pluginTrust({
+     : null
+   return {
+     worker,
++    agentHarness: points?.has('agentHarnesses') ?? execution === 'declarative',
+     declarative,
+     panel,
+     editor: points?.has('customEditors') === true,
+@@ -122,6 +124,7 @@ export function pluginTrust({
+ 
+ const NOTHING_RUNS: PluginTrust = {
+   worker: false,
++  agentHarness: false,
+   declarative: false,
+   panel: false,
+   editor: false,
+diff --git a/src/renderer/src/components/plugins/presentation/plugin-capability-presentation.ts b/src/renderer/src/components/plugins/presentation/plugin-capability-presentation.ts
+index f0c40ca..f5f6cc0 100644
+--- a/src/renderer/src/components/plugins/presentation/plugin-capability-presentation.ts
++++ b/src/renderer/src/components/plugins/presentation/plugin-capability-presentation.ts
+@@ -6,11 +6,11 @@ import type { PluginTrust } from './plugin-access-profile'
+ /** The grants a plugin of this trust can use; approvals never list the rest. */
+ export function shownPluginCapabilities<T extends { kind: string }>(
+   capabilities: readonly T[],
+-  trust: Pick<PluginTrust, 'worker'> | null
++  trust: Pick<PluginTrust, 'worker' | 'agentHarness'> | null
+ ): T[] {
+   return trust?.worker
+     ? [...capabilities]
+-    : reachablePluginCapabilities(capabilities, 'sandboxed-ui')
++    : reachablePluginCapabilities(capabilities, 'declarative', trust?.agentHarness)
+ }
+ 
+ export function pluginCapabilityDescription(
+diff --git a/src/renderer/src/components/plugins/presentation/plugin-contributions.ts b/src/renderer/src/components/plugins/presentation/plugin-contributions.ts
+index 2f329c2..a7ee20b 100644
+--- a/src/renderer/src/components/plugins/presentation/plugin-contributions.ts
++++ b/src/renderer/src/components/plugins/presentation/plugin-contributions.ts
+@@ -22,7 +22,7 @@ import {
+  *  own lists, and hooks show as the trusted-worker access they need. */
+ export type PluginContributionKind = Exclude<
+   PluginContributionPoint,
+-  'commands' | 'keybindings' | 'events' | 'hooks' | 'settings'
++  'commands' | 'keybindings' | 'events' | 'hooks' | 'settings' | 'agentHarnesses'
+ >
+ 
+ /** One named thing a plugin adds, ready to show as a row. */
+diff --git a/src/renderer/src/lib/agent-catalog/agent-catalog-entries-secondary.ts b/src/renderer/src/lib/agent-catalog/agent-catalog-entries-secondary.ts
+index 40365ac..dba8536 100644
+--- a/src/renderer/src/lib/agent-catalog/agent-catalog-entries-secondary.ts
++++ b/src/renderer/src/lib/agent-catalog/agent-catalog-entries-secondary.ts
+@@ -3,6 +3,12 @@ import type { AgentCatalogEntry } from './agent-catalog'
+ 
+ export function secondaryAgentCatalogEntries(): AgentCatalogEntry[] {
+   return [
++    {
++      id: 'bqagent',
++      label: 'bqagent',
++      cmd: 'bqagent',
++      homepageUrl: 'https://github.com/BussanQ/bqAgent'
++    },
+     {
+       id: 'aider',
+       label: translate('auto.lib.agent.catalog.b32627f09b', 'Aider'),
+diff --git a/src/shared/agent-launch/catalog/tui-agent-config.ts b/src/shared/agent-launch/catalog/tui-agent-config.ts
+index c954fd5..f53d725 100644
+--- a/src/shared/agent-launch/catalog/tui-agent-config.ts
++++ b/src/shared/agent-launch/catalog/tui-agent-config.ts
+@@ -241,6 +241,10 @@ const TUI_AGENT_CONFIG_SOURCE: Record<TuiAgent, TuiAgentConfigSource> = {
+     windowsShiftEnterEncoding: 'csi-u',
+     ctrlEnterEncoding: 'csi-u'
+   },
++  bqagent: {
++    detectCmd: 'bqagent',
++    promptInjectionMode: 'stdin-after-start'
++  },
+   kimi: {
+     preflightTrust: 'kimi',
+     // The kimi launcher runs as kimi-code; recognize the alias for reuse and dispatch --inject.
+diff --git a/src/shared/agent-launch/catalog/tui-agent-display-names.ts b/src/shared/agent-launch/catalog/tui-agent-display-names.ts
+index f52e0f8..a25b772 100644
+--- a/src/shared/agent-launch/catalog/tui-agent-display-names.ts
++++ b/src/shared/agent-launch/catalog/tui-agent-display-names.ts
+@@ -39,6 +39,7 @@ export const TUI_AGENT_DISPLAY_NAMES: Record<TuiAgent, string> = {
+   cursor: 'Cursor',
+   droid: 'Droid',
+   kimi: 'Kimi',
++  bqagent: 'bqagent',
+   'mistral-vibe': 'Mistral Vibe',
+   'qwen-code': 'Qwen Code',
+   rovo: 'Rovo Dev',
+diff --git a/src/shared/agent-launch/catalog/tui-agent.ts b/src/shared/agent-launch/catalog/tui-agent.ts
+index 62de3a8..88ea5e4 100644
+--- a/src/shared/agent-launch/catalog/tui-agent.ts
++++ b/src/shared/agent-launch/catalog/tui-agent.ts
+@@ -29,6 +29,7 @@ export type TuiAgent =
+   | 'cursor'
+   | 'droid' // Factory Droid
+   | 'kimi'
++  | 'bqagent'
+   | 'mistral-vibe'
+   | 'qwen-code'
+   | 'rovo' // Rovo Dev
+diff --git a/src/shared/agent-launch/startup/agent-resume-argv.ts b/src/shared/agent-launch/startup/agent-resume-argv.ts
+index f5f5aae..212f4bb 100644
+--- a/src/shared/agent-launch/startup/agent-resume-argv.ts
++++ b/src/shared/agent-launch/startup/agent-resume-argv.ts
+@@ -12,6 +12,8 @@ export function getAgentResumeArgv(
+ ): string[] | null {
+   const id = providerSession.id
+   switch (agent) {
++    case 'bqagent':
++      return providerSession.key === 'session_id' ? ['bqagent', '--resume', id] : null
+     case 'codebuddy':
+       return providerSession.key === 'session_id' ? ['codebuddy', '--resume', id] : null
+     case 'claude':
+diff --git a/src/shared/agent-session/lifecycle/agent-session-resume.ts b/src/shared/agent-session/lifecycle/agent-session-resume.ts
+index 7b1f4ca..8083505 100644
+--- a/src/shared/agent-session/lifecycle/agent-session-resume.ts
++++ b/src/shared/agent-session/lifecycle/agent-session-resume.ts
+@@ -30,6 +30,7 @@ export const RESUMABLE_TUI_AGENTS = [
+   'copilot',
+   'cursor',
+   'kimi',
++  'bqagent',
+   'muse',
+   'zcode',
+   'dsh',
+diff --git a/src/shared/agent-status/identity/agent-kind.ts b/src/shared/agent-status/identity/agent-kind.ts
+index 36dd6cc..0c6345e 100644
+--- a/src/shared/agent-status/identity/agent-kind.ts
++++ b/src/shared/agent-status/identity/agent-kind.ts
+@@ -37,6 +37,7 @@ const TUI_AGENT_KIND_BY_AGENT = {
+   cursor: 'cursor',
+   droid: 'droid',
+   kimi: 'kimi',
++  bqagent: 'bqagent',
+   'mistral-vibe': 'mistral-vibe',
+   'qwen-code': 'qwen-code',
+   rovo: 'rovo',
+diff --git a/src/shared/ai-vault/contracts/ai-vault-types.ts b/src/shared/ai-vault/contracts/ai-vault-types.ts
+index 008a7eb..b847bfe 100644
+--- a/src/shared/ai-vault/contracts/ai-vault-types.ts
++++ b/src/shared/ai-vault/contracts/ai-vault-types.ts
+@@ -26,6 +26,7 @@ export const AI_VAULT_AGENTS = [
+   'droid',
+   'cline',
+   'kimi',
++  'bqagent',
+   'muse',
+   'jcode',
+   'kiro'
+@@ -86,6 +87,7 @@ export const AI_VAULT_AGENT_LABELS = {
+   droid: 'Droid',
+   cline: 'Cline',
+   kimi: 'Kimi',
++  bqagent: 'bqagent',
+   muse: 'Muse',
+   jcode: 'Jcode',
+   kiro: 'Kiro'
+diff --git a/src/shared/ai-vault/resume/ai-vault-resume-command.test.ts b/src/shared/ai-vault/resume/ai-vault-resume-command.test.ts
+index 4f1a858..6b13777 100644
+--- a/src/shared/ai-vault/resume/ai-vault-resume-command.test.ts
++++ b/src/shared/ai-vault/resume/ai-vault-resume-command.test.ts
+@@ -6,6 +6,20 @@ import {
+   buildAiVaultResumeShellCommand
+ } from './ai-vault-resume-command'
+ 
++it('resumes bqagent with the same native id in terminal and history commands', () => {
++  expect(
++    getAgentResumeArgv('bqagent', { key: 'session_id', id: 'native-session-7' })
++  ).toEqual(['bqagent', '--resume', 'native-session-7'])
++  expect(
++    buildAiVaultResumeCommand({
++      agent: 'bqagent',
++      sessionId: 'native-session-7',
++      cwd: null,
++      platform: 'linux'
++    })
++  ).toBe("bqagent --resume 'native-session-7'")
++})
++
+ describe('buildAiVaultResumeShellCommand env removal', () => {
+   const base = {
+     resumeCommand: "codex 'resume' 'sid'",
+diff --git a/src/shared/ai-vault/resume/ai-vault-resume-command.ts b/src/shared/ai-vault/resume/ai-vault-resume-command.ts
+index 6ce190b..f48daf5 100644
+--- a/src/shared/ai-vault/resume/ai-vault-resume-command.ts
++++ b/src/shared/ai-vault/resume/ai-vault-resume-command.ts
+@@ -203,6 +203,7 @@ function buildAgentResumeInvocation(
+     case 'cline':
+       return `${baseCommand} --id ${sessionArg}`
+     case 'qoder':
++    case 'bqagent':
+     case 'codebuddy':
+     case 'claude':
+     case 'zcode':
+diff --git a/src/shared/ai-vault/session-display/ai-vault-session-log-resource.ts b/src/shared/ai-vault/session-display/ai-vault-session-log-resource.ts
+index e248582..f3bb7c4 100644
+--- a/src/shared/ai-vault/session-display/ai-vault-session-log-resource.ts
++++ b/src/shared/ai-vault/session-display/ai-vault-session-log-resource.ts
+@@ -58,6 +58,7 @@ const logFileResolvers = {
+   cline: (filePath) => clineMessagesPathForMetadata(filePath) || null,
+   // The primary wire path requires state contents unavailable in a History row.
+   kimi: () => null,
++  bqagent: () => null,
+   muse: jsonlLog,
+   jcode: jsonLog,
+   kiro: (filePath) => kiroTranscriptPathForMetadata(filePath) || null
+diff --git a/src/shared/plugins/capabilities/plugin-capability-reach.ts b/src/shared/plugins/capabilities/plugin-capability-reach.ts
+index 25e1680..0a1ec86 100644
+--- a/src/shared/plugins/capabilities/plugin-capability-reach.ts
++++ b/src/shared/plugins/capabilities/plugin-capability-reach.ts
+@@ -17,15 +17,22 @@ const WORKER_ONLY_CAPABILITIES: ReadonlySet<string> = new Set<PluginCapabilityKi
+ /** Whether a plugin of this profile can ever exercise the capability, so consent may name it. */
+ export function pluginCapabilityReachable(
+   kind: string,
+-  execution: PluginExecutionProfile
++  execution: PluginExecutionProfile,
++  hasDeclarativeAgentHarness = false
+ ): boolean {
++  if (kind === 'agent:launch' && execution === 'declarative' && hasDeclarativeAgentHarness) {
++    return true
++  }
+   return execution === 'trusted-worker' || !WORKER_ONLY_CAPABILITIES.has(kind)
+ }
+ 
+ /** Drops grants the plugin can never use, so approvals never warn about them. */
+ export function reachablePluginCapabilities<T extends { kind: string }>(
+   capabilities: readonly T[],
+-  execution: PluginExecutionProfile
++  execution: PluginExecutionProfile,
++  hasDeclarativeAgentHarness = false
+ ): T[] {
+-  return capabilities.filter((capability) => pluginCapabilityReachable(capability.kind, execution))
++  return capabilities.filter((capability) =>
++    pluginCapabilityReachable(capability.kind, execution, hasDeclarativeAgentHarness)
++  )
+ }
+diff --git a/src/shared/plugins/catalog/plugin-catalog-types.ts b/src/shared/plugins/catalog/plugin-catalog-types.ts
+index bb4e5a5..561b3d4 100644
+--- a/src/shared/plugins/catalog/plugin-catalog-types.ts
++++ b/src/shared/plugins/catalog/plugin-catalog-types.ts
+@@ -35,7 +35,7 @@ export function pluginCatalogTypes(manifest: PluginManifest): PluginCatalogType[
+   const declared = new Set<PluginCatalogType>()
+   for (const point of PLUGIN_CONTRIBUTION_POINTS) {
+     const type = PLUGIN_CONTRIBUTION_POINT_POLICY[point].catalogType
+-    if (type && manifest.contributes[point].length > 0) {
++    if (type && (manifest.contributes[point]?.length ?? 0) > 0) {
+       declared.add(type)
+     }
+   }
+diff --git a/src/shared/plugins/contributions/plugin-contribution-points.ts b/src/shared/plugins/contributions/plugin-contribution-points.ts
+index 0f34d6e..7191c43 100644
+--- a/src/shared/plugins/contributions/plugin-contribution-points.ts
++++ b/src/shared/plugins/contributions/plugin-contribution-points.ts
+@@ -41,6 +41,7 @@ import { PLUGIN_PANEL_LIMIT, pluginPanelContributionSchema } from './plugin-pane
+ import {
+   pluginFieldDoc,
+   PLUGIN_HOOKS_SINCE,
++  PLUGIN_HOST_ACTIONS_SINCE,
+   PLUGIN_MANIFEST_V2_SINCE,
+   PLUGIN_PANEL_BRIDGE_SINCE,
+   PLUGIN_SCHEMA_SINCE_V1
+@@ -72,7 +73,8 @@ export const PLUGIN_CONTRIBUTION_POINTS = [
+   'customEditors',
+   'newFiles',
+   'settings',
+-  'statusBarItems'
++  'statusBarItems',
++  'agentHarnesses'
+ ] as const
+ 
+ export type PluginContributionPoint = (typeof PLUGIN_CONTRIBUTION_POINTS)[number]
+@@ -82,7 +84,6 @@ export type PluginContributionPoint = (typeof PLUGIN_CONTRIBUTION_POINTS)[number
+  *  `skills` and `mcpServers` keep the meaning agent-plugin formats such as Claude Code's give them;
+  *  `agents` is left unclaimed because those formats use it for subagent files. */
+ export const PLUGIN_RESERVED_CONTRIBUTION_POINTS = {
+-  agentHarnesses: 'coding-agent harness definitions',
+   skills: 'agent skills',
+   mcpServers: 'MCP server definitions',
+   taskSources: 'task sources',
+@@ -100,8 +101,6 @@ export const PLUGIN_PLANNED_CONTRIBUTION_POINTS: Readonly<
+     'Issue and task providers such as Asana, Linear or Jira, declared as data that a worker fills with tasks.',
+   connections:
+     'Account providers with a host-run sign-in, so a plugin never handles credentials itself.',
+-  agentHarnesses:
+-    'New coding-agent harnesses described as data: how to launch them and read their status.',
+   sidebarCards: 'Declarative left-sidebar cards with fixed layouts whose values a worker updates.',
+   mcpServers: 'MCP server definitions that Orca offers to the agents it launches.',
+   skills: 'Agent skills shipped as files that Orca installs for the agents it launches.'
+@@ -234,11 +233,20 @@ export const pluginContributesFields = {
+     PLUGIN_STATUS_BAR_ITEM_LIMIT,
+     'Items in the status bar; pressing one runs its `command`, and a worker changes them with `statusBar.update`. With `main`, the worker runs for as long as the plugin is enabled.',
+     PLUGIN_STATUS_BAR_SINCE
++  ),
++  agentHarnesses: contributionList(
++    z.strictObject({
++      id: z.literal('bqagent'),
++      command: z.literal('bqagent'),
++      args: z.array(z.literal('--acp')).length(1)
++    }),
++    1,
++    'Native ACP harness on builds with bqagent support. Requires plugin id `bqagent`, format 2, `declarative` execution and the `agent:launch` capability.',
++    PLUGIN_HOST_ACTIONS_SINCE
+   )
+ } satisfies Record<PluginContributionPoint, z.ZodType>
+ 
+ export const pluginReservedContributesFields = {
+-  agentHarnesses: reservedList(PLUGIN_RESERVED_CONTRIBUTION_POINTS.agentHarnesses),
+   skills: reservedList(PLUGIN_RESERVED_CONTRIBUTION_POINTS.skills),
+   mcpServers: reservedList(PLUGIN_RESERVED_CONTRIBUTION_POINTS.mcpServers),
+   taskSources: reservedList(PLUGIN_RESERVED_CONTRIBUTION_POINTS.taskSources),
+@@ -283,5 +291,6 @@ export const PLUGIN_CONTRIBUTION_POINT_POLICY: Record<
+   // Why sandboxed-ui: only code reads a setting, and panels are the least code there is.
+   settings: { execution: 'sandboxed-ui', catalogType: null, bindsContent: false },
+   // Why declarative: a static item only names its own command; updating it needs a worker.
+-  statusBarItems: { execution: 'declarative', catalogType: null, bindsContent: false }
++  statusBarItems: { execution: 'declarative', catalogType: null, bindsContent: false },
++  agentHarnesses: { execution: 'declarative', catalogType: 'instructions', bindsContent: true }
+ }
+diff --git a/src/shared/plugins/contributions/plugin-contribution-summary.ts b/src/shared/plugins/contributions/plugin-contribution-summary.ts
+index dcce645..19a3b84 100644
+--- a/src/shared/plugins/contributions/plugin-contribution-summary.ts
++++ b/src/shared/plugins/contributions/plugin-contribution-summary.ts
+@@ -68,6 +68,7 @@ export function pluginContributionSummary(
+       return { kind, name: name(item), ...(extra ? { detail: extra } : {}) }
+     })
+   return [
++    ...named('agentHarnesses', c.agentHarnesses ?? [], (harness) => harness.id),
+     ...named('panels', c.panels, (panel) => panel.title),
+     ...named('commands', c.commands, (command) => command.title),
+     ...named('events', c.events, (event) => event.on),
+diff --git a/src/shared/plugins/manifest/plugin-json-schema.ts b/src/shared/plugins/manifest/plugin-json-schema.ts
+index 604946d..b908328 100644
+--- a/src/shared/plugins/manifest/plugin-json-schema.ts
++++ b/src/shared/plugins/manifest/plugin-json-schema.ts
+@@ -37,12 +37,32 @@ function toPublishedSchema(
+ }
+ 
+ export function pluginManifestJsonSchema(): PluginJsonSchema {
+-  return toPublishedSchema(
+-    pluginManifestV2Object,
+-    PLUGIN_MANIFEST_SCHEMA_FILE,
+-    'Orca plugin manifest',
+-    'The orca-plugin.json file at the root of an Orca plugin (manifest format 2).'
+-  )
++  return {
++    ...toPublishedSchema(
++      pluginManifestV2Object,
++      PLUGIN_MANIFEST_SCHEMA_FILE,
++      'Orca plugin manifest',
++      'The orca-plugin.json file at the root of an Orca plugin (manifest format 2).'
++    ),
++    if: {
++      required: ['contributes'],
++      properties: {
++        contributes: {
++          required: ['agentHarnesses'],
++          properties: { agentHarnesses: { minItems: 1 } }
++        }
++      }
++    },
++    then: {
++      required: ['capabilities'],
++      properties: {
++        id: { const: 'bqagent' },
++        execution: { const: 'declarative' },
++        capabilities: { contains: { properties: { kind: { const: 'agent:launch' } } } }
++      },
++      not: { anyOf: [{ required: ['main'] }, { required: ['pluginApi'] }] }
++    }
++  }
+ }
+ 
+ export function pluginCatalogJsonSchema(): PluginJsonSchema {
+diff --git a/src/shared/plugins/manifest/plugin-manifest-contribution-validation.ts b/src/shared/plugins/manifest/plugin-manifest-contribution-validation.ts
+index 9746f64..36d761a 100644
+--- a/src/shared/plugins/manifest/plugin-manifest-contribution-validation.ts
++++ b/src/shared/plugins/manifest/plugin-manifest-contribution-validation.ts
+@@ -12,8 +12,12 @@ type IdentifiedContribution = { id: string }
+ type PathContribution = { path: string }
+ 
+ type ContributionValidationManifest = {
++  manifestVersion: 1 | 2
++  id: string
++  execution?: string
+   main?: string
+   contributes: {
++    agentHarnesses: IdentifiedContribution[]
+     panels: IdentifiedContribution[]
+     commands: (IdentifiedContribution & {
+       action?: string
+@@ -63,6 +67,26 @@ export function validatePluginManifestContributions(
+   manifest: ContributionValidationManifest,
+   ctx: RefinementCtx
+ ): void {
++  if (manifest.contributes.agentHarnesses.length > 0) {
++    if (
++      manifest.id !== 'bqagent' ||
++      manifest.manifestVersion !== 2 ||
++      manifest.execution !== 'declarative'
++    ) {
++      ctx.addIssue({
++        code: 'custom',
++        path: ['contributes', 'agentHarnesses'],
++        message: 'requires a format 2 declarative plugin with id "bqagent"'
++      })
++    }
++    if (!manifest.capabilities.some((capability) => capability.kind === 'agent:launch')) {
++      ctx.addIssue({
++        code: 'custom',
++        path: ['capabilities'],
++        message: 'contributes.agentHarnesses requires the "agent:launch" capability'
++      })
++    }
++  }
+   for (const path of [
+     'panels',
+     'commands',
+diff --git a/src/shared/plugins/manifest/plugin-manifest-v2-rules.test.ts b/src/shared/plugins/manifest/plugin-manifest-v2-rules.test.ts
+index 80261b0..1a88349 100644
+--- a/src/shared/plugins/manifest/plugin-manifest-v2-rules.test.ts
++++ b/src/shared/plugins/manifest/plugin-manifest-v2-rules.test.ts
+@@ -1,5 +1,7 @@
+ import { describe, expect, it } from 'vitest'
+ 
++import { pluginApprovalGrants, pluginNeedsCliApproval } from '../approval/plugin-cli-approval'
++import { fingerprintPluginConsent } from '../approval/plugin-consent-fingerprint'
+ import { parseHostPluginManifest, parsePluginManifest } from './plugin-manifest'
+ import { PLUGIN_MANIFEST_V2_SINCE } from './plugin-schema-field-docs'
+ 
+@@ -16,6 +18,92 @@ function v2(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+   }
+ }
+ 
++const harness = { id: 'bqagent', command: 'bqagent', args: ['--acp'] }
++const bqagentManifest = {
++  manifestVersion: 2,
++  id: 'bqagent',
++  name: 'bqAgent',
++  version: '1.0.0',
++  engines: { orca: '>=1.4.248' },
++  execution: 'declarative',
++  capabilities: [{ kind: 'agent:launch' }],
++  contributes: { agentHarnesses: [harness] }
++}
++
++for (const parse of [parsePluginManifest, parseHostPluginManifest]) {
++  describe(`${parse.name} native ACP harness`, () => {
++    it('accepts a manifest-only bqagent package', () => {
++      expect(parse(bqagentManifest)).toMatchObject({
++        ok: true,
++        manifest: {
++          contributes: { agentHarnesses: [harness] },
++          capabilities: [{ kind: 'agent:launch' }]
++        }
++      })
++    })
++
++    it.each([
++      { id: 'other' },
++      { manifestVersion: 1, publisher: 'demo', pluginApi: 1 },
++      { execution: 'data' },
++      { execution: 'sandboxed-ui' },
++      { execution: 'trusted-worker', main: 'main.mjs' },
++      { main: 'main.mjs' },
++      { capabilities: [] },
++      { capabilities: [{ kind: 'agent:read' }] },
++      { capabilities: [{ kind: 'agent:launch' }, { kind: 'terminal:send' }] },
++      { contributes: { agentHarnesses: [] } }
++    ])('rejects unsupported authority or identity %#', (overrides) => {
++      expect(parse({ ...bqagentManifest, ...overrides }).ok).toBe(false)
++    })
++
++    const invalidDescriptors = [
++      [harness, harness],
++      [{ ...harness, id: 'other' }],
++      [{ ...harness, command: 'other' }],
++      [{ ...harness, command: './bqagent' }],
++      [{ ...harness, command: '/usr/bin/bqagent' }],
++      [{ ...harness, command: 'C:\\tools\\bqagent.exe' }],
++      [{ ...harness, args: [] }],
++      [{ ...harness, args: ['--other'] }],
++      [{ ...harness, args: ['--acp', 'extra'] }],
++      [{ id: 'bqagent', command: 'bqagent' }],
++      [{ ...harness, env: {} }]
++    ]
++    it.each(invalidDescriptors.map((descriptors) => ({ descriptors })))(
++      'rejects unsupported descriptors %#',
++      ({ descriptors }) => {
++        const contributes = { agentHarnesses: descriptors }
++        expect(parse({ ...bqagentManifest, contributes }).ok).toBe(false)
++      }
++    )
++
++    it.each(['skills', 'mcpServers', 'taskSources', 'connections', 'sidebarCards'])(
++      'keeps %s reserved',
++      (point) => {
++        const contributes = { ...bqagentManifest.contributes, [point]: [{}] }
++        expect(parse({ ...bqagentManifest, contributes }).ok).toBe(false)
++      }
++    )
++  })
++}
++
++it('requires an explicit content-bound install grant for the native harness', () => {
++  const parsed = parsePluginManifest(bqagentManifest)
++  if (!parsed.ok) {
++    throw new Error(parsed.error)
++  }
++  const { manifest } = parsed
++  expect(pluginNeedsCliApproval(manifest)).toBe(true)
++  expect(pluginApprovalGrants(manifest)).toMatchObject({
++    capabilities: [{ kind: 'agent:launch' }],
++    contributions: [{ kind: 'agentHarnesses', name: 'bqagent' }]
++  })
++  expect(fingerprintPluginConsent(manifest, 'first')).not.toBe(
++    fingerprintPluginConsent(manifest, 'changed')
++  )
++})
++
+ describe('manifest format 2 rules', () => {
+   it('skips only the engines floor when reading a manifest at runtime', () => {
+     const underDeclared = v2({ engines: { orca: '>=1.4.160' } })
+diff --git a/src/shared/plugins/manifest/plugin-manifest-v2-rules.ts b/src/shared/plugins/manifest/plugin-manifest-v2-rules.ts
+index 0791925..189a607 100644
+--- a/src/shared/plugins/manifest/plugin-manifest-v2-rules.ts
++++ b/src/shared/plugins/manifest/plugin-manifest-v2-rules.ts
+@@ -17,6 +17,7 @@ import {
+ 
+ type V2RuleSubject = {
+   execution: PluginExecutionProfile
++  contributes: { agentHarnesses: readonly unknown[] }
+   pluginApi?: number
+   capabilities: readonly PluginCapability[]
+ }
+@@ -33,8 +34,9 @@ export function validatePluginManifestV2Rules(manifest: V2RuleSubject, ctx: Refi
+       message: `${manifest.execution} plugins never call the host API; remove pluginApi`
+     })
+   }
++  const hasAgentHarness = manifest.contributes.agentHarnesses.length > 0
+   manifest.capabilities.forEach((capability, index) => {
+-    if (!pluginCapabilityReachable(capability.kind, manifest.execution)) {
++    if (!pluginCapabilityReachable(capability.kind, manifest.execution, hasAgentHarness)) {
+       ctx.addIssue({
+         code: 'custom',
+         path: ['capabilities', index, 'kind'],
+diff --git a/src/shared/skills/installation/skills-cli-agent-keys.ts b/src/shared/skills/installation/skills-cli-agent-keys.ts
+index 5818e69..f371ef9 100644
+--- a/src/shared/skills/installation/skills-cli-agent-keys.ts
++++ b/src/shared/skills/installation/skills-cli-agent-keys.ts
+@@ -35,6 +35,7 @@ export const SKILLS_CLI_AGENT_KEY_BY_TUI_AGENT = {
+   cursor: 'cursor',
+   droid: 'droid',
+   kimi: 'kimi-code-cli',
++  bqagent: null,
+   'mistral-vibe': 'mistral-vibe',
+   'qwen-code': 'qwen-code',
+   rovo: 'rovodev',
+diff --git a/src/shared/telemetry/schemas/telemetry-property-schemas.ts b/src/shared/telemetry/schemas/telemetry-property-schemas.ts
+index 0acc804..77950cc 100644
+--- a/src/shared/telemetry/schemas/telemetry-property-schemas.ts
++++ b/src/shared/telemetry/schemas/telemetry-property-schemas.ts
+@@ -40,6 +40,7 @@ export const AGENT_KIND_VALUES = [
+   'cursor',
+   'droid',
+   'kimi',
++  'bqagent',
+   'mistral-vibe',
+   'qwen-code',
+   'rovo',

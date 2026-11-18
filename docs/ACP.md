@@ -40,15 +40,8 @@ bqagent --acp
 
 ## Orca 接入
 
-仅安装支持 ACP 的 bqagent，还不足以让已有 Orca 自动识别它。Orca 当前使用内置 Agent 清单，需要应用本仓库提供的 [Orca 补丁与说明](../plugins/orca/README.md)，再使用包含注册项的 Orca 构建。
+在支持 Agent 插件的 Orca 构建中，安装并批准本仓库的 `plugins/orca/bqagent` 插件，重启 Orca 后，在 **Settings → Agents → bqagent** 选择 **Chat**。宿主通过 ACP 启动本地 `bqagent --acp`，使用原生 ChatUI 显示文本和工具卡片。插件安装授权与 bqagent 的工具执行策略分别生效。
 
-补丁针对 Orca 固定版本提供，负责：
-
-- 以 `bqagent` 命令检测安装，并显示 bqagent。
-- 在 ChatUI 模式下启动 `bqagent --acp`。
-- 使用 Orca 通用 ACP 适配器处理文本、工具和会话恢复。
-- 明确工具自动执行，不向用户承诺 Orca 强制手动审批。
-
-在更新后的 Orca 中，将 bqagent 放入执行主机的 PATH，或在 Settings → Agents 的 Command 中填入绝对路径，再选择 Chat。配对远端主机也需要具备注册支持和 bqagent 二进制。
+Orca 官方格式 v2 仍将 `agentHarnesses` 保留为空数组。本仓库为固定 Orca 版本提供兼容补丁和本地插件安装命令。参见 [Orca 插件安装说明](../plugins/orca/README.md)。
 
 模型列表来自活跃 ACP 会话；不为后台模型探测创建无法删除的临时会话。Orca 对已有 CLI 历史的自动扫描、Chat/Terminal 对话复制和分叉是独立功能，不等同于按已知 session ID 恢复，本次不提供这些能力。
