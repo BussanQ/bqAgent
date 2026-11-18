@@ -52,6 +52,7 @@ func printCLIHelp(output io.Writer, flags *flag.FlagSet) {
   bqagent --resume <sessionID> "继续完成任务"
   bqagent --background "执行任务"
   bqagent --server --listen 127.0.0.1:8080
+  bqagent --acp
   bqagent --doctor
 
 TUI 内输入 /help 查看快捷键和交互命令，输入 / 浏览命令候选。`)

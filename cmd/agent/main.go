@@ -25,6 +25,7 @@ import (
 )
 
 type cliOptions struct {
+	acp             bool
 	doctor          bool
 	doctorActive    bool
 	doctorJSON      bool
@@ -78,6 +79,9 @@ func runWithDeps(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer,
 			}
 		}
 		return 1
+	}
+	if options.acp {
+		return runACP(ctx, stdin, stdout, stderr, getenv)
 	}
 	task := strings.Join(taskArgs, " ")
 	if options.usesTUI(task) && !interactiveTerminal(stdin, stdout, getenv) {
@@ -218,6 +222,7 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 
 	var options cliOptions
 	var daemon bool
+	fs.BoolVar(&options.acp, "acp", false, "serve ACP over stdin/stdout for native chat clients (tools run without approval prompts)")
 	fs.BoolVar(&options.doctor, "doctor", false, "inspect local readiness without starting a conversation")
 	fs.BoolVar(&options.doctorActive, "doctor-active", false, "perform bounded storage, ACP and MCP probes (requires --doctor)")
 	fs.BoolVar(&options.doctorJSON, "doctor-json", false, "print diagnostic JSON (requires --doctor)")
@@ -241,11 +246,18 @@ func parseCLIWithHelp(args []string, helpOutput io.Writer) (cliOptions, []string
 		}
 		return cliOptions{}, nil, err
 	}
+	var acpConflict string
 	fs.Visit(func(option *flag.Flag) {
 		if option.Name == "resume" {
 			options.resumeRequested = true
 		}
+		if option.Name != "acp" {
+			acpConflict = option.Name
+		}
 	})
+	if options.acp && (acpConflict != "" || len(fs.Args()) > 0) {
+		return cliOptions{}, nil, fmt.Errorf("--acp cannot be combined with other options or a task; sessions are controlled through ACP")
+	}
 	if (options.doctorActive || options.doctorJSON) && !options.doctor {
 		return cliOptions{}, nil, fmt.Errorf("--doctor-active and --doctor-json require --doctor")
 	}
@@ -516,7 +528,7 @@ func persistTurnWorkingContext(conversation *appruntime.Conversation, updatedMes
 }
 
 func (options cliOptions) usesTUI(task string) bool {
-	return strings.TrimSpace(task) == "" && !options.doctor && !options.background &&
+	return strings.TrimSpace(task) == "" && !options.acp && !options.doctor && !options.background &&
 		!options.server && !options.serverRun && !options.sessionRun &&
 		!options.ilinkLogin && !options.ilinkStatus && options.subagentRun == ""
 }

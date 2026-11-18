@@ -9,7 +9,7 @@ import (
 
 func TestCLIHelpPrintsParametersWithoutStartingRuntime(t *testing.T) {
 	var first string
-	for _, args := range [][]string{{"-h"}, {"--help"}, {"--doctor", "-h"}, {"--server", "--listen", ":9090", "--help"}, {"--resume", "--help"}} {
+	for _, args := range [][]string{{"-h"}, {"--help"}, {"--acp", "--help"}, {"--doctor", "-h"}, {"--server", "--listen", ":9090", "--help"}, {"--resume", "--help"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			// Nil dependencies would panic if help attempted workspace/runtime setup.
@@ -21,7 +21,7 @@ func TestCLIHelpPrintsParametersWithoutStartingRuntime(t *testing.T) {
 				t.Fatalf("exit=%d stderr=%q", code, stderr.String())
 			}
 			text := stdout.String()
-			for _, want := range []string{"用法:", "bqagent [选项] [任务描述]", "-h, --help", "--resume [sessionID]", "--background", "--server", "-d", "--listen string", "127.0.0.1:8080", "--server-url", "http://127.0.0.1:8080", "--doctor", "--doctor-active", "--doctor-json", "--ilink-login", "--ilink-status", "示例:", "/help"} {
+			for _, want := range []string{"用法:", "bqagent [选项] [任务描述]", "-h, --help", "--resume [sessionID]", "--background", "--server", "--acp", "-d", "--listen string", "127.0.0.1:8080", "--server-url", "http://127.0.0.1:8080", "--doctor", "--doctor-active", "--doctor-json", "--ilink-login", "--ilink-status", "示例:", "/help"} {
 				if !strings.Contains(text, want) {
 					t.Errorf("help missing %q: %s", want, text)
 				}

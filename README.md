@@ -8,7 +8,7 @@
 
 bqagent is a Agent Runtime built for real local workflows: a small, legible execution core with multi-agent orchestration, durable memory, full context management, and conversations across channels.
 
-See the [project documentation](./docs/en/doc.md) for complete usage instructions and the [inline TUI guide](./docs/TUI.md) for shortcuts, commands, TTY fallback, and scrollback behavior.
+See the [project documentation](./docs/en/doc.md) for complete usage instructions and the [inline TUI guide](./docs/TUI.md) for shortcuts, commands, TTY fallback, and scrollback behavior. Use `bqagent --acp` with native chat clients; see the [ACP and Orca integration guide](./docs/ACP.md).
 
 ## Why bqagent?
 
